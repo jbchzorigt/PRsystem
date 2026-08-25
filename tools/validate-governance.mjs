@@ -241,6 +241,18 @@ check('7', 'Markdown file references resolve', () => {
     ['docs/implementation/external-integration-gates.md', extGates, IMPL],
     ['docs/implementation/assumptions-and-conflicts.md', assumptions, IMPL],
   ];
+  const archDir = join(DOCS, 'architecture');
+  if (existsSync(archDir)) {
+    for (const f of readdirSync(archDir).filter((n) => n.endsWith('.md'))) {
+      files.push([`docs/architecture/${f}`, read(join(archDir, f)), archDir]);
+    }
+    const adrDir = join(archDir, 'adr');
+    if (existsSync(adrDir)) {
+      for (const f of readdirSync(adrDir).filter((n) => n.endsWith('.md'))) {
+        files.push([`docs/architecture/adr/${f}`, read(join(adrDir, f)), adrDir]);
+      }
+    }
+  }
   const broken = [];
   let checked = 0;
   for (const [name, text, base] of files) {
@@ -267,6 +279,110 @@ check('7', 'Markdown file references resolve', () => {
   }
   return `${checked} relative links resolve; all five governance documents named in CLAUDE.md exist`;
 });
+
+// ------------------------------------------- Phase 01 architecture checks
+const ARCH = join(DOCS, 'architecture');
+const hasArch = existsSync(ARCH);
+
+if (hasArch) {
+  const archIndex = read(join(ARCH, 'README.md'));
+  const adrIndex = read(join(ARCH, 'adr', 'README.md'));
+  const decMap = read(join(ARCH, '17-dec-control-mapping.md'));
+  const portCatalog = read(join(ARCH, '16-external-port-catalog.md'));
+  const gateDoc = read(join(ARCH, '14-test-strategy-and-gates.md'));
+
+  check('8', 'Architecture index and ADR index resolve to real documents', () => {
+    const wantDocs = readdirSync(ARCH)
+      .filter((f) => /^\d{2}-.*\.md$/.test(f))
+      .sort();
+    assert(wantDocs.length === 17, `expected 17 numbered architecture documents, found ${wantDocs.length}`);
+    const unlisted = wantDocs.filter((f) => !archIndex.includes(f));
+    assert(unlisted.length === 0, `not listed in the architecture index: ${unlisted.join(', ')}`);
+
+    const adrFiles = readdirSync(join(ARCH, 'adr'))
+      .filter((f) => /^ADR-\d{4}-.*\.md$/.test(f))
+      .sort();
+    assert(adrFiles.length >= 1, 'no ADRs found');
+    const adrUnlisted = adrFiles.filter((f) => !adrIndex.includes(f));
+    assert(adrUnlisted.length === 0, `ADRs not listed in the ADR index: ${adrUnlisted.join(', ')}`);
+    const nums = adrFiles.map((f) => Number(f.match(/^ADR-(\d{4})/)[1]));
+    const wantNums = range(1, nums.length);
+    assert(
+      nums.every((n, i) => n === wantNums[i]),
+      `ADR numbering is not contiguous 0001..${nums.length}: ${nums.join(',')}`,
+    );
+    return `${wantDocs.length} architecture documents and ${adrFiles.length} contiguous ADRs, all indexed`;
+  });
+
+  check('9', 'Every cross-cutting invariant has a named enforcement mechanism', () => {
+    // traceability §25 rows: | invariant | sources | established in | enforced by |
+    const invRe = /^\|\s*([^|]+?)\s*\|\s*([^|]*(?:DEC-\d{3})[^|]*)\s*\|\s*(\d{2})\s*\|\s*([^|]+?)\s*\|\s*$/gm;
+    const rows = [...traceability.matchAll(invRe)];
+    assert(rows.length >= 10, `parsed only ${rows.length} invariant rows in traceability §25`);
+    const missingMech = rows.filter((m) => m[4].trim().length < 3 || m[4].trim() === '—');
+    assert(
+      missingMech.length === 0,
+      `invariants without an enforcement mechanism: ${missingMech.map((m) => m[1]).join('; ')}`,
+    );
+    const declared = new Set(planHeadingPhases);
+    const badPhase = rows.filter((m) => !declared.has(Number(m[3])));
+    assert(
+      badPhase.length === 0,
+      `invariant established in an undeclared phase: ${badPhase.map((m) => m[1]).join('; ')}`,
+    );
+    return `${rows.length} invariants, each with a mechanism and a declared establishing phase`;
+  });
+
+  check('10', 'Every EXT gate has a named port surface or an explicit no-port rationale', () => {
+    const want = range(1, 11).map((n) => `EXT-${String(n).padStart(2, '0')}`);
+    const missingGate = want.filter((id) => !portCatalog.includes(id));
+    assert(missingGate.length === 0, `absent from the port catalog: ${missingGate.join(', ')}`);
+    // Each gate row in §4 must name a port or say "no port".
+    const rows = [...portCatalog.matchAll(/^\|\s*(EXT-\d{2})\s*\|\s*([^|]+?)\s*\|/gm)];
+    assert(rows.length === 11, `port catalog gate table has ${rows.length} rows, expected 11`);
+    const unnamed = rows.filter((m) => !/Port|no port/i.test(m[2]));
+    assert(
+      unnamed.length === 0,
+      `gates without a named port or rationale: ${unnamed.map((m) => m[1]).join(', ')}`,
+    );
+    return `11 gates: ${rows.filter((m) => /Port/.test(m[2])).length} with a typed port, ${rows.filter((m) => /no port/i.test(m[2])).length} policy-only`;
+  });
+
+  check('11', 'Every DEC maps to defined controls and gates', () => {
+    const controlIds = new Set(
+      [...decMap.matchAll(/^\|\s*`?(CTL-[A-Z]+-\d{2})`?\s*\|/gm)].map((m) => m[1]),
+    );
+    assert(controlIds.size >= 20, `control catalog defines only ${controlIds.size} controls`);
+    const gateIds = new Set(
+      [...gateDoc.matchAll(/^\|\s*`?(GATE-[A-Z]+)`?\s*\|/gm)].map((m) => m[1]),
+    );
+    assert(gateIds.size >= 7, `gate catalog defines only ${gateIds.size} gates`);
+
+    const mapRe = /^\|\s*([A-Z]+-DEC-\d{3})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$/gm;
+    const mapped = new Map();
+    for (const m of decMap.matchAll(mapRe)) {
+      if (!/CTL-/.test(m[2])) continue; // skip catalog tables
+      mapped.set(m[1], { controls: m[2], gates: m[3] });
+    }
+    const allDecs = decRows.map((r) => r.id);
+    const unmapped = allDecs.filter((id) => !mapped.has(id));
+    assert(unmapped.length === 0, `DECs with no control mapping: ${unmapped.slice(0, 10).join(', ')}${unmapped.length > 10 ? ` (+${unmapped.length - 10})` : ''}`);
+
+    const badControl = [];
+    const badGate = [];
+    for (const [id, { controls, gates }] of mapped) {
+      for (const c of controls.matchAll(/CTL-[A-Z]+-\d{2}/g)) {
+        if (!controlIds.has(c[0])) badControl.push(`${id}→${c[0]}`);
+      }
+      for (const g of gates.matchAll(/GATE-[A-Z]+/g)) {
+        if (!gateIds.has(g[0])) badGate.push(`${id}→${g[0]}`);
+      }
+    }
+    assert(badControl.length === 0, `undefined controls cited: ${badControl.join(', ')}`);
+    assert(badGate.length === 0, `undefined gates cited: ${badGate.join(', ')}`);
+    return `${mapped.size}/${allDecs.length} DECs mapped; ${controlIds.size} controls and ${gateIds.size} gates all defined`;
+  });
+}
 
 // ------------------------------------------------------------------- report
 let failed = 0;

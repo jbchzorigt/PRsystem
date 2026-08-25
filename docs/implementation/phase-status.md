@@ -13,9 +13,9 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 
 | Field | Value |
 | --- | --- |
-| Current phase | **00 — Requirement intake and governance baseline** |
-| Phase state | `DONE` (repaired; awaiting customer acceptance) |
-| Next phase | 01 — Architecture and threat model |
+| Current phase | **01 — Architecture and threat model** |
+| Phase state | `DONE` (documentation only; awaiting customer acceptance) |
+| Next phase | 02 — Monorepo scaffold |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
 
@@ -25,8 +25,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 
 | # | Phase | State | Migrations | Gates run | Commit |
 | --- | --- | --- | --- | --- | --- |
-| 00 | Requirement intake and governance baseline | `DONE` | — | governance validation | `07a9fd0`, repair pending |
-| 01 | Architecture and threat model | `NOT STARTED` | — | — | — |
+| 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
+| 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 11/11 | pending |
 | 02 | Monorepo scaffold | `NOT STARTED` | — | — | — |
 | 03 | Platform kernel | `NOT STARTED` | — | — | — |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
@@ -132,6 +132,82 @@ Not applicable to a documentation phase.
 
 - `07a9fd0835893c0c9e3d11777f51f4dbd580cdb9` — initial Phase 00 baseline.
 - Repair commit SHA recorded at commit time.
+
+---
+
+## Phase 01 record
+
+### Scope completed
+
+Documentation only. No workspace, package manifest, lockfile, dependency, application code, migration
+or test code was created, and `docs/00` … `docs/26` were not modified.
+
+Delivered under [docs/architecture/](../architecture/README.md):
+
+| Deliverable | Document |
+| --- | --- |
+| System context (C4 L1), actors, boundary crossings, three separated money flows | `01-system-context.md` |
+| Container and deployment view, request and callback lifecycles, worker queues | `02-container-and-deployment.md` |
+| Module ownership register (19 modules), dependency rules, cross-module flows | `03-module-ownership-and-dependencies.md` |
+| Logical ERD per bounded context with database-level invariants | `04-logical-data-model.md` |
+| Four authentication realms and the seven-condition authorization pipeline | `05-authentication-realms-and-authorization.md` |
+| Tenant boundaries and four-layer enforcement | `06-tenant-boundaries.md` |
+| Data classification C0–C4 and the handling matrix | `07-data-classification.md` |
+| Eleven trust boundaries and their validation | `08-trust-boundaries.md` |
+| STRIDE threat model: 63 threats, mitigations, residual register | `09-threat-model.md` |
+| Money and time invariant specification | `10-money-and-time-invariants.md` |
+| Concurrency strategy: 10 race classes, 21-entry race register | `11-concurrency-strategy.md` |
+| Migration strategy: versioned only, expand/contract, append-only enforcement | `12-migration-strategy.md` |
+| Telemetry and redaction policy | `13-telemetry-and-redaction.md` |
+| Test strategy and the 8-gate catalog | `14-test-strategy-and-gates.md` |
+| Measurable non-functional targets — **closes P1-10** | `15-non-functional-targets.md` |
+| Typed port surface per EXT gate plus the 8-scenario conformance suite | `16-external-port-catalog.md` |
+| DEC → control → gate mapping for all 279 decisions; 37-control catalog | `17-dec-control-mapping.md` |
+| 16 architecture decision records | `adr/ADR-0001` … `adr/ADR-0016` |
+
+`tools/validate-governance.mjs` extended with Phase 01 architecture checks 8–11, and check 7 widened
+to cover the architecture set.
+
+### Changed file groups
+
+- `docs/architecture/` — 18 new documents plus `adr/` (17 new files)
+- `docs/implementation/requirements-traceability.md` — §26 control mapping, §27 validation
+- `docs/implementation/phase-status.md` — this record
+- `tools/validate-governance.mjs` — checks 7–11
+
+### Migrations
+
+None. No schema exists.
+
+### DEC coverage
+
+Phase 01 owns **0 decisions**. It establishes the control and gate vocabulary that all 279 decisions
+are mapped through; every decision now has a control and gate mapping, verified by check 11.
+No decision moves to `COVERED` in this phase.
+
+### Test gates
+
+```bash
+node tools/validate-governance.mjs      # GATE-GOV — 11/11 passed
+git diff --check                        # clean, exit 0
+```
+
+`GATE-TYPES`, `GATE-LINT`, `GATE-UNIT`, `GATE-INTEG`, `GATE-CONC`, `GATE-MIGR`, `GATE-E2E` and
+`GATE-SEC` are **not applicable**: no code, no schema and no workspace exist until Phase 02. None was
+run and none is claimed as passing.
+
+### Security and concurrency evidence
+
+Design-level only. The threat model records 63 threats with named mitigations, controls and verifying
+gates, and a residual register of 14 Medium risks with named owners. No Critical or High residual risk
+remains. Concurrency evidence is the 21-entry race register, each entry bound to a `GATE-CONC` test to
+be written by its owning phase.
+
+### Remaining blockers
+
+Unchanged from Phase 00: no P0 product blockers; eleven EXT gates block production release only;
+seventeen P1 items remain configuration values. Four Phase 01 design questions are recorded as open:
+`DM-01` … `DM-04` in `04-logical-data-model.md` §11, all owned by Phase 03.
 
 ---
 

@@ -532,15 +532,32 @@ phase touching the invariant must re-assert it in its own gates.
 
 ---
 
-## 26. Validation
+## 26. Control and gate mapping
 
-Machine validation of this document, [build-plan.md](build-plan.md), [phase-status.md](phase-status.md)
-and [external-integration-gates.md](external-integration-gates.md):
+Every decision in this register is additionally mapped to the architectural controls that enforce it
+and the test gates that prove it, in
+[docs/architecture/17-dec-control-mapping.md](../architecture/17-dec-control-mapping.md)
+(established in Phase 01).
+
+- Control catalog: that document, §2 — 37 controls.
+- Gate catalog: [docs/architecture/14-test-strategy-and-gates.md](../architecture/14-test-strategy-and-gates.md) §2 — 8 gates.
+
+A decision moves to `COVERED` only when its owning phase has implemented the mapped controls **and**
+the mapped gates have executed against them.
+
+---
+
+## 27. Validation
+
+Machine validation of this document, [build-plan.md](build-plan.md), [phase-status.md](phase-status.md),
+[external-integration-gates.md](external-integration-gates.md) and the Phase 01 architecture set:
 
 ```bash
 node tools/validate-governance.mjs
 ```
 
 The validator asserts source-document coverage, DEC uniqueness and count, single-phase assignment,
-phase-namespace agreement across documents, EXT uniqueness, and markdown link resolution. It is a
-standing gate for every phase (see [build-plan.md](build-plan.md) §5).
+phase-namespace agreement across documents, EXT uniqueness, markdown link resolution, architecture and
+ADR index integrity, invariant enforcement mechanisms, EXT port-surface coverage, and complete
+DEC → control → gate mapping. It is a standing gate for every phase
+(see [build-plan.md](build-plan.md) §5).

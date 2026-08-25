@@ -1,0 +1,129 @@
+# 14 — Test Strategy and Gates
+
+The gate catalog every later phase cites, and what each gate must prove.
+
+---
+
+## 1. Principles
+
+1. **Gates are binary.** A phase commits only when every blocking gate passes. A gate that was not run
+   is never reported as passing (`CLAUDE.md` §11).
+2. **Real PostgreSQL for integration and concurrency.** Mocked repositories and SQLite are not
+   substitutes (`CLAUDE.md` §10).
+3. **Test the constraint, not the guard.** Where an invariant is a database constraint, the test must
+   attempt the violation and observe the database rejecting it.
+4. **Concurrency is proven with real connections**, not by reasoning about the code.
+5. **Requirements are the oracle.** Assertions cite DEC ids so a failure names the decision it breaks.
+6. **Synthetic data only.** No real registration number, address or case data in any environment.
+
+---
+
+## 2. Gate catalog
+
+| Gate | Command | Scope | Blocking from |
+| --- | --- | --- | --- |
+| `GATE-TYPES` | `pnpm -w typecheck` | TypeScript strict across the workspace | Phase 02 |
+| `GATE-LINT` | `pnpm -w lint` | Style plus module-boundary rules | Phase 02 |
+| `GATE-UNIT` | `pnpm -w test:unit` | Pure logic: money, time, authorization matrix, state machines, event schemas | Phase 03 |
+| `GATE-INTEG` | `pnpm -w test:integration` | Real Postgres: constraints, transactions, authorization end-to-end, provider ports against simulators | Phase 03 |
+| `GATE-CONC` | `pnpm -w test:concurrency` | Real Postgres, multiple connections: every race in [11](11-concurrency-strategy.md) §4 | Phase 03 |
+| `GATE-MIGR` | `pnpm -w test:migrations` | Fresh and upgrade migration, constraint presence, append-only enforcement | Phase 02 |
+| `GATE-E2E` | `pnpm -w test:e2e` | Playwright journeys through the portals | Phase 21 |
+| `GATE-SEC` | `pnpm -w test:security` | Secret-leakage canary scan, dependency audit, header and CSP checks | Phase 22 |
+| `GATE-GOV` | `node tools/validate-governance.mjs` | Governance and architecture document consistency | Phase 00 |
+
+Phase 01 runs `GATE-GOV` only; no code exists yet, so no other gate is applicable and none is claimed.
+
+---
+
+## 3. What each gate must prove
+
+### `GATE-UNIT`
+
+- Money: `ROUND_HALF_UP` at `.5` boundaries, basis-point arithmetic, no float leakage.
+- Time: end-of-month clamping, service-month recurrence, `[start,end)` semantics, backdate bounds.
+- Authorization: a table-driven test **generated from doc 18 §§3, 5, 6**, covering every role, every
+  action and every `Нэмэлт role` cell.
+- State machines: every documented transition allowed, every undocumented transition rejected —
+  application, subscription, booking, order, refund, configuration request, rollout batch, Wanted
+  case, Match workflow and outcome.
+- Event schemas: outbox payloads contain no C3/C4 field.
+
+### `GATE-INTEG`
+
+- Every invariant in [04](04-logical-data-model.md) is a real constraint that rejects its violation.
+- The seven-condition pipeline denies at each stage, with cross-tenant denial indistinguishable from
+  not-found.
+- Provider ports pass the conformance suite: duplicate, out-of-order, delayed, expired,
+  amount-mismatch, currency-mismatch, bad-signature, timeout-then-late-success.
+- Append-only tables reject `UPDATE` and `DELETE`.
+- Exports contain exactly the approved columns and no PII beyond them.
+
+### `GATE-CONC`
+
+Every race in [11](11-concurrency-strategy.md) §4 has a test that opens multiple real connections,
+synchronises at a barrier inside the critical section, and asserts exactly one business effect, a
+deterministic winner, a coherent loser state, and an audit trail of both attempts.
+
+**A race without a `GATE-CONC` test is not mitigated**, whatever the code looks like.
+
+### `GATE-MIGR`
+
+Fresh and upgrade runs converge to an identical normalised schema dump; the journal is idempotent;
+introspection confirms every named constraint exists.
+
+### `GATE-E2E`
+
+Journeys, not pages: onboarding → activation → configuration → check-in → minibar → checkout → shift
+close; search → book → pay → check-in → review; check-in → Police alert → acknowledge → Found;
+subscription expiry → grace → hard lock → renewal. Run at mobile, tablet and desktop viewports.
+
+### `GATE-SEC`
+
+Canary scan across logs, traces, audit rows, outbox payloads, fixtures and seeds; dependency
+vulnerability audit; security-header and CSP verification; the `security-review` pass.
+
+### `GATE-GOV`
+
+Source-document coverage, DEC uniqueness and count, single-phase assignment, phase-namespace agreement
+across governance documents, EXT uniqueness, markdown link resolution, and — from Phase 01 — the
+architecture checks in §5.
+
+---
+
+## 4. Test data
+
+- `packages/testing` provides a Postgres harness (container per suite, migrated fresh), a concurrency
+  barrier helper, a deterministic clock, and a synthetic identity factory producing structurally valid
+  but reserved-range identifiers.
+- Fixtures are built through public application contracts, not by inserting rows, so a fixture cannot
+  create a state the domain forbids.
+- Every suite is order-independent and runs against its own schema or database.
+
+---
+
+## 5. Phase 01 architecture gates
+
+Added to `GATE-GOV` by this phase:
+
+| Check | Assertion |
+| --- | --- |
+| 8 | Every document listed in the architecture index exists |
+| 9 | Every invariant in traceability §25 is named in the architecture control mapping |
+| 10 | Every `EXT-01` … `EXT-11` has a named port surface in the port catalog |
+| 11 | Every one of the 279 DECs has a control and gate mapping row, and every cited control and gate is defined in its catalog |
+
+---
+
+## 6. Definition of done for a phase
+
+A phase is `DONE` when:
+
+1. every blocking gate for that phase passes on a clean checkout;
+2. every DEC owned by the phase is `COVERED` in traceability, with the control and gate that prove it;
+3. every new race has a `GATE-CONC` test;
+4. every new external interaction goes through a typed port with a simulator;
+5. no new `Medium` or higher residual risk is introduced without an entry in
+   [09](09-threat-model.md) §9;
+6. `phase-status.md` records the exact commands run and their results;
+7. nothing is claimed that was not executed.
