@@ -1,15 +1,19 @@
 # PRsystem — MVP Build Plan
 
-**Version:** 1.0
-**Created:** Phase 00
-**Baseline:** `docs/00-mvp-open-decisions.md` … `docs/26-room-minibar-lifecycle.md` (immutable)
+**Version:** 1.1
+**Created:** Phase 00 · **Revised:** Phase 00 repair (aligned to the approved 23-phase structure)
+**Baseline:** [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) … [docs/26-room-minibar-lifecycle.md](../26-room-minibar-lifecycle.md) (immutable)
 **Branch:** `claude/mvp-implementation`
+
+Phase numbering, titles and ordering in this document are **approved and fixed**. No phase may be
+dropped, merged, renumbered or reordered. Phases run strictly in order; `STOP` after every phase.
 
 ---
 
 ## 1. Deployment shape
 
-One modular-monolith **API** deployment and one **worker** deployment, plus five Next.js App Router portals.
+One modular-monolith **API** deployment and one **worker** deployment, plus five Next.js App Router
+portals.
 
 ```
 apps/
@@ -37,139 +41,185 @@ Module boundary rule (CLAUDE.md §3) is enforced by lint: a module may import an
 
 ---
 
-## 2. Phase decomposition
+## 2. External adapter policy
 
-Each phase is independently committable and independently gated. Phases run strictly in order;
-`STOP` after every phase.
+Full external adapter implementation belongs to **Phase 20 — External adapters**.
 
-| # | Phase | Requirement inputs | Primary DEC families |
-| --- | --- | --- | --- |
-| 00 | Requirement intake & governance baseline | 00–26 | all (inventory only) |
-| 01 | Monorepo & toolchain foundation | 01 | — |
-| 02 | Platform kernel (tenancy, authz, audit, outbox, money, time) | 18, 19, 17 | RBAC-DEC-001–017 |
-| 03 | External ports & deterministic simulators | 00 §4, 08, 09, 11, 13, 14, 16 | EXT-01…EXT-11 |
-| 04 | Onboarding, subscription pricing & lifecycle | 15, 16, 17 | ONB-DEC-001–008, SUB-DEC-001–009, LIFE-DEC-001–007 |
-| 05 | Staff account lifecycle & RBAC enforcement | 19, 18 | STAFF-DEC-001–009, RBAC-DEC-001–017 |
-| 06 | Hotel configuration: rooms, categories, tariffs, entity lifecycle | 07, 05, 26 §§2–13 | STAY-DEC-005–007, RML-DEC-001–006 |
-| 07 | Minibar inventory core | 22 | INV-DEC-001–008 |
-| 08 | Template versions, Publish/Default/Archive, Rollout (single + batch) | 26 §§14–39, 22 §7 | RML-DEC-007–028 |
-| 09 | Cash drawer ledger & Reception shift | 24, 03 | CASH-DEC-001–010, SHIFT-DEC-001–007 |
-| 10 | Stay lifecycle: check-in, actual time, readiness, checkout, overdue | 05, 06, 02 | STAY-DEC-001–014, RC-DEC-012–017, RC-DEC-044 |
-| 11 | Deposit & payment correction | 20, 02 §3.4 | DEP-DEC-001–010, RC-DEC-002–006 |
-| 12 | Minibar price snapshot, Cleaner reports, checkout exception & dispute | 25, 21, 04 | PRICE-DEC-001–008, CHK-DEC-001–006, RC-DEC-035 |
-| 13 | Guest registry & background export | 12 | GUEST-DEC-001–008, RC-DEC-032–033 |
-| 14 | Hotel Admin financial reporting | 23 | FIN-DEC-001–010, RC-DEC-037 |
-| 15 | Online booking: search, auth, inventory, payment, settlement | 09, 11 | BK-DEC-001–014, PAY-DEC-001–009 |
-| 16 | Ratings, reviews, moderation, official reply | 10 | RV-DEC-001–007 |
-| 17 | Restaurant module | 08, 02 §§RC-DEC-019–031 | REST-DEC-001–006, RC-DEC-019–031 |
-| 18 | Police monitoring system | 13 | POL-DEC-001–022 |
-| 19 | Operation Dashboard & SMS reminders | 14 | OPS-DEC-001–018 |
-| 20 | Portal hardening & accessibility pass | 02, 04, 06, 09, 13, 14 | — |
-| 21 | Cross-cutting E2E, concurrency, security & release gate | all | all |
+Earlier phases may define a **typed provider port plus a deterministic simulator** only where the
+phase cannot be built or gated without it. Those phases must not implement production credentials,
+production endpoints, signature schemes, or live network calls. Every production adapter stays
+disabled by configuration and fails closed until Phase 20 (CLAUDE.md §9).
+
+Phases permitted to define ports early, and the minimum surface each may define:
+
+| Phase | Port | Reason it cannot be deferred |
+| --- | --- | --- |
+| 05 | payment gateway, eBarimt, email | Payment-gated provisioning and receipt fallback are the phase's core state machine |
+| 08 | XYP identity | Check-in identity provenance (`XYP_VERIFIED` vs `MANUAL`) is a stored field |
+| 10 | payment gateway, POS reference | Deposit receipt/refund channels define the deposit aggregate |
+| 12 | e-Mongolia, phone OTP, geo | Guest authentication and discovery have no other entry path |
+| 14 | payment gateway | Hold/capture/refund/settlement races are the phase's gates |
+| 15 | payment gateway (restaurant merchant) | Restaurant order confirmation depends on provider success |
+| 18 | SMS | Match alert delivery and escalation records |
+| 19 | SMS, email | Reminder job and reset initiation records |
 
 ---
 
-## 3. Phase detail
+## 3. Approved phase table
 
-### Phase 01 — Monorepo & toolchain foundation
+| # | Phase | Requirement inputs | DECs |
+| --- | --- | --- | ---: |
+| 01 | Architecture and threat model | 00–26 | 0 |
+| 02 | Monorepo scaffold | 01 | 0 |
+| 03 | Platform kernel | 18, 19, 17 | 0 |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | 18, 19 | 26 |
+| 05 | Hotel onboarding and subscription | 15, 16, 17, 14 | 26 |
+| 06 | Hotel, room, category, and tariffs | 07, 05, 26 | 11 |
+| 07 | Minibar inventory and templates | 22, 26, 07 | 36 |
+| 08 | Availability, guest identity, reception, and stay | 05, 06, 02, 25 | 19 |
+| 09 | Cleaner and checkout coordination | 04, 21, 25, 02 | 18 |
+| 10 | Folio, deposit, payment, and correction | 20, 02 | 15 |
+| 11 | Shift, cash drawer, expense, and hotel finance | 03, 24, 23, 02 | 20 |
+| 12 | Public discovery and Guest authentication | 09 | 2 |
+| 13 | Online booking and inventory hold | 09, 11, 02 | 7 |
+| 14 | Online payment, refund, commission, and settlement | 11, 09 | 11 |
+| 15 | Restaurant | 08, 02 | 19 |
+| 16 | Verified reviews | 10, 09 | 11 |
+| 17 | Guest registry, exports, and Hotel Admin reports | 12, 23, 02 | 19 |
+| 18 | Police monitoring | 13, 02 | 23 |
+| 19 | Platform Operation | 14 | 16 |
+| 20 | External adapters | 00 §4, 08, 09, 11, 13, 14, 16 | 0 |
+| 21 | Responsive UI and accessibility | 02, 04, 06, 09, 13, 14 | 0 |
+| 22 | Security, concurrency, recovery, and full E2E | all | 0 |
+| 23 | Release candidate audit | all | 0 |
 
-**Scope.** pnpm workspace + Turborepo pipeline; TypeScript strict (`strict`, `noUncheckedIndexedAccess`,
-`exactOptionalPropertyTypes`, `noImplicitOverride`); NestJS+Fastify API skeleton with OpenAPI;
-worker skeleton with BullMQ; five Next.js App Router shells; Drizzle + versioned migration runner;
-Postgres + Redis via docker-compose; OpenTelemetry bootstrap with log redaction; Playwright harness;
-ESLint boundary rule; CI gate script; pinned lockfile.
+Total assigned decisions: **279**.
 
-**Gates.** `pnpm -w typecheck` · `pnpm -w lint` · `pnpm -w build` · fresh-migration test ·
-API health E2E · boundary-lint fixture proving a cross-module repository import fails.
+---
+
+## 4. Phase detail
+
+### Phase 01 — Architecture and threat model
+
+**Documentation only. No application code, no scaffold, no dependencies.**
+
+**Scope.** Produce `docs/architecture/`: module map and dependency direction for the modular
+monolith; canonical data-model overview per bounded context; trust boundaries and the four
+authentication realms; STRIDE threat model per realm and per external interface; the authorization
+model specification (realm → account/membership → named permission → tenant/resource scope → package
+entitlement → account/hotel/subscription state → step-up); money and time invariant specification;
+concurrency strategy catalogue (row lock, revision CAS, partial unique index, exclusion constraint,
+idempotency key); migration strategy (versioned only, fresh + upgrade); telemetry and log-redaction
+policy; test strategy and gate definitions; measurable non-functional targets closing P1-10.
+
+**Gates.** Documentation review against CLAUDE.md §§1–10; every invariant in
+[requirements-traceability.md](requirements-traceability.md) §25 has a named enforcement mechanism;
+every EXT gate in [external-integration-gates.md](external-integration-gates.md) has a named port
+surface.
+
+**Exit.** Architecture and threat model accepted. No code exists yet.
+
+---
+
+### Phase 02 — Monorepo scaffold
+
+**Scope.** pnpm workspace + Turborepo pipeline; TypeScript strict (`strict`,
+`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`); NestJS + Fastify API
+skeleton with OpenAPI; worker skeleton with BullMQ; five Next.js App Router shells; Drizzle plus a
+versioned migration runner; Postgres and Redis via docker-compose; OpenTelemetry bootstrap with log
+redaction; Playwright harness; ESLint module-boundary rule; CI gate script; pinned lockfile.
+
+**Gates.** `pnpm -w typecheck` · `pnpm -w lint` · `pnpm -w build` · `pnpm -w test:migrations`
+(fresh) · API health E2E · a boundary-lint fixture proving a cross-module repository import fails.
 
 **Exit.** Empty but wired: every app boots, migrations run fresh, telemetry emits, CI green.
 
 ---
 
-### Phase 02 — Platform kernel
+### Phase 03 — Platform kernel
 
 **Scope.** Tenancy (`hotel_id` scope propagation); four authentication realms; server-side session
-and auth-epoch revocation; the named-permission catalog derived from doc 18 §§3, 5, 6; package
-entitlement gate (20 000₮ / 25 000₮ / 30 000₮); subscription state gate incl. 48h grace and hard
-lock; multi-role permission union; step-up MFA marker; append-only audit log; transactional outbox +
-relay; idempotency key store; `packages/money` (bigint MNT, basis points, `ROUND_HALF_UP`);
-`packages/time` (UTC storage, hotel-local resolution, `[start,end)` interval type, calendar-month and
-service-month arithmetic incl. end-of-month clamping).
+and auth-epoch revocation; the authorization **engine** and permission-catalog structure; package
+entitlement gate (20 000₮ / 25 000₮ / 30 000₮); subscription state gate including the 48-hour grace
+and hard lock; multi-role permission union; step-up MFA marker; append-only audit log; transactional
+outbox plus relay; idempotency key store; `packages/money` (bigint MNT, basis points,
+`ROUND_HALF_UP`); `packages/time` (UTC storage, hotel-local resolution, `[start,end)` interval type,
+calendar-month and service-month arithmetic with end-of-month clamping).
 
-**Invariants.** Every action passes realm → account/membership → named permission → tenant/resource
-scope → package entitlement → account/hotel/subscription state → step-up. Role name alone grants
-nothing. Client-supplied role/scope/amount/status is discarded.
+The kernel provides the mechanisms; the concrete permission matrix rows are encoded in Phase 04.
 
-**Gates.** Unit: permission matrix table-driven test asserting every row of doc 18 §3/§5/§6 including
-every `Нэмэлт role` cell. Integration (real Postgres): audit append-only constraint, outbox
-exactly-once relay under duplicate delivery, idempotency replay returns prior result.
-Concurrency: parallel permission revocation vs in-flight action.
+**Gates.** Unit: engine semantics — union of roles, entitlement gate above role, deny on any failed
+condition. Integration (real Postgres): audit append-only constraint, outbox exactly-once relay under
+duplicate delivery, idempotency replay returns the prior result. Concurrency: parallel permission
+revocation against an in-flight action.
 
 ---
 
-### Phase 03 — External ports & deterministic simulators
+### Phase 04 — IAM, tenancy, RBAC, and staff lifecycle
 
-**Scope.** Typed ports + deterministic simulators for QPay, Khaan Bank gateway, manual/integrated
-POS, XYP/HUR, e-Mongolia, eBarimt, CallPro SMS, Google Maps/Geocoding, email, S3-compatible storage.
-Each port: signature verification hook, provider event dedup store, reference/amount/currency match,
-status re-query, canonical idempotent transition. Production adapters compiled but **disabled by
-config and fail closed**.
+**Decisions.** `RBAC-DEC-001`–`017`, `STAFF-DEC-001`–`009` (26).
 
-**Gates.** Simulator conformance suite per port: duplicate callback, out-of-order callback, delayed
-callback after expiry, unknown reference, amount mismatch, currency mismatch, signature failure,
-timeout-then-late-success. Assert: no second business effect; disabled production adapter refuses to
-run and emits a gate error.
+**Scope.** The complete named-permission catalog derived from doc 18 §§3, 5, 6 including every
+`Нэмэлт role` cell; Hotel Admin never inheriting operational roles; package gate above role;
+Operation and Platform Super Admin explicit permissions; Police base matrix; user account versus
+hotel/restaurant membership; invitation token lifecycle `ACTIVE → ACCEPTED | SUPERSEDED | EXPIRED |
+REVOKED`; one canonical membership per scope and at most one `ACTIVE` invitation enforced by database
+constraints; `membership_revision` CAS serialising invite/accept/role-change/suspend/terminate/
+reactivate; the scope-targeted session revocation matrix; `TAKEOVER_REQUIRED` Reception shift queue;
+Cleaner task reassignment and linked `CONTINUATION` task; Restaurant reassignment; single Primary
+Hotel Admin.
+
+**Gates.** Table-driven test asserting every row of doc 18 §§3, 5, 6. Concurrency: suspension
+committing against a concurrent invitation accept; two Managers claiming one takeover item; two
+Cleaners claiming one task. Integration: password reset revokes all sessions across all memberships;
+a package-forbidden role invitation is rejected at the API.
 
 ---
 
-### Phase 04 — Onboarding, subscription pricing & lifecycle
+### Phase 05 — Hotel onboarding and subscription
+
+**Decisions.** `ONB-DEC-001`–`008`, `SUB-DEC-001`–`009`, `LIFE-DEC-001`–`007`, `OPS-DEC-006`,
+`OPS-DEC-007` (26).
 
 **Scope.** Application state machine `DRAFT → OWNER_VERIFICATION_REQUIRED → PENDING_PAYMENT →
 PAYMENT_UNCERTAIN/FAILED/EXPIRED → PAID_OWNER_VERIFICATION_REQUIRED → PAID_PENDING_PROVISIONING →
-PROVISIONING → PROVISIONED | PROVISIONING_FAILED`; citizen/organization owner types; existing
+PROVISIONING → PROVISIONED | PROVISIONING_FAILED`; citizen and organization owner types; existing
 owner/account proof; payment-gated activation; durable all-or-nothing provisioning transaction
-(hotel + owner link + subscription + Primary Hotel Admin membership) with ≤5 backoff retries then
-manual `ONBOARDING_PROVISION_RETRY`; activation link via outbox; default cash drawer created at
-activation; subscription pricing (`monthly × 1/3/7/12`, VAT-inclusive, no discounts); eBarimt
-generation + manual retry queue; upgrade-only package floor with service-month boundary,
-incremental second upgrade, `billing_revision` CAS serialization; 48h grace, hard lock, public
-listing hide; `PAID_REQUIRES_RECONCILIATION` queue.
+(hotel + owner link + subscription + Primary Hotel Admin membership) with at most five backoff
+retries then manual `ONBOARDING_PROVISION_RETRY`; activation link via outbox; the default
+`Үндсэн касс` drawer created inside the provisioning transaction; subscription pricing
+(monthly × 1/3/7/12, VAT-inclusive, no discounts); subscription start and expiry arithmetic with
+end-of-month clamping; renewal inside and after grace; eBarimt issuance plus manual retry queue;
+upgrade-only package floor with service-month boundary, incremental second upgrade and
+`billing_revision` CAS serialisation; 48-hour grace, hard lock, public listing hide;
+`PAID_REQUIRES_RECONCILIATION` queue.
 
-**Gates.** Concurrency: duplicate payment callback, two providers paying one intent, late capture on
-expired attempt, boundary worker vs upgrade callback racing on the same `billing_revision`.
+**Ports (simulator only).** payment gateway, eBarimt, email.
+
+**Gates.** Concurrency: duplicate payment callback; two providers paying one intent; late capture on
+an expired attempt; boundary worker racing an upgrade callback on one `billing_revision`.
 Integration: provisioning failure leaves zero partial entities; email failure does not roll back
-provisioning; renewal inside grace extends from original `expires_at`; renewal after grace starts at
-payment confirmation.
+provisioning; renewal inside grace extends from the original `expires_at`; renewal after grace starts
+at payment confirmation.
 
 ---
 
-### Phase 05 — Staff account lifecycle & RBAC enforcement
+### Phase 06 — Hotel, room, category, and tariffs
 
-**Scope.** User account vs hotel/restaurant membership; invitation token lifecycle
-`ACTIVE → ACCEPTED | SUPERSEDED | EXPIRED | REVOKED`; one canonical membership per scope + at most
-one `ACTIVE` invitation (DB unique constraints); `membership_revision` CAS serializing
-invite/accept/role-change/suspend/terminate/reactivate; scope-targeted session revocation matrix;
-`TAKEOVER_REQUIRED` Reception shift queue; Cleaner task reassignment and linked `CONTINUATION` task;
-Restaurant reassignment; single Primary Hotel Admin.
+**Decisions.** `RML-DEC-001`–`006`, `STAY-DEC-002`, `STAY-DEC-004`, `STAY-DEC-005`, `STAY-DEC-006`,
+`RC-DEC-040` (11).
 
-**Gates.** Concurrency: suspension committing against a concurrent invitation accept; two Managers
-claiming one takeover item; two Cleaners claiming one task. Integration: password reset revokes all
-sessions across all memberships; package-forbidden role invitation rejected at API.
+**Scope.** Room categories; physical rooms with a hotel-scoped unique room number; hourly and nightly
+tariff levels (hotel default → category override → room override) resolved independently per stay
+type; hotel fixed check-out time; cleaning buffer configuration (hotel default plus category
+override); `ACTIVE → RETIRING → INACTIVE` lifecycle for room, category, product and template
+entities; hard-delete only for never-used entities; reactivation dependency validation.
 
----
-
-### Phase 06 — Hotel configuration
-
-**Scope.** Room categories, physical rooms (hotel-scoped unique room number), hourly/nightly tariff
-levels (hotel default → category override → room override) with independent resolution;
-`ACTIVE → RETIRING → INACTIVE` lifecycle for room/category/product/template entities; hard-delete
-only for never-used entities; reactivation dependency validation; cleaning buffer configuration;
-fixed hotel check-out time; deposit amount configuration (hotel + category override).
-
-**Invariants.** Walk-in `room → category → hotel`; online quote `category → hotel`, room override
-never used. Server-authoritative rate resolution; confirmation snapshot stores unit price, source
-level, source entity ID, config version. Later tariff edits never reprice confirmed bookings or
-active stays.
+**Invariants.** Walk-in resolves `room → category → hotel`; online quote resolves
+`category → hotel` and never uses a room override. Server-authoritative rate resolution. The
+confirmation snapshot stores unit price, source level, source entity ID and configuration version.
+Later tariff edits never reprice a confirmed booking or an active stay. No configurable hourly
+minimum, maximum or increment is introduced.
 
 **Gates.** Table-driven precedence and inheritance tests for both stay types; audit assertions on
 every tariff create/update/unset; lifecycle blocker tests (active stay, confirmed future booking,
@@ -177,230 +227,345 @@ inventory movement); hard-delete rejection for any referenced entity.
 
 ---
 
-### Phase 07 — Minibar inventory core
+### Phase 07 — Minibar inventory and templates
 
-**Scope.** Products with separate selling price and purchase cost; two stock locations (warehouse,
-per-room minibar); immutable typed movement ledger (`OPENING`, `PURCHASE`, `TRANSFER_TO_ROOM`,
-`RETURN_TO_WAREHOUSE`, `GUEST_CONSUMPTION`, `WASTE`, `ADJUSTMENT_IN/OUT`); non-negative balance
-constraints; continuous hotel-level weighted average cost with per-movement cost snapshot;
-active-stay refill request → Cleaner task → atomic warehouse→room transfer; stay-scoped non-guest
-stock-out.
+**Decisions.** `INV-DEC-001`–`008`, `RML-DEC-007`–`028`, `RC-DEC-011`, `RC-DEC-018`, `RC-DEC-036`,
+`RC-DEC-041`, `RC-DEC-042`, `RC-DEC-043` (36).
+
+**Scope.** Products with separate selling price and purchase cost; two stock locations (warehouse and
+per-room minibar); immutable typed movement ledger; non-negative balance constraints; continuous
+hotel-level weighted average cost with a per-movement cost snapshot; shortage override; template
+entity lifecycle separate from version lifecycle `DRAFT → PUBLISHED → ARCHIVED`; immutable published
+product list and target quantities; Publish validation (ACTIVE parent, at least one unique same-hotel
+ACTIVE product, positive integer targets); first-published-is-Default with a separate atomic
+`Set default`; Archive blockers; exact-version room binding (`current_version_id`,
+`pending_target_version_id`); room configuration `current + at most one pending`; ON→OFF, OFF→ON and
+A→B reconciliation with Cleaner tasks; cancel versus compensating rollback; single-room Rollout;
+multi-room Rollout batch with read-only Preview, partial-success Confirm, derived batch state,
+`Cancel remaining` and linked `retry_of_batch_id`.
 
 **Gates.** Real-Postgres concurrency: parallel refills against a scarce warehouse balance never go
-negative and never over-transfer; retry of one transfer posts once. Weighted-average unit tests
-including zero-balance receipt and adjustment-in without established cost.
+negative and never over-transfer; a retried transfer posts once; duplicate Confirm with one
+idempotency key creates one batch; two Rollouts on one room violate the one-pending invariant.
+Integration: Publish, Set default and Archive produce zero pointer, stock, task or blocker side
+effects; batch-state derivation table covering all five states.
 
 ---
 
-### Phase 08 — Template versions & Rollout
+### Phase 08 — Availability, guest identity, reception, and stay
 
-**Scope.** Template entity lifecycle separate from version lifecycle `DRAFT → PUBLISHED → ARCHIVED`;
-immutable published product list/target quantities; Publish validation (ACTIVE parent, ≥1 unique
-same-hotel ACTIVE product, positive integer targets); first-published-is-Default, subsequent publish
-does not change Default; separate atomic `Set default`; Archive blockers; exact-version room binding
-(`current_version_id`, `pending_target_version_id`); room configuration `current + ≤1 pending`;
-ON→OFF / OFF→ON / A→B reconciliation with Cleaner tasks; shortage override; cancel vs compensating
-rollback; single-room Rollout; multi-room Rollout batch with read-only Preview, partial-success
-Confirm, derived batch state, `Cancel remaining`, linked `retry_of_batch_id`.
+**Decisions.** `STAY-DEC-001`, `STAY-DEC-003`, `STAY-DEC-007`–`014`, `RC-DEC-007`, `RC-DEC-012`–`015`,
+`RC-DEC-017`, `RC-DEC-033`, `RC-DEC-044`, `PRICE-DEC-001` (19).
 
-**Gates.** Concurrency: duplicate Confirm with one idempotency key creates one batch; two Rollouts on
-one room violate the one-pending invariant; check-in racing configuration apply. Integration:
-Publish/Set default/Archive produce zero pointer, stock, task, or blocker side effects; batch state
-derivation table covering all five states.
+**Scope.** Primary guest identity (`MN_REG_NO`, `FOREIGN_PASSPORT`, `OTHER_GOV_ID`, `NO_DOCUMENT`)
+with encrypted identifiers, keyed lookup tokens, guardian metadata and server-derived age; XYP
+provenance versus manual fallback; walk-in versus online source and deposit exemption; hourly stays
+in 30-minute integer units and nightly stays as `N` calendar nights against a snapshotted fixed
+checkout time; `[start_at, end_at)` occupancy; snapshotted cleaning buffer; planned versus actual
+readiness anchors; the composite readiness gate (buffer + `Цэвэр` + applicable minibar readiness);
+initial `actual_check_in_at` with the 120-minute bounded backdate and historical readiness proof;
+immutable `check_in_recorded_at`; active-stay actual-time correction request and approval with the
+`self_approved` audit flag; fully locked planned checkout; overdue conflict alert, same-category
+reassignment, higher-category approval and `CANCELLED_HOTEL`; minibar stay price book created
+atomically at check-in from the exact current published version.
 
----
-
-### Phase 09 — Cash drawer ledger & Reception shift
-
-**Scope.** `DRAWER` / `SAFE` locations; default `Үндсэн касс` at activation; one active shift per
-drawer, one active drawer shift per Reception account; `INITIAL_FLOAT` from first actual count;
-typed immutable movements; expected-cash formula; variance; separate operational and financial review
-states; self-close mode; opening balance from actual received/counted amount; transfer with locked
-source/destination shift IDs, recipient confirmation, cancel-with-recount; drawer↔safe; bank deposit
-and owner withdrawal approvals; effective-date-only corrections; expense payment execution
-(`PAID_CASH_EXPENSE`).
-
-**Gates.** Concurrency: two shifts opening on one drawer; transfer confirm racing shift close.
-Integration: shift with a pending transfer cannot close; correction never rewrites a closed shift;
-card/POS/QPay expense produces no drawer movement.
-
----
-
-### Phase 10 — Stay lifecycle
-
-**Scope.** Primary guest identity (`MN_REG_NO`, `FOREIGN_PASSPORT`, `OTHER_GOV_ID`, `NO_DOCUMENT`),
-encrypted identifiers with keyed lookup tokens, guardian metadata, server-derived age; walk-in vs
-online source and deposit exemption; hourly (30-minute units) and nightly (`N` calendar nights +
-snapshotted fixed checkout time) stays; `[start_at, end_at)` occupancy; snapshotted cleaning buffer;
-planned vs actual readiness anchors; composite readiness gate (buffer + `Цэвэр` + minibar readiness);
-initial `actual_check_in_at` with 120-minute bounded backdate and historical readiness proof;
-immutable `check_in_recorded_at`; active-stay actual-time correction request/approval with
-`self_approved` audit; fully locked planned checkout; overdue conflict alert, reassignment,
-higher-category approval, `CANCELLED_HOTEL`; guest access codes and multi-device sessions (30 000₮).
+**Ports (simulator only).** XYP identity.
 
 **Gates.** Concurrency: two Receptions checking into one room; check-in racing an overdue conflict
-resolution. Integration: backdate rejected when historical readiness cannot be proven from immutable
-events; correction changes only effective actual start and touches no price, payment, cash, config,
-stock, or Police timestamp; no API path can mutate a confirmed `planned_checkout_at`.
+resolution; check-in racing a configuration apply. Integration: backdate is rejected when historical
+readiness cannot be proven from immutable events; a correction changes only the effective actual start
+and touches no price, payment, cash, configuration, stock or Police timestamp; no API path can mutate
+a confirmed `planned_checkout_at`; a minibar-enabled stay cannot activate without a complete price
+book.
 
 ---
 
-### Phase 11 — Deposit & payment correction
+### Phase 09 — Cleaner and checkout coordination
 
-**Scope.** Walk-in-only deposit (50 000–100 000₮), versioned deposit balance aggregate with reserved
-amounts, original-channel refund, alternate-channel refund approval, POS reference capture, refund
-state machine, authoritative release, `LATE_REFUND_SUCCESS` freeze + `DEPOSIT_REFUND_RECONCILE`
-terminal posting (covered + shortfall), immutable financial correction (reversal + corrected record).
+**Decisions.** `CHK-DEC-001`–`006`, `PRICE-DEC-002`–`008`, `RC-DEC-008`, `RC-DEC-010`, `RC-DEC-016`,
+`RC-DEC-035`, `RC-DEC-039` (18).
+
+**Scope.** Mobile-first Cleaner work queues; cleaning status authority by package; routine refill from
+warehouse; minibar inspection task on checkout initiation; Cleaner report versions; Reception
+return-for-correction; Manager/Manager Plus exception report; payment-attempt report-version lock and
+pending/unknown reconciliation; post-payment immutable adjustment; guest dispute hold; active-stay
+price isolation; the billable-quantity formula with documented refill and non-guest stock-out;
+server-authoritative unit price with no override path.
+
+**Gates.** Integration: a current price edit never reprices an active stay; a product absent from the
+price book can never be charged; the payment lock is not released while provider status is pending or
+unknown; one report version cannot back two successful charges. Concurrency: two Cleaners claiming one
+inspection task.
+
+---
+
+### Phase 10 — Folio, deposit, payment, and correction
+
+**Decisions.** `DEP-DEC-001`–`010`, `RC-DEC-001`, `RC-DEC-002`, `RC-DEC-003`, `RC-DEC-004`,
+`RC-DEC-006` (15).
+
+**Scope.** One consolidated folio per stay; walk-in-only deposit (50 000–100 000₮) with hotel and
+category configuration and an immutable confirmation snapshot; versioned deposit balance aggregate
+with reserved amounts; allocation to room/minibar/other lines; original-channel refund;
+alternate-channel refund approval; manual POS reference capture; the refund state machine;
+authoritative release; `LATE_REFUND_SUCCESS` freeze plus `DEPOSIT_REFUND_RECONCILE` terminal posting
+with covered amount and shortfall; immutable financial correction as reversal plus corrected record.
+
+**Ports (simulator only).** payment gateway, POS reference.
 
 **Gates.** Concurrency: parallel allocation and refund reservation on one aggregate; duplicate
-approval executes one reversal. Integration: available balance never negative; released refund with
-late provider success creates exactly one reconciliation case and no second refund.
+approval executes exactly one reversal. Integration: available balance never negative; a released
+refund with a late provider success creates exactly one reconciliation case and no second refund;
+deposit allocation adds no cash inflow.
 
 ---
 
-### Phase 12 — Price snapshot, Cleaner reports, exception & dispute
+### Phase 11 — Shift, cash drawer, expense, and hotel finance
 
-**Scope.** Stay price book created atomically at check-in from the exact current published version
-(including zero-opening rows); active-stay price isolation; Cleaner report versions; Reception
-return-for-correction; Manager exception report; payment-attempt report-version lock; post-payment
-immutable adjustment; guest dispute hold; billable-quantity formula with documented refill and
-non-guest stock-out.
+**Decisions.** `SHIFT-DEC-001`–`007`, `CASH-DEC-001`–`010`, `FIN-DEC-005`, `RC-DEC-009`,
+`RC-DEC-038` (20).
 
-**Gates.** Integration: current price edits never reprice an active stay; a product absent from the
-price book can never be charged; payment lock is not released while provider status is pending or
-unknown; one report version cannot back two successful charges.
+**Scope.** `DRAWER` and `SAFE` locations; one active shift per drawer and one active drawer shift per
+Reception account; `INITIAL_FLOAT` from the first actual count; typed immutable movements; the
+expected-cash formula and variance; separate operational and financial review states; single-staff
+self-close; opening balance from the actual received or counted amount; drawer transfer with locked
+source and destination shift IDs, recipient confirmation and cancel-with-recount; drawer↔safe
+transfer; bank deposit and owner withdrawal approvals; cash top-up; effective-date-only corrections;
+the expense lifecycle `Draft → Submitted → Approved for payment → Paid | Rejected` where approval is
+not a cash outflow and only cash-method execution creates `PAID_CASH_EXPENSE`.
 
----
-
-### Phase 13 — Guest registry & export
-
-**Scope.** Six approved columns; server-side pagination (20/50/100); mandatory effective-check-in date
-range defaulting to 30 days; stay-status/room/name filters; DOB-derived age snapshot; background
-export job (`QUEUED/RUNNING/COMPLETED/FAILED/EXPIRED`) capped at 10 000 rows with no partial file;
-private storage with 1-hour file TTL and 5-minute signed URL; 365-day product retention with
-`retention_policy_version` snapshot and legal hold.
-
-**Gates.** Authorization: Reception/Cleaner/Restaurant and cross-hotel IDs denied on list, job create,
-and download. Integration: >10 000 result set refuses to start; expired file returns `EXPIRED`;
-re-issued URL does not extend file TTL.
+**Gates.** Concurrency: two shifts opening on one drawer; a transfer confirmation racing a shift
+close. Integration: a shift with a pending transfer cannot close; a correction never rewrites a closed
+shift; card/POS and bank/QPay expense payments produce no drawer movement; only `Paid` expenses enter
+cash outflow.
 
 ---
 
-### Phase 14 — Hotel Admin financial reporting
+### Phase 12 — Public discovery and Guest authentication
 
-**Scope.** Separate confirmed sales, received payments, receivables, held deposits, refunds, paid
-expenses; minibar gross profit on weighted-average COGS; inventory purchase vs COGS not double
-deducted; expense lifecycle with approval separate from payment execution; 11 KPI cards; 7-day /
-this-month / custom ranges with per-metric date basis; top-5 rooms by demand and by revenue; four
-Excel exports.
+**Decisions.** `BK-DEC-001`, `BK-DEC-002` (2).
 
-**Gates.** Golden-dataset assertions per KPI and per export column set; authorization tests proving
-Manager/Manager Plus/Reception/Cleaner cannot reach the dashboard or exports; PII-absence assertion
-on every financial export.
+**Scope.** Public hotel search by date, manually chosen location and consented current position;
+listing visibility conditions; server-computed distance and ordering; e-Mongolia authentication and
+phone-OTP registration with user-chosen password; account, booker and staying-guest separation;
+duplicate-account protection with dual-channel verification before linking.
+
+**Ports (simulator only).** e-Mongolia, phone OTP, geo.
+
+**Gates.** Integration: client-supplied distance is never trusted; unauthenticated precise
+coordinates are never persisted to a profile; login error responses do not disclose whether a phone
+number is registered; tokens never appear in URLs or logs.
 
 ---
 
-### Phase 15 — Online booking
+### Phase 13 — Online booking and inventory hold
 
-**Scope.** Public search (date, location, current-location radius), listing visibility conditions,
-category inventory availability, e-Mongolia and phone-OTP guest auth (ports), booker vs staying
-guest separation, 10-minute payment hold, single active payment attempt, QPay/Khaan provider parity,
-`CONSUMED`/`EXPIRED` race resolution under row lock, late/duplicate capture refund obligation,
-cancellation (24h boundary) and no-show (arrival-date 23:59:59 cutoff), first-night fee retention,
-contract commission in basis points with `ROUND_HALF_UP`, provider fee as platform expense,
-`D+1 12:00 Asia/Ulaanbaatar` payout batch, `ADJUSTMENT_DUE`, hotel-caused overbooking remedies.
+**Decisions.** `BK-DEC-009`, `BK-DEC-012`, `BK-DEC-013`, `BK-DEC-014`, `PAY-DEC-002`, `PAY-DEC-006`,
+`RC-DEC-005` (7).
+
+**Scope.** MVP booking shape (`1 booking = 1 category room = 1 primary staying guest`, nightly only);
+category inventory availability derived from eligible ACTIVE rooms minus overlapping holds, confirmed
+bookings and active stays; the 10-minute payment hold with `hold_expires_at`; a single active payment
+attempt with `SUPERSEDED` on provider switch; hold expiry versus callback resolved under one row lock;
+late and duplicate capture creating a refund obligation without reopening the booking; physical room
+assignment at check-in; hotel-caused fulfilment failure remedies.
 
 **Gates.** Concurrency: two guests paying for the last unit of a category; expiry racing a paid
-callback. Integration: expired booking never reopens; commission base is zero on full refund; payout
-ledger reconciles gross/commission/refund/net per batch.
+callback. Integration: an expired booking never reopens and never re-occupies inventory; terminal
+transitions release inventory immediately.
 
 ---
 
-### Phase 16 — Ratings, reviews, moderation
+### Phase 14 — Online payment, refund, commission, and settlement
 
-**Scope.** Verified-stay eligibility (one review per completed booking), 1–5 integer rating, 10–1000
-character comment, 30-day window from `actual_checkout_at`, owner edit/soft-delete, authenticated
-guest report with one open report per account/review, `REVIEW_MODERATE` hide/restore with mandatory
-reason, one official hotel reply per review with package rules, aggregate recomputation.
+**Decisions.** `BK-DEC-003`, `BK-DEC-008`, `BK-DEC-010`, `BK-DEC-011`, `PAY-DEC-001`, `PAY-DEC-003`,
+`PAY-DEC-004`, `PAY-DEC-005`, `PAY-DEC-007`, `PAY-DEC-008`, `PAY-DEC-009` (11).
 
-**Gates.** DB uniqueness on `booking_id` review and `review_id` reply; aggregate correctness after
-hide/restore/soft-delete; authorization proving no hotel/Operation/Police role name grants moderation.
+**Scope.** Payments routed to the platform account; QPay and Khaan Bank behind one provider-adapter
+contract; server-verified provider result as the only payment authority; cancellation at the 24-hour
+boundary and no-show after the arrival-date 23:59:59 cutoff; first-night fee retention; per-contract
+commission stored in integer basis points with a single `ROUND_HALF_UP`; commission base zero on full
+refund and hotel-caused cancellation; provider fee as a platform expense never deducted from hotel
+payout; immutable ledger events for payment, commission, hotel payable, provider fee, refund,
+adjustment and payout; `D+1 12:00 Asia/Ulaanbaatar` payout batching; `HELD` on non-terminal
+reconciliation; `ADJUSTMENT_DUE` negative adjustments.
 
----
+**Ports (simulator only).** payment gateway.
 
-### Phase 17 — Restaurant module
-
-**Scope.** 30 000₮-only registration by Manager Plus; per-hotel-link active state; weekly and
-overnight schedules; menu management; room QR + one-time guest access code (≤5 sessions per stay);
-seven separate state axes (order, fulfillment, payment, refund policy, refund request, refund,
-handoff); own-merchant QPay; acceptance/refund-request race under row lock; 5/10/30-minute SLAs;
-15/30/45/60-minute ETA; checkout handoff options; closing/late-payment mandatory refund queue.
-
-**Gates.** Race test: accept vs refund request committing simultaneously — first valid transition
-wins. Integration: restaurant payments never enter hotel checkout, deposit, cash, or shift totals;
-invoice validity never exceeds the day's ordering close.
+**Gates.** Integration: commission base is zero on full refund; each payout batch reconciles gross,
+retained fee, refund, commission, adjustment and hotel payable; one booking payable enters exactly one
+successful payout. Concurrency: duplicate refund callback posts once.
 
 ---
 
-### Phase 18 — Police monitoring system
+### Phase 15 — Restaurant
 
-**Scope.** Wanted Person (immutable identity revisions) / Wanted Case (lifecycle) / Match
-(`unique(stay_id, wanted_person_id)`) / append-only `MatchCaseLink`; exact normalized `MN_REG_NO`
-matching only, triggered at `check_in_recorded_at`; no retroactive matching of checked-out stays;
-manual identity two-person approval; case lifecycle permissions; acknowledgement without ownership;
-`Found` by any active officer; two-person Found correction and False Match workflows; alert routing
-by hotel district with Police Admin fallback; SMS containing only the full RD; Police Admin
-check-in list with 31-day historical window and no bulk export; Wanted Case Excel with masked RD by
-default; 4-digit bootstrap code hardening; step-up MFA for high-risk actions.
+**Decisions.** `REST-DEC-001`–`006`, `RC-DEC-019`–`031` (19).
 
-**Gates.** Isolation: no hotel-facing response, error text, or timing differs based on match
-existence. Separation-of-duties: requester ≠ approver enforced in the backend for identity approval,
-Found correction, and False Match. Integration: duplicate matching runs create one Match and one
-alert; approved actual-time correction creates no duplicate alert and shifts no timestamp.
+**Scope.** 30 000₮-only restaurant registration by Manager Plus; active state held on the
+hotel–restaurant link; weekly and overnight ordering schedules; menu management; room QR plus
+one-time guest access code with at most five concurrent sessions per stay; seven separate state axes
+(order, fulfillment, payment, refund policy, refund request, refund, handoff); the restaurant's own
+QPay merchant with no platform settlement; acceptance versus refund-request race resolved under a row
+lock; 5/10/30-minute SLAs; 15/30/45/60-minute ETA; checkout handoff options; closing and late-payment
+mandatory refund queue.
 
----
+**Ports (simulator only).** payment gateway (restaurant merchant).
 
-### Phase 19 — Operation Dashboard & SMS
-
-**Scope.** Explicit Operation permissions; mutually exclusive KPI partition over provisioned hotels;
-separate `Идэвхжээгүй` application queue; 13-column subscription list with masked email; combined
-server-side filters; password-reset initiation without token visibility; offline ownership recovery
-handoff; subscription contact change with old+new phone OTP and Platform Super Admin exception;
-subscription suspension without pausing expiry; paid reconciliation queue; provisioning and eBarimt
-retry; manual-only SMS with preview, dedup, segment/cost estimate, one-way delivery status.
-
-**Gates.** KPI partition sums to total; package counts sum to total; card click applies the exact
-filter. Integration: no scheduler or state transition can auto-send SMS; duplicate confirm sends one
-message per number.
+**Gates.** Race test: accept and refund request committing simultaneously — the first valid
+transition wins. Integration: restaurant money never enters hotel checkout, deposit, cash drawer or
+shift totals; invoice validity never exceeds the day's ordering close; a code cannot create a sixth
+concurrent session.
 
 ---
 
-### Phase 20 — Portal hardening
+### Phase 16 — Verified reviews
 
-**Scope.** Five portals wired to real APIs, server-enforced navigation, Mongolian copy from the
-requirement docs, responsive Cleaner dashboard (mobile-first), grace-period banners, hard-lock
-screens, no business rules in web code.
+**Decisions.** `RV-DEC-001`–`007`, `BK-DEC-004`, `BK-DEC-005`, `BK-DEC-006`, `BK-DEC-007` (11).
 
-**Gates.** Playwright per-portal flows; a lint/architecture test asserting web packages import only
-`contracts` types and never `db`, `authz` internals, or module services.
+**Scope.** Verified-stay eligibility with one review per completed booking; 1–5 integer rating;
+10–1000 character comment; a 30-day window from `actual_checkout_at`; owner edit and soft-delete;
+authenticated guest report with one open report per account and review; `REVIEW_MODERATE` hide and
+restore with mandatory reason; one official hotel reply per review under the package rules; aggregate
+recomputation on hide, restore and soft-delete.
 
----
-
-### Phase 21 — Cross-cutting E2E, concurrency, security & release gate
-
-**Scope.** Full-journey Playwright suites; fresh-migration and upgrade-migration verification;
-concurrency suite consolidation; secret-leakage scanner over logs/traces/audit/outbox/fixtures;
-`security-review` pass; external gate review; final traceability reconciliation.
-
-**Gates.** All prior phase gates re-run green; upgrade migration from Phase 01 baseline to head;
-zero findings in the secret-leakage scan; every DEC ID in traceability marked covered or explicitly
-deferred with a recorded reason.
+**Gates.** Database uniqueness on the review's `booking_id` and the reply's `review_id`; aggregate
+correctness after every visibility transition; authorization proving that no hotel, Operation or
+Police role name alone grants report or moderation rights.
 
 ---
 
-## 4. Standing test-gate policy
+### Phase 17 — Guest registry, exports, and Hotel Admin reports
 
-Every phase from 02 onward runs, at minimum:
+**Decisions.** `GUEST-DEC-001`–`008`, `FIN-DEC-001`–`004`, `FIN-DEC-006`–`010`, `RC-DEC-032`,
+`RC-DEC-037` (19).
+
+**Scope.** Guest registry with the six approved columns, server-side pagination (20/50/100), a
+mandatory effective-check-in date range defaulting to 30 days, stay-status/room/name filters and a
+DOB-derived age snapshot; background export job with a 10 000-row cap and no partial file; private
+storage with a one-hour file TTL and five-minute signed URLs; 365-day retention with
+`retention_policy_version` snapshot and legal hold. Hotel Admin financial dashboard: confirmed sales,
+received payments, receivables, held deposits, refunds and paid expenses kept separate; minibar gross
+profit on weighted-average COGS; inventory purchase and COGS never double deducted; the eleven KPI
+cards; 7-day, this-month and custom ranges with a per-metric date basis; top-5 rooms by demand and by
+revenue; the four financial Excel exports; effective-date corrections.
+
+**Gates.** Authorization: Reception, Cleaner, Restaurant, Manager, Manager Plus and cross-hotel IDs
+denied on the registry, the dashboard, job creation and download. Integration: a result set above
+10 000 refuses to start; an expired file returns `EXPIRED`; a re-issued URL does not extend the file
+TTL; golden-dataset assertions per KPI and per export column set; a PII-absence assertion on every
+financial export.
+
+---
+
+### Phase 18 — Police monitoring
+
+**Decisions.** `POL-DEC-001`–`022`, `RC-DEC-034` (23).
+
+**Scope.** Wanted Person with immutable identity revisions, Wanted Case lifecycle, Match with
+`unique(stay_id, wanted_person_id)` and append-only `MatchCaseLink`; exact normalized `MN_REG_NO`
+matching only, triggered at `check_in_recorded_at`, consuming a minimal check-in event from the
+outbox; no retroactive matching of checked-out stays; two-person manual identity approval; case
+lifecycle permissions; acknowledgement without ownership; Found confirmation by any active officer;
+two-person Found correction and False Match workflows; alert routing by hotel district with Police
+Admin fallback; SMS carrying only the full registration number; the Police Admin check-in list with a
+31-day historical window, mandatory search reason and no bulk export; Wanted Case Excel with masked
+identifiers by default; 4-digit bootstrap hardening; step-up MFA for high-risk actions.
+
+**Ports (simulator only).** SMS.
+
+**Gates.** Isolation: no hotel-facing response, error text or timing differs based on match
+existence. Separation of duties: requester ≠ approver enforced in the backend for identity approval,
+Found correction and False Match. Integration: duplicate matching runs create one Match and one alert;
+an approved actual-time correction creates no duplicate alert and shifts no timestamp; escalation
+timer and historical search stay disabled without approved configuration.
+
+---
+
+### Phase 19 — Platform Operation
+
+**Decisions.** `OPS-DEC-001`–`005`, `OPS-DEC-008`–`018` (16).
+
+**Scope.** Explicit Operation permissions with named accounts and step-up MFA; the mutually exclusive
+KPI partition over provisioned hotels; the separate `Идэвхжээгүй` onboarding application queue; the
+13-column subscription list with masked email and expiry-ascending default order; combined
+server-side filters; password-reset initiation without token visibility; offline ownership-recovery
+handoff; subscription contact change with old and new phone OTP plus the Platform Super Admin
+exception; subscription suspension that never pauses expiry; the paid reconciliation queue with
+terminal outcomes; provisioning and eBarimt retry; manual-only SMS with preview, deduplication,
+segment and cost estimation, and one-way delivery status.
+
+**Ports (simulator only).** SMS, email.
+
+**Gates.** The KPI partition sums to the total and the package counts sum to the total; a card click
+applies the exact filter. Integration: no scheduler or state transition can auto-send SMS; a duplicate
+confirm sends one message per number; Operation cannot read a token, a password or an unmasked email.
+
+---
+
+### Phase 20 — External adapters
+
+**Scope.** Production adapters for all eleven external systems: QPay, Khaan Bank gateway and POS,
+XYP/HUR, e-Mongolia, eBarimt, CallPro, Google Maps, email and S3-compatible object storage. Real
+signature verification, credential handling through secret storage, IP allowlisting, rate and
+throughput limits, provider status reconciliation jobs, and per-environment configuration. Each
+adapter is enabled only when its gate in [external-integration-gates.md](external-integration-gates.md)
+records the named contract, credential or written approval.
+
+**Gates.** Adapter conformance against the same suite the simulators pass: duplicate, out-of-order,
+delayed, expired, mismatched-amount, mismatched-currency, bad-signature and timeout-then-late-success.
+A disabled adapter refuses to run and emits a gate error. No secret appears in logs, traces, audit or
+outbox payloads.
+
+**Exit.** Every adapter either enabled with its gate cleared, or explicitly recorded as still blocked.
+
+---
+
+### Phase 21 — Responsive UI and accessibility
+
+**Scope.** Five portals wired to real APIs with server-enforced navigation; Mongolian copy taken from
+the requirement documents; mobile-first Cleaner dashboard usable without horizontal scrolling;
+responsive public search and booking on phone and laptop; grace-period banners and hard-lock screens;
+keyboard navigation, focus management, colour contrast and screen-reader labelling; no business rules
+in web code.
+
+**Gates.** Playwright per-portal flows at mobile, tablet and desktop viewports; automated
+accessibility scan on every primary screen; an architecture test asserting that web packages import
+only `contracts` types and never `db`, `authz` internals or module services.
+
+---
+
+### Phase 22 — Security, concurrency, recovery, and full E2E
+
+**Scope.** Consolidated concurrency suite across every money and lifecycle command; full-journey
+Playwright suites spanning onboarding through checkout, booking through settlement, and check-in
+through Police alert; fresh-migration and upgrade-migration verification from the Phase 02 baseline to
+head; backup, restore and disaster-recovery rehearsal; secret-leakage scanner over logs, traces,
+audit records, outbox payloads, fixtures and seeds; the `security-review` pass; threat-model
+re-verification against Phase 01.
+
+**Gates.** All prior phase gates re-run green; upgrade migration succeeds; zero findings in the
+secret-leakage scan; recovery rehearsal meets the Phase 01 RPO/RTO targets.
+
+---
+
+### Phase 23 — Release candidate audit
+
+**Scope.** Final reconciliation of [requirements-traceability.md](requirements-traceability.md):
+every one of the 279 decisions marked `COVERED` or explicitly `DEFERRED` with a recorded reason and
+approver. Final review of [external-integration-gates.md](external-integration-gates.md): every EXT
+gate either cleared with its named artefact or reported as a production release blocker. Confirmation
+that the three Police production security exceptions are approved or that their fallbacks are active.
+P1 configuration register signed off. Release notes, runbook and rollback plan.
+
+**Gates.** Governance validation passes; traceability shows zero `PENDING`; no unresolved requirement
+conflict; the release decision is reported to the customer, not taken unilaterally.
+
+---
+
+## 5. Standing test-gate policy
+
+Every phase from 03 onward runs, at minimum:
 
 | Gate | Command |
 | --- | --- |
@@ -410,19 +575,26 @@ Every phase from 02 onward runs, at minimum:
 | Integration (real Postgres) | `pnpm -w test:integration` |
 | Concurrency (real Postgres) | `pnpm -w test:concurrency` |
 | Migrations fresh + upgrade | `pnpm -w test:migrations` |
-| E2E (portal phases) | `pnpm -w test:e2e` |
+| E2E (portal-facing phases) | `pnpm -w test:e2e` |
+| Governance | `node tools/validate-governance.mjs` |
 
-Mocked repositories and SQLite are not acceptable substitutes for integration or concurrency gates.
+Phases 01 and 02 run only the gates that exist at that point, as listed in their phase detail. Mocked
+repositories and SQLite are never acceptable substitutes for the integration or concurrency gates.
 
 ---
 
-## 5. Sequencing constraints
+## 6. Sequencing constraints
 
-- Phase 02 must precede every domain phase: no module ships its own authorization, audit, outbox,
-  money, or time logic.
-- Phase 03 must precede any phase touching money or messaging: no domain code may call a provider
-  SDK directly.
-- Phase 09 (cash/shift) must precede Phase 11 (deposit) and Phase 14 (financial reporting).
-- Phase 07 must precede Phase 08; Phase 08 must precede Phase 12.
-- Phase 10 must precede Phases 12, 13, 15, and 18.
-- Phase 18 consumes only minimal check-in events emitted by Phase 10 through the outbox.
+- Phase 01 precedes all implementation; no code is written before the architecture and threat model
+  are accepted.
+- Phase 03 must precede every domain phase: no module ships its own authorization, audit, outbox,
+  money or time logic.
+- Phase 04 must precede Phase 05: provisioning creates a Primary Hotel Admin membership.
+- Phase 06 must precede Phase 07; Phase 07 must precede Phase 08.
+- Phase 08 must precede Phases 09, 13, 17 and 18.
+- Phase 10 must precede Phase 11 for expense payment execution, and Phase 11 must precede Phase 17.
+- Phase 12 must precede Phase 13; Phase 13 must precede Phase 14.
+- Phase 16 depends on completed stays from Phase 08 and bookings from Phase 13.
+- Phase 18 consumes only minimal check-in events emitted by Phase 08 through the outbox.
+- Phase 20 may be entered only after every dependent port and simulator exists.
+- Phases 21–23 close the release and may not be reordered.
