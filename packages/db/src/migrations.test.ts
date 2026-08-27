@@ -47,20 +47,64 @@ describe('migration journal', () => {
   it('contains no down-migration or destructive statement', () => {
     // ADR-0004: migrations only move forward. A mistake is corrected by a new
     // migration, never by dropping or rewriting an applied one.
-    for (const file of sqlFiles) {
-      const sql = readFileSync(join(MIGRATIONS_FOLDER, file), 'utf8');
-      const statements = sql.replace(/^\s*--.*$/gm, '');
+    //
+    // Matched at the start of a statement, not anywhere in the text: a trigger
+    // that *rejects* TRUNCATE mentions the word while doing the opposite, and
+    // flagging it would train the reader to ignore this check.
+    const destructive = /(^|;)\s*(DROP\s+(TABLE|SCHEMA|TYPE)|TRUNCATE)\b/im;
+    const dropColumn = /\bALTER\s+TABLE\s+[^;]*\bDROP\s+COLUMN\b/i;
 
-      expect(statements).not.toMatch(/\bDROP\s+(TABLE|SCHEMA|COLUMN|TYPE)\b/i);
-      expect(statements).not.toMatch(/\bTRUNCATE\b/i);
+    for (const file of sqlFiles) {
+      const sql = readFileSync(join(MIGRATIONS_FOLDER, file), 'utf8')
+        .replace(/^\s*--.*$/gm, '')
+        .replace(/-->\s*statement-breakpoint/g, ';');
+
+      expect({ file, destructive: destructive.test(sql) }).toEqual({ file, destructive: false });
+      expect({ file, dropColumn: dropColumn.test(sql) }).toEqual({ file, dropColumn: false });
     }
   });
 
-  it('creates no table before Phase 03', () => {
+  it('creates tables only in the kernel schemas', () => {
+    // Phase 03 introduces kernel tables. Business-domain tables belong to Phase 04
+    // and later, so any CREATE TABLE outside platform/audit/police_audit — or any
+    // table named after a business entity — has landed in the wrong phase.
+    const businessWords =
+      /\b(hotel|guest|room|staff|subscription|booking|restaurant|wanted|stay|folio|deposit|drawer|minibar)\b/i;
+
     for (const file of sqlFiles) {
       const sql = readFileSync(join(MIGRATIONS_FOLDER, file), 'utf8').replace(/^\s*--.*$/gm, '');
 
-      expect(sql).not.toMatch(/\bCREATE\s+(UNLOGGED\s+)?TABLE\b/i);
+      for (const [, qualified] of sql.matchAll(
+        /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w.]*)/gi,
+      )) {
+        const [schema, table] = (qualified ?? '').split('.');
+        expect({ file, schema }).toEqual({
+          file,
+          schema: expect.stringMatching(/^(platform|audit|police_audit)$/),
+        });
+        expect({ file, businessNamed: businessWords.test(table ?? '') }).toEqual({
+          file,
+          businessNamed: false,
+        });
+      }
+    }
+  });
+
+  it('enables and forces row level security on every tenant-scoped kernel table', () => {
+    // ADR-0017 §1: ENABLE alone leaves the table owner exempt.
+    for (const file of sqlFiles) {
+      const sql = readFileSync(join(MIGRATIONS_FOLDER, file), 'utf8');
+      const enabled = [...sql.matchAll(/ALTER TABLE\s+(\S+)\s+ENABLE ROW LEVEL SECURITY/gi)].map(
+        (match) => match[1],
+      );
+      const forced = new Set(
+        [...sql.matchAll(/ALTER TABLE\s+(\S+)\s+FORCE ROW LEVEL SECURITY/gi)].map(
+          (match) => match[1],
+        ),
+      );
+      for (const table of enabled) {
+        expect({ file, table, forced: forced.has(table) }).toEqual({ file, table, forced: true });
+      }
     }
   });
 });

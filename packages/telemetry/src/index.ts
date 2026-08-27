@@ -3,6 +3,7 @@ export type { Logger, LoggerConfig } from './logger';
 export {
   CORRELATION_HEADER,
   currentCorrelation,
+  currentCorrelationId,
   newRequestId,
   runWithCorrelation,
   sanitiseRequestId,

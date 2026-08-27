@@ -54,13 +54,17 @@ describe('workerOptions', () => {
 });
 
 describe('QUEUE_NAMES', () => {
-  it('registers only the infrastructure heartbeat in Phase 02', () => {
-    expect(Object.values(QUEUE_NAMES)).toEqual(['system.heartbeat']);
+  it('registers the heartbeat and the two kernel queues', () => {
+    expect(Object.values(QUEUE_NAMES)).toEqual([
+      'system.heartbeat',
+      'kernel.outbox.relay',
+      'kernel.audit.partition_maintenance',
+    ]);
   });
 
   it('namespaces every queue name', () => {
     for (const name of Object.values(QUEUE_NAMES)) {
-      expect(name).toMatch(/^[a-z]+\.[a-z]+$/);
+      expect(name).toMatch(/^[a-z]+(\.[a-z_]+)+$/);
     }
   });
 });

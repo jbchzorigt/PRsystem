@@ -48,6 +48,7 @@ const ALLOWED_VALUES = [
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SflKxwRJSMeKKF2QT4', // packages/telemetry — logger value-shape test
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K', // packages/telemetry — redaction test
   '-----BEGIN PRIVATE KEY-----MIIEvQ', // packages/telemetry — PEM header shape, truncated, not a key
+  'must-never-be-recorded', // packages/db — audit payload the constraint must refuse
 ];
 
 const BINARY_EXT = new Set([

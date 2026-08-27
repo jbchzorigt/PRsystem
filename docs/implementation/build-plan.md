@@ -1,7 +1,7 @@
 # PRsystem — MVP Build Plan
 
-**Version:** 1.1
-**Created:** Phase 00 · **Revised:** Phase 00 repair (aligned to the approved 23-phase structure)
+**Version:** 1.2
+**Created:** Phase 00 · **Revised:** Phase 03 (kernel scope clarified; authorization engine moved to Phase 04)
 **Baseline:** [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) … [docs/26-room-minibar-lifecycle.md](../26-room-minibar-lifecycle.md) (immutable)
 **Branch:** `claude/mvp-implementation`
 
@@ -152,13 +152,24 @@ and non-business portal shells. See [assumptions-and-conflicts.md](assumptions-a
 
 ### Phase 03 — Platform kernel
 
-**Scope.** Tenancy (`hotel_id` scope propagation); four authentication realms; server-side session
-and auth-epoch revocation; the authorization **engine** and permission-catalog structure; package
-entitlement gate (20 000₮ / 25 000₮ / 30 000₮); subscription state gate including the 48-hour grace
-and hard lock; multi-role permission union; step-up MFA marker; append-only audit log; transactional
-outbox plus relay; idempotency key store; `packages/money` (bigint MNT, basis points,
-`ROUND_HALF_UP`); `packages/time` (UTC storage, hotel-local resolution, `[start,end)` interval type,
-calendar-month and service-month arithmetic with end-of-month clamping).
+**Scope — the transaction kernel.** Tenancy (`hotel_id` scope propagation) with row level
+security and the database roles; the transaction / unit-of-work boundary and RLS-ready scoped
+repository foundation; append-only partitioned audit; transactional outbox plus relay; idempotent
+inbox and provider-event deduplication; idempotency key store; projection checkpoint, `as_of` and lag
+primitives; job and export metadata; feature and external-gate primitives; API primitives (`/api/v1`,
+canonical error envelope and stable codes, pagination, request/correlation context); `packages/money`
+(bigint MNT, basis points, `ROUND_HALF_UP`); `packages/time` (UTC storage, hotel-local resolution,
+`[start,end)` interval type, calendar-month and service-month arithmetic with end-of-month clamping);
+`packages/ports` `KeyManagementPort` with a non-production simulator, envelope encryption and
+versioned keyed-HMAC primitives.
+
+**Re-scoped in Phase 03 (customer-approved).** The four authentication realms, server-side sessions
+and auth-epoch revocation, the authorization **engine**, the permission-catalog structure, the
+package entitlement gate (20 000₮ / 25 000₮ / 30 000₮), the subscription state gate with its 48-hour
+grace and hard lock, the multi-role permission union and the step-up MFA marker **move to Phase 04**,
+which already owns the concrete permission matrix. Recorded in
+[assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.3. The kernel provides the
+mechanisms those gates run on; it does not decide who may do what.
 
 Also implements the four closed design decisions:
 
@@ -175,19 +186,27 @@ Also implements the four closed design decisions:
   deterministic development simulator. Required here because identifier ciphertext exists from the
   first migration that stores an identifier.
 
-The kernel provides the mechanisms; the concrete permission matrix rows are encoded in Phase 04.
-
-**Gates.** Unit: engine semantics — union of roles, entitlement gate above role, deny on any failed
-condition; keyed-HMAC namespacing. Integration (real Postgres): audit append-only constraint and
-grant separation, partition routing and fail-closed audit, outbox exactly-once relay under duplicate
-delivery, idempotency replay returns the prior result, RLS cross-tenant and missing-scope suites, no
-runtime role holds `BYPASSRLS`, key rotation preserves readability, KMS unavailability fails closed.
-Concurrency: parallel permission revocation against an in-flight action; connection-pool tenant
-context leak.
+**Gates.** Unit: `ROUND_HALF_UP` at tie boundaries and basis-point arithmetic; end-of-month clamping
+and `[start,end)` semantics; keyed-HMAC namespacing; envelope round trip, tamper detection, AAD
+binding, key versioning and rewrap; error-envelope and pagination contracts. Integration (real
+Postgres): audit append-only enforcement and grant separation across both streams, partition routing
+and fail-closed audit, missing-partition refusal, outbox relay under duplicate delivery, idempotency
+replay returns the prior result, RLS cross-tenant and missing-scope suites, no runtime role holds
+`BYPASSRLS`, planted-canary leakage sweep. Concurrency: concurrent identical idempotency requests
+produce one effect, same key with a different payload is refused, duplicate inbox delivery consumes
+once, two workers never claim the same outbox row, a crashed worker's event returns to the queue,
+connection-pool tenant-context leak. Migration: fresh, upgrade from the Phase 02 baseline,
+determinism and idempotence.
 
 ---
 
 ### Phase 04 — IAM, tenancy, RBAC, and staff lifecycle
+
+**Absorbed from Phase 03 (customer-approved).** The four authentication realms, server-side sessions
+and auth-epoch revocation, the authorization engine, the permission-catalog structure, the package
+entitlement gate, the subscription state gate with its 48-hour grace and hard lock, the multi-role
+permission union and the step-up MFA marker. They sit with the permission matrix rows that drive
+them. See [assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.3.
 
 **Decisions.** `RBAC-DEC-001`–`017`, `STAFF-DEC-001`–`009` (26).
 

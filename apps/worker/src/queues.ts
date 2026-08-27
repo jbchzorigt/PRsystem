@@ -3,13 +3,16 @@ import type { ConnectionOptions, WorkerOptions } from 'bullmq';
 /**
  * Queue registry.
  *
- * Phase 02 registers the infrastructure heartbeat only. Domain queues — outbox relay,
- * notification, provisioning, billing boundary, export, reconciliation, retention —
- * arrive with the phases that own them
- * (docs/architecture/02-container-and-deployment.md §5).
+ * Phase 03 adds the two kernel queues. Domain queues — notification, provisioning,
+ * billing boundary, export, reconciliation, retention — arrive with the phases that
+ * own them (docs/architecture/02-container-and-deployment.md §5).
  */
 export const QUEUE_NAMES = {
   heartbeat: 'system.heartbeat',
+  /** Relays committed outbox events after their transaction (ADR-0010). */
+  outboxRelay: 'kernel.outbox.relay',
+  /** Pre-creates audit partitions and checks the horizon (ADR-0018 §4). */
+  partitionMaintenance: 'kernel.audit.partition_maintenance',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

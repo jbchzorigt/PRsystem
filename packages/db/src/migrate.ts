@@ -42,11 +42,14 @@ async function ledgerCount(pool: Pool): Promise<number> {
  * Applies every pending migration to `connectionString` and reports how many
  * were recorded before and after. Equal counts mean the run was a no-op.
  */
-export async function runMigrations(connectionString: string): Promise<MigrationOutcome> {
+export async function runMigrations(
+  connectionString: string,
+  migrationsFolder: string = MIGRATIONS_FOLDER,
+): Promise<MigrationOutcome> {
   const pool = new Pool({ connectionString, max: 1 });
   try {
     const appliedBefore = await ledgerCount(pool);
-    await migrate(drizzle(pool), { migrationsFolder: MIGRATIONS_FOLDER });
+    await migrate(drizzle(pool), { migrationsFolder });
     const appliedAfter = await ledgerCount(pool);
     return { appliedBefore, appliedAfter };
   } finally {

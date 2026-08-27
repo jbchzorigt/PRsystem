@@ -15,8 +15,14 @@ platform operators. `04-logical-data-model.md` left partitioning open as **DM-02
 1. **Two streams, not one.** `audit.platform_event` and `police_audit.security_event` are separate
    tables in separate schemas with separate grants. Platform operators cannot read Police audit;
    `prsystem_api` has no grant on `police_audit`.
-2. **Append-only.** Both carry the ADR-0009 rules rejecting `UPDATE` and `DELETE`. Runtime
-   application roles hold `INSERT` and `SELECT` only — no `UPDATE`, no `DELETE`, on either stream.
+2. **Append-only, and write-only for business runtimes.** Both carry the ADR-0009 rules rejecting
+   `UPDATE` and `DELETE`. **Amended in Phase 03 by customer direction:** a business runtime role
+   appends and cannot read. `prsystem_api` and `prsystem_worker` hold `INSERT` only on
+   `audit.platform_event`; reading is the privilege of the dedicated `prsystem_audit_reader`, which
+   in turn cannot write. `police_audit.security_event` is the same shape with `prsystem_police` and
+   `prsystem_police_audit_reader`, and neither reader can cross to the other stream. The earlier
+   wording granted runtime roles `SELECT` as well, which would have let any API query read the whole
+   platform audit trail.
 3. **Monthly range partitions by server timestamp.** Partition key is the server-generated
    `occurred_at`, never a client-supplied or business-effective time, so a backdated business event
    still lands in the partition of the month it was actually recorded.

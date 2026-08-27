@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.3 (Phase 02 — zero-DEC phase obligations and the DSR-01 review points recorded in §2.1)
+**Version:** 1.4 (Phase 03 — platform kernel obligations recorded in §2.1)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -133,7 +133,19 @@ artefacts below are the traceable output.
 | 20 | Re-review `DSR-01` when external adapters are wired | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod` |
 | 22 | Re-review `DSR-01` in the security pass; close it if a compatible stable Drizzle Kit has landed | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod`, `pnpm run audit:tree` |
 
-Phase 02 introduces no DEC coverage; every one of the 279 decisions remains `PENDING` after it.
+| 03 | Tenant isolation: forced RLS, five roles, transaction-scoped server-derived context ([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md)) | `packages/db/migrations/0001_kernel.sql`, `packages/db/src/unit-of-work.ts` | `pnpm run test:integration`, `pnpm run test:concurrency` |
+| 03 | Append-only monthly-partitioned audit in two separately granted streams ([ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md)) | `audit.platform_event`, `police_audit.security_event`, `packages/db/src/kernel/audit.ts` | `pnpm run test:integration` |
+| 03 | Transactional outbox with at-least-once relay and idempotent inbox ([ADR-0010](../architecture/adr/ADR-0010-transactional-outbox.md), [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md)) | `packages/db/src/kernel/outbox.ts`, `packages/db/src/kernel/inbox.ts`, `packages/outbox/` | `pnpm run test:integration`, `pnpm run test:concurrency` |
+| 03 | Idempotency and provider-event deduplication — a retry never creates a second effect (CLAUDE.md §§6–7) | `packages/db/src/kernel/idempotency.ts`, `platform.provider_event` | `pnpm run test:concurrency` |
+| 03 | Integer MNT, basis points, single `ROUND_HALF_UP` ([ADR-0007](../architecture/adr/ADR-0007-integer-money-basis-points.md)) | `packages/money/` | `pnpm run test:unit` |
+| 03 | UTC storage, hotel-local derivation, `[start,end)`, end-of-month clamping ([ADR-0008](../architecture/adr/ADR-0008-utc-storage-hotel-local-dates.md)) | `packages/time/` | `pnpm run test:unit` |
+| 03 | `KeyManagementPort`, envelope encryption, versioned keyed-HMAC lookup ([ADR-0020](../architecture/adr/ADR-0020-key-management.md)) | `packages/ports/` | `pnpm run test:unit` |
+| 03 | API primitives: `/api/v1`, canonical error envelope, pagination, correlation | `packages/contracts/`, `apps/api/src/observability/` | `pnpm run test:unit` |
+| 03 | Projection checkpoint, `as_of` and lag; critical commands never read a projection ([ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md)) | `platform.projection_checkpoint`, `packages/db/src/kernel/projections.ts` | `pnpm run test:integration` |
+| 03 | No secret, key, identifier or provider payload in any durable record (CLAUDE.md §8) | database check constraints, `packages/telemetry/` | `packages/db/src/integration/leakage.test.ts` |
+
+Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions remains `PENDING` after
+them. Phase 04 is the first phase to move a decision to `COVERED`.
 
 ---
 

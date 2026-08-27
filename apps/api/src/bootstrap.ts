@@ -1,11 +1,14 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import { RequestMethod } from '@nestjs/common';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { SwaggerModule } from '@nestjs/swagger';
 import { createLogger } from '@prsystem/telemetry';
 import { env } from '@prsystem/config';
+import { API_PREFIX, UNVERSIONED_PATHS } from '@prsystem/contracts';
 import { AppModule } from './app.module';
 import { registerCorrelation } from './observability/correlation.plugin';
+import { ApiErrorFilter } from './observability/api-error.filter';
 import { OPENAPI_PATH, buildOpenApiDocument } from './openapi-document';
 
 export interface BootstrapOptions {
@@ -26,6 +29,13 @@ export async function createApp(
   });
 
   registerCorrelation(app.getHttpAdapter().getInstance());
+
+  // Every API route is versioned. Health and the OpenAPI document are operational
+  // surfaces rather than API contract, so they stay unversioned and stable.
+  app.setGlobalPrefix(API_PREFIX, {
+    exclude: UNVERSIONED_PATHS.map((path) => ({ path, method: RequestMethod.ALL })),
+  });
+  app.useGlobalFilters(new ApiErrorFilter());
 
   if (options.serveDocs ?? true) {
     // Only the machine-readable document is served. The Swagger UI bundle would

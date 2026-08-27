@@ -27,12 +27,13 @@ Versioned migrations only. Schema push is forbidden (`CLAUDE.md` §10).
 ```
 packages/db/
   migrations/
-    0001_kernel.sql
-    0002_iam.sql
-    ...
-    meta/journal.json
-  schema/          Drizzle table definitions (source of truth for types)
-  seed/            Synthetic reference data only
+    0000_baseline.sql    Phase 02 — extensions only, no table
+    0001_kernel.sql      Phase 03 — platform, audit, police_audit; roles; RLS
+    0002_iam.sql         Phase 04 — ...
+    meta/_journal.json
+  src/
+    kernel/          Idempotency, outbox, inbox, audit, projections, partitions
+    schema.ts        Drizzle table definitions (source of truth for types)
 ```
 
 One migration per logical change. Numbering is monotonic; the journal records the applied set.
@@ -79,7 +80,19 @@ and are therefore alone in their file.
 ## 5. Append-only enforcement
 
 Append-only tables — audit events, ledger movements, cash movements, price-book lines, report
-versions, identity revisions, amendments, outbox — are protected in the migration that creates them:
+versions, identity revisions, amendments, outbox events — are protected in the migration that creates
+them.
+
+**D-05, resolved in Phase 03.** The outbox is append-only *as an event log*: `platform.outbox_event`
+rejects `UPDATE` and `DELETE`, while the mutable delivery marker that
+[04-logical-data-model.md](04-logical-data-model.md) §10 requires lives in the separate
+`platform.outbox_delivery` row. A trigger creates the delivery row with the event, so a permanently
+failing consumer can never destroy the record of what happened. See
+[assumptions-and-conflicts.md](../implementation/assumptions-and-conflicts.md) §2 D-05.
+
+The kernel uses a raising trigger rather than `DO INSTEAD NOTHING`, so the caller sees the refusal
+instead of a silent no-op, and `TRUNCATE` is refused by privilege plus a statement trigger on each
+partition:
 
 ```sql
 CREATE RULE no_update AS ON UPDATE TO <table> DO INSTEAD NOTHING;
@@ -115,6 +128,12 @@ is audited and gated by legal hold — not as an ordinary application delete
 | Determinism | Fresh and upgrade produce byte-identical schema dumps after normalisation |
 
 `GATE-MIGR` runs from Phase 02 onward and is a blocking gate for every phase.
+
+**Phase 03 coverage.** Fresh, Upgrade (Phase 02 baseline → head), Determinism (upgrade and fresh
+produce an identical normalised schema fingerprint covering columns, constraints, indexes, policies
+and RLS flags), Idempotence, and Append-only are all asserted against real PostgreSQL in
+`packages/db/src/migrate.test.ts` and `packages/db/src/integration/kernel.test.ts`. Constraint
+presence is asserted per invariant as each table arrives.
 
 ---
 

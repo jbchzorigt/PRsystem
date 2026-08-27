@@ -59,9 +59,21 @@ importers:
       '@prsystem/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@prsystem/money':
+        specifier: workspace:*
+        version: link:../../packages/money
       '@prsystem/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
+      '@prsystem/time':
+        specifier: workspace:*
+        version: link:../../packages/time
       fastify:
         specifier: 5.11.3
         version: 5.11.3
@@ -227,6 +239,15 @@ importers:
       '@prsystem/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@prsystem/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
       '@prsystem/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -236,10 +257,16 @@ importers:
       ioredis:
         specifier: 5.11.1
         version: 5.11.1
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
     devDependencies:
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       tsx:
         specifier: 4.23.12
         version: 4.23.12
@@ -263,6 +290,18 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
 
+  packages/contracts:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
   packages/db:
     dependencies:
       '@prsystem/config':
@@ -275,6 +314,12 @@ importers:
         specifier: 8.23.0
         version: 8.23.0
     devDependencies:
+      '@prsystem/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
+      '@prsystem/testing':
+        specifier: workspace:*
+        version: link:../testing
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
@@ -287,6 +332,52 @@ importers:
       tsx:
         specifier: 4.23.12
         version: 4.23.12
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
+  packages/money:
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
+  packages/outbox:
+    dependencies:
+      '@prsystem/db':
+        specifier: workspace:*
+        version: link:../db
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
+    devDependencies:
+      '@prsystem/testing':
+        specifier: workspace:*
+        version: link:../testing
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
+  packages/ports:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -311,13 +402,29 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
 
   packages/testing:
+    dependencies:
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
     devDependencies:
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       eslint:
         specifier: 9.39.5
         version: 9.39.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
+  packages/time:
+    devDependencies:
       typescript:
         specifier: 5.9.3
         version: 5.9.3

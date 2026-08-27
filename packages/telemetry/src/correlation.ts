@@ -12,6 +12,12 @@ export interface CorrelationContext {
   readonly traceId?: string;
   readonly realm?: string;
   readonly actorId?: string;
+  /**
+   * The message that caused this one. Correlation groups a unit of work;
+   * causation orders it, so an outbox event can be traced back to the command
+   * that produced it without either carrying business data.
+   */
+  readonly causationId?: string;
 }
 
 const storage = new AsyncLocalStorage<CorrelationContext>();
@@ -42,4 +48,9 @@ export function runWithCorrelation<T>(context: CorrelationContext, fn: () => T):
 /** The correlation context of the current async scope, if any. */
 export function currentCorrelation(): CorrelationContext | undefined {
   return storage.getStore();
+}
+
+/** The correlation id of the current unit of work, if one is established. */
+export function currentCorrelationId(): string | undefined {
+  return storage.getStore()?.requestId;
 }

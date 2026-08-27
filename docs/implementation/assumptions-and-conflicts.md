@@ -1,6 +1,6 @@
 # PRsystem — Assumptions, Drift Resolutions and Conflicts
 
-**Version:** 1.2 (Phase 02 — migration and E2E scope clarification recorded in §3.2)
+**Version:** 1.3 (Phase 03 — kernel scope clarifications in §3.3 and drift resolution D-05)
 
 Precedence used throughout (CLAUDE.md §0):
 
@@ -135,6 +135,36 @@ Boundaries this clarification preserves:
   journeys.
 
 Phase 02 owns **zero DEC IDs**, so this clarification changes no requirement coverage.
+
+### D-05 — Outbox: append-only versus delivery marker
+
+- **One text.** [12-migration-strategy.md](../architecture/12-migration-strategy.md) §5 lists the
+  outbox among append-only tables, whose `UPDATE` and `DELETE` are rejected in the migration that
+  creates them.
+- **The other text.** [04-logical-data-model.md](../architecture/04-logical-data-model.md) §10 gives
+  `outbox_event` a mutable **delivery marker**.
+- **Why they conflict.** A single table cannot both reject every `UPDATE` and carry a column the
+  relay updates on each attempt.
+- **Resolution (customer-approved, Phase 03).** Split the row. `platform.outbox_event` is strictly
+  append-only and holds what happened; `platform.outbox_delivery` holds claim, lease, attempt count,
+  backoff and published state. A database trigger creates the delivery row with the event, so the
+  pairing is an invariant rather than a caller obligation. Both documents are satisfied, and the
+  stronger property — a permanently failing consumer can never destroy the record of what happened —
+  is gained rather than traded away.
+- **Phases affected.** Phase 03 (mechanism); every later phase that emits an event.
+
+### 3.3 Phase 03 scope clarifications
+
+Three decisions were put to the customer before any Phase 03 edit and approved. Each is recorded as a
+clarification, not a silent resolution.
+
+| # | Question | Approved answer |
+| --- | --- | --- |
+| 1 | [build-plan.md](build-plan.md) Phase 03 also listed the four realms, sessions and auth-epoch revocation, the authorization engine, the permission-catalog structure, the package-entitlement gate, the subscription-state gate and the step-up MFA marker — which the Phase 03 brief placed out of scope. | **Move that half to Phase 04.** Phase 03 is the transaction kernel; Phase 04 absorbs realms, sessions, the authorization engine and the entitlement gates. Build-plan §3 updated to match, so the document describes what was built. |
+| 2 | [ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md) §2 gives runtime application roles `INSERT` **and** `SELECT` on both audit streams; the Phase 03 security requirement is stricter. | **The stricter rule governs.** `prsystem_api` and `prsystem_worker` hold `INSERT` only and cannot read audit at all. Two new roles — `prsystem_audit_reader` and `prsystem_police_audit_reader` — hold scoped `SELECT` and no write. ADR-0018 §2 amended to record the tightening. |
+| 3 | The outbox conflict above. | **Split into an immutable event and a mutable delivery row.** Recorded as D-05. |
+
+Phase 03 owns **zero DEC IDs**, so none of these changes requirement coverage.
 
 ---
 

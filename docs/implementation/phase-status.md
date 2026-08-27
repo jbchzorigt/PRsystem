@@ -13,9 +13,9 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 
 | Field | Value |
 | --- | --- |
-| Current phase | **02 — Monorepo scaffold** |
-| Phase state | `DONE` (all blocking gates green from a clean install; awaiting customer acceptance) |
-| Next phase | 03 — Platform kernel |
+| Current phase | **03 — Platform kernel** |
+| Phase state | `DONE` (all blocking gates green; awaiting customer acceptance) |
+| Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
 
@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `NOT STARTED` | — | — | — |
+| 03 | Platform kernel | `DONE` | `0001_kernel` | `GATE-MIGR` 6, `GATE-INTEG` 45, `GATE-CONC` 10, `GATE-UNIT` 180, `GATE-GOV` 13/13, workspace 15/15 | pending |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -365,6 +365,121 @@ and above.
 `DSR-01` remains **OPEN — contained**; it blocks nothing in Phase 02 and is not a production
 dependency. Eleven EXT gates still block production release only. **Seventeen P1 items remain open**,
 including P1-10. No P0 product blocker. No requirement conflict was discovered in this phase.
+
+---
+
+## Phase 03 record
+
+### Scope completed
+
+The platform transaction kernel. **No business-domain table exists**: no hotel, guest, room, staff,
+subscription, booking, restaurant or Police case row type, and no login, account, membership, RBAC or
+staff-lifecycle code. `docs/00` … `docs/26` were not modified.
+
+| Module | Delivered |
+| --- | --- |
+| `packages/money` | branded `bigint` MNT, integer basis points, the single `ROUND_HALF_UP` division, JSON-string wire form |
+| `packages/time` | UTC instants, hotel-local date derivation, `[start,end)` intervals, integer minutes and half-hour units, calendar/service-month arithmetic with end-of-month clamping |
+| `packages/contracts` | `/api/v1`, canonical error envelope with 14 stable codes, cursor pagination, correlation/idempotency/revision headers, UUIDv7 stable ids |
+| `packages/ports` | `KeyManagementPort`, fail-closed `LocalKeyManagement` simulator, `UnavailableKeyManagement`, envelope encryption with AAD binding, versioned keyed-HMAC lookup tokens |
+| `packages/db` | tenant context, transaction/unit-of-work boundary, scoped-repository foundation with revision CAS, and the kernel stores: idempotency, outbox, inbox, provider events, audit, projections, partitions |
+| `packages/outbox` | at-least-once relay with lease and backoff; idempotent consumer helper |
+| `apps/api` | `/api/v1` global prefix, canonical error filter |
+| `apps/worker` | two kernel queues, audit partition-maintenance job |
+
+### Migrations
+
+`packages/db/migrations/0001_kernel.sql` — schemas `platform`, `audit`, `police_audit`, `police`;
+17 kernel tables plus 8 monthly audit partitions; RLS enabled **and forced** on all 7 tenant-scoped
+tables; append-only triggers; partition and horizon functions; all 11 EXT gates seeded closed.
+
+### Database roles
+
+| Role | Grants | `BYPASSRLS` |
+| --- | --- | --- |
+| `prsystem_migrate` | DDL owner, migrations only | no |
+| `prsystem_api` | DML on `platform`; `INSERT` only on audit; no `police_audit` | no |
+| `prsystem_worker` | as API plus job, export and projection tables | no |
+| `prsystem_police` | `police` / `police_audit` only | no |
+| `prsystem_maintenance` | retention, rebuild, break-glass | **yes** — the only one |
+| `prsystem_audit_reader` | scoped `SELECT` on `audit.platform_event` only | no |
+| `prsystem_police_audit_reader` | scoped `SELECT` on `police_audit.security_event` only | no |
+
+Roles are `NOLOGIN` group roles; a deployment creates one login user per runtime and grants it the
+role, so no credential is invented in a migration.
+
+### Invariant evidence
+
+| Invariant | How it is enforced | Proved by |
+| --- | --- | --- |
+| Missing tenant scope fails closed | `FORCE ROW LEVEL SECURITY`; `hotel_id = platform.current_hotel_id()` is NULL-safe-false | zero rows on read, `row-level security` error on write |
+| Tenant A cannot reach tenant B | RLS policy plus repository predicate | targeted cross-tenant read returns 0 rows, cross-tenant write refused |
+| Pool reuse leaks no context | `SET LOCAL` plus a targeted reset on release | `max: 1` pool proves the same physical connection carries nothing forward |
+| No runtime role bypasses RLS | `NOBYPASSRLS` asserted per role in the migration | `pg_roles` assertion over all 6 non-maintenance roles |
+| Audit is append-only | raising trigger on `UPDATE`/`DELETE`; `TRUNCATE` refused by privilege and by a per-partition trigger | all three refused |
+| High-risk audit failure fails the mutation | audit and effect share one `UnitOfWork` | a refused audit payload leaves zero orphan outbox rows |
+| Audit readers cannot cross | separate schemas, separate grants | four cross-boundary reads all `permission denied` |
+| A retry creates one effect | unique index on `(realm, actor, operation, key)` | 6 concurrent identical requests → 1 claim, 1 effect row |
+| Same key, different payload | stored `request_hash` compared before replay | refused, and no second effect |
+| One consumption per event | unique `(consumer, dedup_key)` | 5 racing consumers → 1 claim |
+| Two workers never share a row | `FOR UPDATE SKIP LOCKED` | disjoint claim sets |
+| A crashed worker loses nothing | lease expiry on the delivery row only | event redelivered, payload identical |
+| No secret in a durable record | `jsonb ?|` check constraints plus logger redaction | planted canaries refused, and a whole-database sweep finds none |
+
+### DEC coverage
+
+Phase 03 owns **0 decisions**; all 279 remain `PENDING`. Obligations and gates are recorded in
+[requirements-traceability.md](requirements-traceability.md) §2.1.
+
+### Test gates
+
+```bash
+pnpm run format:check                 # clean
+pnpm run lint                         # GATE-LINT — 16 projects + e2e sources
+pnpm run typecheck                    # GATE-TYPES — 24 project graphs
+pnpm run test:unit                    # GATE-UNIT — 180 passed
+pnpm run test:migrations              # GATE-MIGR — 6 passed (fresh, upgrade, determinism, idempotence)
+pnpm run test:integration             # GATE-INTEG — 45 passed (real PostgreSQL)
+pnpm run test:concurrency             # GATE-CONC — 10 passed (real connections, real races)
+pnpm run build                        # 16 projects
+pnpm run openapi                      # /api/v1 document
+pnpm run test:e2e                     # GATE-E2E — 15 passed (Phase 02 regression)
+node tools/validate-workspace.mjs     # 15/15
+node tools/validate-governance.mjs    # GATE-GOV 13/13
+node tools/scan-secrets.mjs           # 0 findings
+pnpm run audit:prod / audit:tree      # production clean; 1 moderate dev-only (DSR-01)
+git diff --check                      # clean
+```
+
+`GATE-SEC` is partially exercised: the kernel leakage canaries run here; the full security pass —
+headers, CSP, dependency posture at release — remains Phase 22.
+
+### Defects found and fixed during the gate run
+
+| Defect | Why it mattered | Fix |
+| --- | --- | --- |
+| RLS suites ran through a superuser connection | a superuser bypasses RLS unconditionally, `FORCE` included, so the policy assertions proved nothing | added a runtime-role pool to the harness; every policy-sensitive test now connects as `prsystem_api` / `prsystem_police` |
+| `RESET ALL` on connection release | would have cleared the connection's role as well as the tenant context | reset only the `app.*` keys |
+| `UnavailableKeyManagement` threw synchronously | a caller using `.catch()` would get an unhandled exception at the call site | returns a rejected promise |
+| `ALTER ROLE` issued unconditionally | role attributes live in a cluster-wide catalog, so two parallel migrations collided with `tuple concurrently updated` | write only when the current attribute differs; tolerate a concurrent creator |
+| Journal check flagged the anti-`TRUNCATE` triggers as destructive | a check that cries wolf trains the reader to ignore it | match statement-initial verbs only |
+
+### Security and concurrency evidence
+
+- 45 integration and 10 concurrency assertions run against real PostgreSQL. No mock, no SQLite.
+- Every tenant identifier, seed and identifier in the suites is synthetic; registration numbers use
+  the reserved `99` range.
+- Envelope encryption is proved for round trip, tamper detection on both ciphertext and wrapped key,
+  AAD binding across row/column/table, cross-scope refusal, key versioning, rewrap and resumability.
+- Lookup tokens differ across identity type, country, realm scope and a namespace-boundary shift.
+- The local KMS refuses to construct outside `local`, `ci` or `test`, and its error names no key.
+
+### Remaining blockers
+
+`DSR-01` remains **OPEN — contained**. Eleven EXT gates are seeded closed in `platform.external_gate`
+and block production release only. **Seventeen P1 items remain open**, including P1-10. No P0 product
+blocker. One documentation conflict was found and resolved as **D-05**; three scope questions were put
+to the customer and approved before any edit.
 
 ---
 
