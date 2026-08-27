@@ -17,7 +17,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run --exclude 'src/security/**'",
+    "test:security": "vitest run src/security"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

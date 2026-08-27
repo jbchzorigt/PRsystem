@@ -41,25 +41,17 @@ export async function recordPlatformAudit(
   uow: UnitOfWork,
   event: PlatformAuditEvent,
 ): Promise<void> {
-  await uow.query(
-    `INSERT INTO audit.platform_event
-       (realm, action, outcome, actor_ref, hotel_id, target_type, target_ref,
-        reason, correlation_id, causation_id, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
-    [
-      uow.context.realm,
-      event.action,
-      event.outcome,
-      uow.context.actorRef,
-      uow.context.hotelId,
-      event.targetType ?? null,
-      event.targetRef ?? null,
-      event.reason ?? null,
-      uow.context.correlationId,
-      uow.context.causationId ?? null,
-      JSON.stringify(event.payload ?? {}),
-    ],
-  );
+  // The wrapper, never the table: a runtime role holds no privilege on an audit
+  // relation. Realm, actor, tenant scope and server time are derived inside the
+  // function from the transaction context, so none of them is passed here.
+  await uow.query(`SELECT audit.append_platform_audit_event($1, $2, $3, $4, $5, $6::jsonb)`, [
+    event.action,
+    event.outcome,
+    event.targetType ?? null,
+    event.targetRef ?? null,
+    event.reason ?? null,
+    JSON.stringify(event.payload ?? {}),
+  ]);
 }
 
 /**
@@ -67,18 +59,11 @@ export async function recordPlatformAudit(
  * grants. Platform operators cannot read it (ADR-0018 §1).
  */
 export async function recordPoliceAudit(uow: UnitOfWork, event: PoliceAuditEvent): Promise<void> {
-  await uow.query(
-    `INSERT INTO police_audit.security_event
-       (action, outcome, actor_ref, case_ref, reason, correlation_id, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-    [
-      event.action,
-      event.outcome,
-      uow.context.actorRef,
-      event.caseRef ?? null,
-      event.reason ?? null,
-      uow.context.correlationId,
-      JSON.stringify(event.payload ?? {}),
-    ],
-  );
+  await uow.query(`SELECT police_audit.append_police_security_event($1, $2, $3, $4, $5::jsonb)`, [
+    event.action,
+    event.outcome,
+    event.caseRef ?? null,
+    event.reason ?? null,
+    JSON.stringify(event.payload ?? {}),
+  ]);
 }

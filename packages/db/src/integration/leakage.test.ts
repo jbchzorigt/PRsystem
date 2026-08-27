@@ -1,10 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import type { TestDatabase } from '@prsystem/testing';
-import { createRolePool, createTestDatabase, syntheticIdentity } from '@prsystem/testing';
+import { syntheticIdentity } from '@prsystem/testing';
 import { redact } from '@prsystem/telemetry';
-import { runMigrations } from '../migrate';
-import { DATABASE_ROLES } from '../roles';
+import type { ProvisionedDatabase } from '../test-support/provision';
+import { provisionKernelDatabase } from '../test-support/provision';
 import type { TenantContext } from '../tenant-context';
 import { withTenantTransaction } from '../unit-of-work';
 import { recordPlatformAudit } from '../kernel/audit';
@@ -29,7 +28,7 @@ const CANARIES = {
   keyMaterial: 'canary-key-material-0001',
 } as const;
 
-let db: TestDatabase;
+let env: ProvisionedDatabase;
 let pool: Pool;
 let apiPool: Pool;
 
@@ -43,15 +42,13 @@ function ctx(): TenantContext {
 }
 
 beforeAll(async () => {
-  db = await createTestDatabase('kernel_leak');
-  pool = db.pool;
-  await runMigrations(db.url);
-  apiPool = createRolePool(db.url, DATABASE_ROLES.api);
-}, 60000);
+  env = await provisionKernelDatabase('kernel_leak');
+  pool = env.admin;
+  apiPool = env.api;
+}, 90000);
 
 afterAll(async () => {
-  await apiPool.end();
-  await db.drop();
+  await env.close();
 }, 30000);
 
 describe('the canaries are what they claim to be', () => {
@@ -102,7 +99,19 @@ describe('durable records reject a planted canary', () => {
           payload: { passportNumber: CANARIES.registrationNumber },
         }),
       ),
-    ).rejects.toThrow(/platform_event_payload_sanitised/);
+    ).rejects.toThrow(/denied field/i);
+  });
+
+  it('refuses an audit payload hiding a canary in a nested object', async () => {
+    await expect(
+      withTenantTransaction(apiPool, ctx(), (uow) =>
+        recordPlatformAudit(uow, {
+          action: 'kernel.leak.nested',
+          outcome: 'allowed',
+          payload: { guest: { identity: { registrationNumber: CANARIES.registrationNumber } } },
+        }),
+      ),
+    ).rejects.toThrow(/denied field/i);
   });
 
   it('refuses provider metadata carrying a canary field', async () => {

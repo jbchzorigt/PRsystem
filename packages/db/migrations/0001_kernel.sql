@@ -12,54 +12,78 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 --> statement-breakpoint
 
--- ---------------------------------------------------------------- roles
--- Cluster-scoped, so creation is idempotent. These are NOLOGIN group roles:
--- a deployment creates one login user per runtime and grants it the role, so no
--- credential is ever invented here (CLAUDE.md §8).
--- Roles and their attributes live in a cluster-wide catalog, not in this
--- database. Both loops therefore (a) tolerate a concurrent creator and (b) write
--- only when the current state actually differs — re-applying the journal, or
--- migrating two databases at once, must not contend for the same catalog tuple.
+-- ------------------------------------------------- bootstrap precondition
+-- Roles are NOT created here. They are cluster-global objects created once per
+-- cluster by packages/db/bootstrap/cluster-roles.sql, run by a privileged
+-- operator. A migration that mutated them would race across databases and would
+-- need privileges the migration principal must never hold.
 --
--- ADR-0017 §5: only the maintenance role may bypass RLS, and only under a named
--- audited job. Every other role is explicitly held at NOBYPASSRLS, so a
--- hand-granted attribute cannot survive a migration.
-DO $$
+-- This migration therefore refuses to run against a cluster that has not been
+-- bootstrapped, or whose roles have drifted into an unsafe shape. Failing here
+-- is the whole point: the alternative is a schema whose grants reference roles
+-- that do not exist, or that are more powerful than the design allows.
+DO $precondition$
 DECLARE
   r record;
+  v_missing text[] := ARRAY[]::text[];
+  v_unsafe  text[] := ARRAY[]::text[];
 BEGIN
   FOR r IN
     SELECT * FROM (VALUES
-      ('prsystem_migrate', false),
-      ('prsystem_api', false),
-      ('prsystem_worker', false),
-      ('prsystem_police', false),
-      ('prsystem_maintenance', true),
-      ('prsystem_audit_reader', false),
-      ('prsystem_police_audit_reader', false)
-    ) AS t(role_name, wants_bypassrls)
+      ('prsystem_api',                 false),
+      ('prsystem_worker',              false),
+      ('prsystem_police',              false),
+      ('prsystem_audit_reader',        false),
+      ('prsystem_police_audit_reader', false),
+      ('prsystem_migrate',             false),
+      ('prsystem_audit_writer',        false),
+      ('prsystem_partition_mgr',       false),
+      ('prsystem_maintenance_fn',      false),
+      ('prsystem_maintenance',         true)
+    ) AS t(role_name, expect_bypassrls)
   LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.role_name) THEN
-      BEGIN
-        EXECUTE format('CREATE ROLE %I NOLOGIN', r.role_name);
-      EXCEPTION WHEN duplicate_object THEN
-        -- Another migration created it between the check and the CREATE.
-        NULL;
-      END;
-    END IF;
-
-    IF EXISTS (
+      v_missing := v_missing || r.role_name;
+    ELSIF EXISTS (
       SELECT 1 FROM pg_roles
-       WHERE rolname = r.role_name AND rolbypassrls IS DISTINCT FROM r.wants_bypassrls
+       WHERE rolname = r.role_name
+         AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolcanlogin
+              OR rolbypassrls IS DISTINCT FROM r.expect_bypassrls)
     ) THEN
-      EXECUTE format(
-        'ALTER ROLE %I %s',
-        r.role_name,
-        CASE WHEN r.wants_bypassrls THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END
-      );
+      v_unsafe := v_unsafe || r.role_name;
     END IF;
   END LOOP;
-END $$;
+
+  IF array_length(v_missing, 1) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'cluster bootstrap has not run: missing role(s) %. Run packages/db/bootstrap/cluster-roles.sql first.',
+      array_to_string(v_missing, ', ')
+      USING ERRCODE = '42704';
+  END IF;
+
+  IF array_length(v_unsafe, 1) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'cluster roles are unsafe: % carry a forbidden attribute (LOGIN, SUPERUSER, CREATEDB, CREATEROLE, REPLICATION, or the wrong BYPASSRLS).',
+      array_to_string(v_unsafe, ', ')
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- No runtime group may be able to reach a function-owner or the DDL owner.
+  FOR r IN
+    SELECT owner.rolname AS owner_name, runtime.rolname AS runtime_name
+      FROM pg_roles owner, pg_roles runtime
+     WHERE owner.rolname IN ('prsystem_maintenance', 'prsystem_maintenance_fn',
+                             'prsystem_audit_writer', 'prsystem_partition_mgr',
+                             'prsystem_migrate')
+       AND runtime.rolname IN ('prsystem_api', 'prsystem_worker', 'prsystem_police',
+                               'prsystem_audit_reader', 'prsystem_police_audit_reader')
+       AND pg_has_role(runtime.rolname, owner.oid, 'USAGE')
+  LOOP
+    RAISE EXCEPTION 'role % can reach %, which breaks the privilege separation this schema depends on',
+      r.runtime_name, r.owner_name USING ERRCODE = '42501';
+  END LOOP;
+END
+$precondition$;
 --> statement-breakpoint
 
 -- ---------------------------------------------------------------- schemas
@@ -81,6 +105,20 @@ GRANT USAGE ON SCHEMA audit TO prsystem_api, prsystem_worker, prsystem_maintenan
 GRANT USAGE ON SCHEMA police_audit TO prsystem_police, prsystem_police_audit_reader, prsystem_maintenance;
 --> statement-breakpoint
 GRANT USAGE ON SCHEMA police TO prsystem_police, prsystem_maintenance;
+--> statement-breakpoint
+
+-- SECURITY DEFINER owners resolve fully qualified objects in these schemas, so
+-- each needs USAGE on exactly the schemas its function bodies touch and nothing
+-- more. None of them can connect; none is reachable by a runtime role.
+-- CREATE is required to *own* an object in a schema, and the partition manager
+-- additionally needs it to attach a new monthly partition. It is granted to
+-- these three unreachable owner roles and to no runtime role.
+GRANT USAGE, CREATE ON SCHEMA platform
+  TO prsystem_audit_writer, prsystem_partition_mgr, prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT USAGE, CREATE ON SCHEMA audit TO prsystem_audit_writer, prsystem_partition_mgr;
+--> statement-breakpoint
+GRANT USAGE, CREATE ON SCHEMA police_audit TO prsystem_audit_writer, prsystem_partition_mgr;
 --> statement-breakpoint
 
 -- ------------------------------------------------- tenant context functions
@@ -125,6 +163,75 @@ BEGIN
   END IF;
   RETURN v;
 END $$;
+--> statement-breakpoint
+
+-- ------------------------------------------------- payload sanitisation
+-- CLAUDE.md §8. A top-level `?|` key test only inspects the outermost object, so
+-- {"guest":{"registrationNumber":"..."}} would pass it. This walks the whole
+-- document — nested objects and arrays at any depth — because that is exactly
+-- where a leak hides.
+CREATE OR REPLACE FUNCTION platform.denied_payload_keys() RETURNS text[]
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog
+  AS $$
+  SELECT ARRAY[
+    'password', 'passwordhash', 'otp', 'pin',
+    'token', 'accesstoken', 'refreshtoken', 'sessiontoken', 'sessionid',
+    'secret', 'apikey', 'webhooksecret', 'signature', 'privatekey',
+    'pan', 'cvv', 'cvc', 'cardnumber',
+    'registrationnumber', 'passportnumber', 'nationalid', 'foreignid',
+    'smsbody', 'messagebody'
+  ]
+$$;
+--> statement-breakpoint
+
+-- Comparison is case- and separator-insensitive, so `registration_number`,
+-- `registrationNumber` and `Registration-Number` are all the same key.
+CREATE OR REPLACE FUNCTION platform.is_denied_key(p_key text) RETURNS boolean
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog
+  AS $$
+  SELECT lower(regexp_replace(p_key, '[^a-zA-Z0-9]', '', 'g')) = ANY(platform.denied_payload_keys())
+$$;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION platform.contains_denied_key(p_payload jsonb)
+  RETURNS boolean
+  LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog
+  AS $$
+DECLARE
+  v_key text;
+  v_value jsonb;
+BEGIN
+  IF p_payload IS NULL THEN
+    RETURN false;
+  END IF;
+
+  IF jsonb_typeof(p_payload) = 'object' THEN
+    FOR v_key, v_value IN SELECT * FROM jsonb_each(p_payload) LOOP
+      IF platform.is_denied_key(v_key) THEN
+        RETURN true;
+      END IF;
+      IF platform.contains_denied_key(v_value) THEN
+        RETURN true;
+      END IF;
+    END LOOP;
+    RETURN false;
+  END IF;
+
+  IF jsonb_typeof(p_payload) = 'array' THEN
+    FOR v_value IN SELECT * FROM jsonb_array_elements(p_payload) LOOP
+      IF platform.contains_denied_key(v_value) THEN
+        RETURN true;
+      END IF;
+    END LOOP;
+    RETURN false;
+  END IF;
+
+  RETURN false;
+END
+$$;
 --> statement-breakpoint
 
 -- ------------------------------------------------- append-only enforcement
@@ -195,13 +302,8 @@ CREATE TABLE platform.outbox_event (
   CONSTRAINT outbox_event_version_positive CHECK (event_version >= 1),
   -- CLAUDE.md §8: an outbox payload must never carry a secret or a full
   -- identifier. Enforced in the database, not only in review.
-  CONSTRAINT outbox_payload_sanitised CHECK (
-    NOT (payload ?| ARRAY[
-      'password', 'otp', 'token', 'accessToken', 'refreshToken', 'secret',
-      'apiKey', 'signature', 'pan', 'cvv', 'cardNumber',
-      'registrationNumber', 'passportNumber', 'smsBody'
-    ])
-  )
+  CONSTRAINT outbox_payload_sanitised
+    CHECK (NOT platform.contains_denied_key(payload))
 );
 --> statement-breakpoint
 
@@ -286,12 +388,8 @@ CREATE TABLE platform.provider_event (
   received_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT provider_event_uq UNIQUE (provider, provider_event_id),
   CONSTRAINT provider_event_hash_shape CHECK (payload_hash ~ '^[0-9a-f]{64}$'),
-  CONSTRAINT provider_event_metadata_sanitised CHECK (
-    NOT (metadata ?| ARRAY[
-      'pan', 'cvv', 'cardNumber', 'password', 'otp', 'token', 'secret',
-      'apiKey', 'signature', 'registrationNumber', 'passportNumber', 'smsBody'
-    ])
-  )
+  CONSTRAINT provider_event_metadata_sanitised
+    CHECK (NOT platform.contains_denied_key(metadata))
 );
 --> statement-breakpoint
 
@@ -370,6 +468,25 @@ CREATE TABLE platform.external_gate (
 );
 --> statement-breakpoint
 
+-- Internal readiness controls. These are NOT external integration gates: the
+-- EXT-01..EXT-11 namespace is fixed by docs/00 §4 and may not be reused for POS,
+-- email or key management (Phase 03 review).
+CREATE TABLE platform.internal_gate (
+  control_code text PRIMARY KEY,
+  description  text NOT NULL,
+  enabled      boolean NOT NULL DEFAULT false,
+  blocker      text,
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT internal_gate_code_shape CHECK (control_code ~ '^INT-[A-Z]{2,8}-\d{2}$')
+);
+--> statement-breakpoint
+
+INSERT INTO platform.internal_gate (control_code, description, blocker) VALUES
+  ('INT-KMS-01', 'Approved key management service adapter', 'no KMS provider contracted; production fails closed'),
+  ('INT-POS-01', 'Hotel POS terminal integration', 'no POS vendor contracted'),
+  ('INT-MAIL-01', 'Transactional email delivery provider', 'no email provider contracted');
+--> statement-breakpoint
+
 CREATE TABLE platform.feature_flag (
   flag_key    text PRIMARY KEY,
   description text NOT NULL,
@@ -381,17 +498,17 @@ CREATE TABLE platform.feature_flag (
 -- CLAUDE.md §9: every external gate is closed until its contract clears, and the
 -- adapter stays disabled. Seeded closed; Phase 20 flips them with evidence.
 INSERT INTO platform.external_gate (gate_code, description, blocker) VALUES
-  ('EXT-01', 'QPay payment provider', 'contract and credentials not issued'),
-  ('EXT-02', 'Khaan Bank settlement', 'contract and credentials not issued'),
-  ('EXT-03', 'POS integration', 'contract and credentials not issued'),
-  ('EXT-04', 'eBarimt receipting', 'contract and credentials not issued'),
-  ('EXT-05', 'CallPro SMS', 'contract and credentials not issued'),
-  ('EXT-06', 'Email delivery provider', 'contract and credentials not issued'),
-  ('EXT-07', 'Google Maps', 'contract and credentials not issued'),
-  ('EXT-08', 'XYP/HUR identity verification', 'contract and credentials not issued'),
-  ('EXT-09', 'ЦЕГ Police integration', 'contract and credentials not issued'),
-  ('EXT-10', 'Key management service', 'contract and credentials not issued'),
-  ('EXT-11', 'eMongolia', 'contract and credentials not issued');
+  ('EXT-01', 'XYP / ХУР identity verification', 'contract, credentials and legal basis not issued'),
+  ('EXT-02', 'e-Mongolia guest authentication', 'contract, credentials and legal basis not issued'),
+  ('EXT-03', 'QPay payment provider', 'contract, credentials and legal basis not issued'),
+  ('EXT-04', 'Khaan Bank gateway and POS', 'contract, credentials and legal basis not issued'),
+  ('EXT-05', 'CallPro SMS', 'contract, credentials and legal basis not issued'),
+  ('EXT-06', 'Google Maps', 'contract, credentials and legal basis not issued'),
+  ('EXT-07', 'Platform central account and settlement authorisation', 'authorisation not granted'),
+  ('EXT-08', 'Personal-data and privacy governance', 'authorisation not granted'),
+  ('EXT-09', 'ЦЕГ Police data-sharing authorisation', 'authorisation not granted'),
+  ('EXT-10', 'Police security approvals', 'authorisation not granted'),
+  ('EXT-11', 'eBarimt receipting', 'contract, credentials and legal basis not issued');
 --> statement-breakpoint
 
 -- ---------------------------------------------------------- operational alerts
@@ -431,13 +548,8 @@ CREATE TABLE audit.platform_event (
   CONSTRAINT platform_event_pk PRIMARY KEY (occurred_at, event_id),
   CONSTRAINT platform_event_outcome_known
     CHECK (outcome IN ('allowed', 'denied', 'failed')),
-  CONSTRAINT platform_event_payload_sanitised CHECK (
-    NOT (payload ?| ARRAY[
-      'password', 'otp', 'token', 'accessToken', 'refreshToken', 'secret',
-      'apiKey', 'signature', 'pan', 'cvv', 'cardNumber',
-      'registrationNumber', 'passportNumber', 'smsBody'
-    ])
-  )
+  CONSTRAINT platform_event_payload_sanitised
+    CHECK (NOT platform.contains_denied_key(payload))
 ) PARTITION BY RANGE (occurred_at);
 --> statement-breakpoint
 
@@ -454,12 +566,8 @@ CREATE TABLE police_audit.security_event (
   CONSTRAINT security_event_pk PRIMARY KEY (occurred_at, event_id),
   CONSTRAINT security_event_outcome_known
     CHECK (outcome IN ('allowed', 'denied', 'failed')),
-  CONSTRAINT security_event_payload_sanitised CHECK (
-    NOT (payload ?| ARRAY[
-      'password', 'otp', 'token', 'secret', 'apiKey', 'signature',
-      'registrationNumber', 'passportNumber', 'smsBody'
-    ])
-  )
+  CONSTRAINT security_event_payload_sanitised
+    CHECK (NOT platform.contains_denied_key(payload))
 ) PARTITION BY RANGE (occurred_at);
 --> statement-breakpoint
 
@@ -473,89 +581,154 @@ CREATE TRIGGER security_event_append_only
 --> statement-breakpoint
 
 -- ---------------------------------------------------------- partitioning
--- ADR-0018 §4. Partitions are pre-created; a missing one is an operational
--- incident surfaced by the horizon check before any write can fail.
+-- ADR-0018 §4. Hardened after the Phase 03 review: the function is an allow-list
+-- over exactly the two audit streams, bounds the month count, fixes its
+-- search_path, fully qualifies every object, and serialises creation with an
+-- advisory lock. It is SECURITY DEFINER owned by a narrow partition-manager role,
+-- so the worker can extend coverage without ever holding schema DDL rights.
 CREATE OR REPLACE FUNCTION platform.ensure_month_partitions(
   p_schema text,
   p_table  text,
   p_from   timestamptz,
   p_months integer
-) RETURNS integer LANGUAGE plpgsql AS $$
+) RETURNS integer
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
 DECLARE
-  v_start date := date_trunc('month', p_from AT TIME ZONE 'UTC')::date;
+  v_start date;
   v_created integer := 0;
   i integer;
   v_lower date;
   v_upper date;
   v_name text;
 BEGIN
-  IF p_months < 1 THEN
-    RAISE EXCEPTION 'p_months must be at least 1';
+  -- Allow-list, not validation. A caller cannot name any other relation, so the
+  -- function can never be turned into a general CREATE TABLE primitive.
+  IF NOT (p_schema = 'audit' AND p_table = 'platform_event')
+     AND NOT (p_schema = 'police_audit' AND p_table = 'security_event') THEN
+    RAISE EXCEPTION 'ensure_month_partitions refuses %.%; only the two audit streams are permitted',
+      p_schema, p_table USING ERRCODE = '42501';
   END IF;
+
+  IF p_months IS NULL OR p_months < 1 OR p_months > 24 THEN
+    RAISE EXCEPTION 'p_months must be between 1 and 24' USING ERRCODE = '22023';
+  END IF;
+
+  IF p_from IS NULL THEN
+    RAISE EXCEPTION 'p_from is required' USING ERRCODE = '22023';
+  END IF;
+
+  -- Two runners extending the same stream would otherwise race on CREATE TABLE.
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext('prsystem.partition.' || p_schema || '.' || p_table)
+  );
+
+  v_start := pg_catalog.date_trunc('month', p_from AT TIME ZONE 'UTC')::date;
 
   FOR i IN 0 .. p_months - 1 LOOP
     v_lower := (v_start + (i || ' months')::interval)::date;
     v_upper := (v_lower + interval '1 month')::date;
-    v_name  := format('%s_%s', p_table, to_char(v_lower, 'YYYY_MM'));
+    v_name  := pg_catalog.format('%s_%s', p_table, pg_catalog.to_char(v_lower, 'YYYY_MM'));
 
     IF NOT EXISTS (
-      SELECT 1 FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
+      SELECT 1 FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = p_schema AND c.relname = v_name
     ) THEN
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'CREATE TABLE %I.%I PARTITION OF %I.%I FOR VALUES FROM (%L) TO (%L)',
         p_schema, v_name, p_schema, p_table, v_lower, v_upper
       );
-      -- TRUNCATE triggers cannot live on the partitioned parent, so each
-      -- partition carries its own. Privileges are the primary control; this is
-      -- the second one.
-      EXECUTE format(
+
+      -- A new partition inherits nothing automatically. Owner, grants and
+      -- TRUNCATE protection are re-established explicitly, or a partition
+      -- created next month would be less protected than the ones created here.
+      EXECUTE pg_catalog.format(
+        'ALTER TABLE %I.%I OWNER TO prsystem_partition_mgr', p_schema, v_name
+      );
+      EXECUTE pg_catalog.format('REVOKE ALL ON %I.%I FROM PUBLIC', p_schema, v_name);
+      EXECUTE pg_catalog.format(
+        'GRANT SELECT ON %I.%I TO %I',
+        p_schema, v_name,
+        CASE WHEN p_schema = 'audit' THEN 'prsystem_audit_reader'
+             ELSE 'prsystem_police_audit_reader' END
+      );
+      EXECUTE pg_catalog.format(
+        'GRANT INSERT ON %I.%I TO prsystem_audit_writer', p_schema, v_name
+      );
+      EXECUTE pg_catalog.format(
         'CREATE TRIGGER %I BEFORE TRUNCATE ON %I.%I
            FOR EACH STATEMENT EXECUTE FUNCTION platform.reject_mutation()',
         v_name || '_no_truncate', p_schema, v_name
       );
+
       v_created := v_created + 1;
     END IF;
   END LOOP;
 
   RETURN v_created;
-END $$;
+END
+$$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.ensure_month_partitions(text, text, timestamptz, integer)
+  OWNER TO prsystem_partition_mgr;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.ensure_month_partitions(text, text, timestamptz, integer) FROM PUBLIC;
 --> statement-breakpoint
 
 -- Months of pre-created coverage still ahead of now, counting the current month.
 CREATE OR REPLACE FUNCTION platform.partition_horizon(
   p_schema text,
   p_table  text
-) RETURNS integer LANGUAGE plpgsql STABLE AS $$
+) RETURNS integer
+  LANGUAGE plpgsql STABLE
+  SET search_path = pg_catalog, pg_temp
+  AS $$
 DECLARE
   v_months integer := 0;
-  v_probe  date := date_trunc('month', now() AT TIME ZONE 'UTC')::date;
+  v_probe  date := pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'UTC')::date;
 BEGIN
+  IF NOT (p_schema = 'audit' AND p_table = 'platform_event')
+     AND NOT (p_schema = 'police_audit' AND p_table = 'security_event') THEN
+    RAISE EXCEPTION 'partition_horizon refuses %.%', p_schema, p_table USING ERRCODE = '42501';
+  END IF;
+
   LOOP
     EXIT WHEN NOT EXISTS (
-      SELECT 1 FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
+      SELECT 1 FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = p_schema
-        AND c.relname = format('%s_%s', p_table, to_char(v_probe, 'YYYY_MM'))
+        AND c.relname = pg_catalog.format('%s_%s', p_table, pg_catalog.to_char(v_probe, 'YYYY_MM'))
     );
     v_months := v_months + 1;
     v_probe := (v_probe + interval '1 month')::date;
   END LOOP;
   RETURN v_months;
-END $$;
+END
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.partition_horizon(text, text) FROM PUBLIC;
 --> statement-breakpoint
 
--- Raises an alert row when coverage falls below the threshold. Detection happens
--- before a write fails, which is the whole point of ADR-0018 §4.
 CREATE OR REPLACE FUNCTION platform.check_partition_horizon(
   p_threshold integer DEFAULT 3
-) RETURNS integer LANGUAGE plpgsql AS $$
+) RETURNS integer
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
 DECLARE
   v_raised integer := 0;
   r record;
   v_horizon integer;
 BEGIN
+  IF p_threshold IS NULL OR p_threshold < 1 OR p_threshold > 24 THEN
+    RAISE EXCEPTION 'p_threshold must be between 1 and 24' USING ERRCODE = '22023';
+  END IF;
+
   FOR r IN
     SELECT * FROM (VALUES
       ('audit', 'platform_event'),
@@ -568,7 +741,7 @@ BEGIN
       VALUES (
         'AUDIT_PARTITION_HORIZON',
         'critical',
-        jsonb_build_object(
+        pg_catalog.jsonb_build_object(
           'schema', r.schema_name,
           'table', r.table_name,
           'horizonMonths', v_horizon,
@@ -579,12 +752,171 @@ BEGIN
     END IF;
   END LOOP;
   RETURN v_raised;
-END $$;
+END
+$$;
+--> statement-breakpoint
+ALTER FUNCTION platform.check_partition_horizon(integer) OWNER TO prsystem_partition_mgr;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.check_partition_horizon(integer) FROM PUBLIC;
 --> statement-breakpoint
 
-SELECT platform.ensure_month_partitions('audit', 'platform_event', now(), 4);
+-- --------------------------------------------------- audit append functions
+-- Runtime roles hold NO privilege on an audit table — not INSERT, not SELECT.
+-- They call these SECURITY DEFINER wrappers, which derive server time, realm,
+-- actor and tenant scope from the trusted transaction context rather than
+-- accepting them from the caller. A caller cannot forge an actor, backdate a
+-- record, or write into the other realm's stream.
+CREATE OR REPLACE FUNCTION audit.append_platform_audit_event(
+  p_action      text,
+  p_outcome     text,
+  p_target_type text DEFAULT NULL,
+  p_target_ref  text DEFAULT NULL,
+  p_reason      text DEFAULT NULL,
+  p_payload     jsonb DEFAULT '{}'::jsonb
+) RETURNS uuid
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+DECLARE
+  v_event_id uuid := gen_random_uuid();
+  v_realm text := platform.current_realm();
+  v_actor text := platform.current_actor_ref();
+  v_hotel uuid := platform.current_hotel_id();
+BEGIN
+  IF p_action IS NULL OR pg_catalog.length(p_action) NOT BETWEEN 1 AND 200 THEN
+    RAISE EXCEPTION 'audit action is required' USING ERRCODE = '22023';
+  END IF;
+  IF p_outcome IS NULL OR p_outcome NOT IN ('allowed', 'denied', 'failed') THEN
+    RAISE EXCEPTION 'audit outcome must be allowed, denied or failed' USING ERRCODE = '22023';
+  END IF;
+  IF v_realm IS NULL OR v_actor IS NULL OR v_hotel IS NULL THEN
+    RAISE EXCEPTION 'audit requires an established transaction context' USING ERRCODE = '42501';
+  END IF;
+  -- The Police stream is a different function with a different owner; a Police
+  -- action must not be recorded here.
+  IF v_realm = 'police' THEN
+    RAISE EXCEPTION 'police realm must use police_audit.append_police_security_event'
+      USING ERRCODE = '42501';
+  END IF;
+  IF platform.contains_denied_key(p_payload) THEN
+    RAISE EXCEPTION 'audit payload carries a denied field' USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO audit.platform_event
+    (event_id, occurred_at, realm, action, outcome, actor_ref, hotel_id,
+     target_type, target_ref, reason, correlation_id, causation_id, payload)
+  VALUES
+    (v_event_id, pg_catalog.now(), v_realm, p_action, p_outcome, v_actor, v_hotel,
+     p_target_type, p_target_ref, p_reason,
+     nullif(pg_catalog.current_setting('app.correlation_id', true), ''),
+     nullif(pg_catalog.current_setting('app.causation_id', true), ''),
+     coalesce(p_payload, '{}'::jsonb));
+
+  RETURN v_event_id;
+END
+$$;
 --> statement-breakpoint
-SELECT platform.ensure_month_partitions('police_audit', 'security_event', now(), 4);
+ALTER FUNCTION audit.append_platform_audit_event(text, text, text, text, text, jsonb)
+  OWNER TO prsystem_audit_writer;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION audit.append_platform_audit_event(text, text, text, text, text, jsonb) FROM PUBLIC;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION police_audit.append_police_security_event(
+  p_action   text,
+  p_outcome  text,
+  p_case_ref text DEFAULT NULL,
+  p_reason   text DEFAULT NULL,
+  p_payload  jsonb DEFAULT '{}'::jsonb
+) RETURNS uuid
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+DECLARE
+  v_event_id uuid := gen_random_uuid();
+  v_realm text := platform.current_realm();
+  v_actor text := platform.current_actor_ref();
+BEGIN
+  IF p_action IS NULL OR pg_catalog.length(p_action) NOT BETWEEN 1 AND 200 THEN
+    RAISE EXCEPTION 'audit action is required' USING ERRCODE = '22023';
+  END IF;
+  IF p_outcome IS NULL OR p_outcome NOT IN ('allowed', 'denied', 'failed') THEN
+    RAISE EXCEPTION 'audit outcome must be allowed, denied or failed' USING ERRCODE = '22023';
+  END IF;
+  IF v_actor IS NULL THEN
+    RAISE EXCEPTION 'audit requires an established transaction context' USING ERRCODE = '42501';
+  END IF;
+  IF v_realm IS DISTINCT FROM 'police' THEN
+    RAISE EXCEPTION 'only the police realm may write the police security stream'
+      USING ERRCODE = '42501';
+  END IF;
+  IF platform.contains_denied_key(p_payload) THEN
+    RAISE EXCEPTION 'audit payload carries a denied field' USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO police_audit.security_event
+    (event_id, occurred_at, action, outcome, actor_ref, case_ref, reason, correlation_id, payload)
+  VALUES
+    (v_event_id, pg_catalog.now(), p_action, p_outcome, v_actor, p_case_ref, p_reason,
+     nullif(pg_catalog.current_setting('app.correlation_id', true), ''),
+     coalesce(p_payload, '{}'::jsonb));
+
+  RETURN v_event_id;
+END
+$$;
+--> statement-breakpoint
+ALTER FUNCTION police_audit.append_police_security_event(text, text, text, text, jsonb)
+  OWNER TO prsystem_audit_writer;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION police_audit.append_police_security_event(text, text, text, text, jsonb) FROM PUBLIC;
+--> statement-breakpoint
+
+-- ------------------------------------------- cross-tenant maintenance surface
+-- ADR-0017 §8. A cross-tenant job establishes scope per tenant rather than
+-- bypassing RLS: the owner of this function holds no BYPASSRLS, so the only way
+-- it can see a tenant's rows is to set that tenant's scope, one transaction at a
+-- time. Every invocation must name a job id, a reason and an audit reference.
+CREATE OR REPLACE FUNCTION platform.maintenance_expire_idempotency_keys(
+  p_hotel_id  uuid,
+  p_job_id    text,
+  p_reason    text,
+  p_audit_ref text
+) RETURNS integer
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
+DECLARE
+  v_deleted integer;
+BEGIN
+  IF p_hotel_id IS NULL OR coalesce(pg_catalog.length(p_job_id), 0) = 0
+     OR coalesce(pg_catalog.length(p_reason), 0) = 0
+     OR coalesce(pg_catalog.length(p_audit_ref), 0) = 0 THEN
+    RAISE EXCEPTION 'maintenance requires hotel scope, job id, reason and audit reference'
+      USING ERRCODE = '22023';
+  END IF;
+
+  PERFORM pg_catalog.set_config('app.hotel_id', p_hotel_id::text, true);
+
+  DELETE FROM platform.idempotency_key
+   WHERE hotel_id = p_hotel_id AND expires_at < pg_catalog.now() AND state <> 'in_progress';
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+
+  INSERT INTO platform.operational_alert (alert_code, severity, detail)
+  VALUES ('MAINTENANCE_RUN', 'info',
+          pg_catalog.jsonb_build_object('operation', 'expire_idempotency_keys',
+                                        'jobId', p_job_id, 'reason', p_reason,
+                                        'auditRef', p_audit_ref, 'rows', v_deleted));
+  RETURN v_deleted;
+END
+$$;
+--> statement-breakpoint
+ALTER FUNCTION platform.maintenance_expire_idempotency_keys(uuid, text, text, text)
+  OWNER TO prsystem_maintenance_fn;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid, text, text, text) FROM PUBLIC;
 --> statement-breakpoint
 
 -- ---------------------------------------------------------- row level security
@@ -647,7 +979,37 @@ CREATE POLICY tenant_isolation ON platform.export_artifact
   WITH CHECK (hotel_id = platform.current_hotel_id());
 --> statement-breakpoint
 
+-- ---------------------------------------------------------- ownership
+-- The two audit streams belong to the partition manager. PostgreSQL requires
+-- the parent's owner to attach a partition, so the renewal function's definer
+-- and the tables' owner must be the same role — and that role owns nothing else.
+ALTER TABLE audit.platform_event OWNER TO prsystem_partition_mgr;
+--> statement-breakpoint
+ALTER TABLE police_audit.security_event OWNER TO prsystem_partition_mgr;
+--> statement-breakpoint
+-- Every kernel object is owned by the DDL role. No runtime role owns anything:
+-- an owner can disable a trigger, alter a policy or drop a table, so ownership
+-- is the privilege that matters most here.
+ALTER SCHEMA platform     OWNER TO prsystem_migrate;
+--> statement-breakpoint
+ALTER SCHEMA audit        OWNER TO prsystem_migrate;
+--> statement-breakpoint
+ALTER SCHEMA police_audit OWNER TO prsystem_migrate;
+--> statement-breakpoint
+ALTER SCHEMA police       OWNER TO prsystem_migrate;
+--> statement-breakpoint
+
 -- ---------------------------------------------------------- grants
+-- PUBLIC gets nothing anywhere in the kernel.
+REVOKE ALL ON ALL TABLES IN SCHEMA platform FROM PUBLIC;
+--> statement-breakpoint
+REVOKE ALL ON ALL TABLES IN SCHEMA audit FROM PUBLIC;
+--> statement-breakpoint
+REVOKE ALL ON ALL TABLES IN SCHEMA police_audit FROM PUBLIC;
+--> statement-breakpoint
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA platform FROM PUBLIC;
+--> statement-breakpoint
+
 GRANT SELECT, INSERT, UPDATE ON platform.idempotency_key TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
 GRANT SELECT, INSERT ON platform.outbox_event TO prsystem_api, prsystem_worker;
@@ -667,37 +1029,83 @@ GRANT SELECT ON platform.projection_checkpoint, platform.projection_freshness
 --> statement-breakpoint
 GRANT INSERT, UPDATE ON platform.projection_checkpoint TO prsystem_worker;
 --> statement-breakpoint
-GRANT SELECT ON platform.external_gate, platform.feature_flag TO prsystem_api, prsystem_worker;
+GRANT SELECT ON platform.external_gate, platform.internal_gate, platform.feature_flag
+  TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
 GRANT SELECT ON platform.operational_alert TO prsystem_api;
 --> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON platform.operational_alert TO prsystem_worker;
 --> statement-breakpoint
-GRANT ALL ON ALL TABLES IN SCHEMA platform TO prsystem_maintenance;
+GRANT INSERT ON platform.operational_alert TO prsystem_partition_mgr, prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT SELECT, DELETE ON platform.idempotency_key TO prsystem_maintenance_fn;
 --> statement-breakpoint
 
--- Audit: business runtime roles append and cannot read; a dedicated reader role
--- reads and cannot write. Stricter than ADR-0018 §2 by customer direction.
-GRANT INSERT ON audit.platform_event TO prsystem_api, prsystem_worker;
+-- The audit streams.
+--
+-- No runtime role holds ANY table privilege here. Appending is the wrapper
+-- function; reading belongs to the dedicated reader for that stream and to
+-- nobody else. `prsystem_maintenance` is deliberately absent: it is break-glass,
+-- and break-glass is a DBA action with its own audit trail, not a standing grant.
+GRANT INSERT ON audit.platform_event TO prsystem_audit_writer;
+--> statement-breakpoint
+GRANT INSERT ON police_audit.security_event TO prsystem_audit_writer;
 --> statement-breakpoint
 GRANT SELECT ON audit.platform_event TO prsystem_audit_reader;
 --> statement-breakpoint
-GRANT INSERT ON police_audit.security_event TO prsystem_police;
---> statement-breakpoint
 GRANT SELECT ON police_audit.security_event TO prsystem_police_audit_reader;
 --> statement-breakpoint
-GRANT SELECT, INSERT ON audit.platform_event TO prsystem_maintenance;
---> statement-breakpoint
-GRANT SELECT, INSERT ON police_audit.security_event TO prsystem_maintenance;
---> statement-breakpoint
 
+-- Execution rights: named functions only, never a schema-wide grant.
 GRANT EXECUTE ON FUNCTION
   platform.current_hotel_id(), platform.current_realm(), platform.current_actor_ref(),
-  platform.platform_scope(), platform.require_hotel_id()
-  TO prsystem_api, prsystem_worker, prsystem_police, prsystem_maintenance;
+  platform.platform_scope(), platform.require_hotel_id(),
+  platform.contains_denied_key(jsonb), platform.is_denied_key(text),
+  platform.denied_payload_keys()
+  TO prsystem_api, prsystem_worker, prsystem_police;
 --> statement-breakpoint
+-- Each SECURITY DEFINER owner needs EXECUTE on the helpers its own body calls.
+-- Schema-wide REVOKE FROM PUBLIC removed the default, so these are explicit:
+-- the append functions evaluate the sanitisation check, and the partition
+-- manager attaches the append-only trigger.
+GRANT EXECUTE ON FUNCTION
+  platform.contains_denied_key(jsonb), platform.is_denied_key(text),
+  platform.denied_payload_keys(), platform.current_realm(),
+  platform.current_actor_ref(), platform.current_hotel_id()
+  TO prsystem_audit_writer;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.reject_mutation() TO prsystem_partition_mgr;
+--> statement-breakpoint
+-- The maintenance definer works *through* the RLS policy rather than around it,
+-- so it must be able to evaluate the policy's context function.
+GRANT EXECUTE ON FUNCTION platform.current_hotel_id() TO prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.partition_horizon(text, text) TO prsystem_partition_mgr;
+--> statement-breakpoint
+
+GRANT EXECUTE ON FUNCTION audit.append_platform_audit_event(text, text, text, text, text, jsonb)
+  TO prsystem_api, prsystem_worker;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION police_audit.append_police_security_event(text, text, text, text, jsonb)
+  TO prsystem_police;
+--> statement-breakpoint
+-- The worker extends audit coverage through the wrapper and gains no DDL by it.
+-- The migration seeds the first partitions through the same function the worker
+-- uses later, so the initial partitions and every future one are created by
+-- identical code with identical ownership and grants.
 GRANT EXECUTE ON FUNCTION
   platform.ensure_month_partitions(text, text, timestamptz, integer),
   platform.partition_horizon(text, text),
   platform.check_partition_horizon(integer)
-  TO prsystem_worker, prsystem_maintenance;
+  TO prsystem_worker, prsystem_migrate;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid, text, text, text)
+  TO prsystem_worker;
+--> statement-breakpoint
+
+-- Created last, so every partition is stamped with the ownership, grants and
+-- TRUNCATE protection settled above — exactly as a partition created next month
+-- will be.
+SELECT platform.ensure_month_partitions('audit', 'platform_event', now(), 4);
+--> statement-breakpoint
+SELECT platform.ensure_month_partitions('police_audit', 'security_event', now(), 4);

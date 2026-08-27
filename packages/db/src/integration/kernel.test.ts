@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import type { TestDatabase } from '@prsystem/testing';
-import { createRolePool, createTestDatabase } from '@prsystem/testing';
-import { runMigrations } from '../migrate';
+import type { ProvisionedDatabase } from '../test-support/provision';
+import { provisionKernelDatabase } from '../test-support/provision';
 import { DATABASE_ROLES, ROLES_WITHOUT_BYPASSRLS } from '../roles';
 import { PLATFORM_SCOPE, type TenantContext } from '../tenant-context';
 import { withTenantTransaction } from '../unit-of-work';
@@ -23,10 +22,10 @@ import { checkPartitionHorizon, readPartitionHorizons } from '../kernel/partitio
 const HOTEL_A = '11111111-1111-4111-8111-111111111111';
 const HOTEL_B = '22222222-2222-4222-8222-222222222222';
 
-let db: TestDatabase;
+let env: ProvisionedDatabase;
 /** Administrative connection: superuser, used only for setup and verification. */
 let pool: Pool;
-/** Runtime connections. RLS applies to these; it never applies to `pool`. */
+/** Real LOGIN principals. RLS applies to these; it never applies to `pool`. */
 let apiPool: Pool;
 let policePool: Pool;
 
@@ -66,25 +65,28 @@ async function asRole<T>(
 }
 
 beforeAll(async () => {
-  db = await createTestDatabase('kernel_integ');
-  pool = db.pool;
-  await runMigrations(db.url);
-  apiPool = createRolePool(db.url, DATABASE_ROLES.api);
-  policePool = createRolePool(db.url, DATABASE_ROLES.police);
-}, 60000);
+  env = await provisionKernelDatabase('kernel_integ');
+  pool = env.admin;
+  apiPool = env.api;
+  policePool = env.police;
+}, 90000);
 
 afterAll(async () => {
-  await apiPool.end();
-  await policePool.end();
-  await db.drop();
+  await env.close();
 }, 30000);
 
 describe('database roles (ADR-0017 §5)', () => {
-  it('creates exactly the approved roles', async () => {
+  it('creates every approved group role', async () => {
     const result = await pool.query<{ rolname: string }>(
       `SELECT rolname FROM pg_roles WHERE rolname LIKE 'prsystem\\_%' ORDER BY rolname`,
     );
-    expect(result.rows.map((r) => r.rolname)).toEqual(Object.values(DATABASE_ROLES).slice().sort());
+    // The cluster also carries the deployment's LOGIN principals and the narrow
+    // function-owner roles; SEC-ROLE asserts that exact set. Here it is enough
+    // that every role this schema grants to exists.
+    const present = new Set(result.rows.map((r) => r.rolname));
+    for (const role of Object.values(DATABASE_ROLES)) {
+      expect({ role, present: present.has(role) }).toEqual({ role, present: true });
+    }
   });
 
   it('gives no runtime role BYPASSRLS', async () => {
@@ -242,7 +244,7 @@ describe('audit streams (ADR-0018)', () => {
           payload: { password: 'must-never-be-recorded' },
         });
       }),
-    ).rejects.toThrow(/platform_event_payload_sanitised/);
+    ).rejects.toThrow(/denied field/i);
 
     const orphan = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM platform.outbox_event WHERE aggregate_id = 'fail-closed'`,
@@ -362,8 +364,8 @@ describe('audit partitioning (ADR-0018 §3–§4)', () => {
 
   it('raises an alert when the horizon falls below its threshold', async () => {
     // Ask for more headroom than exists rather than dropping a partition, so the
-    // check is exercised without destroying data.
-    const raised = await checkPartitionHorizon(pool, 99);
+    // check is exercised without destroying data. 24 is the function's ceiling.
+    const raised = await checkPartitionHorizon(pool, 24);
     expect(raised).toBe(2);
 
     const alerts = await pool.query<{ count: string }>(

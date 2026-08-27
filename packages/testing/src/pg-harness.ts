@@ -29,9 +29,34 @@ export interface TestDatabase {
   readonly name: string;
   readonly url: string;
   readonly pool: Pool;
+  /** Connection string for a named LOGIN principal created by the bootstrap. */
+  loginUrl(principal: string): string;
   /** Drops the scratch database. Leaves the server and every other database alone. */
   drop(): Promise<void>;
 }
+
+/**
+ * Local/CI password for the bootstrap LOGIN principals.
+ *
+ * Stable across processes on purpose. Roles are cluster-global, so a
+ * per-process value would have each test worker's bootstrap reset the password
+ * out from under the others — the suites would fail with an authentication
+ * error that looks nothing like the race it actually is.
+ *
+ * It is a local-container value of the same class as the compose password, never
+ * a production credential, and CI can override it.
+ */
+export const TEST_LOGIN_PASSWORD =
+  process.env['PRSYSTEM_TEST_LOGIN_PASSWORD'] ?? 'prsystem_local_dev_login_only';
+
+export const TEST_LOGIN_PRINCIPALS = {
+  api: 'prsystem_api_login',
+  worker: 'prsystem_worker_login',
+  police: 'prsystem_police_login',
+  auditReader: 'prsystem_audit_reader_login',
+  policeAuditReader: 'prsystem_police_audit_reader_login',
+  migrate: 'prsystem_migrate_login',
+} as const;
 
 function withDatabase(url: string, database: string): string {
   const parsed = new URL(url);
@@ -96,6 +121,12 @@ export async function createTestDatabase(suite: string): Promise<TestDatabase> {
     name,
     url,
     pool,
+    loginUrl(principal: string): string {
+      const parsed = new URL(url);
+      parsed.username = principal;
+      parsed.password = TEST_LOGIN_PASSWORD;
+      return parsed.toString();
+    },
     async drop(): Promise<void> {
       await pool.end();
       await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);

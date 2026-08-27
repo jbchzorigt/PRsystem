@@ -22,7 +22,9 @@
     "test:migrations": "vitest run src/migrate.test.ts",
     "migrate": "tsx src/cli.ts",
     "test:integration": "vitest run src/integration",
-    "test:concurrency": "vitest run src/concurrency"
+    "test:concurrency": "vitest run src/concurrency",
+    "test:security": "vitest run src/security",
+    "bootstrap": "tsx src/bootstrap-cli.ts"
   },
   "dependencies": {
     "@prsystem/config": "workspace:*",

@@ -1,5 +1,27 @@
 export { MIGRATIONS_FOLDER, runMigrations } from './migrate';
-export type { MigrationOutcome } from './migrate';
+export type { MigrationOutcome, RunMigrationsOptions } from './migrate';
+export {
+  BOOTSTRAP_SQL,
+  BootstrapError,
+  GROUP_ROLES,
+  LOGIN_PRINCIPALS,
+  UNREACHABLE_ROLES,
+  bootstrapCluster,
+} from './bootstrap';
+export type {
+  BootstrapOptions,
+  BootstrapResult,
+  LoginCredential,
+  LoginPrincipal,
+} from './bootstrap';
+export {
+  FORBIDDEN_FOR_RUNTIME,
+  PrincipalError,
+  assertMigrationPrincipal,
+  assertRuntimePrincipal,
+  readPrincipalFacts,
+} from './principal-guard';
+export type { PrincipalFacts } from './principal-guard';
 export { DATABASE_ROLES, ROLES_WITHOUT_BYPASSRLS } from './roles';
 export type { DatabaseRole } from './roles';
 export {
@@ -49,3 +71,6 @@ export {
   runPartitionMaintenance,
 } from './kernel/partitions';
 export type { PartitionHorizon } from './kernel/partitions';
+export { AUDIT_GRANT_POLICY, RUNTIME_ROLES, TABLE_CLASSIFICATION } from './classification';
+export type { ClassificationViolation, ClassifiedTable, TableClass } from './classification';
+export { validateClassification } from './classification-check';

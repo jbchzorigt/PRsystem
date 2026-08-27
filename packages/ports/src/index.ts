@@ -12,3 +12,5 @@ export { decryptValue, encryptValue, rewrapValue } from './envelope';
 export type { EnvelopeAad, EnvelopeCiphertext } from './envelope';
 export { deriveLookupToken } from './lookup-token';
 export type { IdentityNamespace, LookupToken } from './lookup-token';
+export { selectKeyManagement } from './select-key-management';
+export type { KeyManagementSelection, KmsAdapter } from './select-key-management';

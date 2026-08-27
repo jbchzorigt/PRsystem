@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Pool } from 'pg';
+import { Pool } from 'pg';
+import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
-import { createRolePool, createTestDatabase } from '@prsystem/testing';
-import type { ClaimedOutboxEvent, TenantContext } from '@prsystem/db';
+import type { ClaimedOutboxEvent, LoginPrincipal, TenantContext } from '@prsystem/db';
 import {
-  DATABASE_ROLES,
+  LOGIN_PRINCIPALS,
   appendOutboxEvent,
+  bootstrapCluster,
   runMigrations,
   withTenantTransaction,
 } from '@prsystem/db';
@@ -56,9 +57,18 @@ async function seed(aggregateId: string): Promise<void> {
 
 beforeAll(async () => {
   db = await createTestDatabase('outbox_relay');
-  await runMigrations(db.url);
-  workerPool = createRolePool(db.url, DATABASE_ROLES.worker);
-}, 60000);
+  await bootstrapCluster({
+    adminUrl: db.url,
+    database: db.name,
+    logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+      principal,
+      password: TEST_LOGIN_PASSWORD,
+    })),
+  });
+  await runMigrations(db.loginUrl(TEST_LOGIN_PRINCIPALS.migrate));
+  // A real worker LOGIN principal, not a superuser with SET ROLE.
+  workerPool = new Pool({ connectionString: db.loginUrl(TEST_LOGIN_PRINCIPALS.worker), max: 6 });
+}, 90000);
 
 afterAll(async () => {
   await workerPool.end();

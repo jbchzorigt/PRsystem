@@ -17,16 +17,24 @@ platform operators. `04-logical-data-model.md` left partitioning open as **DM-02
    `prsystem_api` has no grant on `police_audit`.
 2. **Append-only, and write-only for business runtimes.** Both carry the ADR-0009 rules rejecting
    `UPDATE` and `DELETE`. **Amended in Phase 03 by customer direction:** a business runtime role
-   appends and cannot read. `prsystem_api` and `prsystem_worker` hold `INSERT` only on
-   `audit.platform_event`; reading is the privilege of the dedicated `prsystem_audit_reader`, which
-   in turn cannot write. `police_audit.security_event` is the same shape with `prsystem_police` and
+   appends and cannot read. **Tightened again in the Phase 03 security review:** a runtime role holds *no*
+   table privilege on an audit relation at all. Appending goes through the SECURITY DEFINER wrappers
+   `audit.append_platform_audit_event` and `police_audit.append_police_security_event`, which derive
+   server time, realm, actor and tenant scope from the trusted transaction context rather than
+   accepting them from the caller, and which are owned by `prsystem_audit_writer` — a role holding
+   `INSERT` and not `SELECT`. Reading is the privilege of the dedicated `prsystem_audit_reader`,
+   which in turn cannot write. `police_audit.security_event` is the same shape with `prsystem_police` and
    `prsystem_police_audit_reader`, and neither reader can cross to the other stream. The earlier
    wording granted runtime roles `SELECT` as well, which would have let any API query read the whole
    platform audit trail.
 3. **Monthly range partitions by server timestamp.** Partition key is the server-generated
    `occurred_at`, never a client-supplied or business-effective time, so a backdated business event
    still lands in the partition of the month it was actually recorded.
-4. **Partitions are pre-created.** A maintenance job creates the next partitions ahead of time. An
+4. **Partitions are pre-created.** A maintenance job creates the next partitions ahead of time.
+   `platform.ensure_month_partitions` is an allow-list over exactly the two audit streams, bounds the
+   requested month count, fixes its `search_path`, fully qualifies every object, serialises with an
+   advisory lock, and re-establishes ownership, grants and TRUNCATE protection on each new partition —
+   so a partition created next month is no more permissive than one created by the migration. An
    alert fires when the horizon of pre-created partitions falls below the configured threshold — a
    missing partition is an operational incident detected *before* a write fails, not after.
 5. **High-risk actions fail closed.** Where an action's audit record is written in the same

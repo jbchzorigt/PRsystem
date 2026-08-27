@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { assertMigrationPrincipal } from './principal-guard';
 
 /**
  * Versioned migration runner (ADR-0004, CLAUDE.md §10).
@@ -42,12 +43,32 @@ async function ledgerCount(pool: Pool): Promise<number> {
  * Applies every pending migration to `connectionString` and reports how many
  * were recorded before and after. Equal counts mean the run was a no-op.
  */
+export interface RunMigrationsOptions {
+  readonly migrationsFolder?: string;
+  /**
+   * Verify the connection is a restricted migration principal before applying
+   * anything. Default on. Only a bootstrap-provisioning path may turn it off,
+   * and it is never off in an application or CI run.
+   */
+  readonly verifyPrincipal?: boolean;
+}
+
 export async function runMigrations(
   connectionString: string,
-  migrationsFolder: string = MIGRATIONS_FOLDER,
+  options: string | RunMigrationsOptions = {},
 ): Promise<MigrationOutcome> {
+  const resolved: RunMigrationsOptions =
+    typeof options === 'string' ? { migrationsFolder: options } : options;
+  const migrationsFolder = resolved.migrationsFolder ?? MIGRATIONS_FOLDER;
+
   const pool = new Pool({ connectionString, max: 1 });
   try {
+    if (resolved.verifyPrincipal ?? true) {
+      // A migration must not run as a superuser or as an over-privileged login.
+      // Checking here means a misconfigured MIGRATION_DATABASE_URL fails before
+      // it can touch the schema.
+      await assertMigrationPrincipal(pool);
+    }
     const appliedBefore = await ledgerCount(pool);
     await migrate(drizzle(pool), { migrationsFolder });
     const appliedAfter = await ledgerCount(pool);

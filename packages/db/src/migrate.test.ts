@@ -3,6 +3,9 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
+import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS } from '@prsystem/testing';
+import { LOGIN_PRINCIPALS, bootstrapCluster } from './bootstrap';
+import type { LoginPrincipal } from './bootstrap';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate';
 
 /**
@@ -84,6 +87,42 @@ async function schemaFingerprint(pool: Pool): Promise<string> {
       WHERE n.nspname IN ('platform', 'audit', 'police_audit') AND c.relkind IN ('r', 'p')
       ORDER BY 1, 2`,
   );
+  // Ownership and ACLs are part of the schema's security posture, so a fresh and
+  // an upgraded database must agree on them too — not only on shape.
+  const ownership = await pool.query<Record<string, string>>(
+    `SELECT n.nspname, c.relname, pg_get_userbyid(c.relowner) AS owner,
+            coalesce(array_to_string(c.relacl, ' '), '') AS acl
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+        AND c.relkind IN ('r', 'p', 'v')
+      ORDER BY 1, 2`,
+  );
+  const functions = await pool.query<Record<string, string>>(
+    `SELECT n.nspname, p.proname, p.prosecdef::text,
+            coalesce(array_to_string(p.proconfig, ' '), '') AS config,
+            pg_get_userbyid(p.proowner) AS owner,
+            coalesce(array_to_string(p.proacl, ' '), '') AS acl
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+      ORDER BY 1, 2`,
+  );
+  const triggers = await pool.query<Record<string, string>>(
+    `SELECT n.nspname, c.relname, t.tgname, pg_get_triggerdef(t.oid) AS def
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT t.tgisinternal
+        AND n.nspname IN ('platform', 'audit', 'police_audit')
+      ORDER BY 1, 2, 3`,
+  );
+  const partitions = await pool.query<Record<string, string>>(
+    `SELECT n.nspname, c.relname, pg_get_expr(c.relpartbound, c.oid) AS bound
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_inherits i ON i.inhrelid = c.oid
+      WHERE n.nspname IN ('audit', 'police_audit')
+      ORDER BY 1, 2`,
+  );
 
   return JSON.stringify(
     {
@@ -92,6 +131,10 @@ async function schemaFingerprint(pool: Pool): Promise<string> {
       indexes: indexes.rows,
       policies: policies.rows,
       rls: rls.rows,
+      ownership: ownership.rows,
+      functions: functions.rows,
+      triggers: triggers.rows,
+      partitions: partitions.rows,
     },
     null,
     0,
@@ -138,8 +181,17 @@ beforeAll(async () => {
   for (const database of [FRESH_DATABASE, UPGRADE_DATABASE]) {
     await retry(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     await retry(`CREATE DATABASE ${database}`);
+    // Cluster bootstrap first: the migration refuses to run without it.
+    await bootstrapCluster({
+      adminUrl: withDatabase(ADMIN_URL, database),
+      database,
+      logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+        principal,
+        password: TEST_LOGIN_PASSWORD,
+      })),
+    });
   }
-}, 60000);
+}, 120000);
 
 afterAll(async () => {
   for (const database of [FRESH_DATABASE, UPGRADE_DATABASE]) {
@@ -148,9 +200,16 @@ afterAll(async () => {
   await admin.end();
 }, 60000);
 
+function asMigrationLogin(url: string): string {
+  const parsed = new URL(url);
+  parsed.username = TEST_LOGIN_PRINCIPALS.migrate;
+  parsed.password = TEST_LOGIN_PASSWORD;
+  return parsed.toString();
+}
+
 describe('migration runner', () => {
-  const freshUrl = withDatabase(ADMIN_URL, FRESH_DATABASE);
-  const upgradeUrl = withDatabase(ADMIN_URL, UPGRADE_DATABASE);
+  const freshUrl = asMigrationLogin(withDatabase(ADMIN_URL, FRESH_DATABASE));
+  const upgradeUrl = asMigrationLogin(withDatabase(ADMIN_URL, UPGRADE_DATABASE));
   let freshLedger: LedgerRow[] = [];
 
   it('applies the whole journal to a fresh database', async () => {
@@ -234,4 +293,107 @@ describe('migration runner', () => {
       await pool.end();
     }
   }, 60000);
+});
+
+describe('server and extension evidence', () => {
+  it('records the exact PostgreSQL version the gates ran against', async () => {
+    const pool = new Pool({
+      connectionString: asMigrationLogin(withDatabase(ADMIN_URL, FRESH_DATABASE)),
+      max: 1,
+    });
+    try {
+      const version = await pool.query<{ full: string; num: string }>(
+        `SELECT version() AS full, current_setting('server_version') AS num`,
+      );
+      // Pinned in docker-compose.yml. A gate that silently moved to another major
+      // would invalidate every partitioning and RLS assertion above it.
+      expect(version.rows[0]?.num).toMatch(/^17\./);
+
+      const extensions = await pool.query<{ extname: string; extversion: string }>(
+        `SELECT extname, extversion FROM pg_extension ORDER BY extname`,
+      );
+      const names = extensions.rows.map((r) => r.extname);
+      expect(names).toContain('btree_gist');
+      expect(names).toContain('pgcrypto');
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
+describe('transactional failure recovery', () => {
+  it('leaves the database untouched when a migration in the journal fails', async () => {
+    const database = 'prsystem_migration_failure';
+    await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${database}`);
+    await bootstrapCluster({
+      adminUrl: withDatabase(ADMIN_URL, database),
+      database,
+      logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+        principal,
+        password: TEST_LOGIN_PASSWORD,
+      })),
+    });
+
+    const url = asMigrationLogin(withDatabase(ADMIN_URL, database));
+    try {
+      // A journal whose second file is broken. The runner applies the journal in
+      // one transaction, so a failure anywhere rolls the whole run back — a
+      // forward fix therefore starts from the previous known state, never from a
+      // half-applied schema.
+      const folder = mkdtempSync(join(tmpdir(), 'prsystem-broken-'));
+      mkdirSync(join(folder, 'meta'), { recursive: true });
+      const journal = JSON.parse(
+        readFileSync(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
+      ) as { entries: { idx: number; tag: string; version: string; when: number }[] };
+
+      const first = journal.entries[0]!;
+      copyFileSync(join(MIGRATIONS_FOLDER, `${first.tag}.sql`), join(folder, `${first.tag}.sql`));
+      writeFileSync(
+        join(folder, '0001_broken.sql'),
+        'CREATE TABLE platform_broken_probe (id int);\n--> statement-breakpoint\nSELECT 1/0;\n',
+        'utf8',
+      );
+      writeFileSync(
+        join(folder, 'meta', '_journal.json'),
+        JSON.stringify({
+          ...journal,
+          entries: [first, { ...first, idx: 1, tag: '0001_broken', when: first.when + 1 }],
+        }),
+        'utf8',
+      );
+
+      await expect(runMigrations(url, { migrationsFolder: folder })).rejects.toThrow();
+
+      const pool = new Pool({ connectionString: url, max: 1 });
+      try {
+        const leftover = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM information_schema.tables
+            WHERE table_name = 'platform_broken_probe'`,
+        );
+        expect(leftover.rows[0]?.count).toBe('0');
+
+        const ledgerExists = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM information_schema.tables
+            WHERE table_schema = 'drizzle' AND table_name = '__drizzle_migrations'`,
+        );
+        const applied =
+          ledgerExists.rows[0]?.count === '0'
+            ? '0'
+            : (
+                await pool.query<{ count: string }>(
+                  'SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations',
+                )
+              ).rows[0]?.count;
+
+        // Nothing is recorded: the run is atomic across the whole journal, so a
+        // broken file undoes even the files that had already succeeded.
+        expect(applied).toBe('0');
+      } finally {
+        await pool.end();
+      }
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    }
+  }, 120000);
 });

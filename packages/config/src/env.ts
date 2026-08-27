@@ -30,7 +30,18 @@ export const envSchema = z.object({
   API_PORT: port.default(3000),
 
   DATABASE_URL: postgresUrl,
+  /**
+   * The migration principal's connection string — a restricted, non-superuser
+   * login that is a member of prsystem_migrate and nothing else. Separate from
+   * DATABASE_URL on purpose: the API and worker must never hold it, and the
+   * runner verifies the principal before applying anything.
+   */
+  MIGRATION_DATABASE_URL: postgresUrl.optional(),
   REDIS_URL: redisUrl,
+
+  /** Key management adapter. `none` fails closed; `local` is refused outside local/ci/test. */
+  KMS_ADAPTER: z.string().default('none'),
+  KMS_SEED: z.string().optional(),
 
   OBJECT_STORAGE_ENDPOINT: nonEmpty,
   OBJECT_STORAGE_REGION: nonEmpty.default('us-east-1'),
@@ -48,7 +59,13 @@ export const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 /** Field names whose values must never be echoed in an error message. */
-const SECRET_KEYS = new Set(['OBJECT_STORAGE_SECRET_ACCESS_KEY', 'DATABASE_URL', 'REDIS_URL']);
+const SECRET_KEYS = new Set([
+  'OBJECT_STORAGE_SECRET_ACCESS_KEY',
+  'DATABASE_URL',
+  'MIGRATION_DATABASE_URL',
+  'REDIS_URL',
+  'KMS_SEED',
+]);
 
 export class EnvValidationError extends Error {
   public readonly issues: readonly string[];

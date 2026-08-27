@@ -27,6 +27,7 @@ Implementation-owned documents live under `docs/implementation/` and are updated
 - `external-integration-gates.md` — external provider blockers.
 - `assumptions-and-conflicts.md` — assumptions, resolved drift, open conflicts.
 - `dependency-security-register.md` — advisories that cannot be closed by a compatible stable upgrade, with their containment, evidence and mandatory review phase.
+- `database-bootstrap-runbook.md` — cluster role bootstrap, the restricted migration principal, and the forward-fix procedure.
 
 ---
 

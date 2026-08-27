@@ -1,8 +1,9 @@
 /**
  * Provider-neutral key management (ADR-0020, ADR-0012).
  *
- * No KMS provider is contracted and EXT-10 has not cleared, so the port is the
- * only thing the kernel depends on. The production adapter is Phase 20.
+ * No KMS provider is contracted — tracked as the internal control INT-KMS-01,
+ * not as an EXT gate: the EXT-01..EXT-11 namespace is fixed by docs/00 §4 and
+ * EXT-10 is Police security. The production adapter is Phase 20.
  */
 
 /** Key scopes are per realm: compromise of one does not expose the other (ADR-0020 §5). */

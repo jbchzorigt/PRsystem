@@ -59,7 +59,9 @@ const planTablePhases = [
   ...buildPlan.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*[^|]*\|\s*\d+\s*\|\s*$/gm),
 ].map((m) => Number(m[1]));
 const statusLedgerPhases = [
-  ...phaseStatus.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*`[A-Z ]+`\s*\|/gm),
+  // The state vocabulary includes underscored states such as
+  // SECURITY_REPAIR_REQUIRED, so the class is not letters and spaces alone.
+  ...phaseStatus.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*\*{0,2}`[A-Z_ ]+`\*{0,2}\s*\|/gm),
 ].map((m) => Number(m[1]));
 
 const dupes = (arr) => {

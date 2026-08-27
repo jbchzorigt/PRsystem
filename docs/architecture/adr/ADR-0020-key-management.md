@@ -8,7 +8,9 @@
 Registration numbers, passport numbers and other government identifiers are stored encrypted, and
 exact matching uses a keyed lookup token rather than the plaintext (`RC-DEC-044`, doc 13 §6.3).
 `04-logical-data-model.md` left key management open as **DM-04**. No KMS provider is contracted, and
-EXT-10 has not cleared.
+no key-management provider is contracted. **Corrected in the Phase 03 review:** the
+EXT-01…EXT-11 namespace is fixed by docs/00 §4 and EXT-10 is *Police security*, not key management.
+Key management is tracked as the internal control `INT-KMS-01`.
 
 ## Decision
 
@@ -41,7 +43,9 @@ EXT-10 has not cleared.
    encryption keys, and Police lookup uses its own scope.
 7. **Development simulator.** Development and CI use a deterministic local simulator with synthetic
    data only. It is never enabled outside those environments.
-8. **Production fails closed.** If the approved KMS is unreachable or a required key version is
+8. **Production fails closed.** Adapter selection is a single function that refuses the local
+   simulator outside `local`, `ci` and `test`, refuses to start when no adapter is configured, and
+   refuses a named adapter that does not exist. If the approved KMS is unreachable or a required key version is
    unavailable, operations needing it fail with a typed error. The system never falls back to a local
    key, never writes plaintext, and never skips the lookup token.
 9. **Plaintext keys never persist.** No key material appears in source, database rows, logs, traces,

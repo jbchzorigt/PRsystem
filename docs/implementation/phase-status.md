@@ -5,7 +5,7 @@
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3. Approved and immutable —
 no phase may be dropped, merged, renumbered or reordered.
 
-Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
+Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAIR_REQUIRED`
 
 ---
 
@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | `DONE` (all blocking gates green; awaiting customer acceptance) |
+| Phase state | **`SECURITY_REPAIR_REQUIRED`** — customer review rejected the database bootstrap and privilege model; repair in progress, no acceptance claimed |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `DONE` | `0001_kernel` | `GATE-MIGR` 6, `GATE-INTEG` 45, `GATE-CONC` 10, `GATE-UNIT` 180, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b` |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 6, `GATE-INTEG` 45, `GATE-CONC` 10, `GATE-UNIT` 180, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b` |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -474,9 +474,36 @@ headers, CSP, dependency posture at release — remains Phase 22.
 - Lookup tokens differ across identity type, country, realm scope and a namespace-boundary shift.
 - The local KMS refuses to construct outside `local`, `ci` or `test`, and its error names no key.
 
+### Security repair after customer review (Phase 03)
+
+The first Phase 03 submission was rejected. Eight defects were found in the database bootstrap and
+privilege model; all are repaired, and the repair is gated rather than asserted.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | `0001_kernel.sql` created and altered cluster-global roles, so it raced across databases and required the migration principal to hold `CREATEROLE` | Roles moved to `packages/db/bootstrap/cluster-roles.sql`, run once per cluster under an advisory lock by a privileged operator. The migration now **verifies** the role model and refuses to run when it is missing or unsafe. |
+| 2 | `GRANT ALL ON ALL TABLES IN SCHEMA platform TO prsystem_maintenance` | Removed. `prsystem_maintenance` now owns nothing, grants nothing, and is reachable by nobody — including the migration principal. Cross-tenant maintenance is a SECURITY DEFINER function owned by `prsystem_maintenance_fn`, which holds **no** `BYPASSRLS` and sets tenant scope per tenant. |
+| 3 | Runtime roles held direct `INSERT` on the audit tables | Runtime roles now hold **no** table privilege on any audit relation. Appending is `audit.append_platform_audit_event` / `police_audit.append_police_security_event`, which derive server time, realm, actor and scope from the trusted transaction context. |
+| 4 | Payload sanitisation was a top-level `?|` key test, so a nested object passed | Replaced by the recursive `platform.contains_denied_key`, walking objects and arrays at any depth, insensitive to case and separators. |
+| 5 | `ensure_month_partitions` accepted any schema and table, had no bound, no fixed `search_path` and no lock | Allow-listed to the two audit streams, bounded to 1–24 months, `SECURITY DEFINER` owned by `prsystem_partition_mgr`, fixed `search_path`, fully qualified, advisory-locked, `PUBLIC` execute revoked, and it re-establishes owner, grants and TRUNCATE protection on each new partition. |
+| 6 | The EXT register was seeded against the wrong subjects on 7 of 11 rows, and KMS was wrongly attributed to EXT-10 | Reseeded to the canonical `docs/00` §4 mapping, asserted row-for-row against the source document. POS, email and key management moved to a separate `platform.internal_gate` namespace (`INT-KMS-01`, `INT-MAIL-01`, `INT-POS-01`). ADR-0020 corrected. |
+| 7 | Security tests ran on a superuser connection with `SET ROLE`, which proves nothing | Every security assertion now runs over a real LOGIN principal created by the bootstrap. `SET ROLE` leaves `session_user` unchanged and a superuser bypasses RLS unconditionally — both would have reported a pass while proving nothing. |
+| 8 | No named, blocking security gate existed | `GATE-SEC` (`pnpm run test:security`) aggregates eight sub-gates and fails closed on an unavailable database, a skipped suite, a sub-gate that ran zero tests, or a missing artefact. |
+
+**Defects found by the repair's own gates**, and fixed: the principal guard matched role membership by
+*substring*, so `prsystem_maintenance_fn` satisfied a check for `prsystem_maintenance`; `RESET ALL`
+on connection release cleared the connection's role; and the test login password was generated
+per-process while roles are cluster-global, so parallel workers invalidated each other's pools.
+
+`0001_kernel.sql` was edited in place rather than superseded. That is safe and was **proven** before
+editing: the remote has exactly one ref, `refs/heads/main` at `c1c2abc`, and zero tags;
+`0001_kernel.sql` is absent from `origin/main`; and commit `8a62b0b` is an ancestor of no remote ref.
+The migration has never been pushed, tagged or released.
+
 ### Remaining blockers
 
-`DSR-01` remains **OPEN — contained**. Eleven EXT gates are seeded closed in `platform.external_gate`
+`DSR-01` remains **OPEN — contained**. **`GATE-SEC` must be made a required status check before
+merge** — a GitHub branch-protection setting, deliberately not changed in this phase. Eleven EXT gates are seeded closed in `platform.external_gate`
 and block production release only. **Seventeen P1 items remain open**, including P1-10. No P0 product
 blocker. One documentation conflict was found and resolved as **D-05**; three scope questions were put
 to the customer and approved before any edit.

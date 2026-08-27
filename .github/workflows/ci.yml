@@ -117,6 +117,14 @@ jobs:
         run: pnpm run test:concurrency
         env:
           DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
+      # GATE-SEC is blocking and fails closed: an unavailable database, a skipped
+      # suite, a sub-gate that ran zero tests or a missing artefact all fail it.
+      # It must be added to the repository's required checks before merge — that
+      # is a GitHub branch-protection setting, deliberately not changed here.
+      - name: GATE-SEC
+        run: pnpm run test:security
+        env:
+          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
       - name: Report service state
         if: always()
         run: docker compose ps

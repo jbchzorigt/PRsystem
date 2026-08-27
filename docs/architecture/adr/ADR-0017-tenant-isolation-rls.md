@@ -29,17 +29,34 @@ existing controls; it never replaces them.
 4. **Retain every existing control.** Composite tenant foreign keys, mandatory repository predicates
    and the seven-condition pipeline all stay. A query that would be denied by RLS should already have
    been denied earlier; RLS exists to catch the case where it was not.
-5. **Database roles.**
+5. **Database roles.** **Revised in the Phase 03 security review.** Roles are created once per
+   cluster by a privileged bootstrap step, never by an application migration: they are cluster-wide
+   catalog objects, so migrating them races across databases and would require the migration
+   principal to hold `CREATEROLE`. See
+   [database-bootstrap-runbook.md](../../implementation/database-bootstrap-runbook.md).
 
-   | Role | Grants | RLS |
-   | --- | --- | --- |
-   | `prsystem_migrate` | DDL owner; runs migrations only | not used at runtime |
-   | `prsystem_api` | DML on hotel/restaurant/guest/operation schemas | subject to RLS; no `BYPASSRLS` |
-   | `prsystem_worker` | DML plus job tables | subject to RLS; no `BYPASSRLS` |
-   | `prsystem_police` | DML on the `police` schema only | subject to RLS; not grantable to the above |
-   | `prsystem_maintenance` | retention, rebuild, break-glass | `BYPASSRLS`, used only by named audited jobs |
+   | Role | Kind | Grants | RLS |
+   | --- | --- | --- | --- |
+   | `prsystem_migrate` | DDL group | owns schemas and platform tables; runs migrations only | subject to RLS; no `BYPASSRLS` |
+   | `prsystem_api` | runtime group | DML on `platform`; append-only on audit via a wrapper | subject to RLS; no `BYPASSRLS` |
+   | `prsystem_worker` | runtime group | as API plus job, export and projection tables | subject to RLS; no `BYPASSRLS` |
+   | `prsystem_police` | runtime group | `police` and `police_audit` only | subject to RLS; not grantable to the above |
+   | `prsystem_audit_reader` | reader group | scoped `SELECT` on `audit.platform_event` only | no write path |
+   | `prsystem_police_audit_reader` | reader group | scoped `SELECT` on `police_audit.security_event` only | no write path |
+   | `prsystem_audit_writer` | function owner | owns the audit append functions; `INSERT` only | reachable only by `prsystem_migrate` |
+   | `prsystem_partition_mgr` | function owner | owns the audit streams and their partitions | reachable only by `prsystem_migrate` |
+   | `prsystem_maintenance_fn` | function owner | owns cross-tenant maintenance functions; sets scope per tenant | reachable only by `prsystem_migrate` |
+   | `prsystem_maintenance` | **break-glass** | **owns nothing, grants nothing** | `BYPASSRLS`; **reachable by nobody, including the migration principal** |
 
-   No ordinary API or worker role holds `BYPASSRLS`.
+   Every LOGIN principal is created by deployment configuration, is
+   `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, and is a member of exactly one
+   group. No ordinary API or worker role holds `BYPASSRLS`, and no runtime role can `SET ROLE` into a
+   function owner, the DDL group, or the break-glass role.
+
+   Normal cross-tenant maintenance does **not** use `BYPASSRLS`: `prsystem_maintenance_fn` holds none
+   and establishes tenant scope one tenant at a time, per §7. A blanket
+   `GRANT ALL ON ALL TABLES … TO prsystem_maintenance` was removed in the Phase 03 review.
+
 6. **Police separation.** Police data lives in its own schema, behind its own repository boundary,
    reached only by `prsystem_police`. That role is not available to Hotel, Restaurant, Guest or
    Operation runtimes. This makes ADR-0005's isolation a database-level guarantee rather than only a

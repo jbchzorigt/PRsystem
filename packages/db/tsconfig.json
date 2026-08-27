@@ -8,5 +8,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "dist"]
+  "exclude": ["src/**/*.test.ts", "src/test-support/**", "dist"]
 }
