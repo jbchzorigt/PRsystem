@@ -117,17 +117,39 @@ jobs:
         run: pnpm run test:concurrency
         env:
           DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
-      # GATE-SEC is blocking and fails closed: an unavailable database, a skipped
-      # suite, a sub-gate that ran zero tests or a missing artefact all fail it.
-      # It must be added to the repository's required checks before merge — that
-      # is a GitHub branch-protection setting, deliberately not changed here.
-      - name: GATE-SEC
-        run: pnpm run test:security
-        env:
-          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
       - name: Report service state
         if: always()
         run: docker compose ps
+      - name: Stop backing services
+        if: always()
+        run: docker compose down -v
+
+  # A distinct job, so its display name is a selectable branch-protection check.
+  # A step inside another job is not: only the job name appears in the required
+  # checks list. Branch protection itself is a repository setting and is
+  # deliberately not configured here.
+  gate-sec:
+    name: GATE-SEC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Start backing services
+        run: docker compose up -d --wait
+      # Fails closed: unavailable database, skipped suite, zero-test sub-gate or
+      # missing artefact each fail the job rather than passing quietly.
+      - name: Run the fail-closed security aggregator
+        run: pnpm run test:security
+        env:
+          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
       - name: Stop backing services
         if: always()
         run: docker compose down -v

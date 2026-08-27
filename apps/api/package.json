@@ -7,10 +7,12 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --exclude 'src/security/**' --exclude 'src/health/health.http.test.ts'",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
-    "openapi": "tsx src/openapi.ts"
+    "openapi": "tsx src/openapi.ts",
+    "test:security": "vitest run src/security",
+    "test:integration": "vitest run src/health/health.http.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "11.2.3",
@@ -21,6 +23,7 @@
     "@prsystem/contracts": "workspace:*",
     "@prsystem/db": "workspace:*",
     "@prsystem/money": "workspace:*",
+    "@prsystem/ports": "workspace:*",
     "@prsystem/telemetry": "workspace:*",
     "@prsystem/time": "workspace:*",
     "fastify": "5.11.3",
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@nestjs/testing": "11.2.3",
+    "@prsystem/testing": "workspace:*",
     "@types/node": "22.20.1",
     "@types/pg": "8.23.1",
     "tsx": "4.23.12",

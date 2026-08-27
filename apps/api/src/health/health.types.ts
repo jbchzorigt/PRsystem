@@ -11,6 +11,8 @@ export interface DependencyProbeResult {
 export interface DependencyProbe {
   readonly name: string;
   check(): Promise<DependencyProbeResult>;
+  /** Releases any client the probe opened lazily. */
+  close?(): Promise<void>;
 }
 
 export interface ReadinessReport {

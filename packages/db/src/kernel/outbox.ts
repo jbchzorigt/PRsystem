@@ -22,9 +22,21 @@ export interface OutboxEventInput {
   readonly payload: Record<string, unknown>;
 }
 
+/**
+ * A claim is a *fence*, not just a payload.
+ *
+ * `claimedBy` and `claimRevision` identify this worker's hold on the delivery.
+ * Acknowledging quotes them back, so a worker whose lease expired and whose row
+ * another worker has since reclaimed cannot acknowledge or fail that reclaimed
+ * delivery. Without this, a slow worker finishing after its lease could mark
+ * another worker's in-flight claim published.
+ */
 export interface ClaimedOutboxEvent {
   readonly eventId: string;
+  /** Stable outbound idempotency key. Identical across every redelivery. */
   readonly eventUuid: string;
+  readonly claimedBy: string;
+  readonly claimRevision: number;
   readonly hotelId: string;
   readonly aggregateType: string;
   readonly aggregateId: string;
@@ -94,6 +106,8 @@ export async function claimOutboxBatch(
     correlation_id: string | null;
     causation_id: string | null;
     attempts: number;
+    claimed_by: string;
+    revision: number;
   }>(
     `WITH claimed AS (
        SELECT d.event_id
@@ -113,11 +127,12 @@ export async function claimOutboxBatch(
               revision = d.revision + 1
          FROM claimed
         WHERE d.event_id = claimed.event_id
-        RETURNING d.event_id, d.attempts
+        RETURNING d.event_id, d.attempts, d.claimed_by, d.revision
      )
      SELECT e.event_id::text AS event_id, e.event_uuid, e.hotel_id,
             e.aggregate_type, e.aggregate_id, e.event_type, e.event_version,
-            e.payload, e.correlation_id, e.causation_id, locked.attempts
+            e.payload, e.correlation_id, e.causation_id,
+            locked.attempts, locked.claimed_by, locked.revision
        FROM locked
        JOIN platform.outbox_event e ON e.event_id = locked.event_id
       ORDER BY e.event_id`,
@@ -136,17 +151,42 @@ export async function claimOutboxBatch(
     correlationId: row.correlation_id,
     causationId: row.causation_id,
     attempts: row.attempts,
+    claimedBy: row.claimed_by,
+    claimRevision: row.revision,
   }));
 }
 
-export async function markOutboxPublished(uow: UnitOfWork, eventId: string): Promise<void> {
-  await uow.query(
+/**
+ * The result of acknowledging a delivery.
+ *
+ * `stale_claim` is not an error condition to retry — it means another worker
+ * legitimately owns this delivery now, and this worker must simply stop.
+ */
+export type DeliveryAckResult =
+  { readonly outcome: 'acknowledged' } | { readonly outcome: 'stale_claim' };
+
+/**
+ * Marks a delivery published, fenced on the claim that produced it.
+ *
+ * The CAS covers event, state, claimant and claim revision together. Zero rows
+ * updated means the claim moved on; nothing is mutated and the caller is told.
+ */
+export async function markOutboxPublished(
+  uow: UnitOfWork,
+  claim: ClaimedOutboxEvent,
+): Promise<DeliveryAckResult> {
+  const result = await uow.query(
     `UPDATE platform.outbox_delivery
         SET state = 'published', published_at = now(), claimed_until = NULL,
             last_error = NULL, revision = revision + 1
-      WHERE event_id = $1`,
-    [eventId],
+      WHERE event_id = $1
+        AND state = 'claimed'
+        AND claimed_by = $2
+        AND revision = $3`,
+    [claim.eventId, claim.claimedBy, claim.claimRevision],
   );
+
+  return result.rowCount === 1 ? { outcome: 'acknowledged' } : { outcome: 'stale_claim' };
 }
 
 /**
@@ -156,19 +196,24 @@ export async function markOutboxPublished(uow: UnitOfWork, eventId: string): Pro
  */
 export async function markOutboxFailed(
   uow: UnitOfWork,
-  eventId: string,
+  claim: ClaimedOutboxEvent,
   errorName: string,
   maxAttempts = 10,
-): Promise<void> {
-  await uow.query(
+): Promise<DeliveryAckResult> {
+  const result = await uow.query(
     `UPDATE platform.outbox_delivery
-        SET state = CASE WHEN attempts >= $3 THEN 'failed' ELSE 'pending' END,
+        SET state = CASE WHEN attempts >= $4 THEN 'failed' ELSE 'pending' END,
             claimed_by = NULL,
             claimed_until = NULL,
             available_at = now() + make_interval(secs => least(300, power(2, attempts)::int)),
-            last_error = $2,
+            last_error = $3,
             revision = revision + 1
-      WHERE event_id = $1`,
-    [eventId, errorName, maxAttempts],
+      WHERE event_id = $1
+        AND state = 'claimed'
+        AND claimed_by = $2
+        AND revision = $5`,
+    [claim.eventId, claim.claimedBy, errorName, maxAttempts, claim.claimRevision],
   );
+
+  return result.rowCount === 1 ? { outcome: 'acknowledged' } : { outcome: 'stale_claim' };
 }

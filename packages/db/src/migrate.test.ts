@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { Pool } from 'pg';
 import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from './bootstrap';
@@ -141,21 +142,20 @@ async function schemaFingerprint(pool: Pool): Promise<string> {
   );
 }
 
-/** Materialises the journal as it stood at the end of Phase 02. */
-function baselineOnlyFolder(): string {
-  const folder = mkdtempSync(join(tmpdir(), 'prsystem-baseline-'));
-  mkdirSync(join(folder, 'meta'), { recursive: true });
+/**
+ * The frozen Phase 02 baseline, committed as a fixture.
+ *
+ * Deliberately **not** a runtime copy of the live `0000`: copying head to build
+ * the "previous release" would make the upgrade test assert that head upgrades
+ * from head, which is a tautology. This is the artefact as released.
+ */
+const FROZEN_BASELINE = resolve(__dirname, 'test-support', 'frozen-baseline');
+const FROZEN_BASELINE_SHA256 = '2a202d67ce10c9f8fa74166c38616c16e95216ff9f00c8cd6bf28bbb025858bc';
 
-  const journal = JSON.parse(
-    readFileSync(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
-  ) as { entries: { tag: string }[] };
-
-  const baseline = { ...journal, entries: journal.entries.slice(0, 1) };
-  writeFileSync(join(folder, 'meta', '_journal.json'), JSON.stringify(baseline), 'utf8');
-  const tag = baseline.entries[0]?.tag ?? '';
-  copyFileSync(join(MIGRATIONS_FOLDER, `${tag}.sql`), join(folder, `${tag}.sql`));
-
-  return folder;
+function frozenBaselineChecksum(): string {
+  return createHash('sha256')
+    .update(readFileSync(join(FROZEN_BASELINE, '0000_baseline.sql')))
+    .digest('hex');
 }
 
 beforeAll(async () => {
@@ -227,8 +227,12 @@ describe('migration runner', () => {
     }
   }, 60000);
 
+  it('uses the frozen Phase 02 artefact, not a copy of the current baseline', () => {
+    expect(frozenBaselineChecksum()).toBe(FROZEN_BASELINE_SHA256);
+  });
+
   it('upgrades a Phase 02 baseline database to head', async () => {
-    const baselineOutcome = await runMigrations(upgradeUrl, baselineOnlyFolder());
+    const baselineOutcome = await runMigrations(upgradeUrl, { migrationsFolder: FROZEN_BASELINE });
     expect(baselineOutcome.appliedAfter).toBe(1);
 
     const upgradeOutcome = await runMigrations(upgradeUrl);

@@ -3,10 +3,15 @@
 //
 //   node tools/gate-sec.mjs
 //
-// Aggregates seven sub-gates. It fails when PostgreSQL is unavailable, when a
-// required suite is skipped, when a sub-gate runs zero tests, or when an
-// expected artefact is missing — because a security gate that can pass by not
-// running is worse than no gate at all.
+// This is the **kernel security subset** of a cumulative gate. Phase 03 covers
+// roles, RLS, audit, partitions, Police isolation, key management, PII leakage
+// and secrets. Phase 22 expands the same gate with headers, CSP, the
+// penetration/security-review pass and the release checks. The name does not
+// change; the sub-gate list grows.
+//
+// It fails when PostgreSQL is unavailable, when a required suite is skipped,
+// when a sub-gate runs zero tests, or when an expected artefact is missing —
+// because a security gate that can pass by not running is worse than none.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -33,6 +38,52 @@ const SUB_GATES = [
     suite: 'src/security/sec-rls.test.ts',
     needsDatabase: true,
     artefacts: ['packages/db/src/classification.ts', 'packages/db/src/classification-check.ts'],
+  },
+  {
+    id: 'SEC-ACL-MATRIX',
+    what: 'every tenant table × runtime login × DML verb, with exact SQLSTATEs',
+    filter: '@prsystem/db',
+    suite: 'src/security/sec-acl-matrix.test.ts',
+    needsDatabase: true,
+    artefacts: ['packages/db/src/security/sec-acl-matrix.test.ts'],
+  },
+  {
+    id: 'SEC-OWNERSHIP',
+    what: 'object ownership and serialised cluster bootstrap',
+    filter: '@prsystem/db',
+    suite: 'src/security/sec-ownership.test.ts',
+    needsDatabase: true,
+    artefacts: [
+      'packages/db/bootstrap/cluster-roles.sql',
+      'packages/db/src/test-support/bootstrap-once.ts',
+    ],
+  },
+  {
+    id: 'SEC-MAINTENANCE',
+    what: 'maintenance is accountable: generated audit id, no invented reference',
+    filter: '@prsystem/db',
+    suite: 'src/security/sec-maintenance.test.ts',
+    needsDatabase: true,
+    artefacts: ['packages/db/migrations/0001_kernel.sql'],
+  },
+  {
+    id: 'SEC-STARTUP',
+    what: 'principal and key-management guards refuse before a port is bound',
+    filter: '@prsystem/api',
+    suite: 'src/security/startup-guard.test.ts',
+    needsDatabase: true,
+    artefacts: [
+      'apps/api/src/observability/connection-guard.ts',
+      'apps/worker/src/observability/connection-guard.ts',
+    ],
+  },
+  {
+    id: 'SEC-REGRESSION',
+    what: 'the reproduced Phase 03 review defects stay fixed',
+    filter: '@prsystem/db',
+    suite: 'src/regression/phase03-repair.test.ts',
+    needsDatabase: true,
+    artefacts: ['packages/db/src/regression/phase03-repair.test.ts'],
   },
   {
     id: 'SEC-AUDIT',

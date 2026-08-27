@@ -1,10 +1,13 @@
-export { MIGRATIONS_FOLDER, runMigrations } from './migrate';
+export { MIGRATIONS_FOLDER, MIGRATION_LOCK_KEY, MIGRATION_ROLE, runMigrations } from './migrate';
 export type { MigrationOutcome, RunMigrationsOptions } from './migrate';
 export {
+  BOOTSTRAP_LOCK_KEY,
   BOOTSTRAP_SQL,
   BootstrapError,
+  DEFAULT_COORDINATION_DATABASE,
   GROUP_ROLES,
   LOGIN_PRINCIPALS,
+  RUNTIME_AND_READER_ROLES,
   UNREACHABLE_ROLES,
   bootstrapCluster,
 } from './bootstrap';
@@ -50,7 +53,7 @@ export {
   markOutboxFailed,
   markOutboxPublished,
 } from './kernel/outbox';
-export type { ClaimedOutboxEvent, OutboxEventInput } from './kernel/outbox';
+export type { ClaimedOutboxEvent, DeliveryAckResult, OutboxEventInput } from './kernel/outbox';
 export { claimConsumption, payloadHash, registerProviderEvent } from './kernel/inbox';
 export type { ProviderEventInput, ProviderEventOutcome } from './kernel/inbox';
 export {

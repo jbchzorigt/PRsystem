@@ -1,4 +1,11 @@
-import type { Pool } from 'pg';
+/** Anything that can run a query — a Client or a Pool. Migrations use a single
+ *  Client so the guard, the advisory lock and the journal share one backend. */
+export interface Queryable {
+  query<R extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: unknown[],
+  ): Promise<{ rows: R[]; rowCount: number | null }>;
+}
 
 /**
  * Connection principal guards.
@@ -38,7 +45,7 @@ export interface PrincipalFacts {
   readonly memberOf: readonly string[];
 }
 
-export async function readPrincipalFacts(pool: Pool): Promise<PrincipalFacts> {
+export async function readPrincipalFacts(pool: Queryable): Promise<PrincipalFacts> {
   const attributes = await pool.query<{
     current_user: string;
     session_user: string;
@@ -109,19 +116,32 @@ function assertNoPrivilegedAttribute(facts: PrincipalFacts): void {
   }
 }
 
-/** Roles an application connection must be unable to reach, directly or transitively. */
+/**
+ * Roles an application connection must be unable to reach, directly or
+ * transitively. Every function owner is here, not only the break-glass role: a
+ * runtime that could assume `prsystem_audit_writer` could write audit rows the
+ * wrapper would never have produced.
+ */
 export const FORBIDDEN_FOR_RUNTIME = [
   'prsystem_migrate',
   'prsystem_maintenance',
+  'prsystem_maintenance_fn',
   'prsystem_audit_writer',
   'prsystem_partition_mgr',
 ] as const;
+
+/** The complete membership closure a runtime login is permitted to have. */
+const ALLOWED_RUNTIME_CLOSURE: Readonly<Record<string, readonly string[]>> = {
+  prsystem_api: ['prsystem_api'],
+  prsystem_worker: ['prsystem_worker'],
+  prsystem_police: ['prsystem_police'],
+};
 
 /**
  * Verifies a migration connection: restricted, non-superuser, a member of
  * `prsystem_migrate`, and of no function-owner or maintenance role.
  */
-export async function assertMigrationPrincipal(pool: Pool): Promise<PrincipalFacts> {
+export async function assertMigrationPrincipal(pool: Queryable): Promise<PrincipalFacts> {
   const facts = await readPrincipalFacts(pool);
   assertNoPrivilegedAttribute(facts);
 
@@ -148,7 +168,7 @@ export async function assertMigrationPrincipal(pool: Pool): Promise<PrincipalFac
  * migration, owner or maintenance roles.
  */
 export async function assertRuntimePrincipal(
-  pool: Pool,
+  pool: Queryable,
   expectedGroup: 'prsystem_api' | 'prsystem_worker' | 'prsystem_police',
 ): Promise<PrincipalFacts> {
   const facts = await readPrincipalFacts(pool);
@@ -168,5 +188,18 @@ export async function assertRuntimePrincipal(
       );
     }
   }
+
+  // An exact closure, not merely "contains the expected role". A login that also
+  // reached some other group would pass a containment check while holding reach
+  // the design never granted it.
+  const allowed = new Set(ALLOWED_RUNTIME_CLOSURE[expectedGroup] ?? [expectedGroup]);
+  const unexpected = facts.memberOf.filter((role) => !allowed.has(role));
+  if (unexpected.length > 0) {
+    throw new PrincipalError(
+      `${facts.sessionUser} additionally reaches ${unexpected.join(', ')}`,
+      'unexpected_membership',
+    );
+  }
+
   return facts;
 }

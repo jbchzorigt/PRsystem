@@ -22,7 +22,15 @@ platform operators. `04-logical-data-model.md` left partitioning open as **DM-02
    `audit.append_platform_audit_event` and `police_audit.append_police_security_event`, which derive
    server time, realm, actor and tenant scope from the trusted transaction context rather than
    accepting them from the caller, and which are owned by `prsystem_audit_writer` — a role holding
-   `INSERT` and not `SELECT`. Reading is the privilege of the dedicated `prsystem_audit_reader`,
+   `INSERT` and not `SELECT`.
+
+   **One writer owns both functions, by design.** That is an *infrastructure*
+   role, not a runtime one, and it is a different kind of separation from the
+   realm boundary: it is NOLOGIN, no runtime can assume it, it can read neither
+   stream, and it never chooses what it writes. Realm separation is enforced by
+   the realm check inside each function and by realm-separated `EXECUTE` grants —
+   `prsystem_api`/`prsystem_worker` on the platform function, `prsystem_police` on
+   the Police one. Splitting the owner would add a role without adding a boundary. Reading is the privilege of the dedicated `prsystem_audit_reader`,
    which in turn cannot write. `police_audit.security_event` is the same shape with `prsystem_police` and
    `prsystem_police_audit_reader`, and neither reader can cross to the other stream. The earlier
    wording granted runtime roles `SELECT` as well, which would have let any API query read the whole

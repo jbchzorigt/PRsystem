@@ -5,10 +5,13 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { SwaggerModule } from '@nestjs/swagger';
 import { createLogger } from '@prsystem/telemetry';
 import { env } from '@prsystem/config';
+import { Pool } from 'pg';
 import { API_PREFIX, UNVERSIONED_PATHS } from '@prsystem/contracts';
+import { selectKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
 import { registerCorrelation } from './observability/correlation.plugin';
 import { ApiErrorFilter } from './observability/api-error.filter';
+import { assertApiConnectionPrincipal } from './observability/connection-guard';
 import { OPENAPI_PATH, buildOpenApiDocument } from './openapi-document';
 
 export interface BootstrapOptions {
@@ -22,6 +25,25 @@ export async function createApp(
 ): Promise<{ app: NestFastifyApplication; port: number }> {
   const config = env();
   const logger = createLogger({ level: config.LOG_LEVEL, serviceName: config.OTEL_SERVICE_NAME });
+
+  // Security preconditions run before anything is constructed and long before a
+  // port is bound. A process that cannot prove its identity, or that has no key
+  // management, must never reach the point of accepting a request.
+  const guardPool = new Pool({ connectionString: config.DATABASE_URL, max: 1 });
+  try {
+    await assertApiConnectionPrincipal(guardPool, logger);
+    // Throws when the adapter is `none`, when a production build asks for the
+    // local simulator, or when the configuration is missing or unknown.
+    selectKeyManagement({
+      appEnv: config.APP_ENV,
+      kmsAdapter: config.KMS_ADAPTER,
+      ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
+    });
+  } finally {
+    // Released whether the guard passed or threw: a refused startup must not
+    // leave a connection behind.
+    await guardPool.end();
+  }
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
     // Nest's own bootstrap logging is suppressed; the redacting logger is authoritative.

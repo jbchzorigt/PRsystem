@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetEnvCache } from '@prsystem/config';
 import { CORRELATION_HEADER } from '@prsystem/telemetry';
+import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
+import type { TestDatabase } from '@prsystem/testing';
+import { LOGIN_PRINCIPALS, bootstrapCluster, runMigrations } from '@prsystem/db';
+import type { LoginPrincipal } from '@prsystem/db';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 
 /**
@@ -11,18 +15,37 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
  * whether Postgres and Redis happen to be running, which would make the test
  * environment-dependent. Readiness logic is covered deterministically in
  * readiness.service.test.ts, and the live-dependency check is a separate compose gate.
+ *
+ * The app boots through its real startup guards, so this needs a real, restricted
+ * runtime principal — a bootstrapped scratch database and the `prsystem_api_login`
+ * credential. There is deliberately no way to switch the guards off: an option to
+ * skip them in tests is an option to ship with them skipped.
  */
 
 let app: NestFastifyApplication;
 let baseUrl: string;
+let db: TestDatabase;
 
 beforeAll(async () => {
+  db = await createTestDatabase('api_health');
+  await bootstrapCluster({
+    adminUrl: db.url,
+    database: db.name,
+    logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+      principal,
+      password: TEST_LOGIN_PASSWORD,
+    })),
+  });
+  await runMigrations(db.loginUrl(TEST_LOGIN_PRINCIPALS.migrate));
+
   Object.assign(process.env, {
     NODE_ENV: 'test',
     APP_ENV: 'ci',
     LOG_LEVEL: 'error',
     API_HOST: '127.0.0.1',
-    DATABASE_URL: 'postgresql://prsystem_api:local@127.0.0.1:59999/prsystem',
+    KMS_ADAPTER: 'local',
+    KMS_SEED: 'synthetic-api-health-seed',
+    DATABASE_URL: db.loginUrl(TEST_LOGIN_PRINCIPALS.api),
     REDIS_URL: 'redis://127.0.0.1:59998',
     OBJECT_STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
     OBJECT_STORAGE_BUCKET: 'prsystem-local',
@@ -37,10 +60,11 @@ beforeAll(async () => {
   const started = await createApp({ port: 0 });
   app = started.app;
   baseUrl = `http://127.0.0.1:${started.port}`;
-}, 30000);
+}, 120000);
 
 afterAll(async () => {
   await app?.close();
+  await db?.drop();
   resetEnvCache();
 });
 

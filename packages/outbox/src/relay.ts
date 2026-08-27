@@ -27,6 +27,8 @@ export interface RelayResult {
   readonly claimed: number;
   readonly published: number;
   readonly failed: number;
+  /** Deliveries another worker had already reclaimed by acknowledgement time. */
+  readonly staleClaims: number;
 }
 
 export interface RelayOptions {
@@ -56,26 +58,33 @@ export async function relayOnce(
 
   let published = 0;
   let failed = 0;
+  let staleClaims = 0;
 
   for (const event of claimed) {
     try {
       await publisher.publish(event);
-      await withTenantTransaction(pool, context, (uow) => markOutboxPublished(uow, event.eventId));
-      published += 1;
+      // Fenced on this worker's claim. If the lease expired and another worker
+      // took the delivery, this acknowledgement must not land on their claim.
+      const ack = await withTenantTransaction(pool, context, (uow) =>
+        markOutboxPublished(uow, event),
+      );
+      if (ack.outcome === 'stale_claim') staleClaims += 1;
+      else published += 1;
     } catch (error) {
       // Only the error's name is recorded. A message can carry a provider payload
       // or a connection string, and this row is durable (CLAUDE.md §8).
-      await withTenantTransaction(pool, context, (uow) =>
+      const ack = await withTenantTransaction(pool, context, (uow) =>
         markOutboxFailed(
           uow,
-          event.eventId,
+          event,
           error instanceof Error ? error.name : 'UnknownError',
           options.maxAttempts ?? 10,
         ),
       );
-      failed += 1;
+      if (ack.outcome === 'stale_claim') staleClaims += 1;
+      else failed += 1;
     }
   }
 
-  return { claimed: claimed.length, published, failed };
+  return { claimed: claimed.length, published, failed, staleClaims };
 }

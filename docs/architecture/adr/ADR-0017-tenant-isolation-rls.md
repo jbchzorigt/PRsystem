@@ -48,6 +48,10 @@ existing controls; it never replaces them.
    | `prsystem_maintenance_fn` | function owner | owns cross-tenant maintenance functions; sets scope per tenant | reachable only by `prsystem_migrate` |
    | `prsystem_maintenance` | **break-glass** | **owns nothing, grants nothing** | `BYPASSRLS`; **reachable by nobody, including the migration principal** |
 
+   Ten group roles in total, created by the cluster bootstrap under a
+   session-level coordination lock. Objects are owned by the *group*, never by a
+   login: the migration runner `SET ROLE`s before applying the journal.
+
    Every LOGIN principal is created by deployment configuration, is
    `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, and is a member of exactly one
    group. No ordinary API or worker role holds `BYPASSRLS`, and no runtime role can `SET ROLE` into a

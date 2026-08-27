@@ -26,6 +26,25 @@ let apiPool: Pool;
 let workerPool: Pool;
 let auditReader: Pool;
 
+/**
+ * Releases only once `parties` callers have arrived.
+ *
+ * Without this, `Promise.all` of two transactions proves nothing: the first can
+ * finish its critical section before the second has started one.
+ */
+function createBarrier(parties: number): () => Promise<void> {
+  let arrived = 0;
+  let release: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return () => {
+    arrived += 1;
+    if (arrived >= parties) release();
+    return gate;
+  };
+}
+
 function ctx(overrides: Partial<TenantContext> = {}): TenantContext {
   return {
     hotelId: HOTEL,
@@ -211,20 +230,39 @@ describe('outbox relay under concurrency (ADR-0010, ADR-0011)', () => {
     });
   }
 
-  it('never lets two workers claim the same row', async () => {
+  it('never lets two workers claim the same row, and both claim something', async () => {
     await seed(20, 'race');
 
-    const [first, second] = await Promise.all([
-      withTenantTransaction(workerPool, ctx(), (uow) => claimOutboxBatch(uow, 'worker-1', 20)),
-      withTenantTransaction(workerPool, ctx(), (uow) => claimOutboxBatch(uow, 'worker-2', 20)),
-    ]);
+    // Two dedicated pools so the two claims cannot share a backend, and a
+    // barrier so both are genuinely inside the critical section at once.
+    const poolA = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
+    const poolB = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
+    try {
+      const barrier = createBarrier(2);
+      const claim = async (pool: Pool, worker: string): Promise<{ pid: number; ids: string[] }> =>
+        withTenantTransaction(pool, ctx(), async (uow) => {
+          const backend = await uow.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          // Inside the transaction, before claiming: neither side may run ahead.
+          await barrier();
+          const events = await claimOutboxBatch(uow, worker, 10);
+          return { pid: backend.rows[0]!.pid, ids: events.map((e) => e.eventId) };
+        });
 
-    const firstIds = new Set(first.map((event) => event.eventId));
-    const overlap = second.filter((event) => firstIds.has(event.eventId));
+      const [first, second] = await Promise.all([
+        claim(poolA, 'worker-1'),
+        claim(poolB, 'worker-2'),
+      ]);
 
-    expect(overlap).toEqual([]);
-    expect(first.length + second.length).toBeGreaterThan(0);
-  });
+      // Distinct backends, or the "race" was one session doing two things.
+      expect(first.pid).not.toBe(second.pid);
+      expect(first.ids.length).toBeGreaterThan(0);
+      expect(second.ids.length).toBeGreaterThan(0);
+      expect(first.ids.filter((id) => second.ids.includes(id))).toEqual([]);
+    } finally {
+      await poolA.end();
+      await poolB.end();
+    }
+  }, 60000);
 
   it('returns an event to the queue when a worker dies mid-delivery', async () => {
     await seed(1, 'crash');
@@ -266,9 +304,7 @@ describe('outbox relay under concurrency (ADR-0010, ADR-0011)', () => {
     const event = claimed[0];
     expect(event).toBeDefined();
 
-    await withTenantTransaction(workerPool, ctx(), (uow) =>
-      markOutboxPublished(uow, String(event?.eventId)),
-    );
+    await withTenantTransaction(workerPool, ctx(), (uow) => markOutboxPublished(uow, event!));
 
     const after = await withTenantTransaction(workerPool, ctx(), (uow) =>
       claimOutboxBatch(uow, 'worker-2', 50),
@@ -278,47 +314,63 @@ describe('outbox relay under concurrency (ADR-0010, ADR-0011)', () => {
 });
 
 describe('additional concurrency evidence (Phase 03 review)', () => {
-  it('separates two different keys sharing one provider reference', async () => {
+  it('separates two different keys sharing one provider reference, concurrently', async () => {
     // Two distinct idempotency keys may legitimately carry the same business
     // reference. The provider-event unique constraint, not the idempotency key,
     // is what stops the second one producing a second effect.
     const reference = 'REF-SHARED-0001';
+    const poolA = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+    const poolB = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
 
-    const first = await withTenantTransaction(apiPool, ctx(), async (uow) => {
-      const claim = await claimIdempotencyKey(uow, {
-        operation: 'kernel.callback.apply',
-        key: 'idem-shared-ref-00001',
-        clientRef: 'client-synthetic',
-        payload: { reference },
-      });
-      expect(claim.kind).toBe('claimed');
-      return registerProviderEvent(uow, {
-        provider: 'qpay',
-        providerEventId: reference,
-        eventKind: 'payment.succeeded',
-        rawPayload: `{"reference":"${reference}"}`,
-        metadata: { reference },
-      });
-    });
-    expect(first.kind).toBe('first_delivery');
+    try {
+      const barrier = createBarrier(2);
+      const attempt = async (pool: Pool, key: string) =>
+        withTenantTransaction(pool, ctx(), async (uow) => {
+          const backend = await uow.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          const claim = await claimIdempotencyKey(uow, {
+            operation: 'kernel.callback.apply',
+            key,
+            clientRef: 'client-synthetic',
+            payload: { reference },
+          });
+          expect(claim.kind).toBe('claimed');
+          // Both sides hold their idempotency claim before either registers the
+          // provider event, so the unique constraint is what decides.
+          await barrier();
+          const outcome = await registerProviderEvent(uow, {
+            provider: 'qpay',
+            providerEventId: reference,
+            eventKind: 'payment.succeeded',
+            rawPayload: `{"reference":"${reference}"}`,
+            metadata: { reference },
+          });
+          return { pid: backend.rows[0]!.pid, outcome };
+        });
 
-    const second = await withTenantTransaction(apiPool, ctx(), async (uow) => {
-      const claim = await claimIdempotencyKey(uow, {
-        operation: 'kernel.callback.apply',
-        key: 'idem-shared-ref-00002',
-        clientRef: 'client-synthetic',
-        payload: { reference },
-      });
-      expect(claim.kind).toBe('claimed');
-      return registerProviderEvent(uow, {
-        provider: 'qpay',
-        providerEventId: reference,
-        eventKind: 'payment.succeeded',
-        rawPayload: `{"reference":"${reference}"}`,
-        metadata: { reference },
-      });
-    });
-    expect(second).toEqual({ kind: 'duplicate', payloadMatches: true });
+      const results = await Promise.allSettled([
+        attempt(poolA, 'idem-shared-ref-00001'),
+        attempt(poolB, 'idem-shared-ref-00002'),
+      ]);
+      const settled = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+
+      // Distinct idempotency keys both claim; exactly one registers the provider
+      // event as a first delivery. The other sees a duplicate or loses the race
+      // on the unique index — either way there is one effect, never two.
+      const firstDeliveries = settled.filter((r) => r.outcome.kind === 'first_delivery');
+      expect(firstDeliveries).toHaveLength(1);
+      if (settled.length === 2) expect(settled[0]!.pid).not.toBe(settled[1]!.pid);
+
+      const stored = await withTenantTransaction(apiPool, ctx(), (uow) =>
+        uow.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM platform.provider_event WHERE provider_event_id = $1`,
+          [reference],
+        ),
+      );
+      expect(stored.rows[0]?.count).toBe('1');
+    } finally {
+      await poolA.end();
+      await poolB.end();
+    }
   });
 
   it('leaves no audit or outbox orphan when the losing transaction rolls back', async () => {
@@ -449,15 +501,42 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
     expect(effects).toBe(1);
   });
 
-  it('derives a stable outbound idempotency key from the event identity', async () => {
-    // The relay must present the same key on every redelivery, or the downstream
-    // provider would treat a retry as a new request.
-    const claimed = await withTenantTransaction(workerPool, ctx(), (uow) =>
-      claimOutboxBatch(uow, 'worker-stable', 50, 60),
+  it('presents the same outbound idempotency key on every redelivery', async () => {
+    // Seeded here rather than relying on whatever earlier tests left behind, and
+    // actually redelivered: the property is that the key survives a redelivery,
+    // not merely that claimed rows have distinct uuids.
+    await withTenantTransaction(workerPool, ctx(), (uow) =>
+      appendOutboxEvent(uow, {
+        aggregateType: 'kernel_probe',
+        aggregateId: 'stable-key',
+        eventType: 'kernel.probe.created',
+        payload: { stage: 'stable' },
+      }),
     );
-    const withUuid = claimed.filter((e) => e.eventUuid.length > 0);
-    expect(withUuid.length).toBe(claimed.length);
-    expect(new Set(claimed.map((e) => e.eventUuid)).size).toBe(claimed.length);
+
+    const first = await withTenantTransaction(workerPool, ctx(), (uow) =>
+      claimOutboxBatch(uow, 'worker-stable-1', 50, 1),
+    );
+    const target = first.find((e) => e.aggregateId === 'stable-key');
+    expect(target).toBeDefined();
+
+    await withTenantTransaction(workerPool, ctx(), (uow) =>
+      uow.query(
+        `UPDATE platform.outbox_delivery SET claimed_until = now() - interval '1 minute'
+          WHERE event_id = $1`,
+        [target?.eventId],
+      ),
+    );
+
+    const second = await withTenantTransaction(workerPool, ctx(), (uow) =>
+      claimOutboxBatch(uow, 'worker-stable-2', 50),
+    );
+    const again = second.find((e) => e.eventId === target?.eventId);
+
+    expect(again).toBeDefined();
+    expect(again?.eventUuid).toBe(target?.eventUuid);
+    // The claim fence moved on even though the outbound key did not.
+    expect(again?.claimRevision).toBeGreaterThan(target!.claimRevision);
   });
 
   it('serialises two migration runners after one role bootstrap', async () => {

@@ -710,6 +710,8 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
+ALTER FUNCTION platform.partition_horizon(text, text) OWNER TO prsystem_partition_mgr;
+--> statement-breakpoint
 REVOKE ALL ON FUNCTION platform.partition_horizon(text, text) FROM PUBLIC;
 --> statement-breakpoint
 
@@ -867,6 +869,10 @@ BEGIN
 END
 $$;
 --> statement-breakpoint
+-- Both append functions share this owner by approved design (ADR-0018): it is an
+-- infrastructure role with INSERT and no SELECT on either stream, which no
+-- runtime can assume. Realm separation is enforced by the realm check inside each
+-- function and by realm-separated EXECUTE grants — not by having two owners.
 ALTER FUNCTION police_audit.append_police_security_event(text, text, text, text, jsonb)
   OWNER TO prsystem_audit_writer;
 --> statement-breakpoint
@@ -876,47 +882,90 @@ REVOKE ALL ON FUNCTION police_audit.append_police_security_event(text, text, tex
 -- ------------------------------------------- cross-tenant maintenance surface
 -- ADR-0017 §8. A cross-tenant job establishes scope per tenant rather than
 -- bypassing RLS: the owner of this function holds no BYPASSRLS, so the only way
--- it can see a tenant's rows is to set that tenant's scope, one transaction at a
--- time. Every invocation must name a job id, a reason and an audit reference.
+-- it can see a tenant's rows is to set that tenant's scope.
+--
+-- The audit reference is **generated here**, not supplied by the caller: a
+-- reference the caller invents is not evidence of anything. The immutable record
+-- is the row in audit.platform_event; platform.operational_alert is telemetry
+-- and carries the generated audit id so an operator can find that record.
+--
+-- Deletion and audit share one transaction, so a failure to record the audit
+-- rolls the deletion back (ADR-0018 §5).
 CREATE OR REPLACE FUNCTION platform.maintenance_expire_idempotency_keys(
-  p_hotel_id  uuid,
-  p_job_id    text,
-  p_reason    text,
-  p_audit_ref text
-) RETURNS integer
+  p_job_run_id uuid
+) RETURNS TABLE (deleted integer, audit_event_id uuid)
   LANGUAGE plpgsql
   SECURITY DEFINER
   SET search_path = pg_catalog, pg_temp
   AS $$
 DECLARE
   v_deleted integer;
+  v_audit_event_id uuid;
+  v_hotel uuid := platform.current_hotel_id();
+  v_realm text := platform.current_realm();
+  v_actor text := platform.current_actor_ref();
+  v_correlation text := nullif(pg_catalog.current_setting('app.correlation_id', true), '');
+  v_job record;
 BEGIN
-  IF p_hotel_id IS NULL OR coalesce(pg_catalog.length(p_job_id), 0) = 0
-     OR coalesce(pg_catalog.length(p_reason), 0) = 0
-     OR coalesce(pg_catalog.length(p_audit_ref), 0) = 0 THEN
-    RAISE EXCEPTION 'maintenance requires hotel scope, job id, reason and audit reference'
-      USING ERRCODE = '22023';
+  -- Trusted transaction context, not caller-supplied identity.
+  IF v_hotel IS NULL OR v_actor IS NULL OR v_realm IS NULL OR v_correlation IS NULL THEN
+    RAISE EXCEPTION
+      'maintenance requires an established transaction context (hotel, realm, actor, correlation)'
+      USING ERRCODE = '42501';
   END IF;
 
-  PERFORM pg_catalog.set_config('app.hotel_id', p_hotel_id::text, true);
+  -- The Police realm has its own stream and its own principals; a platform
+  -- maintenance action must not be attributed to it.
+  IF v_realm = 'police' THEN
+    RAISE EXCEPTION 'the police realm may not run platform maintenance' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_job_run_id IS NULL THEN
+    RAISE EXCEPTION 'maintenance requires a running job identity' USING ERRCODE = '22023';
+  END IF;
+
+  -- Lock the job row: the run is the unit of accountability, and two concurrent
+  -- invocations must not share one.
+  SELECT * INTO v_job
+    FROM platform.job_run
+   WHERE job_run_id = p_job_run_id AND hotel_id = v_hotel AND state = 'running'
+   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no running job_run % for this tenant', p_job_run_id USING ERRCODE = '22023';
+  END IF;
 
   DELETE FROM platform.idempotency_key
-   WHERE hotel_id = p_hotel_id AND expires_at < pg_catalog.now() AND state <> 'in_progress';
+   WHERE hotel_id = v_hotel AND expires_at < pg_catalog.now() AND state <> 'in_progress';
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
+  -- Immutable audit, same transaction. If this raises, the delete above is undone.
+  v_audit_event_id := audit.append_platform_audit_event(
+    'platform.maintenance.expire_idempotency_keys',
+    'allowed',
+    'job_run',
+    p_job_run_id::text,
+    v_job.job_name,
+    pg_catalog.jsonb_build_object('rows', v_deleted)
+  );
+
+  -- Telemetry, carrying the generated audit id. Not the audit record itself.
   INSERT INTO platform.operational_alert (alert_code, severity, detail)
   VALUES ('MAINTENANCE_RUN', 'info',
           pg_catalog.jsonb_build_object('operation', 'expire_idempotency_keys',
-                                        'jobId', p_job_id, 'reason', p_reason,
-                                        'auditRef', p_audit_ref, 'rows', v_deleted));
-  RETURN v_deleted;
+                                        'jobRunId', p_job_run_id,
+                                        'jobName', v_job.job_name,
+                                        'auditEventId', v_audit_event_id,
+                                        'rows', v_deleted));
+
+  RETURN QUERY SELECT v_deleted, v_audit_event_id;
 END
 $$;
 --> statement-breakpoint
-ALTER FUNCTION platform.maintenance_expire_idempotency_keys(uuid, text, text, text)
+ALTER FUNCTION platform.maintenance_expire_idempotency_keys(uuid)
   OWNER TO prsystem_maintenance_fn;
 --> statement-breakpoint
-REVOKE ALL ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid) FROM PUBLIC;
 --> statement-breakpoint
 
 -- ---------------------------------------------------------- row level security
@@ -1099,8 +1148,21 @@ GRANT EXECUTE ON FUNCTION
   platform.check_partition_horizon(integer)
   TO prsystem_worker, prsystem_migrate;
 --> statement-breakpoint
-GRANT EXECUTE ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid, text, text, text)
-  TO prsystem_worker;
+GRANT EXECUTE ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid) TO prsystem_worker;
+--> statement-breakpoint
+-- The maintenance definer writes its own immutable audit record and reads the
+-- job row it locks, so it needs those two rights and no others.
+-- USAGE only: the definer writes its own immutable audit record through the
+-- wrapper and holds no table privilege on the stream.
+GRANT USAGE ON SCHEMA audit TO prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION audit.append_platform_audit_event(text, text, text, text, text, jsonb)
+  TO prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT SELECT, UPDATE ON platform.job_run TO prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.current_realm(), platform.current_actor_ref()
+  TO prsystem_maintenance_fn;
 --> statement-breakpoint
 
 -- Created last, so every partition is stamped with the ownership, grants and
@@ -1109,3 +1171,16 @@ GRANT EXECUTE ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid, tex
 SELECT platform.ensure_month_partitions('audit', 'platform_event', now(), 4);
 --> statement-breakpoint
 SELECT platform.ensure_month_partitions('police_audit', 'security_event', now(), 4);
+--> statement-breakpoint
+
+-- ---------------------------------------------------- final privilege trim
+-- CREATE on a schema is needed only to *own* an object there. Once ownership is
+-- settled, the audit writer and the maintenance definer need none — the next
+-- migration re-grants it at the top of this file if it must transfer ownership
+-- again. The partition manager keeps CREATE on the two audit schemas, because
+-- attaching next month's partition is exactly that privilege.
+REVOKE CREATE ON SCHEMA platform FROM prsystem_audit_writer, prsystem_maintenance_fn;
+--> statement-breakpoint
+REVOKE CREATE ON SCHEMA audit, police_audit FROM prsystem_audit_writer;
+--> statement-breakpoint
+REVOKE CREATE ON SCHEMA platform FROM prsystem_partition_mgr;

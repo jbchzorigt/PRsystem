@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 
 /**
  * Cluster bootstrap runner.
@@ -36,6 +36,15 @@ export const GROUP_ROLES = [
  * transitively. `prsystem_maintenance` is additionally unreachable by the
  * migration principal, because it is the one role that holds BYPASSRLS.
  */
+/** Roles a deployment's runtime and reader logins map onto. */
+export const RUNTIME_AND_READER_ROLES = [
+  'prsystem_api',
+  'prsystem_worker',
+  'prsystem_police',
+  'prsystem_audit_reader',
+  'prsystem_police_audit_reader',
+] as const;
+
 export const UNREACHABLE_ROLES = [
   'prsystem_maintenance',
   'prsystem_maintenance_fn',
@@ -66,11 +75,27 @@ export interface LoginCredential {
   readonly password: string;
 }
 
+/**
+ * Session-level advisory lock key for the whole bootstrap.
+ *
+ * Advisory locks are scoped to the database that holds them, so every runner
+ * must coordinate through the *same* database or they are not serialised at all.
+ */
+export const BOOTSTRAP_LOCK_KEY = 7_733_105_411;
+
+/** Where every runner takes the coordination lock. Same for all of them. */
+export const DEFAULT_COORDINATION_DATABASE = 'postgres';
+
 export interface BootstrapOptions {
   /** Superuser or CREATEROLE-plus operator connection. A DBA/IaC step. */
   readonly adminUrl: string;
   /** Database the runtimes connect to; CONNECT is granted per role on it. */
   readonly database: string;
+  /**
+   * Database used only to hold the coordination lock. Defaults to `postgres`.
+   * Every concurrent runner must name the same one.
+   */
+  readonly coordinationDatabase?: string;
   /**
    * Login principals to create or re-assert. Omit to bootstrap group roles only,
    * which is what a production run does when logins are managed by IaC.
@@ -122,95 +147,170 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
   }
   for (const credential of options.logins ?? []) assertStrongEnough(credential);
 
-  const pool = new Pool({ connectionString: options.adminUrl, max: 1 });
+  const coordinationDatabase = options.coordinationDatabase ?? DEFAULT_COORDINATION_DATABASE;
+  const coordinationUrl = withDatabase(options.adminUrl, coordinationDatabase);
+
+  // One dedicated session holds the lock for the whole operation. A
+  // transaction-scoped lock would end at COMMIT — before the database grants,
+  // the `public` grants and the login changes that follow — leaving exactly the
+  // catalog race this exists to prevent.
+  const coordinator = new Client({ connectionString: coordinationUrl });
+  await coordinator.connect();
+
+  let held = false;
   try {
-    const statements = readFileSync(BOOTSTRAP_SQL, 'utf8')
-      .split('--> statement-breakpoint')
-      .map((chunk) => chunk.trim())
-      .filter((chunk) => chunk.length > 0);
+    await coordinator.query('SELECT pg_advisory_lock($1)', [BOOTSTRAP_LOCK_KEY]);
+    held = true;
 
-    // One transaction: the advisory lock is transaction-scoped, so the whole
-    // bootstrap is serialised against every other runner in the cluster.
-    const client = await pool.connect();
+    const pool = new Pool({ connectionString: options.adminUrl, max: 1 });
     try {
-      await client.query('BEGIN');
-      for (const statement of statements) await client.query(statement);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
+      await applyGroupRoles(pool);
+      await applyDatabaseGrants(pool, options.database);
+      const loginsConfigured = await applyLogins(pool, options.logins ?? []);
+      await assertInvariants(pool);
+
+      return { groupRoles: GROUP_ROLES.length, loginsConfigured };
     } finally {
-      client.release();
+      await pool.end();
     }
-
-    await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM PUBLIC', [options.database]);
-    for (const role of [
-      'prsystem_api',
-      'prsystem_worker',
-      'prsystem_police',
-      'prsystem_audit_reader',
-      'prsystem_police_audit_reader',
-      'prsystem_migrate',
-    ]) {
-      await executeFormatted(pool, 'GRANT CONNECT ON DATABASE %I TO %I', [options.database, role]);
-    }
-    // Only the DDL group may create schemas. A runtime role that could CREATE
-    // could also place an object ahead of a fully qualified one on search_path.
-    await executeFormatted(pool, 'GRANT CREATE ON DATABASE %I TO %I', [
-      options.database,
-      'prsystem_migrate',
-    ]);
-
-    // PUBLIC holds nothing on `public`; named roles get exactly what they need.
-    // Extensions live there, so the DDL group needs CREATE and every runtime
-    // needs USAGE to resolve an extension-provided function.
-    await pool.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
-    await executeFormatted(pool, 'GRANT CREATE, USAGE ON SCHEMA public TO %I', [
-      'prsystem_migrate',
-    ]);
-    for (const role of [
-      'prsystem_api',
-      'prsystem_worker',
-      'prsystem_police',
-      'prsystem_audit_reader',
-      'prsystem_police_audit_reader',
-    ]) {
-      await executeFormatted(pool, 'GRANT USAGE ON SCHEMA public TO %I', [role]);
-    }
-
-    let loginsConfigured = 0;
-    for (const credential of options.logins ?? []) {
-      const group = LOGIN_PRINCIPALS[credential.principal];
-      const exists = await pool.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [
-        credential.principal,
-      ]);
-
-      if (exists.rowCount === 0) {
-        await executeFormatted(
-          pool,
-          'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT',
-          [credential.principal, credential.password],
-        );
-      } else {
-        await executeFormatted(
-          pool,
-          'ALTER ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT',
-          [credential.principal, credential.password],
-        );
-      }
-
-      // Exactly one group, and never a function-owner or maintenance role.
-      for (const other of GROUP_ROLES) {
-        if (other !== group) {
-          await executeFormatted(pool, 'REVOKE %I FROM %I', [other, credential.principal]);
-        }
-      }
-      await executeFormatted(pool, 'GRANT %I TO %I', [group, credential.principal]);
-      loginsConfigured += 1;
-    }
-
-    return { groupRoles: GROUP_ROLES.length, loginsConfigured };
   } finally {
-    await pool.end();
+    // Released explicitly, then again implicitly when the session closes.
+    try {
+      if (held) await coordinator.query('SELECT pg_advisory_unlock($1)', [BOOTSTRAP_LOCK_KEY]);
+    } catch {
+      // The session is ending; the lock dies with it either way.
+    }
+    await coordinator.end();
+  }
+}
+
+function withDatabase(url: string, database: string): string {
+  const parsed = new URL(url);
+  parsed.pathname = `/${database}`;
+  return parsed.toString();
+}
+
+async function applyGroupRoles(pool: Pool): Promise<void> {
+  const statements = readFileSync(BOOTSTRAP_SQL, 'utf8')
+    .split('--> statement-breakpoint')
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0);
+
+  for (const statement of statements) await pool.query(statement);
+}
+
+/**
+ * Exact final grants, not additive ones. Stale privileges are revoked first, so
+ * a role that once held CREATE does not keep it because nobody remembered.
+ */
+async function applyDatabaseGrants(pool: Pool, database: string): Promise<void> {
+  await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM PUBLIC', [database]);
+  await pool.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
+
+  for (const role of RUNTIME_AND_READER_ROLES) {
+    // Revoke before granting: CONNECT is all a runtime may hold on the database,
+    // and USAGE is all it may hold on `public`.
+    await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM %I', [database, role]);
+    await executeFormatted(pool, 'REVOKE ALL ON SCHEMA public FROM %I', [role]);
+    await executeFormatted(pool, 'GRANT CONNECT ON DATABASE %I TO %I', [database, role]);
+    await executeFormatted(pool, 'GRANT USAGE ON SCHEMA public TO %I', [role]);
+  }
+
+  await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM %I', [database, 'prsystem_migrate']);
+  await executeFormatted(pool, 'GRANT CONNECT, CREATE ON DATABASE %I TO %I', [
+    database,
+    'prsystem_migrate',
+  ]);
+  await executeFormatted(pool, 'GRANT CREATE, USAGE ON SCHEMA public TO %I', ['prsystem_migrate']);
+}
+
+async function applyLogins(pool: Pool, logins: readonly LoginCredential[]): Promise<number> {
+  let configured = 0;
+
+  for (const credential of logins) {
+    const group = LOGIN_PRINCIPALS[credential.principal];
+    const exists = await pool.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [
+      credential.principal,
+    ]);
+
+    const verb = exists.rowCount === 0 ? 'CREATE' : 'ALTER';
+    await executeFormatted(
+      pool,
+      `${verb} ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT`,
+      [credential.principal, credential.password],
+    );
+
+    // Exactly one group. Every other membership is removed, so a login cannot
+    // accumulate reach across deploys.
+    for (const other of GROUP_ROLES) {
+      if (other !== group) {
+        await executeFormatted(pool, 'REVOKE %I FROM %I', [other, credential.principal]);
+      }
+    }
+    await executeFormatted(pool, 'GRANT %I TO %I', [group, credential.principal]);
+    configured += 1;
+  }
+
+  return configured;
+}
+
+/**
+ * The final state, asserted rather than assumed. Runs inside the coordination
+ * lock so it describes a settled cluster, not one another runner is mid-way
+ * through changing.
+ */
+async function assertInvariants(pool: Pool): Promise<void> {
+  const privileged = await pool.query<{ rolname: string; attribute: string }>(
+    `SELECT rolname,
+            CASE WHEN rolsuper THEN 'SUPERUSER'
+                 WHEN rolcreaterole THEN 'CREATEROLE'
+                 WHEN rolcreatedb THEN 'CREATEDB'
+                 WHEN rolreplication THEN 'REPLICATION'
+                 ELSE 'BYPASSRLS' END AS attribute
+       FROM pg_roles
+      WHERE rolname LIKE 'prsystem\\_%'
+        AND rolname <> 'prsystem_maintenance'
+        AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)`,
+  );
+  if (privileged.rowCount !== 0) {
+    throw new BootstrapError(
+      `privileged attribute on ${privileged.rows
+        .map((r) => `${r.rolname}:${r.attribute}`)
+        .join(', ')}`,
+    );
+  }
+
+  const reachable = await pool.query<{ member: string; role: string }>(
+    `SELECT m.rolname AS member, g.rolname AS role
+       FROM pg_roles m, pg_roles g
+      WHERE m.rolname LIKE 'prsystem\\_%'
+        AND m.rolname <> g.rolname
+        AND g.rolname = ANY($1)
+        AND (m.rolname = ANY($2) OR m.rolname LIKE '%\\_login')
+        AND m.rolname <> 'prsystem_migrate_login'
+        AND pg_has_role(m.rolname, g.oid, 'USAGE')`,
+    [UNREACHABLE_ROLES, RUNTIME_AND_READER_ROLES],
+  );
+  if (reachable.rowCount !== 0) {
+    throw new BootstrapError(
+      `runtime role reaches a privileged role: ${reachable.rows
+        .map((r) => `${r.member}->${r.role}`)
+        .join(', ')}`,
+    );
+  }
+
+  const breakGlassMembers = await pool.query<{ member: string }>(
+    `SELECT m.rolname AS member
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE g.rolname = 'prsystem_maintenance'`,
+  );
+  if (breakGlassMembers.rowCount !== 0) {
+    throw new BootstrapError(
+      `prsystem_maintenance must have no members, found ${breakGlassMembers.rows
+        .map((r) => r.member)
+        .join(', ')}`,
+    );
   }
 }

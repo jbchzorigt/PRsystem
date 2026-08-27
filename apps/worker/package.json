@@ -16,6 +16,7 @@
     "@prsystem/contracts": "workspace:*",
     "@prsystem/db": "workspace:*",
     "@prsystem/outbox": "workspace:*",
+    "@prsystem/ports": "workspace:*",
     "@prsystem/telemetry": "workspace:*",
     "bullmq": "5.81.3",
     "ioredis": "5.11.1",

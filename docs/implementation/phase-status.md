@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 8, `GATE-INTEG` 46, `GATE-CONC` 16, `GATE-SEC` 8/8, `GATE-UNIT` 180, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507` |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 9, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 13/13, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507`, pending |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -434,25 +434,36 @@ Phase 03 owns **0 decisions**; all 279 remain `PENDING`. Obligations and gates a
 ### Test gates
 
 ```bash
+node tools/validate-governance.mjs    # GATE-GOV 13/13
+node tools/validate-workspace.mjs     # 15/15
+node tools/scan-secrets.mjs           # 270 tracked text files, 0 findings
 pnpm run format:check                 # clean
 pnpm run lint                         # GATE-LINT — 16 projects + e2e sources
-pnpm run typecheck                    # GATE-TYPES — 24 project graphs
-pnpm run test:unit                    # GATE-UNIT — 180 passed
-pnpm run test:migrations              # GATE-MIGR — 6 passed (fresh, upgrade, determinism, idempotence)
-pnpm run test:integration             # GATE-INTEG — 45 passed (real PostgreSQL)
-pnpm run test:concurrency             # GATE-CONC — 10 passed (real connections, real races)
+pnpm run typecheck                    # GATE-TYPES — 25 project graphs
+pnpm run test:unit                    # GATE-UNIT — 175 passed
+pnpm run test:migrations              # GATE-MIGR — 9 passed (fresh, frozen-baseline upgrade,
+                                      #   determinism, idempotence, atomic failure, version evidence)
+pnpm run test:integration             # GATE-INTEG — 51 passed (db 41, outbox 5, api 5)
+pnpm run test:concurrency             # GATE-CONC — 16 passed
+pnpm run test:regression              # 9 passed — the reproduced review defects
+pnpm run test:security                # GATE-SEC — 13/13 sub-gates, 290 tests
+pnpm run test:e2e                     # GATE-E2E — 15 passed
+pnpm run audit:prod                   # no known vulnerabilities
+pnpm run audit:tree                   # 1 moderate (DSR-01)
 pnpm run build                        # 16 projects
 pnpm run openapi                      # /api/v1 document
-pnpm run test:e2e                     # GATE-E2E — 15 passed (Phase 02 regression)
-node tools/validate-workspace.mjs     # 15/15
-node tools/validate-governance.mjs    # GATE-GOV 13/13
-node tools/scan-secrets.mjs           # 0 findings
-pnpm run audit:prod / audit:tree      # production clean; 1 moderate dev-only (DSR-01)
 git diff --check                      # clean
 ```
 
-`GATE-SEC` is partially exercised: the kernel leakage canaries run here; the full security pass —
-headers, CSP, dependency posture at release — remains Phase 22.
+PostgreSQL 17.6 (aarch64-unknown-linux-musl, Alpine), extensions `btree_gist` and `pgcrypto`.
+Race-focused suites (`test:concurrency`, `test:regression`, `SEC-OWNERSHIP`) were run **three
+consecutive times**: 34/34 on each run.
+
+`GATE-SEC` is a **cumulative** gate. Phase 03 implements its kernel security subset — roles, RLS,
+the ACL matrix, ownership, audit, partitions, maintenance accountability, Police isolation, key
+management, PII leakage, secrets, startup and the review regressions. Phase 22 expands the same gate
+with headers, CSP, the penetration/security-review pass and the release checks. It is neither "full"
+nor "partially exercised": it is complete for what Phase 03 owns.
 
 ### Defects found and fixed during the gate run
 
@@ -488,7 +499,7 @@ privilege model; all are repaired, and the repair is gated rather than asserted.
 | 5 | `ensure_month_partitions` accepted any schema and table, had no bound, no fixed `search_path` and no lock | Allow-listed to the two audit streams, bounded to 1–24 months, `SECURITY DEFINER` owned by `prsystem_partition_mgr`, fixed `search_path`, fully qualified, advisory-locked, `PUBLIC` execute revoked, and it re-establishes owner, grants and TRUNCATE protection on each new partition. |
 | 6 | The EXT register was seeded against the wrong subjects on 7 of 11 rows, and KMS was wrongly attributed to EXT-10 | Reseeded to the canonical `docs/00` §4 mapping, asserted row-for-row against the source document. POS, email and key management moved to a separate `platform.internal_gate` namespace (`INT-KMS-01`, `INT-MAIL-01`, `INT-POS-01`). ADR-0020 corrected. |
 | 7 | Security tests ran on a superuser connection with `SET ROLE`, which proves nothing | Every security assertion now runs over a real LOGIN principal created by the bootstrap. `SET ROLE` leaves `session_user` unchanged and a superuser bypasses RLS unconditionally — both would have reported a pass while proving nothing. |
-| 8 | No named, blocking security gate existed | `GATE-SEC` (`pnpm run test:security`) aggregates eight sub-gates and fails closed on an unavailable database, a skipped suite, a sub-gate that ran zero tests, or a missing artefact. |
+| 8 | No named, blocking security gate existed | `GATE-SEC` (`pnpm run test:security`) aggregates thirteen sub-gates and fails closed on an unavailable database, a skipped suite, a sub-gate that ran zero tests, or a missing artefact. |
 
 **Defects found by the repair's own gates**, and fixed: the principal guard matched role membership by
 *substring*, so `prsystem_maintenance_fn` satisfied a check for `prsystem_maintenance`; `RESET ALL`
@@ -500,10 +511,40 @@ editing: the remote has exactly one ref, `refs/heads/main` at `c1c2abc`, and zer
 `0001_kernel.sql` is absent from `origin/main`; and commit `8a62b0b` is an ancestor of no remote ref.
 The migration has never been pushed, tagged or released.
 
+### Second repair after review (Phase 03)
+
+The first repair was also rejected. Nine further defects, each reproduced by a failing test before
+being fixed — the reproductions are kept in `packages/db/src/regression/phase03-repair.test.ts`.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | The migration CLI read `DATABASE_URL`; the runner used a pool, so its advisory lock, `SET ROLE` and journal were not one session; objects ended up owned by the deploying **login** | `MIGRATION_DATABASE_URL` is required with no fallback and is validated before any connection is opened. The runner uses one `Client`: verify principal → database advisory lock → `SET ROLE prsystem_migrate` → journal → reset. Two runners against a **completely empty** database now both succeed — one applies, one observes the completed journal. |
+| 2 | The upgrade test copied the *current* `0000` at runtime, so it proved that head upgrades from head | The Phase 02 baseline is a committed fixture with a `sha256` the suite asserts. |
+| 3 | Bootstrap's advisory lock was transaction-scoped and taken in the target database, so it ended before the grants and did not serialise runners targeting different databases | One **session-level** lock on a designated coordination database, held across group roles, logins, memberships, database grants, `public` grants and the final invariant check; released in `finally`. Proven by two independent OS processes bootstrapping two databases in one cluster. |
+| 4 | Grants were additive, so a stale `CREATE` could survive | Exact final grants: revoke, then grant. Each runtime login holds exactly its approved closure, `prsystem_maintenance` has zero members, and every reachable role is checked for all five privileged attributes. |
+| 5 | `assertApiConnectionPrincipal`, `assertWorkerConnectionPrincipal` and `selectKeyManagement` had **no runtime callers** | Wired into `createApp` and the worker entrypoint, before HTTP listen, before Redis and before any `Worker` is constructed, with the guard pool released in `finally`. Runtime membership is an exact closure rather than a containment check, and every function-owner role is in the forbidden set. |
+| 6 | A stale worker could acknowledge a delivery another worker had reclaimed | `claimOutboxBatch` returns `claimedBy` and `claimRevision`; `markOutboxPublished` and `markOutboxFailed` compare-and-swap on event, state, claimant **and** revision, returning a typed `stale_claim` without mutating anything. `event_uuid` remains the stable outbound key across redeliveries. |
+| 7 | Maintenance accepted a caller-supplied `p_audit_ref` — a reference the caller invents is not evidence | The signature is now the job-run id alone. Context (hotel, non-Police realm, actor, correlation) is required, the running `job_run` is locked, and the audit id is **generated** by `audit.append_platform_audit_event` in the same transaction. `platform.operational_alert` carries that id and is described as telemetry, not as the audit record. |
+| 8 | RLS assertions swallowed failures with `.catch(() => rowCount: 0)`, so a `NOT NULL` or syntax error read as proof of a privilege boundary | Replaced by a machine-readable matrix: 7 tenant tables × 3 runtime logins × 4 verbs. Allowed actions use complete valid rows and prove same-tenant success and cross-tenant refusal; forbidden actions assert SQLSTATE `42501` exactly. |
+| 9 | "Concurrency" tests shared a backend and had no barrier | Distinct pools with asserted-distinct `pg_backend_pid()`, plus an explicit in-critical-section barrier. Both `SKIP LOCKED` workers now claim non-empty disjoint sets, the provider-reference race is genuinely concurrent, and the stable-key test seeds and redelivers a real event. |
+
+Wiring the guards also surfaced a lifecycle gap: readiness probes connect lazily and were never
+closed, so a shutdown left a connection open. `ReadinessService` now implements
+`OnApplicationShutdown`.
+
+Documentation corrected in the same pass: ten group roles (not nine), current test counts, the
+cumulative-gate wording above, removal of the false "startup guards wired" claim, `INT-KMS-01` in
+place of `EXT-10` for key management, and a truthful note that `prsystem_audit_writer` owning both
+append functions is an approved **infrastructure-role** arrangement, distinct from runtime realm
+separation.
+
 ### Remaining blockers
 
-`DSR-01` remains **OPEN — contained**. **`GATE-SEC` must be made a required status check before
-merge** — a GitHub branch-protection setting, deliberately not changed in this phase. Eleven EXT gates are seeded closed in `platform.external_gate`
+`DSR-01` remains **OPEN — contained**. `GATE-SEC` now runs as its **own** GitHub Actions job named exactly `GATE-SEC`, because only a job
+name is selectable as a required check — a step inside another job is not. **Selecting it as a
+required status check remains pending:** the job must run on GitHub at least once before it can be
+chosen, and nothing has been pushed, so it has not yet run. Branch protection is a repository setting
+deliberately not configured here. Eleven EXT gates are seeded closed in `platform.external_gate`
 and block production release only. **Seventeen P1 items remain open**, including P1-10. No P0 product
 blocker. One documentation conflict was found and resolved as **D-05**; three scope questions were put
 to the customer and approved before any edit.

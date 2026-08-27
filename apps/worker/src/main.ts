@@ -1,7 +1,10 @@
 import { Worker } from 'bullmq';
+import { Pool } from 'pg';
 import { env } from '@prsystem/config';
+import { selectKeyManagement } from '@prsystem/ports';
 import { createLogger, newRequestId, runWithCorrelation } from '@prsystem/telemetry';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
+import { assertWorkerConnectionPrincipal } from './observability/connection-guard';
 
 async function main(): Promise<void> {
   const config = env();
@@ -9,6 +12,21 @@ async function main(): Promise<void> {
     level: config.LOG_LEVEL,
     serviceName: `${config.OTEL_SERVICE_NAME}-worker`,
   });
+
+  // Before Redis is contacted and before any Worker is constructed: a process
+  // that cannot prove its database identity, or that has no key management, must
+  // not start consuming jobs.
+  const guardPool = new Pool({ connectionString: config.DATABASE_URL, max: 1 });
+  try {
+    await assertWorkerConnectionPrincipal(guardPool, logger);
+    selectKeyManagement({
+      appEnv: config.APP_ENV,
+      kmsAdapter: config.KMS_ADAPTER,
+      ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
+    });
+  } finally {
+    await guardPool.end();
+  }
 
   const connection = connectionFromUrl(config.REDIS_URL);
 

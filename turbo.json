@@ -44,6 +44,18 @@
       "outputs": [],
       "cache": false,
       "env": ["DATABASE_URL"]
+    },
+    "test:regression": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "cache": false,
+      "env": ["DATABASE_URL"]
+    },
+    "test:security": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "cache": false,
+      "env": ["DATABASE_URL"]
     }
   }
 }

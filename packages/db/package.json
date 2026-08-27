@@ -24,7 +24,8 @@
     "test:integration": "vitest run src/integration",
     "test:concurrency": "vitest run src/concurrency",
     "test:security": "vitest run src/security",
-    "bootstrap": "tsx src/bootstrap-cli.ts"
+    "bootstrap": "tsx src/bootstrap-cli.ts",
+    "test:regression": "vitest run src/regression"
   },
   "dependencies": {
     "@prsystem/config": "workspace:*",

@@ -167,28 +167,6 @@ describe('the partition wrapper is an allow-list', () => {
   });
 });
 
-describe('cross-tenant maintenance requires a named job', () => {
-  it('refuses without job id, reason and audit reference', async () => {
-    await expect(
-      env.worker.query(`SELECT platform.maintenance_expire_idempotency_keys($1, '', '', '')`, [
-        'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-      ]),
-    ).rejects.toThrow(/job id, reason and audit reference/i);
-  });
-
-  it('records the invocation when all four are supplied', async () => {
-    await env.worker.query(
-      `SELECT platform.maintenance_expire_idempotency_keys($1, 'job-1', 'retention', 'audit-1')`,
-      ['dddddddd-dddd-4ddd-8ddd-dddddddddddd'],
-    );
-    const alerts = await env.admin.query<{ detail: Record<string, unknown> }>(
-      `SELECT detail FROM platform.operational_alert WHERE alert_code = 'MAINTENANCE_RUN'`,
-    );
-    expect(alerts.rows[0]?.detail).toMatchObject({
-      operation: 'expire_idempotency_keys',
-      jobId: 'job-1',
-      reason: 'retention',
-      auditRef: 'audit-1',
-    });
-  });
-});
+// Cross-tenant maintenance accountability moved to sec-maintenance.test.ts when
+// the caller-supplied audit reference was removed: the audit id is now generated
+// inside the function, so the assertions belong with the audit evidence.

@@ -1,6 +1,6 @@
 # PRsystem — Database Bootstrap and Forward-Fix Runbook
 
-**Version:** 1.0 (Phase 03 security repair)
+**Version:** 1.1 (Phase 03 repair — coordination lock, exact grants, ten group roles)
 
 Cluster bootstrap and application migration are **separate operations with
 separate privileges**. This document is the operator's procedure for both, and
@@ -39,7 +39,10 @@ and refuses to run when it is missing or unsafe. It never creates it.
 | `prsystem_audit_writer` | function owner | NOLOGIN, none | the two audit append functions | `prsystem_migrate` only |
 | `prsystem_partition_mgr` | function owner | NOLOGIN, none | the two audit streams, their partitions, the partition functions | `prsystem_migrate` only |
 | `prsystem_maintenance_fn` | function owner | NOLOGIN, none | cross-tenant maintenance functions | `prsystem_migrate` only |
+| `prsystem_maintenance_fn` | function owner | NOLOGIN, none | cross-tenant maintenance functions | `prsystem_migrate` only |
 | `prsystem_maintenance` | **break-glass** | NOLOGIN, **BYPASSRLS** | **nothing** | **nobody, including the migration principal** |
+
+Ten group roles in total.
 
 Every LOGIN principal is `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
 NOBYPASSRLS` and is a member of **exactly one** group.
@@ -57,8 +60,15 @@ requires of any cross-tenant job.
 ## 3. Bootstrap procedure
 
 Run **once per PostgreSQL cluster**, by a superuser or by an operator holding
-`CREATEROLE` plus the ability to grant `BYPASSRLS`. It takes a transaction-scoped
-advisory lock, so concurrent runners serialise rather than collide.
+`CREATEROLE` plus the ability to grant `BYPASSRLS`.
+
+It holds a **session-level** advisory lock on one **coordination database**
+(`postgres` by default) for the *whole* operation — group roles, login
+principals, memberships, target-database grants, `public` grants and the final
+invariant check. A transaction-scoped lock would end at `COMMIT`, before the
+grants and login changes that follow it; and a lock taken in the *target*
+database would not serialise runners that each target a different database,
+which is exactly the racing case. The lock is released in `finally`.
 
 ```bash
 BOOTSTRAP_DATABASE_URL='postgresql://<dba>@<host>:<port>/<db>' \
@@ -80,9 +90,17 @@ pnpm run db:bootstrap
 - Re-running is safe: attributes are written only when the current state differs,
   and a concurrent creator is tolerated.
 
+Grants are **exact, not additive**: stale privileges are revoked before the
+approved ones are granted, so a role that once held `CREATE` does not keep it
+because nobody remembered to take it away.
+
 The bootstrap is idempotent and asserts, on every run:
 
-- exact safe attributes on all nine group roles;
+- exact safe attributes on all ten group roles;
+- every reachable role checked for `SUPERUSER`, `CREATEROLE`, `CREATEDB`,
+  `REPLICATION` and `BYPASSRLS`;
+- each runtime login holding exactly its approved membership closure;
+- `prsystem_maintenance` having zero members;
 - no runtime role is a member of a function-owner, the DDL group, or the
   break-glass role;
 - `PUBLIC` holds nothing on `public` or on the target database;
@@ -97,6 +115,17 @@ The bootstrap is idempotent and asserts, on every run:
 MIGRATION_DATABASE_URL='postgresql://prsystem_migrate_login:…@<host>:<port>/prsystem' \
 pnpm run migrate
 ```
+
+`MIGRATION_DATABASE_URL` is **required** and there is deliberately no fallback to
+`DATABASE_URL`: that variable holds a runtime principal, and a migration must not
+run as one. A missing or malformed value fails before any connection is opened,
+and the value is never printed.
+
+Everything then happens on **one physical session**: verify the principal, take a
+database advisory lock, `SET ROLE prsystem_migrate`, apply the journal, reset. The
+lock makes two runners against an empty database safe — one applies, the other
+observes the completed journal. The `SET ROLE` is what makes every object owned by
+the group rather than by whichever login ran the deploy.
 
 The runner verifies its own principal before touching the schema and refuses:
 
@@ -142,6 +171,12 @@ No procedure here removes an unrelated container, database or volume.
 and `SEC-SECRETS`. It fails closed on an unavailable database, a skipped suite, a
 sub-gate that ran zero tests, or a missing artefact.
 
-**It must be made a required status check before merge.** That is a GitHub
-branch-protection setting on the repository and is deliberately **not** changed
-by this phase.
+It runs as its **own GitHub Actions job** named exactly `GATE-SEC`, because only a
+job name is selectable as a required check — a step inside another job is not.
+
+**Selecting it as a required status check remains pending**: the job must run on
+GitHub at least once before it can be chosen, and branch protection is a
+repository setting deliberately **not** configured by this phase.
+
+Phase 03 covers the kernel security subset. Phase 22 expands the same gate with
+headers, CSP, the penetration/security-review pass and the release checks.

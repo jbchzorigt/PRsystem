@@ -81,7 +81,7 @@ describe('relay', () => {
     const publisher = new RecordingPublisher();
 
     const first = await relayOnce(workerPool, context, publisher, { workerId: 'w1' });
-    expect(first).toEqual({ claimed: 1, published: 1, failed: 0 });
+    expect(first).toEqual({ claimed: 1, published: 1, failed: 0, staleClaims: 0 });
 
     const second = await relayOnce(workerPool, context, publisher, { workerId: 'w1' });
     expect(second.claimed).toBe(0);
@@ -94,7 +94,7 @@ describe('relay', () => {
     publisher.failFor.add('relay-fail');
 
     const result = await relayOnce(workerPool, context, publisher, { workerId: 'w1' });
-    expect(result).toEqual({ claimed: 1, published: 0, failed: 1 });
+    expect(result).toEqual({ claimed: 1, published: 0, failed: 1, staleClaims: 0 });
 
     const state = await withTenantTransaction(workerPool, context, (uow) =>
       uow.query<{ state: string; attempts: number; last_error: string }>(

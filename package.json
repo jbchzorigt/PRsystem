@@ -32,7 +32,8 @@
     "compose:config": "docker compose config --quiet",
     "compose:up": "docker compose up -d --wait",
     "compose:down": "docker compose down -v",
-    "verify": "pnpm run validate:workspace && pnpm run validate:governance && pnpm run scan:secrets && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build && pnpm run openapi && pnpm run compose:up && pnpm run test:migrations && pnpm run test:integration && pnpm run test:concurrency && pnpm run test:security && pnpm run test:e2e && pnpm run audit:prod && pnpm run audit:tree"
+    "verify": "pnpm run validate:workspace && pnpm run validate:governance && pnpm run scan:secrets && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build && pnpm run openapi && pnpm run compose:up && pnpm run test:migrations && pnpm run test:integration && pnpm run test:concurrency && pnpm run test:regression && pnpm run test:security && pnpm run test:e2e && pnpm run audit:prod && pnpm run audit:tree",
+    "test:regression": "turbo run test:regression"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
