@@ -42,7 +42,8 @@ const assert = (cond, msg) => {
 
 // ---------------------------------------------------------------- parse DECs
 // Traceability rows: | <FAMILY>-DEC-<NNN> | <subject> | <NN> | <STATUS> |
-const decRowRe = /^\|\s*([A-Z]+-DEC-\d{3})\s*\|\s*([^|]+?)\s*\|\s*(\d{2})\s*\|\s*([A-Z]+)\s*\|\s*$/gm;
+const decRowRe =
+  /^\|\s*([A-Z]+-DEC-\d{3})\s*\|\s*([^|]+?)\s*\|\s*(\d{2})\s*\|\s*([A-Z]+)\s*\|\s*$/gm;
 const decRows = [...traceability.matchAll(decRowRe)].map((m) => ({
   id: m[1],
   subject: m[2],
@@ -51,9 +52,12 @@ const decRows = [...traceability.matchAll(decRowRe)].map((m) => ({
 }));
 
 // ------------------------------------------------------- parse phase numbers
-const planHeadingPhases = [...buildPlan.matchAll(/^### Phase (\d{2}) — /gm)].map((m) => Number(m[1]));
-const planTablePhases = [...buildPlan.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*[^|]*\|\s*\d+\s*\|\s*$/gm)]
-  .map((m) => Number(m[1]));
+const planHeadingPhases = [...buildPlan.matchAll(/^### Phase (\d{2}) — /gm)].map((m) =>
+  Number(m[1]),
+);
+const planTablePhases = [
+  ...buildPlan.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*[^|]*\|\s*\d+\s*\|\s*$/gm),
+].map((m) => Number(m[1]));
 const statusLedgerPhases = [
   ...phaseStatus.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*`[A-Z ]+`\s*\|/gm),
 ].map((m) => Number(m[1]));
@@ -126,7 +130,10 @@ check('3', 'Every DEC is assigned to exactly one phase in 01..23', () => {
   const load = new Map();
   for (const r of decRows) load.set(r.phase, (load.get(r.phase) ?? 0) + 1);
   const total = [...load.values()].reduce((a, b) => a + b, 0);
-  assert(total === EXPECTED_DEC_COUNT, `phase load sums to ${total}, expected ${EXPECTED_DEC_COUNT}`);
+  assert(
+    total === EXPECTED_DEC_COUNT,
+    `phase load sums to ${total}, expected ${EXPECTED_DEC_COUNT}`,
+  );
   return `${byId.size} DECs, one phase each, load sums to ${total}`;
 });
 
@@ -144,10 +151,7 @@ check('4', 'Phases 01..23 exist exactly once in build-plan.md and phase-status.m
     const extra = arr.filter((p) => !want.includes(p));
     assert(extra.length === 0, `${label}: unexpected phases ${extra.join(', ')}`);
   }
-  assert(
-    statusLedgerPhases.includes(0),
-    'phase-status.md ledger is missing the phase 00 row',
-  );
+  assert(statusLedgerPhases.includes(0), 'phase-status.md ledger is missing the phase 00 row');
   return `01..23 present exactly once in all three listings (plus phase 00 in the ledger)`;
 });
 
@@ -202,15 +206,16 @@ check('6', 'No requirement mapping references a nonexistent phase', () => {
         cols = null;
         continue;
       }
-      const parts = line.split('|').slice(1, -1).map((c) => c.trim());
+      const parts = line
+        .split('|')
+        .slice(1, -1)
+        .map((c) => c.trim());
       const isSeparator = parts.every((c) => /^:?-{2,}:?$/.test(c));
       if (isSeparator) continue;
       if (cols === null) {
         // Header row: remember which columns carry phase numbers, skipping any
         // column that holds phase *titles* rather than numbers.
-        cols = parts
-          .map((c, idx) => (PHASE_HEADER.test(c) ? idx : -1))
-          .filter((idx) => idx >= 0);
+        cols = parts.map((c, idx) => (PHASE_HEADER.test(c) ? idx : -1)).filter((idx) => idx >= 0);
         continue;
       }
       for (const idx of cols) {
@@ -274,8 +279,10 @@ check('7', 'Markdown file references resolve', () => {
     'docs/implementation/assumptions-and-conflicts.md',
   ]) {
     assert(existsSync(join(ROOT, rel)), `CLAUDE.md names a missing file: ${rel}`);
-    assert(claudeMd.includes(relative('docs/implementation', rel) || rel.split('/').pop()),
-      `CLAUDE.md does not name ${rel}`);
+    assert(
+      claudeMd.includes(relative('docs/implementation', rel) || rel.split('/').pop()),
+      `CLAUDE.md does not name ${rel}`,
+    );
   }
   return `${checked} relative links resolve; all five governance documents named in CLAUDE.md exist`;
 });
@@ -295,7 +302,10 @@ if (hasArch) {
     const wantDocs = readdirSync(ARCH)
       .filter((f) => /^\d{2}-.*\.md$/.test(f))
       .sort();
-    assert(wantDocs.length === 17, `expected 17 numbered architecture documents, found ${wantDocs.length}`);
+    assert(
+      wantDocs.length === 17,
+      `expected 17 numbered architecture documents, found ${wantDocs.length}`,
+    );
     const unlisted = wantDocs.filter((f) => !archIndex.includes(f));
     assert(unlisted.length === 0, `not listed in the architecture index: ${unlisted.join(', ')}`);
 
@@ -316,7 +326,8 @@ if (hasArch) {
 
   check('9', 'Every cross-cutting invariant has a named enforcement mechanism', () => {
     // traceability §25 rows: | invariant | sources | established in | enforced by |
-    const invRe = /^\|\s*([^|]+?)\s*\|\s*([^|]*(?:DEC-\d{3})[^|]*)\s*\|\s*(\d{2})\s*\|\s*([^|]+?)\s*\|\s*$/gm;
+    const invRe =
+      /^\|\s*([^|]+?)\s*\|\s*([^|]*(?:DEC-\d{3})[^|]*)\s*\|\s*(\d{2})\s*\|\s*([^|]+?)\s*\|\s*$/gm;
     const rows = [...traceability.matchAll(invRe)];
     assert(rows.length >= 10, `parsed only ${rows.length} invariant rows in traceability §25`);
     const missingMech = rows.filter((m) => m[4].trim().length < 3 || m[4].trim() === '—');
@@ -366,7 +377,10 @@ if (hasArch) {
     }
     const allDecs = decRows.map((r) => r.id);
     const unmapped = allDecs.filter((id) => !mapped.has(id));
-    assert(unmapped.length === 0, `DECs with no control mapping: ${unmapped.slice(0, 10).join(', ')}${unmapped.length > 10 ? ` (+${unmapped.length - 10})` : ''}`);
+    assert(
+      unmapped.length === 0,
+      `DECs with no control mapping: ${unmapped.slice(0, 10).join(', ')}${unmapped.length > 10 ? ` (+${unmapped.length - 10})` : ''}`,
+    );
 
     const badControl = [];
     const badGate = [];
@@ -417,7 +431,10 @@ if (hasArch) {
     // Count P1 rows in the register.
     const rows = [...assumptions.matchAll(/^\|\s*(P1-\d{2})\s*\|/gm)].map((m) => m[1]);
     const uniq = new Set(rows);
-    assert(rows.length === uniq.size, `duplicate P1 rows: ${rows.length} rows, ${uniq.size} unique`);
+    assert(
+      rows.length === uniq.size,
+      `duplicate P1 rows: ${rows.length} rows, ${uniq.size} unique`,
+    );
     const total = uniq.size;
 
     // The stated accounting line must agree with the row count.
@@ -441,7 +458,8 @@ if (hasArch) {
       ['15-non-functional-targets.md', nfr],
     ]) {
       for (const m of text.matchAll(/(\d+)\s+(?:pending\s+)?P1(?:\s+configuration)?\s+items?/gi)) {
-        if (Number(m[1]) !== sPending) mismatches.push(`${name}: "${m[0].trim()}" vs ${sPending} pending`);
+        if (Number(m[1]) !== sPending)
+          mismatches.push(`${name}: "${m[0].trim()}" vs ${sPending} pending`);
       }
     }
     assert(mismatches.length === 0, `inconsistent P1 counts — ${mismatches.join('; ')}`);

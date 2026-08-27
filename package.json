@@ -1,0 +1,48 @@
+{
+  "name": "prsystem",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Multi-tenant hotel booking and operations platform",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22.17.0 <23",
+    "pnpm": "9.15.9"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint && eslint e2e playwright.config.ts",
+    "typecheck": "turbo run typecheck && tsc -p tsconfig.e2e.json --noEmit",
+    "test:unit": "turbo run test:unit",
+    "test:migrations": "pnpm --filter @prsystem/db run test:migrations",
+    "test:e2e": "turbo run build --filter=@prsystem/web-* && playwright test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "openapi": "pnpm --filter @prsystem/api run openapi",
+    "migrate": "pnpm --filter @prsystem/db run migrate",
+    "validate:workspace": "node tools/validate-workspace.mjs",
+    "validate:governance": "node tools/validate-governance.mjs",
+    "scan:secrets": "node tools/scan-secrets.mjs",
+    "compose:config": "docker compose config --quiet",
+    "compose:up": "docker compose up -d --wait",
+    "compose:down": "docker compose down -v",
+    "verify": "pnpm run validate:workspace && pnpm run validate:governance && pnpm run scan:secrets && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build && pnpm run openapi && pnpm run compose:up && pnpm run test:migrations && pnpm run test:e2e"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.20.1",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.6",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.68.0",
+    "vitest": "3.2.7"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.26"
+    }
+  }
+}

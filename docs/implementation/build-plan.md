@@ -136,8 +136,15 @@ skeleton with OpenAPI; worker skeleton with BullMQ; five Next.js App Router shel
 versioned migration runner; Postgres and Redis via docker-compose; OpenTelemetry bootstrap with log
 redaction; Playwright harness; ESLint module-boundary rule; CI gate script; pinned lockfile.
 
-**Gates.** `pnpm -w typecheck` · `pnpm -w lint` · `pnpm -w build` · `pnpm -w test:migrations`
-(fresh) · API health E2E · a boundary-lint fixture proving a cross-module repository import fails.
+**Gates.** `pnpm run typecheck` · `pnpm run lint` · `pnpm run build` · `pnpm run test:unit` ·
+`pnpm run test:migrations` (fresh apply **and** repeat apply as a no-op, against real PostgreSQL) ·
+`pnpm run test:e2e` (portal-shell smoke) · API health tests over a real listener ·
+`pnpm run openapi` · compose service health · a boundary-lint fixture proving a cross-module
+repository import fails.
+
+The migration and E2E gates are scoped to what exists at this point — a business-table-free baseline
+and non-business portal shells. See [assumptions-and-conflicts.md](assumptions-and-conflicts.md)
+§3.2; nothing is deferred out of this phase.
 
 **Exit.** Empty but wired: every app boots, migrations run fresh, telemetry emits, CI green.
 

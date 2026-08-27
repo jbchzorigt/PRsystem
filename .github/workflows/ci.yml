@@ -1,0 +1,108 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22.17.0'
+  PNPM_VERSION: '9.15.9'
+
+jobs:
+  governance:
+    name: governance and workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Validate governance documents
+        run: node tools/validate-governance.mjs
+      - name: Validate workspace structure
+        run: node tools/validate-workspace.mjs
+      - name: Scan for committed secrets
+        run: node tools/scan-secrets.mjs
+
+  verify:
+    name: format, lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Format check
+        run: pnpm run format:check
+      - name: Lint
+        run: pnpm run lint
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Unit tests
+        run: pnpm run test:unit
+      - name: Build all applications
+        run: pnpm run build
+      - name: Generate OpenAPI document
+        run: pnpm run openapi
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+        continue-on-error: true
+
+  e2e:
+    name: portal shell end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Portal shell smoke tests
+        run: pnpm run test:e2e
+
+  compose:
+    name: compose services, migrations and health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Validate compose configuration
+        run: docker compose config --quiet
+      - name: Start backing services
+        run: docker compose up -d --wait
+      - name: Migration gate against real PostgreSQL
+        run: pnpm run test:migrations
+        env:
+          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
+      - name: Report service state
+        if: always()
+        run: docker compose ps
+      - name: Stop backing services
+        if: always()
+        run: docker compose down -v

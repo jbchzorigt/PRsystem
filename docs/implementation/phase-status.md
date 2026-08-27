@@ -13,9 +13,9 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 
 | Field | Value |
 | --- | --- |
-| Current phase | **01 — Architecture and threat model** |
-| Phase state | `DONE` (documentation only; awaiting customer acceptance) |
-| Next phase | 02 — Monorepo scaffold |
+| Current phase | **02 — Monorepo scaffold** |
+| Phase state | `DONE` (all blocking gates green from a clean install; awaiting customer acceptance) |
+| Next phase | 03 — Platform kernel |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
 
@@ -27,7 +27,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 | --- | --- | --- | --- | --- | --- |
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
-| 02 | Monorepo scaffold | `NOT STARTED` | — | — | — |
+| 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15 | pending |
 | 03 | Platform kernel | `NOT STARTED` | — | — | — |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
@@ -236,6 +236,113 @@ be written by its owning phase.
 No P0 product blockers. Eleven EXT gates block production release only. **Seventeen P1 items remain
 open**, including P1-10. The four Phase 01 design questions `DM-01` … `DM-04` are **closed** by
 ADR-0017 … ADR-0020; none remains open.
+
+---
+
+## Phase 02 record
+
+### Scope completed
+
+Infrastructure only. **No business entity, domain table, authentication, RBAC, platform kernel table,
+outbox, idempotency, audit implementation, external adapter, business page or workflow was created**,
+and `docs/00` … `docs/26` were not modified.
+
+| Deliverable | Location |
+| --- | --- |
+| pnpm 9.15.9 workspace + Turborepo 2.10.12 pipeline, exact-pinned lockfile | `pnpm-workspace.yaml`, `turbo.json`, `pnpm-lock.yaml` |
+| Strict TypeScript base — `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride` | `tsconfig.base.json` |
+| NestJS 11 + Fastify 5 API, liveness and readiness with injectable probes, OpenAPI document | `apps/api/` |
+| BullMQ worker skeleton with queue registry and graceful shutdown | `apps/worker/` |
+| Five Next.js 15 App Router portal shells | `apps/web-public|hotel|restaurant|police|operation/` |
+| Fail-closed validated environment; errors never echo a secret value | `packages/config/` |
+| Structured logging, correlation IDs, redaction by field name and value shape | `packages/telemetry/` |
+| Drizzle + versioned migration runner and the business-table-free baseline | `packages/db/` |
+| Synthetic-identity generator in a reserved range; boundary-rule test | `packages/testing/` |
+| Playwright harness and portal-shell smoke tests | `playwright.config.ts`, `e2e/` |
+| ESLint module-boundary rule plus a fixture proving it fires | `eslint.config.mjs`, `tools/lint-fixtures/` |
+| Local topology: PostgreSQL 17.6, Redis 7.4.2, MinIO, Mailpit — pinned, health-checked | `docker-compose.yml`, `.env.example` |
+| Workspace validator (11 checks) and secret scanner | `tools/validate-workspace.mjs`, `tools/scan-secrets.mjs` |
+| CI: governance, verify, e2e and compose-with-migrations jobs | `.github/workflows/ci.yml` |
+| Local development guide | [../development.md](../development.md) |
+
+### Scope clarification, not a deferral
+
+Drizzle, the migration runner and the Playwright harness are delivered **in this phase**, scoped to
+what exists before the data model: a business-table-free baseline migration proved fresh and
+repeat-applied, and non-business portal-shell smoke tests. Recorded in
+[assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.2. Nothing was moved out of Phase 02.
+
+### Migrations
+
+`packages/db/migrations/0000_baseline.sql` — installs `btree_gist` and `pgcrypto`. **It creates no
+table.** `test:migrations` asserts that after applying the whole journal, zero base tables exist
+outside the migration ledger, so Phase 03 starts from a verified clean slate.
+
+### DEC coverage
+
+Phase 02 owns **0 decisions**; all 279 remain `PENDING`. Its traceable obligations and their gates are
+recorded in [requirements-traceability.md](requirements-traceability.md) §2.1.
+
+### Test gates
+
+Run in order from a **clean install** (`rm -rf node_modules` → `pnpm install --frozen-lockfile`), with
+`.env.example` sourced into the environment. All 15 exited 0.
+
+```bash
+pnpm install --frozen-lockfile        # 306 packages, lockfile unchanged
+node tools/validate-workspace.mjs     # 11/11
+node tools/validate-governance.mjs    # GATE-GOV 13/13
+node tools/scan-secrets.mjs           # 186 tracked text files, 0 findings
+pnpm run format:check                 # clean
+pnpm run lint                         # GATE-LINT — 11 projects + e2e sources
+pnpm run typecheck                    # GATE-TYPES — 13 project graphs
+pnpm run test:unit                    # GATE-UNIT — 12 files, 108 tests passed
+pnpm run build                        # 11 build tasks (7 applications)
+pnpm run openapi                      # openapi 3.0.0, /health/live + /health/ready
+docker compose up -d --wait           # 4 services healthy
+pnpm run test:migrations              # GATE-MIGR — 1 file, 4 tests passed
+pnpm run test:e2e                     # GATE-E2E — 15 tests passed across 5 portals
+pnpm audit --audit-level high         # 0 high or critical
+git diff --check                      # clean
+```
+
+`GATE-INTEG`, `GATE-CONC` and `GATE-SEC` are **not applicable** — no schema, no concurrent command
+and no authorization path exists yet. None was run and none is claimed as passing.
+
+### Defects found and fixed during the gate run
+
+| Defect | Cause | Fix |
+| --- | --- | --- |
+| Duplicate `fastify` copies broke `typecheck` | direct pin 5.12.1 vs `@nestjs/platform-fastify@11.2.3`'s exact 5.11.3 | aligned the direct pin to 5.11.3 |
+| Registration-number redaction never fired | the value-shape regex matched 8 digits; a Mongolian registration number is `YYMMDD` + 4 | corrected to 10 digits, matching `packages/testing` |
+| API failed to boot and OpenAPI generation aborted silently | Swagger UI needs `@fastify/static`; readiness probes resolved env while the DI container was built | serve the JSON document only; probes now connect on first use, so a missing dependency reports **not ready** instead of aborting start-up |
+| Portal builds failed intermittently with a misleading `<Html> should not be imported outside of pages/_document` | `next build` inherited `NODE_ENV=development` when `.env` was sourced, prerendering error pages against a development React build | portal `build` scripts pin `NODE_ENV=production`; reproduced and verified in both directions |
+| 2 high, 3 moderate advisories | transitive `postcss@8.4.31` via `next@15.5.24` | exact `pnpm.overrides` pin to `postcss@8.5.26` |
+
+### Security and concurrency evidence
+
+- Redaction is a property of the logger, not of call sites: 55 telemetry tests cover the field-name
+  deny-list, the value-shape deny-list (JWT, PEM, PAN, registration number, base64 blob), nesting,
+  arrays and depth bounds.
+- `packages/config` fails closed on a malformed environment and its error listing carries **no secret
+  value** — asserted by a dedicated test.
+- Readiness reports carry an error **name** only; no connection string, host or credential — asserted
+  by a test over a real listener.
+- Test identities are synthetic and confined to a reserved `99` prefix range.
+- The cross-module import ban is proved by a fixture that ESLint must reject, executed as a test.
+- Compose binds every service to `127.0.0.1` on a PRsystem-only port range under the compose project
+  `prsystem`; no container outside that project was created, reused or stopped.
+- No concurrency evidence is claimed: no concurrent command exists yet.
+
+### Remaining blockers
+
+One **moderate** advisory remains: `esbuild <=0.24.2` bundled inside `drizzle-kit@0.31.10`. It affects
+the esbuild development server, which this repository never runs — `drizzle-kit` is used only to
+generate migration files. It is below the `--audit-level high` gate threshold and is recorded here
+rather than silently overridden.
+
+Eleven EXT gates still block production release only. **Seventeen P1 items remain open**, including
+P1-10. No P0 product blocker. No requirement conflict was discovered in this phase.
 
 ---
 

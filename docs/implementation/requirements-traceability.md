@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.1 (Phase 00 repair — realigned to the approved 23-phase structure)
+**Version:** 1.2 (Phase 02 — zero-DEC phase obligations recorded in §2.1)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -113,6 +113,24 @@ whose rules resolve into the families above and are read by the phases listed.
 | 22 | Security, concurrency, recovery, and full E2E | 0 |
 | 23 | Release candidate audit | 0 |
 | — | **Total** | **279** |
+
+### 2.1 Phases owning zero decisions
+
+Phases 01, 02, 03, 20, 21, 22 and 23 own no DEC ID. They are not exempt from traceability — each one
+carries infrastructure or verification obligations that later DEC coverage depends on, so the
+artefacts below are the traceable output.
+
+| Phase | Obligation | Artefact | Gate |
+| --- | --- | --- | --- |
+| 02 | Strict TypeScript workspace with pinned dependencies | `tsconfig.base.json`, `pnpm-lock.yaml` | `validate-workspace` 5, 6, 9 |
+| 02 | Module-boundary enforcement (CLAUDE.md §3, [ADR-0013](../architecture/adr/ADR-0013-module-boundary-enforcement.md)) | `eslint.config.mjs`, `tools/lint-fixtures/` | `packages/testing/src/eslint-boundary.test.ts` |
+| 02 | Versioned migration runner, business-table-free baseline ([ADR-0004](../architecture/adr/ADR-0004-versioned-migrations-only.md)) | `packages/db/` | `pnpm run test:migrations` |
+| 02 | Fail-closed validated configuration, no secret in an error | `packages/config/` | `pnpm run test:unit` |
+| 02 | Log redaction by field name and value shape (CLAUDE.md §8) | `packages/telemetry/` | `pnpm run test:unit` |
+| 02 | Synthetic-identity-only test data (CLAUDE.md §8) | `packages/testing/` | `pnpm run test:unit` |
+| 02 | Seven deployable applications and the E2E harness | `apps/`, `e2e/` | `pnpm run build`, `pnpm run test:e2e` |
+
+Phase 02 introduces no DEC coverage; every one of the 279 decisions remains `PENDING` after it.
 
 ---
 

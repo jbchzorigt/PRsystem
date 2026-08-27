@@ -1,6 +1,6 @@
 # PRsystem — Assumptions, Drift Resolutions and Conflicts
 
-**Version:** 1.1 (Phase 00 repair — affected phases realigned to the approved 23-phase structure)
+**Version:** 1.2 (Phase 02 — migration and E2E scope clarification recorded in §3.2)
 
 Precedence used throughout (CLAUDE.md §0):
 
@@ -111,6 +111,30 @@ The four architecture design questions raised in Phase 01 are **closed**. None r
 | DM-02 | Append-only audit partitioned monthly by server timestamp, in two separately granted streams; partitions pre-created with a horizon alert; high-risk actions fail closed when audit cannot be recorded; retention configurable by data class with legal hold; no invented Police retention duration | [ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md) | Phase 03 |
 | DM-03 | Own read model in the same transaction; cross-module projections eventually consistent via outbox and idempotent inbox, with observable `as_of`/lag; critical commands never read a projection; all projections rebuildable | [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md) | Phase 03, applied in 13, 17, 19 |
 | DM-04 | Envelope encryption with versioned DEKs behind a provider-neutral `KeyManagementPort`; separate Hotel/Guest and Police key scopes; versioned keyed-HMAC lookup, never an unkeyed hash; key version stored with ciphertext; rotation and rewrapping; deterministic development simulator; production fails closed | [ADR-0020](../architecture/adr/ADR-0020-key-management.md) | Phase 03, adapter in Phase 20 |
+
+### 3.2 Phase 02 scope clarification — migrations and E2E harness
+
+**This is a scope clarification, not a deferral and not a deviation.** Nothing is postponed out of
+Phase 02, and [build-plan.md](build-plan.md) §3 Phase 02 is unchanged in substance: it already names
+"Drizzle plus a versioned migration runner" and "Playwright harness". The clarification fixes what
+those two deliverables mean while the data model does not yet exist.
+
+| Question | Approved answer | Evidence in the scaffold |
+| --- | --- | --- |
+| What does the migration runner apply in Phase 02, given that no table may exist yet? | A **business-table-free baseline migration**. It installs `btree_gist` and `pgcrypto` — the database prerequisites the data model depends on — and creates no table. | `packages/db/migrations/0000_baseline.sql` |
+| How is the runner proved without a schema? | Against **real PostgreSQL**: a fresh database accepts the whole journal, and a **second application is a safe no-op** that mutates no ledger row. | `packages/db/src/migrate.test.ts`, `pnpm run test:migrations` |
+| What stops a Phase 03 table from arriving early? | The same gate asserts that after applying every migration, **zero base tables** exist outside the migration ledger, and a journal test rejects any `CREATE TABLE` in a migration file. | `packages/db/src/migrations.test.ts` |
+| What does the Playwright harness exercise in Phase 02? | **Non-business portal-shell smoke tests only**: each of the five portals starts, returns 200, and renders its own identity rather than another portal's. | `e2e/portal-shells.spec.ts`, `pnpm run test:e2e` |
+
+Boundaries this clarification preserves:
+
+- **No platform, IAM, audit, outbox, idempotency or business table exists before Phase 03.** Those
+  tables, and the `GATE-MIGR` Upgrade, constraint-presence, append-only and determinism assertions,
+  belong to Phase 03 and later, per [ADR-0004](../architecture/adr/ADR-0004-versioned-migrations-only.md).
+- **Full workflow end-to-end coverage belongs to Phases 21–22.** Phase 02 owns the harness, not the
+  journeys.
+
+Phase 02 owns **zero DEC IDs**, so this clarification changes no requirement coverage.
 
 ---
 
