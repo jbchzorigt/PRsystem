@@ -27,7 +27,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 | --- | --- | --- | --- | --- | --- |
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
-| 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15 | `f3d7b3d` |
+| 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, +dep closure |
 | 03 | Platform kernel | `NOT STARTED` | — | — | — |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
@@ -290,7 +290,7 @@ Run in order from a **clean install** (`rm -rf node_modules` → `pnpm install -
 
 ```bash
 pnpm install --frozen-lockfile        # 306 packages, lockfile unchanged
-node tools/validate-workspace.mjs     # 11/11
+node tools/validate-workspace.mjs     # 15/15
 node tools/validate-governance.mjs    # GATE-GOV 13/13
 node tools/scan-secrets.mjs           # 186 tracked text files, 0 findings
 pnpm run format:check                 # clean
@@ -302,7 +302,8 @@ pnpm run openapi                      # openapi 3.0.0, /health/live + /health/re
 docker compose up -d --wait           # 4 services healthy
 pnpm run test:migrations              # GATE-MIGR — 1 file, 4 tests passed
 pnpm run test:e2e                     # GATE-E2E — 15 tests passed across 5 portals
-pnpm audit --audit-level high         # 0 high or critical
+pnpm run audit:prod                   # production tree — no known vulnerabilities
+pnpm run audit:tree                   # full tree — 0 high or critical (1 moderate: DSR-01)
 git diff --check                      # clean
 ```
 
@@ -334,15 +335,36 @@ and no authorization path exists yet. None was run and none is claimed as passin
   `prsystem`; no container outside that project was created, reused or stopped.
 - No concurrency evidence is claimed: no concurrent command exists yet.
 
+### Dependency security closure
+
+Closed before acceptance. The remaining advisory is **`GHSA-67mh-4wv8-2f99`** (Moderate, esbuild
+development server), reaching the workspace only through
+`packages/db → drizzle-kit@0.31.10 → @esbuild-kit/esm-loader@2.6.5 → @esbuild-kit/core-utils@3.3.2 → esbuild@0.18.20`.
+It is **constrained, not silenced**: no audit ignore, no unstable Drizzle pre-release, no forced
+`esbuild` override, and the migration infrastructure is intact.
+
+| Verified condition | Evidence | Enforced by |
+| --- | --- | --- |
+| `drizzle-kit` is a devDependency only | declared once, in `packages/db` devDependencies | `validate-workspace` 12 |
+| Absent from the production dependency tree | `pnpm why drizzle-kit --prod` empty; `pnpm run audit:prod` → **no known vulnerabilities, exit 0** | `validate-workspace` 12, CI |
+| `apps/api` and `apps/worker` never import it | 50 source files scanned, zero imports in any form | `validate-workspace` 13 |
+| No command runs the esbuild development server | no `--serve` / `--servedir` in any script or workflow | `validate-workspace` 14 |
+| CI blocks moderate-or-higher **production** advisories | `pnpm run audit:prod`, blocking | `validate-workspace` 15 |
+| The full-tree high audit remains enabled | `pnpm run audit:tree`, advisory | `validate-workspace` 15 |
+
+Full record, exploit condition, review owner and removal condition:
+[dependency-security-register.md](dependency-security-register.md) **DSR-01**, with mandatory review
+in **Phase 20** and **Phase 22**.
+
+**The development dependency tree is not claimed to be advisory-free.** It carries DSR-01, reported
+openly. What is claimed, and evidenced, is that the production dependency tree is clean at moderate
+and above.
+
 ### Remaining blockers
 
-One **moderate** advisory remains: `esbuild <=0.24.2` bundled inside `drizzle-kit@0.31.10`. It affects
-the esbuild development server, which this repository never runs — `drizzle-kit` is used only to
-generate migration files. It is below the `--audit-level high` gate threshold and is recorded here
-rather than silently overridden.
-
-Eleven EXT gates still block production release only. **Seventeen P1 items remain open**, including
-P1-10. No P0 product blocker. No requirement conflict was discovered in this phase.
+`DSR-01` remains **OPEN — contained**; it blocks nothing in Phase 02 and is not a production
+dependency. Eleven EXT gates still block production release only. **Seventeen P1 items remain open**,
+including P1-10. No P0 product blocker. No requirement conflict was discovered in this phase.
 
 ---
 

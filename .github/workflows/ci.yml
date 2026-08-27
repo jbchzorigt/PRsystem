@@ -55,8 +55,15 @@ jobs:
         run: pnpm run build
       - name: Generate OpenAPI document
         run: pnpm run openapi
-      - name: Audit dependencies
-        run: pnpm audit --audit-level high
+      # Blocking. Anything a production install would ship must be clean at
+      # moderate and above. See docs/implementation/dependency-security-register.md.
+      - name: Audit production dependencies
+        run: pnpm run audit:prod
+      # Advisory. The development tree carries GHSA-67mh-4wv8-2f99 through
+      # drizzle-kit's deprecated @esbuild-kit chain; it is contained, not shipped,
+      # and must not block every phase. Registered, reviewed in Phases 20 and 22.
+      - name: Audit full dependency tree
+        run: pnpm run audit:tree
         continue-on-error: true
 
   e2e:

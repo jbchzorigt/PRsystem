@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.2 (Phase 02 — zero-DEC phase obligations recorded in §2.1)
+**Version:** 1.3 (Phase 02 — zero-DEC phase obligations and the DSR-01 review points recorded in §2.1)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -129,6 +129,9 @@ artefacts below are the traceable output.
 | 02 | Log redaction by field name and value shape (CLAUDE.md §8) | `packages/telemetry/` | `pnpm run test:unit` |
 | 02 | Synthetic-identity-only test data (CLAUDE.md §8) | `packages/testing/` | `pnpm run test:unit` |
 | 02 | Seven deployable applications and the E2E harness | `apps/`, `e2e/` | `pnpm run build`, `pnpm run test:e2e` |
+| 02 | Production dependency tree clean at moderate and above; dev-only tooling contained ([DSR-01](dependency-security-register.md)) | `package.json`, `.github/workflows/ci.yml` | `pnpm run audit:prod`, `validate-workspace` 12–15 |
+| 20 | Re-review `DSR-01` when external adapters are wired | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod` |
+| 22 | Re-review `DSR-01` in the security pass; close it if a compatible stable Drizzle Kit has landed | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod`, `pnpm run audit:tree` |
 
 Phase 02 introduces no DEC coverage; every one of the 279 decisions remains `PENDING` after it.
 

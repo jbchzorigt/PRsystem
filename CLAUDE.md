@@ -26,6 +26,7 @@ Implementation-owned documents live under `docs/implementation/` and are updated
 - `requirements-traceability.md` — DEC ID → module → code → test mapping.
 - `external-integration-gates.md` — external provider blockers.
 - `assumptions-and-conflicts.md` — assumptions, resolved drift, open conflicts.
+- `dependency-security-register.md` — advisories that cannot be closed by a compatible stable upgrade, with their containment, evidence and mandatory review phase.
 
 ---
 

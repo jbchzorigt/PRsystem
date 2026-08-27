@@ -253,6 +253,131 @@ check('11', 'Compose provides the four local backing services', () => {
   return `${images.length} pinned images, ${healthchecks.length} healthchecks`;
 });
 
+/*
+ * Checks 12-15 contain the dependency-security risk recorded in
+ * docs/implementation/dependency-security-register.md. The mitigation for
+ * GHSA-67mh-4wv8-2f99 is containment, not a version bump, so containment is
+ * asserted by a gate rather than trusted to reviewer memory.
+ */
+
+/** Tooling that must never reach a production dependency tree or runtime import. */
+const DEV_ONLY_TOOLING = ['drizzle-kit'];
+
+check('12', 'Development-only tooling never appears as a production dependency', () => {
+  const offenders = [];
+  for (const { rel, json } of allManifests()) {
+    for (const name of DEV_ONLY_TOOLING) {
+      if (json.dependencies?.[name]) offenders.push(`${rel} → dependencies.${name}`);
+      if (json.optionalDependencies?.[name])
+        offenders.push(`${rel} → optionalDependencies.${name}`);
+      if (json.peerDependencies?.[name]) offenders.push(`${rel} → peerDependencies.${name}`);
+    }
+  }
+  assert(offenders.length === 0, `production-scoped dev tooling: ${offenders.join('; ')}`);
+
+  const declaring = allManifests().filter(({ json }) =>
+    DEV_ONLY_TOOLING.some((name) => json.devDependencies?.[name]),
+  );
+  assert(declaring.length > 0, `${DEV_ONLY_TOOLING.join(', ')} is declared nowhere`);
+  return `${DEV_ONLY_TOOLING.join(', ')} confined to devDependencies of ${declaring
+    .map((d) => d.rel)
+    .join(', ')}`;
+});
+
+check('13', 'No application or package source imports development-only tooling', () => {
+  const { apps, pkgs } = workspaceDirs();
+  const roots = [
+    ...apps.map((d) => join(ROOT, 'apps', d)),
+    ...pkgs.map((d) => join(ROOT, 'packages', d)),
+    join(ROOT, 'e2e'),
+  ];
+
+  const sources = [];
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.next')
+        continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(ts|tsx|mjs|js)$/.test(entry.name)) sources.push(full);
+    }
+  };
+  // Only compiled/served source counts. drizzle.config.ts sits outside src/ and
+  // outside every tsconfig `include`, so it never reaches a build output.
+  for (const root of roots) {
+    walk(join(root, 'src'));
+    walk(join(root, 'app'));
+  }
+  walk(join(ROOT, 'e2e'));
+
+  const offenders = [];
+  for (const file of sources) {
+    const text = readFileSync(file, 'utf8');
+    for (const name of DEV_ONLY_TOOLING) {
+      // Covers `from 'x'`, bare `import 'x'`, `import('x')`, `require('x')` and
+      // any subpath of them. A side-effect import is still an import.
+      const imported = new RegExp(
+        `(?:from|import|require)\\s*\\(?\\s*['"]${name}(?:/[^'"]*)?['"]`,
+      ).test(text);
+      if (imported) offenders.push(`${file.slice(ROOT.length + 1)} → ${name}`);
+    }
+  }
+  assert(offenders.length === 0, `runtime imports of dev tooling: ${offenders.join('; ')}`);
+  return `${sources.length} source files, none imports ${DEV_ONLY_TOOLING.join(' or ')}`;
+});
+
+check('14', 'No script or workflow starts the esbuild development server', () => {
+  // GHSA-67mh-4wv8-2f99 is only exploitable while `esbuild --serve` is running.
+  const serveMode = /--serve\b|--servedir\b|esbuild\s+serve\b/;
+  const offenders = [];
+
+  for (const { rel, json } of allManifests()) {
+    for (const [name, body] of Object.entries(json.scripts ?? {})) {
+      if (serveMode.test(body)) offenders.push(`${rel} → ${name}`);
+    }
+  }
+
+  const workflowDir = join(ROOT, '.github', 'workflows');
+  const workflows = existsSync(workflowDir)
+    ? readdirSync(workflowDir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
+    : [];
+  for (const file of workflows) {
+    const text = readFileSync(join(workflowDir, file), 'utf8');
+    if (serveMode.test(text)) offenders.push(`.github/workflows/${file}`);
+  }
+
+  assert(offenders.length === 0, `esbuild serve mode invoked in: ${offenders.join('; ')}`);
+  return `no serve mode in any script or in ${workflows.length} workflow(s)`;
+});
+
+check('15', 'CI enforces the production and full-tree audit thresholds', () => {
+  const root = readJson(join(ROOT, 'package.json'));
+  const expected = {
+    'audit:prod': 'pnpm audit --prod --audit-level moderate',
+    'audit:tree': 'pnpm audit --audit-level high',
+  };
+  for (const [name, body] of Object.entries(expected)) {
+    assert(root.scripts?.[name] === body, `root script ${name} must be exactly \`${body}\``);
+  }
+
+  const ci = readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  for (const name of Object.keys(expected)) {
+    assert(ci.includes(`pnpm run ${name}`), `ci.yml never runs pnpm run ${name}`);
+  }
+
+  // The production audit must be able to fail the build; a dev-tree advisory
+  // must not. Anything else would either hide a shipped vulnerability or block
+  // every phase on tooling the runtime never loads.
+  const prodStep = ci.slice(ci.indexOf('pnpm run audit:prod'));
+  const nextStep = prodStep.indexOf('\n      - name:');
+  assert(
+    !/continue-on-error:\s*true/.test(prodStep.slice(0, nextStep === -1 ? undefined : nextStep)),
+    'the production audit step is marked continue-on-error and cannot block',
+  );
+  return 'audit:prod blocking at moderate, audit:tree enabled at high';
+});
+
 let failed = 0;
 const width = Math.max(...results.map((r) => r.title.length));
 for (const r of results) {
