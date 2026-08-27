@@ -97,11 +97,28 @@ flowchart TB
 | --- | --- | --- |
 | Application contract call | A synchronous decision is needed inside one request, same transaction | Strong |
 | Query service | A read-only, permission-checked view of another module's data | Strong, read-only |
-| Projection table | A consumer needs a denormalised read model (registry list, Operation KPI, search index) | Eventual, rebuildable |
+| Own read model | A module maintains its **own** critical read model in the same transaction as the source change | Strong |
+| Projection table | A consumer needs a denormalised read model owned by a different module (registry list, Operation KPI, search index) | Eventual, rebuildable |
 | Outbox event | A consumer must react to a state change (Police matching, notifications, settlement eligibility) | Eventual, at-least-once |
 
-A projection is always rebuildable from its source module. Losing one is an availability problem,
-never a correctness problem.
+### 2.3 Projection consistency rules
+
+Decided in [ADR-0019](adr/ADR-0019-projection-consistency.md), closing DM-03.
+
+1. **Within a module, same transaction.** A module may update its own critical read model inside the
+   transaction that changes the source — category availability counters, deposit balance aggregates,
+   rollout batch progress. No boundary is crossed and there is no lag.
+2. **Across modules, eventually consistent.** A read model owned by a different module than its source
+   is updated through the transactional outbox with an idempotent inbox consumer.
+3. **Observable freshness.** Every asynchronous projection exposes an `as_of` timestamp, a processing
+   status, or a measurable lag where operationally relevant. Silently stale is a defect.
+4. **Critical commands never read a projection.** Authorization and entitlement, payment and refund
+   eligibility, inventory and availability allocation, deposit balance, readiness admission, and any
+   transition guarded by a uniqueness or non-negativity invariant all read authoritative rows under
+   the appropriate lock.
+5. **Rebuildable.** Every projection has a documented rebuild job and is fully reproducible from
+   authoritative records or the event log. Losing one is an availability problem, never a correctness
+   problem.
 
 ---
 
@@ -186,6 +203,8 @@ without creating a cycle.
 | `CTL-BOUND-01` | ESLint `no-restricted-imports` denying `*/repositories/*`, `*/schema/*`, `*/entities/*` across module roots | `GATE-LINT` |
 | `CTL-BOUND-01` | A deliberate violation fixture that must fail lint | `GATE-LINT` |
 | `CTL-BOUND-02` | Consumers of Layer 2/3 data import only projection or event types | `GATE-LINT`, `GATE-UNIT` |
+| `CTL-BOUND-03` | Critical-path isolation: a stale projection does not change an authorization, payment, refund, allocation or readiness decision | `GATE-INTEG` |
+| `CTL-DATA-11` | `police` schema reachable only by `prsystem_police`; no runtime role holds `BYPASSRLS` | `GATE-INTEG` |
 | — | Web packages restricted to `contracts` types | `GATE-LINT` (Phase 21) |
 | — | `police` is imported by no module; asserted by a dependency-graph test | `GATE-UNIT` |
 

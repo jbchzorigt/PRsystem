@@ -32,6 +32,9 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | `CTL-CONC-03` | Idempotency key, unique in PostgreSQL |
 | `CTL-AUDIT-01` | Append-only audit event with actor, realm, scope, before/after, reason, server time |
 | `CTL-AUTHZ-02` | Named-permission check inside the seven-condition pipeline |
+| `CTL-DATA-11` | Forced RLS on the transaction-scoped tenant context, for every tenant-scoped table |
+| `CTL-DATA-12` | Audit written in the same transaction; a failure to record rolls the effect back |
+| `CTL-BOUND-03` | Critical commands read authoritative rows, never a projection |
 
 ### 2.2 Authorization
 
@@ -60,6 +63,8 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | `CTL-DATA-08` | Check constraint on balance non-negativity inside the locking transaction |
 | `CTL-DATA-09` | Encrypted identifier plus keyed lookup token |
 | `CTL-DATA-10` | Retention policy snapshot and legal hold |
+| `CTL-DATA-11` | Forced Row Level Security on transaction-scoped server-derived tenant context ([ADR-0017](adr/ADR-0017-tenant-isolation-rls.md)) |
+| `CTL-DATA-12` | Partitioned append-only audit stream, fail-closed for high-risk actions ([ADR-0018](adr/ADR-0018-audit-partitioning.md)) |
 
 ### 2.4 Concurrency and transactions
 
@@ -91,8 +96,10 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | `CTL-SEC-01` | Redaction and data-classification handling |
 | `CTL-SEC-02` | Keyed-hash one-time code with attempt, resend and lockout limits |
 | `CTL-SEC-03` | Server-side session and auth-epoch revocation |
+| `CTL-SEC-04` | Envelope encryption with versioned keys behind `KeyManagementPort`; per-realm key scopes; versioned keyed-HMAC lookup ([ADR-0020](adr/ADR-0020-key-management.md)) |
 | `CTL-BOUND-01` | Module contract boundary, lint-enforced |
 | `CTL-BOUND-02` | Cross-module read via projection or outbox event only |
+| `CTL-BOUND-03` | Critical-path isolation: a critical command never reads an eventually consistent projection ([ADR-0019](adr/ADR-0019-projection-consistency.md)) |
 | `CTL-CFG-01` | Versioned configuration; no hard-coded policy; absent value disables the feature |
 
 ---
@@ -134,7 +141,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | RC-DEC-031 | CTL-CFG-01 · CTL-PROV-05 | GATE-INTEG |
 | RC-DEC-032 | CTL-AUTHZ-02 · CTL-SEC-01 | GATE-INTEG |
 | RC-DEC-033 | CTL-DATA-07 | GATE-INTEG |
-| RC-DEC-034 | CTL-AUTHZ-01 · CTL-DATA-09 | GATE-INTEG |
+| RC-DEC-034 | CTL-AUTHZ-01 · CTL-DATA-09 · CTL-SEC-04 | GATE-INTEG |
 | RC-DEC-035 | CTL-AUTHZ-02 · CTL-DATA-03 | GATE-INTEG |
 | RC-DEC-036 | CTL-DATA-03 · CTL-DATA-08 · CTL-AUDIT-01 | GATE-INTEG |
 | RC-DEC-037 | CTL-AUTHZ-02 · CTL-SEC-01 | GATE-INTEG |
@@ -144,7 +151,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | RC-DEC-041 | CTL-DATA-07 · CTL-TXN-01 | GATE-CONC |
 | RC-DEC-042 | CTL-DATA-07 · CTL-CONC-01 | GATE-CONC |
 | RC-DEC-043 | CTL-CONC-03 · CTL-DATA-07 | GATE-CONC |
-| RC-DEC-044 | CTL-DATA-09 · CTL-SEC-01 | GATE-INTEG |
+| RC-DEC-044 | CTL-DATA-09 · CTL-SEC-04 · CTL-SEC-01 | GATE-INTEG · GATE-SEC |
 
 ## 4. SHIFT-DEC — Shift handover (7)
 
@@ -156,7 +163,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | SHIFT-DEC-004 | CTL-AUTHZ-07 · CTL-AUDIT-01 | GATE-INTEG |
 | SHIFT-DEC-005 | CTL-DATA-03 · CTL-TXN-03 | GATE-INTEG |
 | SHIFT-DEC-006 | CTL-DATA-03 · CTL-TXN-03 | GATE-INTEG |
-| SHIFT-DEC-007 | CTL-AUDIT-01 | GATE-INTEG |
+| SHIFT-DEC-007 | CTL-AUDIT-01 · CTL-DATA-12 | GATE-INTEG |
 
 ## 5. STAY-DEC — Stay and time (14)
 
@@ -204,7 +211,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | BK-DEC-010 | CTL-DATA-04 · CTL-DATA-05 | GATE-INTEG |
 | BK-DEC-011 | CTL-DATA-03 · CTL-DATA-01 | GATE-INTEG |
 | BK-DEC-012 | CTL-DATA-05 · CTL-DATA-04 | GATE-INTEG |
-| BK-DEC-013 | CTL-CONC-01 · CTL-DATA-08 | GATE-CONC |
+| BK-DEC-013 | CTL-CONC-01 · CTL-DATA-08 · CTL-BOUND-03 | GATE-CONC |
 | BK-DEC-014 | CTL-AUTHZ-08 · CTL-TXN-03 | GATE-INTEG |
 
 ## 8. RV-DEC — Reviews (7)
@@ -237,11 +244,11 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 
 | DEC | Controls | Gates |
 | --- | --- | --- |
-| GUEST-DEC-001 | CTL-AUTHZ-02 · CTL-AUTHZ-03 · CTL-AUTHZ-05 | GATE-INTEG |
+| GUEST-DEC-001 | CTL-AUTHZ-02 · CTL-AUTHZ-03 · CTL-AUTHZ-05 · CTL-DATA-11 | GATE-INTEG |
 | GUEST-DEC-002 | CTL-SEC-01 | GATE-INTEG |
 | GUEST-DEC-003 | CTL-DATA-02 · CTL-DATA-04 | GATE-UNIT · GATE-INTEG |
 | GUEST-DEC-004 | CTL-DATA-07 | GATE-INTEG |
-| GUEST-DEC-005 | CTL-AUTHZ-05 · CTL-CFG-01 | GATE-INTEG |
+| GUEST-DEC-005 | CTL-AUTHZ-05 · CTL-CFG-01 · CTL-BOUND-03 | GATE-INTEG |
 | GUEST-DEC-006 | CTL-AUTHZ-05 · CTL-CFG-01 · CTL-AUDIT-01 | GATE-INTEG |
 | GUEST-DEC-007 | CTL-SEC-01 · CTL-CFG-01 | GATE-INTEG |
 | GUEST-DEC-008 | CTL-DATA-10 · CTL-CFG-01 | GATE-INTEG |
@@ -250,27 +257,27 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 
 | DEC | Controls | Gates |
 | --- | --- | --- |
-| POL-DEC-001 | CTL-DATA-09 · CTL-PROV-05 | GATE-INTEG |
+| POL-DEC-001 | CTL-DATA-09 · CTL-SEC-04 · CTL-PROV-05 | GATE-INTEG |
 | POL-DEC-002 | CTL-BOUND-02 · CTL-DATA-04 · CTL-TXN-02 | GATE-INTEG · GATE-CONC |
 | POL-DEC-003 | CTL-AUTHZ-02 · CTL-SEC-01 | GATE-INTEG |
 | POL-DEC-004 | CTL-SEC-02 · CTL-SEC-03 | GATE-INTEG |
 | POL-DEC-005 | CTL-AUTHZ-02 · CTL-AUTHZ-05 | GATE-UNIT · GATE-INTEG |
 | POL-DEC-006 | CTL-DATA-05 | GATE-UNIT |
-| POL-DEC-007 | CTL-AUTHZ-01 · CTL-BOUND-01 · CTL-SEC-01 | GATE-UNIT · GATE-INTEG |
+| POL-DEC-007 | CTL-AUTHZ-01 · CTL-BOUND-01 · CTL-DATA-11 · CTL-SEC-01 | GATE-UNIT · GATE-INTEG |
 | POL-DEC-008 | CTL-AUTHZ-05 · CTL-CFG-01 | GATE-INTEG |
 | POL-DEC-009 | CTL-SEC-01 · CTL-CFG-01 | GATE-SEC |
-| POL-DEC-010 | CTL-AUTHZ-02 · CTL-CFG-01 · CTL-AUDIT-01 | GATE-INTEG |
-| POL-DEC-011 | CTL-CFG-01 · CTL-AUDIT-01 | GATE-INTEG |
+| POL-DEC-010 | CTL-AUTHZ-02 · CTL-CFG-01 · CTL-DATA-11 · CTL-DATA-12 | GATE-INTEG |
+| POL-DEC-011 | CTL-CFG-01 · CTL-DATA-12 | GATE-INTEG |
 | POL-DEC-012 | CTL-AUTHZ-02 · CTL-CONC-01 | GATE-CONC |
 | POL-DEC-013 | CTL-DATA-05 · CTL-AUTHZ-02 | GATE-INTEG |
 | POL-DEC-014 | CTL-DATA-04 · CTL-AUDIT-01 | GATE-INTEG |
 | POL-DEC-015 | CTL-AUTHZ-07 · CTL-DATA-03 | GATE-INTEG |
 | POL-DEC-016 | CTL-DATA-05 | GATE-UNIT |
-| POL-DEC-017 | CTL-DATA-07 · CTL-DATA-09 · CTL-BOUND-02 | GATE-INTEG · GATE-CONC |
+| POL-DEC-017 | CTL-DATA-07 · CTL-DATA-09 · CTL-SEC-04 · CTL-BOUND-02 | GATE-INTEG · GATE-CONC |
 | POL-DEC-018 | CTL-AUTHZ-07 · CTL-DATA-03 | GATE-INTEG |
 | POL-DEC-019 | CTL-AUTHZ-07 · CTL-DATA-03 · CTL-CONC-02 | GATE-INTEG · GATE-CONC |
 | POL-DEC-020 | CTL-DATA-05 · CTL-AUDIT-01 | GATE-UNIT · GATE-INTEG |
-| POL-DEC-021 | CTL-AUTHZ-02 · CTL-AUTHZ-06 · CTL-SEC-01 | GATE-UNIT · GATE-INTEG |
+| POL-DEC-021 | CTL-AUTHZ-02 · CTL-AUTHZ-06 · CTL-DATA-11 · CTL-SEC-01 | GATE-UNIT · GATE-INTEG |
 | POL-DEC-022 | CTL-SEC-02 · CTL-SEC-03 · CTL-AUTHZ-06 | GATE-INTEG · GATE-SEC |
 
 ## 12. OPS-DEC — Operation dashboard (18)
@@ -289,8 +296,8 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | OPS-DEC-010 | CTL-CFG-01 · CTL-CONC-03 | GATE-INTEG |
 | OPS-DEC-011 | CTL-SEC-01 · CTL-AUTHZ-05 | GATE-INTEG |
 | OPS-DEC-012 | CTL-AUTHZ-05 · CTL-SEC-01 | GATE-INTEG |
-| OPS-DEC-013 | CTL-DATA-05 · CTL-BOUND-02 | GATE-INTEG |
-| OPS-DEC-014 | CTL-BOUND-02 · CTL-DATA-02 | GATE-UNIT · GATE-INTEG |
+| OPS-DEC-013 | CTL-DATA-05 · CTL-BOUND-02 · CTL-BOUND-03 | GATE-INTEG |
+| OPS-DEC-014 | CTL-BOUND-02 · CTL-BOUND-03 · CTL-DATA-02 | GATE-UNIT · GATE-INTEG |
 | OPS-DEC-015 | CTL-AUTHZ-06 · CTL-AUTHZ-07 · CTL-SEC-02 | GATE-INTEG |
 | OPS-DEC-016 | CTL-AUTHZ-04 · CTL-CFG-01 | GATE-INTEG |
 | OPS-DEC-017 | CTL-AUTHZ-02 · CTL-PROV-05 · CTL-AUTHZ-06 | GATE-INTEG |
@@ -344,7 +351,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | RBAC-DEC-003 | CTL-AUTHZ-03 | GATE-UNIT · GATE-INTEG |
 | RBAC-DEC-004 | CTL-AUTHZ-01 · CTL-AUTHZ-02 | GATE-UNIT · GATE-INTEG |
 | RBAC-DEC-005 | CTL-AUTHZ-01 · CTL-AUTHZ-02 | GATE-UNIT |
-| RBAC-DEC-006 | CTL-AUTHZ-02 · CTL-AUTHZ-05 | GATE-INTEG |
+| RBAC-DEC-006 | CTL-AUTHZ-02 · CTL-AUTHZ-05 · CTL-DATA-11 | GATE-INTEG |
 | RBAC-DEC-007 | CTL-AUTHZ-02 · CTL-AUTHZ-08 | GATE-UNIT · GATE-INTEG |
 | RBAC-DEC-008 | CTL-AUTHZ-02 · CTL-AUTHZ-08 | GATE-UNIT |
 | RBAC-DEC-009 | CTL-AUTHZ-03 · CTL-AUTHZ-08 | GATE-UNIT · GATE-INTEG |
@@ -381,7 +388,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | DEP-DEC-004 | CTL-AUTHZ-08 · CTL-AUDIT-01 | GATE-INTEG |
 | DEP-DEC-005 | CTL-PROV-03 · CTL-CFG-01 | GATE-INTEG |
 | DEP-DEC-006 | CTL-TXN-03 · CTL-DATA-07 · CTL-DATA-03 | GATE-INTEG |
-| DEP-DEC-007 | CTL-CONC-01 · CTL-CONC-02 · CTL-DATA-08 | GATE-CONC |
+| DEP-DEC-007 | CTL-CONC-01 · CTL-CONC-02 · CTL-DATA-08 · CTL-BOUND-03 | GATE-CONC |
 | DEP-DEC-008 | CTL-AUTHZ-08 · CTL-DATA-04 | GATE-UNIT · GATE-INTEG |
 | DEP-DEC-009 | CTL-CONC-01 · CTL-PROV-05 · CTL-DATA-07 | GATE-CONC |
 | DEP-DEC-010 | CTL-AUTHZ-02 · CTL-AUTHZ-06 · CTL-PROV-05 | GATE-INTEG |
@@ -420,7 +427,7 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | FIN-DEC-004 | CTL-DATA-05 · CTL-DATA-01 | GATE-INTEG |
 | FIN-DEC-005 | CTL-DATA-05 · CTL-AUTHZ-02 · CTL-TXN-01 | GATE-INTEG |
 | FIN-DEC-006 | CTL-DATA-02 | GATE-UNIT · GATE-INTEG |
-| FIN-DEC-007 | CTL-DATA-02 · CTL-BOUND-02 | GATE-INTEG |
+| FIN-DEC-007 | CTL-DATA-02 · CTL-BOUND-02 · CTL-BOUND-03 | GATE-INTEG |
 | FIN-DEC-008 | CTL-SEC-01 · CTL-AUTHZ-02 | GATE-INTEG |
 | FIN-DEC-009 | CTL-TXN-03 · CTL-DATA-03 | GATE-INTEG |
 | FIN-DEC-010 | CTL-AUTHZ-02 · CTL-AUTHZ-08 | GATE-UNIT · GATE-INTEG |
@@ -493,10 +500,15 @@ Applied to every money- or lifecycle-changing command, so they are implicit in e
 | Metric | Value |
 | --- | --- |
 | Decisions mapped | 279 / 279 |
-| Distinct controls used | 37 |
+| Distinct controls defined | 41 |
+| Universal controls applied to every command | 7 |
 | Decisions requiring `GATE-CONC` | 45 |
-| Decisions requiring `GATE-SEC` | 3 |
-| Decisions whose primary control is `CTL-CFG-01` (policy is configuration, not code) | 31 |
+| Decisions requiring `GATE-SEC` | 4 |
+
+Controls `CTL-DATA-11`, `CTL-DATA-12`, `CTL-BOUND-03` and `CTL-SEC-04` were added when the four Phase 01
+design questions were closed (ADR-0017 … ADR-0020). The first three are **universal** — they apply to
+every command rather than to a specific decision — and are cited per row only where they are the
+primary control.
 
 Controls and gates cited here are validated for existence by
 `node tools/validate-governance.mjs` check 11.

@@ -58,6 +58,19 @@ Phase 01 runs `GATE-GOV` only; no code exists yet, so no other gate is applicabl
   amount-mismatch, currency-mismatch, bad-signature, timeout-then-late-success.
 - Append-only tables reject `UPDATE` and `DELETE`.
 - Exports contain exactly the approved columns and no PII beyond them.
+- **RLS** ([ADR-0017](adr/ADR-0017-tenant-isolation-rls.md)): a cross-tenant read is blocked with the
+  repository predicate removed; a missing context returns zero rows and rejects writes; every API
+  route and every worker job establishes context transactionally; no runtime role holds `BYPASSRLS`;
+  `prsystem_api` cannot reach the `police` schema.
+- **Audit** ([ADR-0018](adr/ADR-0018-audit-partitioning.md)): grant separation between platform and
+  Police streams; partition routing by server timestamp; a simulated audit-write failure rolls back
+  the money-changing effect; retention honours legal hold.
+- **Projections** ([ADR-0019](adr/ADR-0019-projection-consistency.md)): with a deliberately stale
+  projection, authorization, payment eligibility, refund eligibility, allocation and readiness still
+  decide correctly; rebuild reproduces the projection exactly.
+- **Keys** ([ADR-0020](adr/ADR-0020-key-management.md)): rotation preserves readability; rewrapping is
+  resumable; a Police-scope unwrap from a Hotel-scope context is refused; KMS unavailability fails
+  closed with no plaintext write.
 
 ### `GATE-CONC`
 
@@ -108,10 +121,12 @@ Added to `GATE-GOV` by this phase:
 
 | Check | Assertion |
 | --- | --- |
-| 8 | Every document listed in the architecture index exists |
+| 8 | Every document listed in the architecture index exists; ADR numbering is contiguous |
 | 9 | Every invariant in traceability §25 is named in the architecture control mapping |
-| 10 | Every `EXT-01` … `EXT-11` has a named port surface in the port catalog |
+| 10 | Every `EXT-01` … `EXT-11` has a named port surface or an explicit no-port rationale |
 | 11 | Every one of the 279 DECs has a control and gate mapping row, and every cited control and gate is defined in its catalog |
+| 12 | Every architecture design question `DM-01` … `DM-04` is resolved and cites the ADR that closed it |
+| 13 | P1 accounting is internally consistent: the pending count agrees across governance documents, and no P1 item is described as closed without an approved DEC |
 
 ---
 

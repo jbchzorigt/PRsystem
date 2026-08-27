@@ -97,13 +97,37 @@ none reopens a closed P0 decision.
 | A-11 | Cleaner task claiming uses a single-statement conditional update on `assignment_version`, satisfying the one-atomic-claim rule while P1-19's automatic SLA escalation stays deferred | doc 04 §8, `STAFF-DEC-007`, P1-19 | Phase 09 | Low |
 | A-12 | Provider events are deduplicated on `(provider, provider_event_id)` with a unique constraint, and payments on `(provider, merchant, provider_payment_id)` | `PAY-DEC-005`, `ONB-DEC-008` | Phase 03 | Low |
 
+Assumptions A-03, A-04, A-05 and A-08 were **superseded in substance** by the Phase 01 design
+decisions in §3.1: they described the intended mechanism, and the ADRs now specify it normatively.
+They remain listed because the reasoning is unchanged.
+
+### 3.1 Phase 01 design decisions
+
+The four architecture design questions raised in Phase 01 are **closed**. None remains open.
+
+| ID | Decision | ADR | Implemented in |
+| --- | --- | --- | --- |
+| DM-01 | PostgreSQL Row Level Security as defence in depth: `FORCE ROW LEVEL SECURITY` on hotel- and restaurant-scoped tables, transaction-scoped `SET LOCAL` server-derived context, five database roles with no `BYPASSRLS` for API or worker, migrations under a separate owner role, Police in a separate schema and role, explicit rules for public projections and cross-tenant jobs | [ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) | Phase 03, extended per table in 04–19 |
+| DM-02 | Append-only audit partitioned monthly by server timestamp, in two separately granted streams; partitions pre-created with a horizon alert; high-risk actions fail closed when audit cannot be recorded; retention configurable by data class with legal hold; no invented Police retention duration | [ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md) | Phase 03 |
+| DM-03 | Own read model in the same transaction; cross-module projections eventually consistent via outbox and idempotent inbox, with observable `as_of`/lag; critical commands never read a projection; all projections rebuildable | [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md) | Phase 03, applied in 13, 17, 19 |
+| DM-04 | Envelope encryption with versioned DEKs behind a provider-neutral `KeyManagementPort`; separate Hotel/Guest and Police key scopes; versioned keyed-HMAC lookup, never an unkeyed hash; key version stored with ciphertext; rotation and rewrapping; deterministic development simulator; production fails closed | [ADR-0020](../architecture/adr/ADR-0020-key-management.md) | Phase 03, adapter in Phase 20 |
+
 ---
 
 ## 4. P1 configuration register
 
-[docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists 17 P1 items. None reopens schema
-or API design; each is implemented as versioned configuration with the interim default below, surfaced
-in the admin or configuration layer, and confirmed before MVP handover in Phase 23.
+[docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain
+open**; none has been closed by any phase to date. None reopens schema or API design; each is
+implemented as versioned configuration with the interim default below, surfaced in the admin or
+configuration layer, and confirmed before MVP handover in Phase 23.
+
+**P1 accounting:** 17 total · 17 pending · 0 closed.
+
+An interim default, an architecture proposal or a passing measurement does **not** close a P1 item.
+Only an approved customer decision does. This applies specifically to **P1-10**: Phase 01 proposed
+measurable non-functional values, every one carrying the status `PROVISIONAL_ARCHITECTURE_DEFAULT`
+— including RPO ≤ 5 minutes and RTO ≤ 4 hours. Phase 22 measures them and Phase 23 reports whether
+they were achieved, but P1-10 stays `OPEN` until an approved DEC adopts the values.
 
 | P1 | Item | Interim default used | Owning phase |
 | --- | --- | --- | --- |
@@ -116,7 +140,7 @@ in the admin or configuration layer, and confirmed before MVP handover in Phase 
 | P1-07 | SMS job cap, retry, retention and masking | Cap and retry configurable with a conservative default; body never logged | 19 |
 | P1-08 | Police alert escalation minutes, routing and metrics | **Disabled in production without approved ЦЕГ configuration** (EXT-09) | 18 |
 | P1-09 | Retention for non-guest data classes | Guest PII at 365 days confirmed; the audit, review, order, payment and SMS retention matrix is pending | 17 |
-| P1-10 | Non-functional targets | Measurable acceptance targets defined in the architecture phase and re-asserted in Phase 22 | 01 |
+| P1-10 | Non-functional targets | `PROVISIONAL_ARCHITECTURE_DEFAULT` values proposed in [15-non-functional-targets.md](../architecture/15-non-functional-targets.md); **status `OPEN`** — measured in Phase 22, reported in Phase 23, closed only by an approved DEC | 01 |
 | P1-11 | Receipt and tax beyond the subscription eBarimt | The ledger carries tax fields; room, minibar, booking receipts and VAT numbering are deferred | 17 |
 | P1-12 | Audit viewer, filters, retention and alerts | The per-module audit taxonomy is built as each module lands; the central viewer is deferred | 22 |
 | P1-13 | Restaurant invitation, OTP and guest access TTLs | A unified security configuration table | 15 |

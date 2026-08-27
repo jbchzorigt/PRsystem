@@ -299,11 +299,34 @@ immutable columns. An approved actual-time amendment changes none of them (`POL-
 
 ---
 
-## 11. Open modelling questions
+## 11. Resolved modelling decisions
 
-| ID | Question | Decided by |
+All four Phase 01 design questions are **closed**. None remains open.
+
+| ID | Question | Decision | ADR |
+| --- | --- | --- | --- |
+| DM-01 | Tenant isolation mechanism | Row Level Security with `FORCE ROW LEVEL SECURITY` as defence in depth, on transaction-scoped server-derived context, retaining composite keys, scoped repositories and the authorization pipeline; Police in a separate schema and role | [ADR-0017](adr/ADR-0017-tenant-isolation-rls.md) |
+| DM-02 | Audit partitioning | Two append-only streams — platform and Police — each monthly range-partitioned by server timestamp, pre-created with a horizon alert, fail-closed for high-risk actions, retention by data class and legal hold | [ADR-0018](adr/ADR-0018-audit-partitioning.md) |
+| DM-03 | Projection consistency | Same-transaction read models inside a module; cross-module projections eventually consistent through outbox and idempotent inbox, with observable freshness; critical commands never read a projection | [ADR-0019](adr/ADR-0019-projection-consistency.md) |
+| DM-04 | Encryption key management | Envelope encryption with versioned DEKs behind a provider-neutral `KeyManagementPort`; separate Hotel/Guest and Police key scopes; versioned keyed-HMAC lookup tokens; fail closed in production | [ADR-0020](adr/ADR-0020-key-management.md) |
+
+### 11.1 Schema consequences
+
+| Consequence | Applies to |
+| --- | --- |
+| Every hotel- and restaurant-scoped table has RLS enabled **and** forced, with a policy on `app.hotel_id` / `app.restaurant_id` | all tenant-owned tables |
+| Police tables live in the `police` schema, reachable only by `prsystem_police` | `police` module |
+| Audit is split into `audit.platform_event` and `police_audit.security_event`, monthly range-partitioned on server `occurred_at` | kernel, police |
+| Encrypted identifier columns carry `key_version` beside the ciphertext | `GUEST_IDENTITY`, `WANTED_IDENTITY_REVISION` |
+| Lookup tokens are versioned keyed HMACs, namespaced by identity type and country | `identifier_lookup_token` |
+| Asynchronous projections carry `as_of` and processing status | registry, Operation KPI, search index |
+
+### 11.2 Public, global and cross-tenant data
+
+Per ADR-0017 §8, three categories are exempt from tenant RLS and each has an explicit rule:
+
+| Category | Examples | Rule |
 | --- | --- | --- |
-| DM-01 | Whether tenant isolation adds Row Level Security in addition to mandatory `hotel_id` predicates | Phase 03, recorded in [06](06-tenant-boundaries.md) §5 |
-| DM-02 | Whether the audit event store is partitioned by month from the start | Phase 03; driven by the P1-12 retention matrix |
-| DM-03 | Whether registry and Operation KPI projections are synchronous or outbox-driven | Phase 17 and Phase 19; both are rebuildable either way |
-| DM-04 | Encryption-key management for identifier ciphertext and lookup tokens | Phase 03, then EXT-10 review |
+| Public projection | Published listing, search index, published reviews, rating aggregate | Separate tables, no RLS, fed only from tenant-scoped sources, contain no C2/C3 data |
+| Global reference | Packages, permission catalog, config versions | No tenant column; read-only at runtime |
+| Cross-tenant system job | Operation KPI aggregation, retention sweep, projection rebuild | `prsystem_maintenance` under a named audited job identity, per-tenant transaction where possible |

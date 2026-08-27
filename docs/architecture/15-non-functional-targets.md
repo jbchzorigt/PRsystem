@@ -1,12 +1,23 @@
 # 15 — Non-Functional Targets
 
-Measurable acceptance targets. This document **closes P1-10**, which the requirements left open as
-"response time, concurrent users, uptime, backup/RPO/RTO, browser and mobile support, Mongolian
-language and timezone" (doc 00 §3).
+**Status of every value in this document: `PROVISIONAL_ARCHITECTURE_DEFAULT`.**
 
-Each target is a proposed default derived from the operating profile in the requirements. Targets are
-verified in Phase 22 and signed off by the customer in Phase 23. Where a target is not met, the phase
-reports it rather than lowering it.
+P1-10 remains **OPEN**. The requirements ask for measurable acceptance targets to be proposed in the
+architecture document (doc 00 §3, P1-10), and that is what this document does — it proposes them. It
+does **not** close the P1 item. Architecture may propose a number; only an approved decision from the
+customer can make it a product requirement.
+
+| | |
+| --- | --- |
+| Requirement status | P1-10 `OPEN` — one of 17 pending P1 items |
+| Value status | `PROVISIONAL_ARCHITECTURE_DEFAULT` for every target below, explicitly including **RPO ≤ 5 minutes** and **RTO ≤ 4 hours** |
+| Finalised by | An approved DEC that explicitly adopts these values |
+| Measured by | Phase 22 — load, fault-injection and restore rehearsal |
+| Reported by | Phase 23 — achieved / not achieved per target, as a release decision for the customer |
+
+Until such a DEC exists, these values are engineering defaults used to size and test the system. A
+Phase 22 measurement that falls short is reported as a gap against a provisional target; it is never
+resolved by lowering the number.
 
 ---
 
@@ -97,13 +108,15 @@ deploy needs no downtime.
 
 ## 5. Durability and recovery
 
-| Target | Value |
-| --- | --- |
-| RPO | ≤ 5 minutes (continuous WAL archiving) |
-| RTO | ≤ 4 hours for full service restoration |
-| Backup retention | 30 days point-in-time, plus monthly archives per the P1-09 retention matrix |
-| Restore rehearsal | Every release cycle; mandatory in Phase 22 |
-| Backup encryption | At rest and in transit |
+All values `PROVISIONAL_ARCHITECTURE_DEFAULT` — see the status block at the top of this document.
+
+| Target | Value | Status |
+| --- | --- | --- |
+| RPO | ≤ 5 minutes (continuous WAL archiving) | `PROVISIONAL_ARCHITECTURE_DEFAULT` |
+| RTO | ≤ 4 hours for full service restoration | `PROVISIONAL_ARCHITECTURE_DEFAULT` |
+| Backup retention | 30 days point-in-time, plus monthly archives per the P1-09 retention matrix | `PROVISIONAL_ARCHITECTURE_DEFAULT` |
+| Restore rehearsal | Every release cycle; mandatory in Phase 22 | `PROVISIONAL_ARCHITECTURE_DEFAULT` |
+| Backup encryption | At rest and in transit | Mandated by CLAUDE.md §8 |
 
 A restore must not replay already-delivered side effects; the outbox delivery marker and the
 documented cut-off procedure prevent duplicate email or SMS
@@ -170,11 +183,14 @@ Phase 21.
 | Target group | Gate | Phase |
 | --- | --- | --- |
 | Latency and throughput | Load test against seeded realistic volumes | 22 |
-| Availability and degraded modes | Fault injection: provider down, Redis down, storage down | 22 |
+| Availability and degraded modes | Fault injection: provider down, Redis down, storage down, KMS down | 22 |
 | RPO / RTO | Restore rehearsal, measured | 22 |
 | Browser and mobile support | `GATE-E2E` across the viewport matrix | 21 |
 | Accessibility | Automated scan plus manual keyboard traversal | 21 |
 | Localisation | Copy review against the requirement vocabulary | 21 |
 | Security posture | `GATE-SEC` plus penetration test | 22 |
 
-Any target missed in Phase 22 is reported to the customer as a release decision, not quietly adjusted.
+**Phase 22** measures every value above and records the measured result beside the provisional target.
+**Phase 23** reports, per target, whether it was achieved, and returns the release decision to the
+customer. A missed target is never silently adjusted, and P1-10 does not become `CLOSED` by
+measurement alone — it closes when an approved DEC adopts the values.

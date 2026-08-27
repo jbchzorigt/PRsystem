@@ -28,11 +28,11 @@ requirement document disagree, the requirement document wins and the conflict is
 | 11 | [Concurrency strategy](11-concurrency-strategy.md) | Which mechanism to use for which class of race |
 | 12 | [Migration strategy](12-migration-strategy.md) | Versioned migrations, fresh and upgrade testing |
 | 13 | [Telemetry and redaction](13-telemetry-and-redaction.md) | What is logged, what is never logged, how it is enforced |
-| 14 | [Test strategy and gates](14-test-strategy-and-gates.md) | The seven gates and what each must prove |
-| 15 | [Non-functional targets](15-non-functional-targets.md) | Measurable NFR targets, closing P1-10 |
-| 16 | [External port catalog](16-external-port-catalog.md) | The typed port surface for each EXT gate |
+| 14 | [Test strategy and gates](14-test-strategy-and-gates.md) | The eight gates and what each must prove |
+| 15 | [Non-functional targets](15-non-functional-targets.md) | Provisional NFR targets proposed for P1-10 (P1-10 stays open) |
+| 16 | [External port catalog](16-external-port-catalog.md) | The typed port surface for each EXT gate, plus `KeyManagementPort` |
 | 17 | [DEC control and test mapping](17-dec-control-mapping.md) | All 279 decisions mapped to controls and gates |
-| — | [Architecture decision records](adr/README.md) | ADR-0001 … ADR-0016 |
+| — | [Architecture decision records](adr/README.md) | ADR-0001 … ADR-0020, incl. DM-01 … DM-04 closure |
 
 ---
 
@@ -40,9 +40,10 @@ requirement document disagree, the requirement document wins and the conflict is
 
 Delivered in this phase:
 
-- the documents listed above and sixteen ADRs;
-- the control catalog (`CTL-*`) and gate catalog (`GATE-*`) that later phases cite;
-- measurable non-functional targets, closing P1-10;
+- the documents listed above and twenty ADRs;
+- the control catalog (`CTL-*`, 41 controls) and gate catalog (`GATE-*`) that later phases cite;
+- closure of the four design questions DM-01 … DM-04 as ADR-0017 … ADR-0020;
+- measurable non-functional targets **proposed** for P1-10, all marked `PROVISIONAL_ARCHITECTURE_DEFAULT`; P1-10 itself remains open pending an approved DEC;
 - extension of `tools/validate-governance.mjs` with the Phase 01 architecture gates.
 
 Explicitly **not** delivered in this phase, by instruction and by
@@ -61,6 +62,8 @@ Explicitly **not** delivered in this phase, by instruction and by
 - **Module** — a code unit owning a set of tables and exposing a `contracts` surface.
 - **Realm** — an isolated authentication population (Hotel, Guest, Operation/Platform, Police).
 - **`CTL-*`** — a named control defined in [17](17-dec-control-mapping.md) §2.
+- **`DM-*`** — a Phase 01 design question. All four are closed by ADR-0017 … ADR-0020; none remains
+  open.
 - **`GATE-*`** — a named test gate defined in [14](14-test-strategy-and-gates.md) §2.
 - **DEC** — a canonical requirement decision; the register is
   [requirements-traceability.md](../implementation/requirements-traceability.md).

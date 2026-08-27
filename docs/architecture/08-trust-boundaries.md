@@ -162,11 +162,16 @@ Semi-trusted: the transport is authenticated but the content is still validated.
 ## 6. TB-5 / TB-6 — Datastores
 
 - **PostgreSQL** is reached only through parameterised queries. Dynamic SQL uses an allowlist for
-  identifiers. Migration and application database roles are separate; the application role cannot
-  perform DDL.
+  identifiers. Five separate roles exist ([02](02-container-and-deployment.md) §1.1): the application
+  roles hold DML only and cannot perform DDL, and none holds `BYPASSRLS`.
+- **Row Level Security** is forced on tenant-scoped tables. Even a query that escapes the repository
+  layer sees only the rows of the transaction-scoped `app.hotel_id`, and sees nothing at all if no
+  context was set ([ADR-0017](adr/ADR-0017-tenant-isolation-rls.md)).
+- **Police data** is in its own schema reachable only by `prsystem_police`, a role not granted to the
+  Hotel, Restaurant, Guest or Operation runtimes.
 - **Redis** never holds authority. Losing it fails closed: rate-limit and OTP counters absent means
   reject, not allow. Idempotency and outbox records live in PostgreSQL so a Redis flush cannot cause a
-  duplicate business effect ([02](02-container-and-deployment.md) §1.1).
+  duplicate business effect ([02](02-container-and-deployment.md) §1.2).
 
 ---
 
@@ -198,6 +203,9 @@ The most easily eroded boundary, because everything shares a process and a datab
 | --- | --- |
 | No shared accounts or sessions | Separate account tables per realm; realm recorded on the session |
 | Police tables unreachable | `police` module imported by no other module; asserted by dependency-graph test |
+| Police schema and role separated | `police` / `police_audit` schemas reachable only by `prsystem_police`, ungranted to other runtimes ([ADR-0017](adr/ADR-0017-tenant-isolation-rls.md)) |
+| Police key material separated | Distinct KMS key scope and distinct keyed-HMAC lookup scope ([ADR-0020](adr/ADR-0020-key-management.md)) |
+| Police audit separated | `police_audit.security_event` is a distinct stream with distinct grants ([ADR-0018](adr/ADR-0018-audit-partitioning.md)) |
 | Minimal check-in event | Fixed event schema with no commercial or contact fields |
 | No back-channel | The `stay` module receives nothing from `police`; a match cannot be observed |
 | Uniform hotel-facing behaviour | Response body, status and observable latency identical whether or not a Match exists (`POL-DEC-007`) |
@@ -207,8 +215,9 @@ The most easily eroded boundary, because everything shares a process and a datab
 
 ## 10. TB-11 — Tenant boundary inside one schema
 
-Covered in [06](06-tenant-boundaries.md). Four layers: pipeline scope check, mandatory repository
-predicate, `hotel_id NOT NULL` with composite foreign keys, and a cross-tenant probe suite.
+Covered in [06](06-tenant-boundaries.md). **Five** layers: pipeline scope check, mandatory repository
+predicate, `hotel_id NOT NULL` with composite foreign keys, forced Row Level Security on a
+transaction-scoped server-derived context, and a cross-tenant probe suite.
 
 ---
 
@@ -220,7 +229,7 @@ predicate, `hotel_id NOT NULL` with composite foreign keys, and a cross-tenant p
 | TB-2 | `GATE-INTEG` | QR alone denied; sixth session refused; checkout invalidates all |
 | TB-3 | `GATE-INTEG`, `GATE-CONC` | Full callback conformance suite per provider port |
 | TB-4 | `GATE-INTEG` | Outage yields `MANUAL` provenance, never `XYP_VERIFIED` |
-| TB-5/6 | `GATE-INTEG` | Redis flush mid-flow causes no duplicate effect and no unauthorized allow |
+| TB-5/6 | `GATE-INTEG`, `GATE-CONC` | Redis flush mid-flow causes no duplicate effect; RLS blocks a cross-tenant read with the repository predicate removed; a pooled connection inherits no tenant context |
 | TB-7/9 | `GATE-SEC` | No secret in bundle, log, trace or audit; signed URL expiry honoured |
 | TB-8 | `GATE-CONC` | Redelivered event produces one effect |
 | TB-10 | `GATE-UNIT`, `GATE-INTEG` | Dependency-graph assertion; hotel-facing responses identical under match/no-match |

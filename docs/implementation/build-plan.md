@@ -110,12 +110,19 @@ model specification (realm → account/membership → named permission → tenan
 entitlement → account/hotel/subscription state → step-up); money and time invariant specification;
 concurrency strategy catalogue (row lock, revision CAS, partial unique index, exclusion constraint,
 idempotency key); migration strategy (versioned only, fresh + upgrade); telemetry and log-redaction
-policy; test strategy and gate definitions; measurable non-functional targets closing P1-10.
+policy; test strategy and gate definitions; provisional non-functional targets proposed for P1-10,
+marked `PROVISIONAL_ARCHITECTURE_DEFAULT` and measured in Phase 22, reported in Phase 23.
 
-**Gates.** Documentation review against CLAUDE.md §§1–10; every invariant in
+Also closes the four architecture design questions as ADRs: `DM-01` tenant isolation
+([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md)), `DM-02` audit partitioning
+([ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md)), `DM-03` projection consistency
+([ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md)) and `DM-04` key management
+([ADR-0020](../architecture/adr/ADR-0020-key-management.md)).
+
+**Gates.** `GATE-GOV` checks 8–13; documentation review against CLAUDE.md §§1–10; every invariant in
 [requirements-traceability.md](requirements-traceability.md) §25 has a named enforcement mechanism;
 every EXT gate in [external-integration-gates.md](external-integration-gates.md) has a named port
-surface.
+surface or an explicit no-port rationale; every `DM-*` question is resolved with its closing ADR.
 
 **Exit.** Architecture and threat model accepted. No code exists yet.
 
@@ -146,12 +153,30 @@ outbox plus relay; idempotency key store; `packages/money` (bigint MNT, basis po
 `ROUND_HALF_UP`); `packages/time` (UTC storage, hotel-local resolution, `[start,end)` interval type,
 calendar-month and service-month arithmetic with end-of-month clamping).
 
+Also implements the four closed design decisions:
+
+- **RLS foundation** ([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md)): the five
+  database roles, transaction-scoped `SET LOCAL` tenant context, forced RLS on kernel-owned
+  tenant-scoped tables, and the `police` schema with its own role.
+- **Audit streams** ([ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md)):
+  `audit.platform_event` and `police_audit.security_event`, monthly range partitions on server
+  timestamp, pre-creation job with a horizon alert, and fail-closed audit for high-risk actions.
+- **Projection rules** ([ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md)): the
+  inbox consumer helper, `as_of` and lag surfacing, and the rebuild-job contract.
+- **`KeyManagementPort`** ([ADR-0020](../architecture/adr/ADR-0020-key-management.md)): envelope
+  encryption with versioned DEKs, per-realm key scopes, versioned keyed-HMAC lookup, and the
+  deterministic development simulator. Required here because identifier ciphertext exists from the
+  first migration that stores an identifier.
+
 The kernel provides the mechanisms; the concrete permission matrix rows are encoded in Phase 04.
 
 **Gates.** Unit: engine semantics — union of roles, entitlement gate above role, deny on any failed
-condition. Integration (real Postgres): audit append-only constraint, outbox exactly-once relay under
-duplicate delivery, idempotency replay returns the prior result. Concurrency: parallel permission
-revocation against an in-flight action.
+condition; keyed-HMAC namespacing. Integration (real Postgres): audit append-only constraint and
+grant separation, partition routing and fail-closed audit, outbox exactly-once relay under duplicate
+delivery, idempotency replay returns the prior result, RLS cross-tenant and missing-scope suites, no
+runtime role holds `BYPASSRLS`, key rotation preserves readability, KMS unavailability fails closed.
+Concurrency: parallel permission revocation against an in-flight action; connection-pool tenant
+context leak.
 
 ---
 
@@ -545,7 +570,12 @@ audit records, outbox payloads, fixtures and seeds; the `security-review` pass; 
 re-verification against Phase 01.
 
 **Gates.** All prior phase gates re-run green; upgrade migration succeeds; zero findings in the
-secret-leakage scan; recovery rehearsal meets the Phase 01 RPO/RTO targets.
+secret-leakage scan; recovery rehearsal **measured against** the Phase 01 RPO/RTO values.
+
+Every non-functional value in [15-non-functional-targets.md](../architecture/15-non-functional-targets.md)
+carries the status `PROVISIONAL_ARCHITECTURE_DEFAULT`. This phase measures each one and records the
+measured result beside the provisional target. A shortfall is reported as a gap, never resolved by
+lowering the number.
 
 ---
 
@@ -557,6 +587,13 @@ approver. Final review of [external-integration-gates.md](external-integration-g
 gate either cleared with its named artefact or reported as a production release blocker. Confirmation
 that the three Police production security exceptions are approved or that their fallbacks are active.
 P1 configuration register signed off. Release notes, runbook and rollback plan.
+
+**Non-functional reporting.** Report, per target in
+[15-non-functional-targets.md](../architecture/15-non-functional-targets.md), whether the Phase 22
+measurement achieved the `PROVISIONAL_ARCHITECTURE_DEFAULT` value — explicitly including RPO ≤ 5
+minutes and RTO ≤ 4 hours. P1-10 closes only if the customer approves a DEC adopting the values; it
+does not close by measurement alone. Achieved-or-not is a release decision returned to the customer,
+not taken here.
 
 **Gates.** Governance validation passes; traceability shows zero `PENDING`; no unresolved requirement
 conflict; the release decision is reported to the customer, not taken unilaterally.

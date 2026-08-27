@@ -25,3 +25,16 @@ interface, or a cross-realm data path requires a new ADR before implementation.
 | [ADR-0014](ADR-0014-separate-state-axes.md) | Separate state axes; never a single status column | Accepted |
 | [ADR-0015](ADR-0015-snapshot-on-confirmation.md) | Snapshot on confirmation; never re-resolve from current configuration | Accepted |
 | [ADR-0016](ADR-0016-policy-as-versioned-configuration.md) | Policy values are versioned configuration and fail closed when absent | Accepted |
+| [ADR-0017](ADR-0017-tenant-isolation-rls.md) | PostgreSQL Row Level Security as defence in depth for tenant isolation | Accepted |
+| [ADR-0018](ADR-0018-audit-partitioning.md) | Append-only monthly-partitioned audit streams, with Police audit separated | Accepted |
+| [ADR-0019](ADR-0019-projection-consistency.md) | Same-transaction read models within a module; eventual consistency across modules | Accepted |
+| [ADR-0020](ADR-0020-key-management.md) | Envelope encryption behind a provider-neutral `KeyManagementPort` | Accepted |
+
+## Design questions closed
+
+| ID | Question | Closed by |
+| --- | --- | --- |
+| DM-01 | PostgreSQL tenant isolation | [ADR-0017](ADR-0017-tenant-isolation-rls.md) |
+| DM-02 | Audit partitioning | [ADR-0018](ADR-0018-audit-partitioning.md) |
+| DM-03 | Projection consistency | [ADR-0019](ADR-0019-projection-consistency.md) |
+| DM-04 | Encryption key management | [ADR-0020](ADR-0020-key-management.md) |

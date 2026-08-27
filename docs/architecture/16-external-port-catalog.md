@@ -154,6 +154,27 @@ queryStatus({ providerMessageId }) → { state: 'SENT'|'DELIVERED'|'BOUNCED'|'FA
 Bodies are server-side templates. Tokens are single-use and never logged. Delivery failure never rolls
 back a committed provisioning transaction (`ONB-DEC-006`).
 
+### Key management — `KeyManagementPort`
+
+Not an EXT gate — no requirement names a KMS vendor — but it follows the same port discipline
+([ADR-0020](adr/ADR-0020-key-management.md), closing DM-04).
+
+```ts
+type KeyScope  = 'pii.hotel_guest' | 'pii.police';
+type HmacScope = 'lookup.identity' | 'lookup.police_identity';
+
+wrap(scope: KeyScope, dek: Uint8Array)       → { wrapped; keyVersion }
+unwrap(scope: KeyScope, wrapped, keyVersion) → dek
+currentVersion(scope: KeyScope)              → keyVersion
+hmac(scope: HmacScope, input: Uint8Array)    → { mac; keyVersion }
+```
+
+Envelope encryption with versioned data-encryption keys; `key_version` stored beside every ciphertext;
+Hotel/Guest and Police key scopes separated; lookup tokens are versioned keyed HMACs, never unkeyed
+hashes. Development uses a deterministic simulator with synthetic data only. **Production fails
+closed**: with the approved KMS or a required key version unavailable, the operation fails rather than
+falling back to a local key or writing plaintext.
+
 ### Object storage — `ObjectStoragePort`
 
 ```ts
@@ -207,3 +228,8 @@ network call.
 EXT-08, EXT-09 and EXT-10 are policy and approval gates rather than network integrations. They are
 satisfied by versioned configuration and written approval, and their absence disables the dependent
 feature in production rather than defaulting it.
+
+`KeyManagementPort` and `ObjectStoragePort` are not EXT gates — the requirements name no vendor — but
+they follow the same port discipline, ship simulators, and have production implementations delivered
+in Phase 20. `KeyManagementPort` is required from Phase 03, because identifier ciphertext and lookup
+tokens exist from the first migration that stores an identifier.

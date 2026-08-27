@@ -382,6 +382,103 @@ if (hasArch) {
     assert(badGate.length === 0, `undefined gates cited: ${badGate.join(', ')}`);
     return `${mapped.size}/${allDecs.length} DECs mapped; ${controlIds.size} controls and ${gateIds.size} gates all defined`;
   });
+
+  check('12', 'Every architecture design question is resolved by an ADR', () => {
+    const dataModel = read(join(ARCH, '04-logical-data-model.md'));
+    const adrIdx = read(join(ARCH, 'adr', 'README.md'));
+    const want = ['DM-01', 'DM-02', 'DM-03', 'DM-04'];
+
+    // The data model must present them as resolved, not open.
+    assert(
+      /##\s*\d+\.\s*Resolved modelling decisions/i.test(dataModel),
+      '04-logical-data-model.md still presents design questions as open',
+    );
+    assert(
+      !/##\s*\d+\.\s*Open modelling questions/i.test(dataModel),
+      '04-logical-data-model.md still contains an "Open modelling questions" section',
+    );
+
+    const adrFiles = readdirSync(join(ARCH, 'adr')).filter((f) => /^ADR-\d{4}-/.test(f));
+    const unresolved = [];
+    for (const id of want) {
+      // Each question must appear in the data model, the ADR index, and be closed by a real ADR.
+      if (!dataModel.includes(id)) unresolved.push(`${id}: absent from the data model`);
+      if (!adrIdx.includes(id)) unresolved.push(`${id}: absent from the ADR index`);
+      const closer = adrFiles.find((f) => read(join(ARCH, 'adr', f)).includes(`**Closes:** ${id}`));
+      if (!closer) unresolved.push(`${id}: no ADR declares "**Closes:** ${id}"`);
+    }
+    assert(unresolved.length === 0, unresolved.join('; '));
+    return `${want.length} design questions closed by ADRs, none open`;
+  });
+
+  check('13', 'P1 accounting is internally consistent and nothing is falsely closed', () => {
+    const nfr = read(join(ARCH, '15-non-functional-targets.md'));
+
+    // Count P1 rows in the register.
+    const rows = [...assumptions.matchAll(/^\|\s*(P1-\d{2})\s*\|/gm)].map((m) => m[1]);
+    const uniq = new Set(rows);
+    assert(rows.length === uniq.size, `duplicate P1 rows: ${rows.length} rows, ${uniq.size} unique`);
+    const total = uniq.size;
+
+    // The stated accounting line must agree with the row count.
+    const acct = assumptions.match(
+      /\*\*P1 accounting:\*\*\s*(\d+)\s*total\s*·\s*(\d+)\s*pending\s*·\s*(\d+)\s*closed/,
+    );
+    assert(acct, 'assumptions-and-conflicts.md has no "**P1 accounting:**" line');
+    const [, sTotal, sPending, sClosed] = acct.map(Number);
+    assert(sTotal === total, `accounting says ${sTotal} total, register has ${total} rows`);
+    assert(
+      sPending + sClosed === sTotal,
+      `accounting is not self-consistent: ${sPending} + ${sClosed} != ${sTotal}`,
+    );
+
+    // Every other document that states a P1 count must agree.
+    const mismatches = [];
+    for (const [name, text] of [
+      ['assumptions-and-conflicts.md', assumptions],
+      ['phase-status.md', phaseStatus],
+      ['build-plan.md', buildPlan],
+      ['15-non-functional-targets.md', nfr],
+    ]) {
+      for (const m of text.matchAll(/(\d+)\s+(?:pending\s+)?P1(?:\s+configuration)?\s+items?/gi)) {
+        if (Number(m[1]) !== sPending) mismatches.push(`${name}: "${m[0].trim()}" vs ${sPending} pending`);
+      }
+    }
+    assert(mismatches.length === 0, `inconsistent P1 counts — ${mismatches.join('; ')}`);
+
+    // No P1 item may be described as closed by architecture alone.
+    const falseClosure = [];
+    for (const [name, text] of [
+      ['architecture/README.md', read(join(ARCH, 'README.md'))],
+      ['15-non-functional-targets.md', nfr],
+      ['build-plan.md', buildPlan],
+      ['phase-status.md', phaseStatus],
+      ['assumptions-and-conflicts.md', assumptions],
+    ]) {
+      for (const m of text.matchAll(/\b(clos(?:es|ed|ing))\b[^.\n]{0,40}?(P1-\d{2})/gi)) {
+        falseClosure.push(`${name}: "${m[0].trim()}"`);
+      }
+    }
+    assert(
+      falseClosure.length === 0,
+      `P1 item described as closed without an approved DEC — ${falseClosure.join('; ')}`,
+    );
+
+    // NFR values must carry the provisional status, including RPO and RTO.
+    assert(
+      nfr.includes('PROVISIONAL_ARCHITECTURE_DEFAULT'),
+      '15-non-functional-targets.md does not mark values PROVISIONAL_ARCHITECTURE_DEFAULT',
+    );
+    for (const token of ['RPO', 'RTO']) {
+      const line = nfr.split('\n').find((l) => l.includes(`| ${token} |`));
+      assert(line, `15-non-functional-targets.md has no ${token} row`);
+      assert(
+        line.includes('PROVISIONAL_ARCHITECTURE_DEFAULT'),
+        `${token} row is not marked PROVISIONAL_ARCHITECTURE_DEFAULT`,
+      );
+    }
+    return `${total} P1 items: ${sPending} pending, ${sClosed} closed; NFR values provisional incl. RPO and RTO`;
+  });
 }
 
 // ------------------------------------------------------------------- report

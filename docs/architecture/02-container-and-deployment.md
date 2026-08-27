@@ -55,7 +55,24 @@ distributed broker.
 | Redis | Managed Redis | Queues, retry backoff, rate-limit counters, non-authoritative caches | Vertical |
 | Object storage | S3-compatible, private buckets | Export artefacts only, with TTL | Managed |
 
-### 1.1 Redis is never authoritative
+### 1.1 Database roles
+
+Per [ADR-0017](adr/ADR-0017-tenant-isolation-rls.md), the deployment uses five distinct database
+roles rather than one application role:
+
+| Role | Used by | Notes |
+| --- | --- | --- |
+| `prsystem_migrate` | Migration runner only | DDL owner; never used at runtime |
+| `prsystem_api` | `api` | DML only; subject to RLS; no `BYPASSRLS` |
+| `prsystem_worker` | `worker` | DML plus job tables; subject to RLS; no `BYPASSRLS` |
+| `prsystem_police` | Police module connections | `police` and `police_audit` schemas only; not grantable to the runtimes above |
+| `prsystem_maintenance` | Named retention, rebuild and rewrap jobs | `BYPASSRLS`; audited job identity required |
+
+Every runtime transaction establishes its tenant context with `SET LOCAL` after the authorization
+pipeline resolves scope. Connection pooling is therefore safe: the context cannot outlive the
+transaction that set it.
+
+### 1.2 Redis is never authoritative
 
 `CLAUDE.md` §1 forbids Redis as a financial source of truth or an authoritative lock. Concretely:
 

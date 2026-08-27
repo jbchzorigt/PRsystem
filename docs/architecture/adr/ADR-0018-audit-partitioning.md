@@ -1,0 +1,66 @@
+# ADR-0018 — Append-only monthly-partitioned audit streams, with Police audit separated
+
+**Status:** Accepted · **Date:** Phase 01 · **Closes:** DM-02
+**Relates to:** ADR-0009 (append-only), ADR-0016 (policy as configuration), ADR-0017 (RLS and roles)
+
+## Context
+
+Audit is a legal and operational asset: doc 13 §13.1 enumerates mandatory Police audit events, and
+`RBAC-DEC-006` requires protected actions — including denied attempts — to be recorded. Volume is
+high and long-lived, retention differs by data class, and Police access audit must not be readable by
+platform operators. `04-logical-data-model.md` left partitioning open as **DM-02**.
+
+## Decision
+
+1. **Two streams, not one.** `audit.platform_event` and `police_audit.security_event` are separate
+   tables in separate schemas with separate grants. Platform operators cannot read Police audit;
+   `prsystem_api` has no grant on `police_audit`.
+2. **Append-only.** Both carry the ADR-0009 rules rejecting `UPDATE` and `DELETE`. Runtime
+   application roles hold `INSERT` and `SELECT` only — no `UPDATE`, no `DELETE`, on either stream.
+3. **Monthly range partitions by server timestamp.** Partition key is the server-generated
+   `occurred_at`, never a client-supplied or business-effective time, so a backdated business event
+   still lands in the partition of the month it was actually recorded.
+4. **Partitions are pre-created.** A maintenance job creates the next partitions ahead of time. An
+   alert fires when the horizon of pre-created partitions falls below the configured threshold — a
+   missing partition is an operational incident detected *before* a write fails, not after.
+5. **High-risk actions fail closed.** Where an action's audit record is written in the same
+   transaction as its effect, a failure to record the audit rolls back the effect. This applies to
+   every money-changing and lifecycle-changing command, every Police outcome decision, and every
+   step-up-gated Operation action. An action that cannot be attributed does not happen.
+6. **Retention is configuration, per data class.** Following ADR-0016, retention lives in versioned
+   configuration keyed by data class, with legal hold suspending removal. **No Police retention
+   duration is invented here.** Absent an approved ЦЕГ value (EXT-09), Police audit is retained and
+   not purged, and the dependent historical-search feature stays disabled in production.
+7. **Removal is privileged.** Partition detach and drop run as `prsystem_maintenance` under a named,
+   audited job that checks legal hold first. It is never an application delete.
+
+## Alternatives rejected
+
+- **One unpartitioned table.** Retention would require mass `DELETE` against an append-only table,
+  and index bloat would degrade the queries investigators depend on.
+- **One partitioned table with a realm column.** A single grant mistake would expose Police audit to
+  platform operators; the requirement is separation, not filtering.
+- **Partition by business-effective time.** A backdated arrival would land in a closed partition,
+  which breaks both retention accounting and the meaning of "when was this recorded".
+- **Audit written asynchronously.** Fast, but a crash between effect and audit produces an
+  unattributable financial change — the exact repudiation risk `T-X-03` addresses.
+
+## Consequences
+
+- Retention becomes a partition operation rather than a row-by-row purge.
+- Audit write availability is on the critical path for high-risk actions. That is intentional: the
+  alternative is an unattributable effect.
+- The partition-horizon alert is a required operational runbook item from Phase 03 onward.
+- Investigator queries filter by month first, which suits both partition pruning and the 31-day Police
+  search window.
+
+## Verification
+
+| Test | Gate | Asserts |
+| --- | --- | --- |
+| Append-only | `GATE-MIGR` | `UPDATE` and `DELETE` on both streams have no effect for runtime roles |
+| Grant separation | `GATE-INTEG` | `prsystem_api` cannot read `police_audit`; Operation roles cannot either |
+| Partition routing | `GATE-INTEG` | A backdated business event lands in the partition of its server-recorded month |
+| Missing partition | `GATE-INTEG` | Absent a partition, the write fails and the enclosing high-risk action rolls back |
+| Fail-closed | `GATE-INTEG` | Simulated audit-write failure rolls back the money-changing effect |
+| Retention | `GATE-INTEG` | Purge honours legal hold; Police audit is not purged without an approved policy version |

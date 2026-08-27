@@ -529,6 +529,10 @@ phase touching the invariant must re-assert it in its own gates.
 | No plaintext secrets in logs, audit, outbox or fixtures | POL-DEC-022, STAFF-DEC-001, OPS-DEC-008 | 02 | telemetry redaction plus the Phase 22 scanner |
 | Exact-RD-only Police matching, no fuzzy matching | POL-DEC-017, RC-DEC-044 | 18 | matching service |
 | Restaurant money never enters hotel ledgers | RC-DEC-020, FIN-DEC-002, CASH-DEC-004 | 15 | ledger boundary tests |
+| Forced RLS on transaction-scoped server-derived tenant context | RBAC-DEC-006, POL-DEC-007 | 03 | `CTL-DATA-11`; policies in migrations, `SET LOCAL` context, five DB roles ([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md)) |
+| Audit partitioned and fail-closed for high-risk actions | RBAC-DEC-006, POL-DEC-011 | 03 | `CTL-DATA-12`; monthly partitions, pre-creation job, same-transaction audit ([ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md)) |
+| Critical commands never read an eventually consistent projection | BK-DEC-013, DEP-DEC-007 | 03 | `CTL-BOUND-03`; authoritative row reads under lock ([ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md)) |
+| Identifiers under envelope encryption with keyed lookup and per-realm key scopes | RC-DEC-044, POL-DEC-017 | 03 | `CTL-SEC-04`; `KeyManagementPort`, versioned DEKs, keyed HMAC ([ADR-0020](../architecture/adr/ADR-0020-key-management.md)) |
 
 ---
 

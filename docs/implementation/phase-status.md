@@ -26,7 +26,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED`
 | # | Phase | State | Migrations | Gates run | Commit |
 | --- | --- | --- | --- | --- | --- |
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
-| 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 11/11 | pending |
+| 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `NOT STARTED` | — | — | — |
 | 03 | Platform kernel | `NOT STARTED` | — | — | — |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
@@ -151,22 +151,50 @@ Delivered under [docs/architecture/](../architecture/README.md):
 | Module ownership register (19 modules), dependency rules, cross-module flows | `03-module-ownership-and-dependencies.md` |
 | Logical ERD per bounded context with database-level invariants | `04-logical-data-model.md` |
 | Four authentication realms and the seven-condition authorization pipeline | `05-authentication-realms-and-authorization.md` |
-| Tenant boundaries and four-layer enforcement | `06-tenant-boundaries.md` |
+| Tenant boundaries and five-layer enforcement incl. forced RLS | `06-tenant-boundaries.md` |
 | Data classification C0–C4 and the handling matrix | `07-data-classification.md` |
 | Eleven trust boundaries and their validation | `08-trust-boundaries.md` |
-| STRIDE threat model: 63 threats, mitigations, residual register | `09-threat-model.md` |
+| STRIDE threat model: 83 threats, mitigations, residual register | `09-threat-model.md` |
 | Money and time invariant specification | `10-money-and-time-invariants.md` |
 | Concurrency strategy: 10 race classes, 21-entry race register | `11-concurrency-strategy.md` |
 | Migration strategy: versioned only, expand/contract, append-only enforcement | `12-migration-strategy.md` |
 | Telemetry and redaction policy | `13-telemetry-and-redaction.md` |
 | Test strategy and the 8-gate catalog | `14-test-strategy-and-gates.md` |
-| Measurable non-functional targets — **closes P1-10** | `15-non-functional-targets.md` |
-| Typed port surface per EXT gate plus the 8-scenario conformance suite | `16-external-port-catalog.md` |
-| DEC → control → gate mapping for all 279 decisions; 37-control catalog | `17-dec-control-mapping.md` |
-| 16 architecture decision records | `adr/ADR-0001` … `adr/ADR-0016` |
+| Non-functional targets **proposed** for P1-10, all `PROVISIONAL_ARCHITECTURE_DEFAULT`; P1-10 stays `OPEN` | `15-non-functional-targets.md` |
+| Typed port surface per EXT gate, plus `KeyManagementPort`, and the 8-scenario conformance suite | `16-external-port-catalog.md` |
+| DEC → control → gate mapping for all 279 decisions; 41-control catalog | `17-dec-control-mapping.md` |
+| 20 architecture decision records | `adr/ADR-0001` … `adr/ADR-0020` |
 
-`tools/validate-governance.mjs` extended with Phase 01 architecture checks 8–11, and check 7 widened
+`tools/validate-governance.mjs` extended with Phase 01 architecture checks 8–13, and check 7 widened
 to cover the architecture set.
+
+### Design decisions closed on review
+
+The customer required the four open design questions to be closed before Phase 02. All four are now
+resolved; **none remains open**.
+
+| ID | Decision | ADR |
+| --- | --- | --- |
+| DM-01 | PostgreSQL Row Level Security as defence in depth — forced RLS, transaction-scoped server-derived context, five database roles, separate migration owner, Police schema and role, explicit public/global/cross-tenant handling, required RLS tests in owning phases | [ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) |
+| DM-02 | Monthly-partitioned append-only audit in two separately granted streams, pre-created partitions with a horizon alert, fail-closed high-risk audit, retention by data class with legal hold and no invented Police duration, no `UPDATE`/`DELETE` for runtime roles | [ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md) |
+| DM-03 | Same-transaction read models within a module; cross-module projections eventually consistent via outbox and idempotent inbox with observable freshness; critical commands never read a projection; all projections rebuildable | [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md) |
+| DM-04 | Provider-neutral `KeyManagementPort`, envelope encryption with versioned DEKs, separate Hotel/Guest and Police key scopes, versioned keyed-HMAC lookup, key version stored with ciphertext, rotation and rewrapping, development simulator, production fails closed, no plaintext key anywhere | [ADR-0020](../architecture/adr/ADR-0020-key-management.md) |
+
+Four controls were added to carry them: `CTL-DATA-11` (RLS), `CTL-DATA-12` (partitioned fail-closed
+audit), `CTL-BOUND-03` (projection critical-path isolation) and `CTL-SEC-04` (key management). The
+first three are universal and apply to every command.
+
+### Non-functional status correction
+
+The first Phase 01 submission claimed P1-10 was closed. That was wrong: architecture may **propose**
+measurable targets, but only an approved customer decision makes them a product requirement.
+
+- Every value in `15-non-functional-targets.md` now carries the status
+  `PROVISIONAL_ARCHITECTURE_DEFAULT`, explicitly including **RPO ≤ 5 minutes** and **RTO ≤ 4 hours**.
+- **P1-10 status: `OPEN`.** P1 accounting is **17 total · 17 pending · 0 closed**, consistent across
+  every governance document and enforced by `GATE-GOV` check 13.
+- Phase 22 measures the values; Phase 23 reports achieved-or-not per target and returns the release
+  decision to the customer. Measurement alone never closes the item.
 
 ### Changed file groups
 
@@ -188,7 +216,7 @@ No decision moves to `COVERED` in this phase.
 ### Test gates
 
 ```bash
-node tools/validate-governance.mjs      # GATE-GOV — 11/11 passed
+node tools/validate-governance.mjs      # GATE-GOV — 13/13 passed
 git diff --check                        # clean, exit 0
 ```
 
@@ -198,16 +226,16 @@ run and none is claimed as passing.
 
 ### Security and concurrency evidence
 
-Design-level only. The threat model records 63 threats with named mitigations, controls and verifying
-gates, and a residual register of 14 Medium risks with named owners. No Critical or High residual risk
+Design-level only. The threat model records 83 threats with named mitigations, controls and verifying
+gates, and a residual register of 15 Medium risks with named owners. No Critical or High residual risk
 remains. Concurrency evidence is the 21-entry race register, each entry bound to a `GATE-CONC` test to
 be written by its owning phase.
 
 ### Remaining blockers
 
-Unchanged from Phase 00: no P0 product blockers; eleven EXT gates block production release only;
-seventeen P1 items remain configuration values. Four Phase 01 design questions are recorded as open:
-`DM-01` … `DM-04` in `04-logical-data-model.md` §11, all owned by Phase 03.
+No P0 product blockers. Eleven EXT gates block production release only. **Seventeen P1 items remain
+open**, including P1-10. The four Phase 01 design questions `DM-01` … `DM-04` are **closed** by
+ADR-0017 … ADR-0020; none remains open.
 
 ---
 

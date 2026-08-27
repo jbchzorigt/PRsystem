@@ -37,7 +37,18 @@ assets in [07](07-data-classification.md). Likelihood/impact use a three-point s
 | T-X-07 | Elevation | Hotel Admin performs an operational action without the extra role | No inheritance; matrix-driven denial | `CTL-AUTHZ-08` | `GATE-UNIT` | Low |
 | T-X-08 | Tampering | Retry or duplicate submit creates a second business effect | Idempotency key on every money/lifecycle command | `CTL-CONC-03` | `GATE-CONC` | Low |
 | T-X-09 | Tampering | Concurrent commands corrupt an aggregate | Row lock or revision CAS per [11](11-concurrency-strategy.md) | `CTL-CONC-01`, `CTL-CONC-02` | `GATE-CONC` | Low |
-| T-X-10 | Information disclosure | Cross-tenant read via a swapped id | Four-layer tenant enforcement; denial indistinguishable from not-found | `CTL-AUTHZ-05` | `GATE-INTEG` | Low |
+| T-X-10 | Information disclosure | Cross-tenant read via a swapped id | Five-layer tenant enforcement; denial indistinguishable from not-found | `CTL-AUTHZ-05` | `GATE-INTEG` | Low |
+| T-X-11 | Information disclosure | A hand-written query or unscoped repository method bypasses the tenant predicate | Forced RLS on transaction-scoped server-derived context; missing context returns zero rows | `CTL-DATA-11` | `GATE-INTEG` | Low |
+| T-X-12 | Information disclosure | A pooled connection retains a previous request's tenant context | `SET LOCAL` only, so context dies with the transaction; explicit leak test | `CTL-DATA-11` | `GATE-CONC` | Low |
+| T-X-13 | Elevation | A background job runs unscoped across all tenants | Jobs carry explicit scope and set it transactionally; `BYPASSRLS` limited to named audited maintenance jobs | `CTL-DATA-11` | `GATE-INTEG` | Low |
+| T-X-14 | Repudiation | A financial effect commits while its audit record is lost | High-risk actions fail closed: an audit-write failure rolls back the effect | `CTL-DATA-12` | `GATE-INTEG` | Low |
+| T-X-15 | Tampering | Audit is altered or purged to hide an action | Append-only rules plus `INSERT`/`SELECT`-only runtime grants; removal only via an audited maintenance job under legal hold | `CTL-DATA-12` | `GATE-MIGR` · `GATE-INTEG` | Low |
+| T-X-16 | Denial of service | A missing audit partition blocks high-risk actions | Partitions pre-created with a horizon alert before exhaustion | `CTL-DATA-12` | `GATE-INTEG` | Low |
+| T-X-17 | Tampering | A critical decision is made from a stale projection — double allocation, double refund | Critical commands read authoritative rows under lock; projections carry `as_of`/lag | `CTL-BOUND-03` | `GATE-INTEG` | Low |
+| T-X-18 | Information disclosure | Stored identifiers decrypted after key compromise | Envelope encryption, versioned DEKs wrapped by KMS, per-realm key scopes, rotation and rewrapping | `CTL-SEC-04` | `GATE-INTEG` | Low |
+| T-X-19 | Information disclosure | Lookup tokens reversed by enumerating a small identifier space | Versioned **keyed** HMAC namespaced by identity type and country; unkeyed hashes prohibited | `CTL-SEC-04` | `GATE-UNIT` | Low |
+| T-X-20 | Elevation | Key material read from source, config, a database row, a log or a fixture | Keys only in KMS/secret manager; `key_version` recorded, key bytes never; canary scan | `CTL-SEC-04` | `GATE-SEC` | Low |
+| T-X-21 | Denial of service | KMS outage silently degrades to weaker protection | Fail closed: the operation fails, with no local-key fallback and no plaintext write | `CTL-SEC-04` | `GATE-INTEG` | Medium — availability trade accepted |
 
 ---
 
@@ -106,7 +117,9 @@ assets in [07](07-data-classification.md). Likelihood/impact use a three-point s
 | T-POL-08 | Tampering | Wanted identity altered to redirect matching | Identity revisions append-only; a material edit suspends dependent active cases until re-approved by a different actor | `CTL-DATA-03` | `GATE-INTEG` | Low |
 | T-POL-09 | Repudiation | Officer denies confirming Found | Immutable account id, unit and server time recorded; correction is a separate two-person flow | `CTL-AUDIT-01` | `GATE-INTEG` | Low |
 | T-POL-10 | Information disclosure | Bulk extraction via repeated exact searches | Exact-match only, rate-limited per account and device/IP, every search audited | `CTL-CFG-01` | `GATE-INTEG` | Medium |
-| T-POL-11 | Elevation | Platform support reads Police data during an incident | No automatic access; break-glass only under an approved ЦЕГ procedure | `CTL-AUTHZ-01` | `GATE-INTEG` | Low |
+| T-POL-11 | Elevation | Platform support reads Police data during an incident | No automatic access; separate schema and `prsystem_police` role ungranted to other runtimes; break-glass only under an approved ЦЕГ procedure | `CTL-AUTHZ-01` · `CTL-DATA-11` | `GATE-INTEG` | Low |
+| T-POL-13 | Information disclosure | Police audit read by a platform operator | `police_audit` is a separate stream with separate grants, reachable only by `prsystem_police` | `CTL-DATA-12` | `GATE-INTEG` | Low |
+| T-POL-14 | Information disclosure | Police identifiers decrypted using Hotel-realm key material | Distinct `pii.police` and `lookup.police_identity` key scopes with distinct grants | `CTL-SEC-04` | `GATE-INTEG` | Low |
 | T-POL-12 | Denial of service | Escalation storm from duplicate matching runs | One Match per `(stay, wanted_person)`; alerts idempotent | `CTL-DATA-07` | `GATE-CONC` | Low |
 
 ---
@@ -163,9 +176,12 @@ Risks that remain **Medium** after mitigation, and who owns them.
 | T-E-06 | SMS provider retains identifiers | Legal | EXT-05 data-processing agreement |
 | T-E-04 | XYP channel integrity | Legal + Engineering | EXT-01 contract, VPN, certificate, IP allowlist |
 | T-E-11 | Settlement dispute | Finance | EXT-07 contract and reconciliation procedure |
+| T-X-21 | KMS outage fails identifier flows closed | Engineering | Accepted availability trade: failing closed is preferred to weakened protection. Measured under fault injection in Phase 22 |
 
 No residual risk is rated **High**. Every Medium either has a named external owner and a gate, or is a
 decision the customer has already accepted in the requirements.
+
+**Count:** 83 threats across §§2–8; 15 residual Medium; 0 High; 0 Critical.
 
 ---
 

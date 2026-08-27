@@ -18,7 +18,7 @@ per-feature judgement call; it follows from the race class.
 | `CTL-DATA-08` | Check constraint in the locking transaction | A balance must never go negative |
 | `CTL-PROV-02` | Unique on `(provider, provider_event_id)` | Provider callbacks may repeat |
 
-Redis is never used for any of these (`CLAUDE.md` §1, [02](02-container-and-deployment.md) §1.1).
+Redis is never used for any of these (`CLAUDE.md` §1, [02](02-container-and-deployment.md) §1.2).
 
 ---
 

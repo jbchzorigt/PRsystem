@@ -44,10 +44,29 @@ runtime (`CLAUDE.md` §8, `POL-DEC-022`, `RC-DEC-027`).
 
 ## 3. Class-specific rules taken directly from the requirements
 
+### 3.0 Key management for C3 and C4 (DM-04 closed)
+
+Decided in [ADR-0020](adr/ADR-0020-key-management.md).
+
+- **Envelope encryption.** Data-encryption keys are versioned and wrapped by a key-encryption key held
+  in the production KMS or secret manager, behind a provider-neutral `KeyManagementPort`.
+- **`key_version` is stored beside the ciphertext**, so rotation never requires a synchronous rewrite
+  and old rows stay readable. A resumable rewrapping job performs rotation.
+- **Separate key scopes per realm.** `pii.hotel_guest` and `pii.police` are distinct scopes with
+  distinct KEKs and grants; compromising one realm's key material does not expose the other.
+- **Lookup uses a versioned keyed HMAC**, never an unkeyed hash — the identifier space is small enough
+  to enumerate. `lookup.identity` and `lookup.police_identity` are separate scopes.
+- **Production fails closed.** If the approved KMS or a required key version is unavailable, the
+  operation fails. There is no local-key fallback, no plaintext write and no skipped lookup token.
+- **Development** uses a deterministic local simulator with synthetic data only.
+- **Plaintext key material never persists** in source, database rows, logs, traces, fixtures, seeds or
+  audit payloads. `key_version` is an identifier and is safe to record; key bytes are not.
+
 ### 3.1 Registration numbers and identity documents (C3)
 
-- Stored as ciphertext. Exact matching uses a **separate keyed lookup token** namespaced by identity
-  type and country, so the plaintext is never needed for a lookup (`RC-DEC-044`, doc 13 §6.3).
+- Stored as ciphertext under the realm's key scope, with `key_version`. Exact matching uses a
+  **separate versioned keyed-HMAC lookup token** namespaced by identity type and country, so the
+  plaintext is never needed for a lookup (`RC-DEC-044`, doc 13 §6.3).
 - Never written to ordinary application logs or analytics (doc 02 §3.1).
 - Excluded from the guest registry list and its Excel export — the six approved columns contain no
   identifier (`GUEST-DEC-002`).
@@ -125,3 +144,8 @@ window. When it lapses, the retention job re-evaluates (`GUEST-DEC-008`).
 | Financial exports contain no guest PII | `GATE-INTEG` | Column-set assertion |
 | One-time codes are unreadable at rest | `GATE-INTEG` | Table introspection: no plaintext code column |
 | Retention job honours legal hold | `GATE-INTEG` | Held rows survive expiry; unheld rows are removed |
+| Key rotation preserves readability | `GATE-INTEG` | Data written under key version N is readable after N+1 becomes current |
+| Key scopes are separated by realm | `GATE-INTEG` | A Police-scope unwrap from a Hotel-scope context is refused |
+| Lookup tokens are keyed, not plain digests | `GATE-UNIT` | Same input yields different tokens across identity-type and country namespaces |
+| KMS unavailability fails closed | `GATE-INTEG` | Operation fails; nothing is written in plaintext |
+| Key material never leaks | `GATE-SEC` | Planted key canaries absent from logs, traces, fixtures, seeds and audit payloads |

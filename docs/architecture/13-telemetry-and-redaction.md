@@ -18,6 +18,30 @@ OpenTelemetry-compatible, emitted by both `api` and `worker`.
 Audit is deliberately not a log stream. Audit answers "who did what and was it allowed"; it is
 queried, retained and access-controlled as business data ([04](04-logical-data-model.md) §10).
 
+### 1.1 Audit streams — DM-02 closed
+
+Decided in [ADR-0018](adr/ADR-0018-audit-partitioning.md).
+
+| Stream | Schema | Readable by |
+| --- | --- | --- |
+| `audit.platform_event` | `audit` | Hotel, Operation and Platform roles per permission |
+| `police_audit.security_event` | `police_audit` | `prsystem_police` only |
+
+- **Monthly range partitions keyed on server `occurred_at`**, never a business-effective or
+  client-supplied time. A backdated arrival still lands in the month it was actually recorded.
+- **Partitions are pre-created** by a maintenance job, with an alert when the pre-created horizon
+  falls below threshold. A missing partition is caught before a write fails.
+- **Runtime roles hold `INSERT` and `SELECT` only.** No `UPDATE`, no `DELETE`, on either stream, in
+  addition to the ADR-0009 append-only rules.
+- **High-risk actions fail closed.** Where the audit record is written in the same transaction as the
+  effect, a failure to record it rolls back the effect. An action that cannot be attributed does not
+  happen. This covers every money- and lifecycle-changing command, every Police outcome decision and
+  every step-up-gated Operation action.
+- **Retention is configuration by data class**, with legal hold. **No Police retention duration is
+  invented**: absent an approved ЦЕГ value (EXT-09), Police audit is retained and not purged.
+- **Removal is privileged**: partition detach and drop run as `prsystem_maintenance` under a named
+  audited job that checks legal hold first — never an application delete.
+
 ---
 
 ## 2. Correlation
@@ -85,6 +109,7 @@ violated by accident:
 | Police Match SMS body | Never in application logs, delivery logs or provider callback records; identifier masked in delivery records | doc 13 §10.2 |
 | Guest name, room number, coordinates | Never in URLs, error messages, analytics or application logs | doc 13 §13.2 |
 | Provider credentials and webhook secrets | Never in source, logs, audit, or a frontend bundle | doc 14 §5.6 |
+| Encryption key material and HMAC secrets | Never anywhere; `key_version` may be recorded, key bytes never | [ADR-0020](adr/ADR-0020-key-management.md) |
 | Raw registry search terms | Never in URL analytics or ordinary application logs | doc 12 §8 |
 | Sensitive values in URLs or query strings | Never — including report links and SMS deep links | doc 13 §10.2 |
 
@@ -118,6 +143,10 @@ Signals that matter because of the requirements, not just the runtime:
 | Lock wait and deadlock counts | Contention on stay, drawer and inventory aggregates | Threshold |
 | Denied high-risk actions | Probing signal | Rate spike per actor/IP |
 | Export job failures | Guest and financial exports are permissioned data paths | Any failure |
+| Audit partition horizon | A missing partition would block high-risk actions | Horizon below threshold |
+| Audit write failures | A fail-closed rollback means a user-visible action was refused | Any failure |
+| Projection lag per consumer | Dashboards must be visibly stale, not silently wrong | Lag above declared bound |
+| KMS availability and unwrap failures | Identifier flows fail closed when keys are unavailable | Any failure |
 | Grace-boundary transitions | Hotels losing access is customer-visible | Daily count |
 | Police alert delivery failures | An undelivered alert is an operational failure | Any failure |
 
