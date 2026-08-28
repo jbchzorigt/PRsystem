@@ -25,8 +25,14 @@ const WORKER_ACTOR = 'actor_worker';
 /** The authenticated principals. The scheduler issues; the worker executes. */
 const SCHEDULER = 'prsystem_job_scheduler_login';
 const EXECUTOR = 'prsystem_worker_login';
-/** A second Worker-member login, for the cross-executor case. */
-const OTHER_EXECUTOR = 'prsystem_worker_alt2_login';
+/**
+ * A second job identity, for the cross-executor cases.
+ *
+ * A name on a controlled row, not a provisioned login. Phase 03 supports one
+ * Worker login shared by every worker process, so creating a second one here
+ * would be asserting against an arrangement the platform does not support.
+ */
+const OTHER_EXECUTOR = 'prsystem_worker_other_identity';
 
 let env: ProvisionedDatabase;
 
@@ -119,20 +125,34 @@ async function seedExpired(key: string, hotel = HOTEL): Promise<void> {
 
 beforeAll(async () => {
   env = await provisionKernelDatabase('sec_scheduler');
-  await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`);
-  await env.admin.query(
-    `CREATE ROLE ${OTHER_EXECUTOR} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`,
-  );
-  await env.admin.query(
-    `GRANT prsystem_worker TO ${OTHER_EXECUTOR} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
-  );
 }, 120000);
 
 afterAll(async () => {
-  await env.admin.query(`DROP OWNED BY ${OTHER_EXECUTOR}`).catch(() => undefined);
-  await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`).catch(() => undefined);
   await env.close();
 }, 30000);
+
+/**
+ * A running job belonging to some other identity, written directly.
+ *
+ * Deliberately not scheduled and not begun through a second login: only the
+ * canonical Worker login may do either. What these cases need is a job whose
+ * `job_identity` is not this connection's, and a controlled row gives exactly
+ * that without implying a second Worker login is supported.
+ */
+async function seedControlledJob(
+  identity: string,
+  jobName: string = JOB_NAME,
+  hotel: string = HOTEL,
+): Promise<string> {
+  const privileged = jobName.startsWith('platform.maintenance.');
+  const row = await env.admin.query<{ id: string }>(
+    `INSERT INTO platform.job_run (hotel_id, job_name, job_identity, issuer_ref, state, started_at)
+     VALUES ($1, $2, $3, $4, 'running', pg_catalog.now())
+     RETURNING job_run_id::text AS id`,
+    [hotel, jobName, identity, privileged ? SCHEDULER : null],
+  );
+  return String(row.rows[0]?.id);
+}
 
 describe('the scheduler issues, the worker executes', () => {
   it('issues one job, writes the issuer server-side and audits it', async () => {
@@ -399,7 +419,7 @@ describe('the scheduling function validates what it is given', () => {
 
 describe('execution authorisation is exact', () => {
   it('refuses a worker whose identity is not the named executor', async () => {
-    const id = await issue(HOTEL, OTHER_EXECUTOR);
+    const id = await seedControlledJob(OTHER_EXECUTOR);
     await expect(
       attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
         q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
@@ -525,7 +545,7 @@ describe('authorisation is bound to the credential, not to a claim', () => {
   });
 
   it('cannot impersonate an executor by rewriting app.actor_ref', async () => {
-    const id = await issue(HOTEL, OTHER_EXECUTOR);
+    const id = await seedControlledJob(OTHER_EXECUTOR);
     await seedExpired('idem_impersonation_probe');
 
     // The worker connection claims to be the named executor. It is not: its
@@ -537,11 +557,10 @@ describe('authorisation is bound to the credential, not to a claim', () => {
     ).rejects.toMatchObject({ code: '42501' });
   });
 
-  it('refuses a second Worker-member login the job it was not assigned', async () => {
-    // Both logins are genuine members of prsystem_worker, so group membership
-    // alone cannot separate them. The job names one principal, and only that
-    // principal may execute it.
-    const id = await issue(HOTEL, OTHER_EXECUTOR);
+  it('refuses the canonical worker a job assigned to another identity', async () => {
+    // The job names one principal, and only that principal may execute it.
+    // Being the canonical Worker login is necessary, not sufficient.
+    const id = await seedControlledJob(OTHER_EXECUTOR);
     await seedExpired('idem_cross_executor');
 
     await expect(
@@ -730,7 +749,7 @@ describe('R7 — the role graph is validated at invocation time', () => {
     try {
       // Issued while the login is still clean, then escalated. The execution
       // check must see the graph as it is *now*, not as it was at issue time.
-      const id = await issue(HOTEL, OVERPRIVILEGED);
+      const id = await seedControlledJob(OVERPRIVILEGED);
       await env.admin.query(`GRANT pg_read_all_data TO ${OVERPRIVILEGED}`);
       await expect(
         attempted(over, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
@@ -782,21 +801,11 @@ describe('R7 — the role graph is validated at invocation time', () => {
 });
 
 describe('R7 — a Worker cannot forge job completion', () => {
-  it("cannot terminalize another Worker login's ordinary job", async () => {
-    // Created *by* the other login, so its identity is genuine rather than
-    // something this test reassigned — job_identity is immutable anyway.
-    const other = quietPool(
-      { connectionString: env.db.loginUrl(OTHER_EXECUTOR), max: 1 },
-      'other-worker',
-    );
-    try {
-      const id = await committed(other, { actor: WORKER_ACTOR, realm: 'hotel' }, async (q) => {
-        const row = await q('SELECT platform.begin_worker_job($1, $2)::text AS id', [
-          'platform.projection.other_login',
-          HOTEL,
-        ]);
-        return String(row.rows[0]?.['id']);
-      });
+  it("cannot terminalize another identity's ordinary job", async () => {
+    // A controlled row: job_identity is immutable, so what matters is only that
+    // it is not this connection's principal.
+    {
+      const id = await seedControlledJob(OTHER_EXECUTOR, 'platform.projection.other_identity');
 
       // Direct UPDATE is refused on the grant …
       await expect(
@@ -822,8 +831,6 @@ describe('R7 — a Worker cannot forge job completion', () => {
         [id],
       );
       expect(state.rows[0]?.state).toBe('running');
-    } finally {
-      await other.end();
     }
   }, 60000);
 
@@ -945,6 +952,67 @@ describe('R8 — the expected group is validated, not only the login', () => {
     // than rejecting everything.
     const id = await issue();
     await seedExpired('idem_group_control');
+    const result = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+      q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
+    );
+    expect(Number(result.rows[0]?.['deleted'])).toBeGreaterThan(0);
+  }, 60000);
+});
+
+describe('R8 — only the canonical Worker login may execute', () => {
+  /**
+   * Phase 03 supports one Worker login, shared by every worker process.
+   *
+   * Membership in `prsystem_worker` was the whole test, so any login an
+   * operator granted the group became a schedulable executor. That made the
+   * supported set open-ended: the runbook claimed arbitrary deployment-managed
+   * Worker logins were supported, while nothing bootstrapped, rotated or
+   * audited them.
+   */
+  const EXTRA_WORKER = 'prsystem_worker_extra_login';
+
+  beforeAll(async () => {
+    await env.admin.query(`DROP ROLE IF EXISTS ${EXTRA_WORKER}`);
+    await env.admin.query(
+      `CREATE ROLE ${EXTRA_WORKER} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`,
+    );
+    await env.admin.query(
+      `GRANT prsystem_worker TO ${EXTRA_WORKER} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+  }, 60000);
+
+  afterAll(async () => {
+    await env.admin.query(`DROP OWNED BY ${EXTRA_WORKER}`).catch(() => undefined);
+    await env.admin.query(`DROP ROLE IF EXISTS ${EXTRA_WORKER}`).catch(() => undefined);
+  }, 30000);
+
+  it('refuses to schedule for a Worker-group login that is not the canonical one', async () => {
+    await expect(
+      attempted(env.jobScheduler, {}, (q) =>
+        q('SELECT platform.schedule_maintenance_job($1, $2, $3)', [JOB_NAME, HOTEL, EXTRA_WORKER]),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+  }, 60000);
+
+  it('refuses to start an ordinary job as a non-canonical Worker-group login', async () => {
+    const extra = quietPool(
+      { connectionString: env.db.loginUrl(EXTRA_WORKER), max: 1 },
+      'extra-worker',
+    );
+    try {
+      await expect(
+        attempted(extra, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q('SELECT platform.begin_worker_job($1, $2)', ['platform.projection.extra', HOTEL]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await extra.end();
+    }
+  }, 60000);
+
+  it('still accepts the canonical Worker login', async () => {
+    const id = await issue();
+    await seedExpired('idem_canonical_control');
     const result = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
       q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
     );

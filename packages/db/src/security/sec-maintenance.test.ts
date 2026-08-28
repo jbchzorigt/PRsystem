@@ -19,7 +19,14 @@ const ACTOR = 'actor_maintenance';
 /** The authenticated principal every worker connection in this suite runs as. */
 const EXECUTOR = 'prsystem_worker_login';
 /** A second Worker-member login, created for the cross-executor case. */
-const OTHER_EXECUTOR = 'prsystem_worker_alt_login';
+/**
+ * A second job identity, for the "assigned to somebody else" cases.
+ *
+ * A name on a controlled row, not a provisioned login. Phase 03 supports one
+ * Worker login shared by every worker process, so creating a second one would
+ * be asserting against an arrangement the platform does not support.
+ */
+const OTHER_EXECUTOR = 'prsystem_worker_other_identity';
 const JOB_NAME = 'platform.maintenance.expire_idempotency_keys';
 const SCHEDULER = 'actor-scheduler';
 
@@ -166,21 +173,36 @@ async function seedExpired(key: string): Promise<string> {
 
 beforeAll(async () => {
   env = await provisionKernelDatabase('sec_maintenance');
-  // A second, genuine Worker-member login. The executor identity is now a
-  // server-validated principal, so "assigned to somebody else" needs a somebody
-  // else that actually exists.
-  await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`);
-  await env.admin.query(`CREATE ROLE ${OTHER_EXECUTOR} LOGIN PASSWORD 'unused_local_only' INHERIT`);
-  await env.admin.query(
-    `GRANT prsystem_worker TO ${OTHER_EXECUTOR} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
-  );
 }, 120000);
 
 afterAll(async () => {
-  await env.admin.query(`DROP OWNED BY ${OTHER_EXECUTOR}`).catch(() => undefined);
-  await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`).catch(() => undefined);
   await env.close();
 }, 30000);
+
+/**
+ * A running job belonging to some other identity, written directly.
+ *
+ * The scheduler will only issue to the canonical Worker login, so a job
+ * "assigned to somebody else" cannot be scheduled. What these cases need is a
+ * job whose `job_identity` is not the executing principal's, and a controlled
+ * row gives exactly that without implying a second Worker login is supported.
+ */
+async function seedForeignJob(
+  identity: string,
+  jobName: string = JOB_NAME,
+  hotel: string = HOTEL,
+): Promise<string> {
+  const privileged = jobName.startsWith('platform.maintenance.');
+  const row = await env.admin.query<{ id: string }>(
+    `INSERT INTO platform.job_run (hotel_id, job_name, job_identity, issuer_ref, state, started_at)
+     VALUES ($1, $2, $3, $4, 'running', pg_catalog.now())
+     RETURNING job_run_id::text AS id`,
+    // The issuer is a principal name, not the correlation actor string: the
+    // column carries a role-shaped identity and the CHECK enforces that.
+    [hotel, jobName, identity, privileged ? 'prsystem_job_scheduler_login' : null],
+  );
+  return String(row.rows[0]?.id);
+}
 
 describe('the audit reference cannot be invented', () => {
   it('exposes only the one-argument form', async () => {
@@ -312,7 +334,7 @@ describe('authorisation', () => {
   });
 
   it('refuses a job belonging to another actor', async () => {
-    const job = await seedJob(JOB_NAME, OTHER_EXECUTOR);
+    const job = await seedForeignJob(OTHER_EXECUTOR);
     await attempted({}, async (q) => {
       await expect(
         q('SELECT platform.maintenance_expire_idempotency_keys($1)', [job]),
@@ -604,7 +626,7 @@ describe('job_run state integrity', () => {
   });
 
   it('refuses to let the worker reassign the job identity', async () => {
-    const id = await seedJob(JOB_NAME, OTHER_EXECUTOR);
+    const id = await seedForeignJob(OTHER_EXECUTOR);
 
     await expect(
       attempted({}, (q) =>

@@ -138,10 +138,39 @@ attribute, exactly one direct membership in the expected group with exactly
 `ADMIN FALSE, INHERIT TRUE, SET TRUE`, nothing else reachable — a second project
 group or a predefined role alike — and no ADMIN OPTION.
 
+The check covers the **group** as well as the login. PostgreSQL does not inherit
+role attributes, so altering `prsystem_worker` or `prsystem_job_scheduler` itself
+changes what every member can do while leaving each member's own catalogue row
+untouched; the expected group must therefore be NOLOGIN, NOSUPERUSER, NOCREATEDB,
+NOCREATEROLE, NOREPLICATION and NOBYPASSRLS, and no role reachable from the
+principal may hold a privileged attribute.
+
 The scheduler validates itself and its named executor; the maintenance function
 validates the executing principal. A login that has become both Scheduler and
-Worker can do neither. Multiple deployment-managed Worker logins remain
-supported: each is held to the same exact Worker-only closure.
+Worker can do neither.
+
+### One login per runtime group
+
+Phase 03 supports **exactly one login per runtime group** — for the Worker,
+`prsystem_worker_login`. Horizontal worker processes **share that one
+credential**; they do not each get their own. Multiple deployment-managed Worker
+logins are **not** supported, and the platform no longer implies otherwise:
+nothing bootstraps, rotates, audits or validates a second one.
+
+This is enforced in both directions, so bootstrap cannot provision what
+execution refuses:
+
+- `platform.assert_exact_role_closure` requires the calling principal to be the
+  canonical login for the expected group. `platform.schedule_maintenance_job`
+  therefore issues only to `prsystem_worker_login`, and
+  `platform.begin_worker_job` and the maintenance functions accept only it.
+- Bootstrap **fails closed** when any non-canonical login is a member of a group
+  role, naming the login. A group with no canonical login — the owner roles and
+  the break-glass role — may have no login member at all.
+
+Tests that need a job belonging to a different identity write a controlled
+`job_run` row directly. That exercises "assigned to somebody else" without
+implying a second Worker login is a supported arrangement.
 
 ### How a job finishes
 

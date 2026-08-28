@@ -198,6 +198,13 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
 
       await applyGroupRoles(clusterPool);
 
+      // Checked before anything is reconciled, so the refusal names the login an
+      // operator created rather than silently repairing it away. Phase 03
+      // supports one login per group; a bootstrap that provisioned a second one
+      // would hand an operator a principal that looks ready and that every
+      // privileged function refuses.
+      await assertCanonicalGroupMembership(clusterPool);
+
       const supplied = options.logins ?? [];
       const loginsConfigured = await applyLogins(clusterPool, supplied);
       // Everything the run was not asked to touch is inspected rather than
@@ -246,6 +253,57 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
       // The session is ending; the lock dies with it either way.
     }
     await coordinator.end();
+  }
+}
+
+/**
+ * The one login each group may have, by group name.
+ *
+ * A group with no entry may have no login member at all: the owner roles
+ * (`prsystem_audit_writer`, `prsystem_partition_mgr`, `prsystem_maintenance_fn`)
+ * and the break-glass role are reached by nobody.
+ */
+function canonicalLoginByGroup(): ReadonlyMap<string, string> {
+  return new Map(Object.entries(LOGIN_PRINCIPALS).map(([login, group]) => [group, login]));
+}
+
+/**
+ * Phase 03 supports exactly one login per runtime group.
+ *
+ * Horizontal worker (or API) processes share that one credential rather than
+ * each holding their own. Nothing bootstraps, rotates, audits or validates a
+ * second one, and `platform.assert_exact_role_closure` refuses it at every
+ * privileged call — so accepting one here would contradict the executor policy
+ * and leave an operator with a provisioned-looking principal that can do
+ * nothing.
+ */
+async function assertCanonicalGroupMembership(pool: Pool): Promise<void> {
+  const canonical = canonicalLoginByGroup();
+
+  // Only logins that are not canonical at all. A canonical login that has
+  // drifted into the wrong group is a different fault with its own, more
+  // specific report in `validateOmittedLogins`; catching it here first would
+  // replace an accurate message with a vaguer one.
+  const members = await pool.query<{ member: string; role: string }>(
+    `SELECT m.rolname AS member, g.rolname AS role
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE g.rolname = ANY($1) AND m.rolcanlogin AND NOT (m.rolname = ANY($2))
+      ORDER BY 1, 2`,
+    [[...GROUP_ROLES], Object.keys(LOGIN_PRINCIPALS)],
+  );
+
+  const edge = members.rows[0];
+  if (edge !== undefined) {
+    const expected = canonical.get(edge.role);
+    throw new BootstrapError(
+      `login ${edge.member} is a member of ${edge.role}, which is not supported: ` +
+        (expected === undefined
+          ? `no login may be a member of ${edge.role}`
+          : `${edge.role} supports exactly one login, ${expected}, shared by every process ` +
+            'of that runtime'),
+    );
   }
 }
 

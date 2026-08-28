@@ -618,3 +618,59 @@ describe('R6-4 — transitive owner drift is detected', () => {
     }
   }, 120000);
 });
+
+describe('R8 — the canonical Worker login policy', () => {
+  /**
+   * Phase 03 supports exactly one login per runtime group.
+   *
+   * Horizontal worker processes share that one credential; they do not each get
+   * their own. Bootstrap therefore has to refuse a non-canonical login that has
+   * been granted a runtime group, because the executor policy already refuses
+   * one — and a bootstrap that accepted what execution rejects would hand an
+   * operator a principal that appears provisioned and can do nothing.
+   */
+  const EXTRA_WORKER = 'prsystem_worker_extra_login';
+
+  async function dropExtra(): Promise<void> {
+    await admin.query(`DROP OWNED BY ${EXTRA_WORKER}`).catch(() => undefined);
+    await admin.query(`DROP ROLE IF EXISTS ${EXTRA_WORKER}`).catch(() => undefined);
+  }
+
+  it('fails closed on a non-canonical login granted a runtime group', async () => {
+    await dropAllLogins();
+    await dropExtra();
+    await admin.query(`CREATE ROLE ${EXTRA_WORKER} LOGIN PASSWORD 'x' INHERIT`);
+    await admin.query(
+      `GRANT prsystem_worker TO ${EXTRA_WORKER} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+
+    try {
+      await expect(
+        bootstrapCluster({
+          adminUrl: db.url,
+          database: db.name,
+          logins: [credential('prsystem_worker_login')],
+        }),
+      ).rejects.toMatchObject({
+        name: 'BootstrapError',
+        message: expect.stringMatching(/prsystem_worker_extra_login/) as unknown as string,
+      });
+    } finally {
+      await dropExtra();
+    }
+  }, 120000);
+
+  it('accepts the canonical login alone', async () => {
+    // The positive control: the rule is "only the canonical login", not
+    // "no login at all".
+    await dropAllLogins();
+    await dropExtra();
+    await expect(
+      bootstrapCluster({
+        adminUrl: db.url,
+        database: db.name,
+        logins: [credential('prsystem_worker_login')],
+      }),
+    ).resolves.toMatchObject({ loginsConfigured: 1 });
+  }, 120000);
+});

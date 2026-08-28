@@ -1499,6 +1499,7 @@ CREATE OR REPLACE FUNCTION platform.assert_exact_role_closure(
 DECLARE
   v_oid oid;
   v_group_oid oid;
+  v_canonical text;
   r record;
 BEGIN
   SELECT oid INTO v_oid FROM pg_roles WHERE rolname = p_login;
@@ -1537,6 +1538,24 @@ BEGIN
     RAISE EXCEPTION
       'group % must be NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION and NOBYPASSRLS',
       p_group USING ERRCODE = '42501';
+  END IF;
+
+  -- The canonical login for that group, and only it.
+  --
+  -- Phase 03 supports one login per runtime group, shared by every process of
+  -- that runtime. Membership alone used to be the whole test, so any login an
+  -- operator granted the group became a schedulable executor — an open-ended
+  -- supported set that nothing bootstrapped, rotated or audited.
+  v_canonical := CASE p_group
+    WHEN 'prsystem_worker'        THEN 'prsystem_worker_login'
+    WHEN 'prsystem_job_scheduler' THEN 'prsystem_job_scheduler_login'
+  END;
+  IF v_canonical IS NULL THEN
+    RAISE EXCEPTION 'no canonical login is defined for group %', p_group USING ERRCODE = '42501';
+  END IF;
+  IF p_login <> v_canonical THEN
+    RAISE EXCEPTION 'principal % is not the canonical login for % (expected %)',
+      p_login, p_group, v_canonical USING ERRCODE = '42501';
   END IF;
 
   -- Exactly one direct membership, in the expected group, with exact options.
@@ -1724,6 +1743,11 @@ BEGIN
       'job name % is in the privileged maintenance namespace; use platform.schedule_maintenance_job as a scheduler',
       p_job_name USING ERRCODE = '42501';
   END IF;
+
+  -- The caller must be the canonical Worker login. Membership in prsystem_worker
+  -- was previously enough, so any login an operator granted the group could
+  -- create job rows under its own identity.
+  PERFORM platform.assert_exact_role_closure(session_user, 'prsystem_worker');
 
   -- The authenticated principal, for the same reason the privileged path uses
   -- it: `app.actor_ref` is caller-writable and is correlation metadata only.
