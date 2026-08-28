@@ -44,12 +44,27 @@ export async function runChildRace(options: ChildRaceOptions): Promise<ChildRepo
     }),
   );
 
+  // Tracks which children have already exited, so nothing is written to, or
+  // signalled at, a process that is gone.
+  const exited = new Set<number>();
+  children.forEach((child, index) => {
+    child.on('close', () => exited.add(index));
+  });
+
   try {
     // A child that fails to start emits `error` and never `data`. Without this
     // the wait below would spin until the suite timed out, saying nothing useful.
     const startupErrors: string[] = [];
     for (const child of children) {
       child.on('error', (error) => startupErrors.push(error.message));
+      // Pipe errors are reported on the *streams*, not on the child. An EPIPE
+      // from writing to a child that has just exited would otherwise be an
+      // unhandled error: the suite's own tests all pass, and the runner still
+      // exits non-zero with nothing to explain it. This was an observed flake,
+      // not a hypothetical one.
+      for (const stream of [child.stdin, child.stdout, child.stderr]) {
+        stream?.on('error', (error: Error) => startupErrors.push(`stream: ${error.message}`));
+      }
     }
 
     const collected = children.map((child) => {
@@ -80,7 +95,10 @@ export async function runChildRace(options: ChildRaceOptions): Promise<ChildRepo
     }
 
     // Released together, only once every one of them is waiting.
-    for (const child of children) child.stdin?.write('go\n');
+    children.forEach((child, index) => {
+      if (exited.has(index) || child.stdin === null || child.stdin.destroyed) return;
+      child.stdin.write('go\n');
+    });
 
     const exits = await Promise.all(
       children.map(
@@ -113,7 +131,11 @@ export async function runChildRace(options: ChildRaceOptions): Promise<ChildRepo
       return JSON.parse(line) as ChildReport;
     });
   } finally {
-    for (const child of children) child.kill('SIGKILL');
+    // Only signal what is still alive. Killing an already-reaped child is
+    // harmless, but touching its streams is not.
+    children.forEach((child, index) => {
+      if (!exited.has(index)) child.kill('SIGKILL');
+    });
   }
 }
 

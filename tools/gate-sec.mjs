@@ -91,7 +91,16 @@ for (const gate of SUB_GATES) {
     } else if (skipped > 0) {
       fail(gate.id, gate.what, `${String(skipped)} test(s) skipped`);
     } else if (run.status !== 0 || passed !== total) {
-      fail(gate.id, gate.what, `${String(total - passed)}/${String(total)} failed`);
+      // A suite whose tests all pass but whose runner exits non-zero has failed
+      // *outside* the tests — an unhandled rejection, a stray child process, an
+      // open handle. Reporting only "0/N failed" makes that indistinguishable
+      // from a mystery, so the runner's own output is surfaced.
+      const detail =
+        passed === total
+          ? `all ${String(total)} tests passed but the runner exited ${String(run.status)}: ` +
+            `${(run.stderr || run.stdout || '').trim().split('\n').slice(-6).join(' | ').slice(0, 500)}`
+          : `${String(total - passed)}/${String(total)} failed`;
+      fail(gate.id, gate.what, detail);
     } else if (gate.also !== undefined) {
       const extra = spawnSync(gate.also[0], gate.also[1], { cwd: ROOT, encoding: 'utf8' });
       if (extra.status !== 0) {
