@@ -510,16 +510,38 @@ if (hasArch) {
   });
 }
 
-check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', () => {
-  // Parsed from the catalogue section itself, not from every `SEC-*` mention in
-  // the file. Scanning the whole document let any passing mention elsewhere
-  // stand in for a catalogue entry, so a catalogue that had lost half its
-  // sub-gates could still look complete.
-  const runbook = readFileSync(RUNBOOK_PATH, 'utf8');
-  const marker = /aggregates \*\*([a-z]+)\*\* sub-gates:\n([\s\S]*?)\n\n/.exec(runbook);
-  assert(marker !== null, 'the runbook has no GATE-SEC catalogue section');
+/** The body of a Markdown section, from its exact heading to the next same-level one. */
+function section(text, heading) {
+  const lines = text.split('\n');
+  const level = /^#+/.exec(heading)?.[0].length ?? 0;
+  const start = lines.indexOf(heading);
+  if (start < 0) return undefined;
+  const boundary = new RegExp(`^#{1,${String(level)}} `);
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (boundary.test(lines[i])) return lines.slice(start + 1, i).join('\n');
+  }
+  return lines.slice(start + 1).join('\n');
+}
 
-  const [, stated, catalogue] = marker;
+/** The text between two exact HTML comment markers. */
+function marked(text, name) {
+  const open = `<!-- ${name}:begin -->`;
+  const close = `<!-- ${name}:end -->`;
+  const from = text.indexOf(open);
+  const to = text.indexOf(close);
+  if (from < 0 || to < 0 || to < from) return undefined;
+  return text.slice(from + open.length, to);
+}
+
+check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', () => {
+  // Anchored to its own heading. Taking the first `aggregates **n** sub-gates`
+  // in the file meant a complete decoy catalogue placed earlier satisfied the
+  // check while the real one had lost entries.
+  const runbook = readFileSync(RUNBOOK_PATH, 'utf8');
+  const catalogue = section(runbook, '### GATE-SEC sub-gate catalogue');
+  assert(catalogue !== undefined, 'the runbook has no "### GATE-SEC sub-gate catalogue" section');
+
+  const stated = /aggregates \*\*([a-z]+)\*\* sub-gates/.exec(catalogue)?.[1];
   const configured = SUB_GATES.map((gate) => gate.id).sort();
   const listed = [...new Set([...catalogue.matchAll(/`(SEC-[A-Z-]+)`/g)].map((m) => m[1]))].sort();
 
@@ -528,64 +550,105 @@ check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', 
   assert(missing.length === 0, `the catalogue omits ${missing.join(', ')}`);
   assert(extra.length === 0, `the catalogue lists unknown sub-gates ${extra.join(', ')}`);
 
-  const words = {
-    sixteen: 16,
-    seventeen: 17,
-    eighteen: 18,
-    nineteen: 19,
-    twenty: 20,
-  };
+  const words = { sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 };
   assert(
-    words[stated] === configured.length,
-    `the catalogue says "${stated}" sub-gates, configuration has ${String(configured.length)}`,
+    stated !== undefined && words[stated] === configured.length,
+    `the catalogue says "${String(stated)}" sub-gates, configuration has ${String(configured.length)}`,
   );
   return `${configured.length} sub-gates, catalogue section and configuration agree`;
 });
 
-check('15', 'The Phase 03 ledger and gate battery link to one canonical evidence section', () => {
-  // Both regions are located and parsed, rather than "everything before the
-  // first heading". The ledger carried its own copy of the counts and went
-  // stale against the section below it, so each region must link to the
-  // canonical section and restate nothing.
+check('15', 'Phase 03 results live in exactly one canonical section', () => {
   const text = readFileSync(PHASE_STATUS_PATH, 'utf8');
-
   const ANCHOR = '#current-phase-03-evidence';
-  const HEADING = '## Current Phase 03 evidence';
+
   const canonical = [...text.matchAll(/^## Current Phase 03 evidence$/gm)];
   assert(
     canonical.length === 1,
-    `expected exactly one "${HEADING}" section, found ${String(canonical.length)}`,
+    `expected exactly one canonical evidence section, found ${String(canonical.length)}`,
+  );
+  const evidence = section(text, '## Current Phase 03 evidence');
+  assert(evidence !== undefined, 'the canonical evidence section is empty');
+
+  // The gate battery is bounded by explicit markers and must sit inside the
+  // canonical section. Selecting "the first bash block starting with
+  // node tools/validate-governance" found one inside the Phase 00 record.
+  const battery = marked(text, 'phase-03-gate-battery');
+  assert(battery !== undefined, 'the Phase 03 gate battery has no bounding markers');
+  assert(
+    evidence.includes('<!-- phase-03-gate-battery:begin -->'),
+    'the Phase 03 gate battery is outside the canonical evidence section',
   );
 
-  // Region 1: the Phase 03 row of the phase ledger.
+  // The Phase 03 ledger row links to the canonical section and restates nothing.
   const ledgerRow = text.split('\n').find((line) => line.startsWith('| 03 |'));
   assert(ledgerRow !== undefined, 'the phase ledger has no Phase 03 row');
   assert(ledgerRow.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
 
-  // Region 2: the gate-battery fenced block and the paragraph that follows it.
-  const battery = /```bash\n(node tools\/validate-governance[\s\S]*?)```\n([\s\S]{0,600})/.exec(
-    text,
-  );
-  assert(battery !== null, 'the Phase 03 gate-battery block is missing');
-  assert(battery[2].includes(ANCHOR), `the gate-battery block does not link to ${ANCHOR}`);
-
-  const patterns = [
-    /GATE-(?:SEC|MIGR|INTEG|CONC|UNIT|E2E)[^\n|]*\d/,
-    /\b\d+\/\d+\s+sub-gates/,
-    /\b\d+\s+tests\b/,
-    /bypass fixtures\s+\d/,
-    /pool fixture\s+\d/,
-  ];
-  const offenders = [ledgerRow, ...battery[1].split('\n')].filter((line) =>
-    patterns.some((pattern) => pattern.test(line)),
-  );
+  // The current-position table must name the current review, not an older one.
+  const position = section(text, '## Current position');
+  assert(position !== undefined, 'there is no "## Current position" section');
+  // The cardinal and the ordinal must describe the same review: "nine reviews
+  // completed; the ninth repair" is the shape, and it went stale as a pair.
+  const ORDINALS = {
+    seven: 'seventh',
+    eight: 'eighth',
+    nine: 'ninth',
+    ten: 'tenth',
+    eleven: 'eleventh',
+    twelve: 'twelfth',
+  };
+  const reviews = /([a-z]+) customer reviews completed/.exec(position)?.[1];
+  const repair = /the ([a-z]+) repair is implemented/.exec(position)?.[1];
   assert(
-    offenders.length === 0,
-    `a mutable count is restated outside the canonical section: ` +
-      offenders.map((l) => l.trim().slice(0, 70)).join(' | '),
+    reviews !== undefined && repair !== undefined && ORDINALS[reviews] === repair,
+    `current position says "${String(reviews)}" reviews and "${String(repair)}" repair`,
   );
 
-  return 'one canonical section; ledger row and gate battery link to it and restate no counts';
+  // And the newest repair section must be the one the position names.
+  const sections = [...text.matchAll(/^### ([A-Za-z]+) security repair \(customer review \d+\)/gm)];
+  const newest = sections[sections.length - 1]?.[1]?.toLowerCase();
+  assert(
+    newest === repair,
+    `current position names the ${String(repair)} repair; the last section is the ${String(newest)}`,
+  );
+
+  // Every mutable result form, in every region that is not the canonical
+  // section. `15/15 checks` slipped through a pattern that only knew about
+  // gate names and sub-gate counts.
+  const MUTABLE = [
+    { why: 'an N/N ratio', re: /\b\d+\/\d+\b/ },
+    { why: 'a test count', re: /\b\d+\s+tests?\b/ },
+    { why: 'a task count', re: /\b\d+\s+tasks?\b/ },
+    { why: 'a findings count', re: /\b\d+\s+findings?\b/ },
+    { why: 'a check count', re: /\b\d+\s+checks?\b/ },
+    { why: 'a sub-gate count', re: /\b\d+\s+sub-gates?\b/ },
+    { why: 'a gate result', re: /GATE-(?:SEC|MIGR|INTEG|CONC|UNIT|E2E)[^\n|]*\d/ },
+  ];
+  const forbidden = [
+    ['the Phase 03 ledger row', [ledgerRow]],
+    ['the Phase 03 gate battery', battery.split('\n')],
+  ];
+  for (const [where, lines] of forbidden) {
+    for (const line of lines) {
+      const hit = MUTABLE.find((pattern) => pattern.re.test(line));
+      assert(
+        hit === undefined,
+        `${where} restates ${String(hit?.why)}: ${line.trim().slice(0, 70)}`,
+      );
+    }
+  }
+
+  // A superseded repair section must not claim to be current.
+  const stale = text
+    .split('\n')
+    .filter((line) => /holds the current counts|This section holds the current/i.test(line));
+  assert(
+    stale.length === 0,
+    `a superseded section still claims to be current: ${stale[0]?.trim().slice(0, 70) ?? ''}`,
+  );
+
+  return 'one canonical section; ledger row, battery and current position agree and restate nothing';
 });
 
 // ------------------------------------------------------------------- report

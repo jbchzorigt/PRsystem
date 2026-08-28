@@ -401,6 +401,8 @@ No procedure here removes an unrelated container, database or volume.
 
 ## 6. Required check
 
+### GATE-SEC sub-gate catalogue
+
 `GATE-SEC` (`pnpm run test:security`) aggregates **eighteen** sub-gates:
 
 `SEC-ROLE`, `SEC-RLS`, `SEC-ACL-MATRIX`, `SEC-OWNERSHIP`, `SEC-LOCK-EVIDENCE`,

@@ -35,8 +35,11 @@ to two dedicated reader roles that hold scoped `SELECT` and no write.
   client-supplied time. A backdated arrival still lands in the month it was actually recorded.
 - **Partitions are pre-created** by a maintenance job, with an alert when the pre-created horizon
   falls below threshold. A missing partition is caught before a write fails.
-- **Runtime roles hold `INSERT` and `SELECT` only.** No `UPDATE`, no `DELETE`, on either stream, in
-  addition to the ADR-0009 append-only rules.
+- **Runtime roles hold no direct privilege on either stream.** They append only by executing the
+  `SECURITY DEFINER` wrapper whose owner `prsystem_audit_writer` is the sole holder of `INSERT`, and
+  they cannot read audit at all: scoped `SELECT` belongs to `prsystem_audit_reader` and
+  `prsystem_police_audit_reader`. No role holds `UPDATE` or `DELETE` on either stream, in addition to
+  the ADR-0009 append-only rules.
 - **High-risk actions fail closed.** Where the audit record is written in the same transaction as the
   effect, a failure to record it rolls back the effect. An action that cannot be attributed does not
   happen. This covers every money- and lifecycle-changing command, every Police outcome decision and

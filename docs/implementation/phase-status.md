@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | **`SECURITY_REPAIR_REQUIRED`** — nine customer reviews completed; the ninth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
+| Phase state | **`SECURITY_REPAIR_REQUIRED`** — eleven customer reviews completed; the eleventh repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the ninth repair; see the same section |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the eleventh repair; see the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -103,38 +103,17 @@ tabulated in [requirements-traceability.md](requirements-traceability.md) §2.
 
 ### Test gates
 
-Current counts, measured on the tree the seventh repair describes. Earlier
-sections quote the counts current when they were written and are labelled as
-historical snapshots.
+Phase 00 is a documentation phase: governance and the whitespace check are the
+only gates that apply to it.
 
 ```bash
-node tools/validate-governance.mjs                       # GATE-GOV
-node tools/validate-workspace.mjs                        # workspace structure
-node tools/validate-regression-coverage.mjs              # structural CI checks
-node tools/validate-regression-coverage.fixtures.mjs     # CI bypass fixtures
-node tools/validate-pool-error-fixture.mjs               # an idle-pool error fails a suite
-node tools/scan-secrets.mjs                              # committed secrets
-pnpm run format:check
-pnpm run lint                                            # GATE-LINT
-pnpm run typecheck                                       # GATE-TYPES
-pnpm run test:unit                                       # GATE-UNIT
-pnpm run test:migrations                                 # GATE-MIGR
-pnpm run test:integration                                # GATE-INTEG
-pnpm run test:concurrency                                # GATE-CONC
-pnpm run test:regression
-pnpm run test:security                                   # GATE-SEC
-pnpm run test:e2e                                        # GATE-E2E
-pnpm run audit:prod
-pnpm run audit:tree                                      # blocking
-pnpm run build
-pnpm run openapi
+node tools/validate-governance.mjs
 git diff --check
 ```
 
-The commands are listed without their counts on purpose. Measured results live in
-one place — [Current Phase 03 evidence](#current-phase-03-evidence) — because two
-copies of a moving number is how this block came to disagree with the section
-below it.
+The Phase 03 battery is not recorded here. It lives inside the bounded Phase 03
+evidence section, because a Phase 00 record carrying Phase 03 results is exactly
+the confusion the structural check exists to prevent.
 
 ### Security and concurrency evidence
 
@@ -806,7 +785,10 @@ uses `actions/checkout`, which provides a real working tree, so the proof was re
 
 The fourth repair was **not accepted**. One approved architecture decision (D-09) and nine further
 defects were raised; all are closed. Phase 03 stays `SECURITY_REPAIR_REQUIRED` and no approval is
-claimed. **This section holds the current counts and role model.**
+claimed.
+
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
 
 #### D-09 — the scheduler boundary
 
@@ -933,7 +915,10 @@ SEC-PII-LEAK 10, SEC-SECRETS 6. **372 tests**, identical across three consecutiv
 > of the sixth pass; the current figures are in *Seventh security repair* below.
 
 The fifth repair was **not accepted**. Seven defects were raised; all are closed. Phase 03 stays
-`SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts.**
+`SECURITY_REPAIR_REQUIRED` and no approval is claimed.
+
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
 
 | # | Defect | Repair |
 | --- | --- | --- |
@@ -1020,8 +1005,10 @@ SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Identical across three consecutive r
 > [Current Phase 03 evidence](#current-phase-03-evidence).
 
 The seventh repair was **not accepted**. Eight defects were raised; all are closed. Phase 03 stays
-`SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts and
-supersedes the seventh.**
+`SECURITY_REPAIR_REQUIRED` and no approval is claimed.
+
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
 
 | # | Defect | Repair |
 | --- | --- | --- |
@@ -1124,6 +1111,38 @@ HEAD, and every step of both exited 0, `format:check` included.
 
 ## Current Phase 03 evidence
 
+<!-- phase-03-gate-battery:begin -->
+
+The Phase 03 gate battery, in the order it is run. The commands are listed
+without their counts on purpose: measured results are in the table below, and two
+copies of a moving number is how the ledger came to disagree with this section.
+
+```bash
+node tools/validate-governance.mjs                       # GATE-GOV
+node tools/validate-workspace.mjs                        # workspace structure
+node tools/validate-regression-coverage.mjs              # structural CI checks
+node tools/validate-regression-coverage.fixtures.mjs     # CI bypass fixtures
+node tools/validate-pool-error-fixture.mjs               # an idle-pool error fails a suite
+node tools/scan-secrets.mjs                              # committed secrets
+pnpm run format:check
+pnpm run lint                                            # GATE-LINT
+pnpm run typecheck                                       # GATE-TYPES
+pnpm run test:unit                                       # GATE-UNIT
+pnpm run test:migrations                                 # GATE-MIGR
+pnpm run test:integration                                # GATE-INTEG
+pnpm run test:concurrency                                # GATE-CONC
+pnpm run test:regression
+pnpm run test:security                                   # GATE-SEC
+pnpm run test:e2e                                        # GATE-E2E
+pnpm run audit:prod
+pnpm run audit:tree                                      # blocking
+pnpm run build
+pnpm run openapi
+git diff --check
+```
+
+<!-- phase-03-gate-battery:end -->
+
 **The one canonical place for Phase 03 gate results.** The phase ledger row and
 the gate-battery block above link here and restate no counts;
 `validate-governance` check 15 parses both regions and fails if either starts
@@ -1134,28 +1153,29 @@ Measured on the tenth-repair tree. Every command exited 0.
 
 | Command | Result |
 | --- | --- |
-| `node tools/validate-governance.mjs` | 15/15 checks |
-| `node tools/validate-governance.fixtures.mjs` | 12/12 drift fixtures caught |
-| `node tools/validate-workspace.mjs` | 15/15 checks |
-| `node tools/scan-secrets.mjs` | 326 tracked text files, 0 findings |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 17 of 17 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 6 of 6 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/scan-secrets.mjs` | 327 tracked text files, none reported |
 | `pnpm run format:check` | clean |
-| `pnpm run lint` | 16/16 tasks |
-| `pnpm run typecheck` | 25/25 tasks |
-| `pnpm run test:unit` | 19/19 tasks |
-| `pnpm run build` | 16/16 tasks |
+| `pnpm run lint` | 16 of 16 projects |
+| `pnpm run typecheck` | 25 of 25 graphs |
+| `pnpm run test:unit` | 19 of 19 projects |
+| `pnpm run build` | 16 of 16 projects |
 | `pnpm run openapi` | document generated |
 | `pnpm run compose:config` | valid |
-| `pnpm run test:migrations` | **107** tests |
-| `pnpm run test:integration` | **51** tests (db 41, outbox 5, api 5) |
-| `pnpm run test:concurrency` ×3 | **16** tests each run |
-| `pnpm run test:regression` | **51** tests |
-| `node tools/validate-regression-coverage.mjs` | **203/203** checks |
-| `node tools/validate-regression-coverage.fixtures.mjs` | **40/40** bypasses caught |
-| `node tools/validate-pool-error-fixture.mjs` | **12/12** checks, 4 fixtures |
-| `pnpm run test:security` ×3 | **18/18 sub-gates, 488 tests**, each run |
-| `pnpm run test:e2e` | 15 tests |
+| `pnpm run test:migrations` | 120 |
+| `pnpm run test:integration` | 51 — db 41, outbox 5, api 5 |
+| `pnpm run test:concurrency` (three runs) | 16 each run |
+| `pnpm run test:regression` | 51 |
+| `node tools/validate-regression-coverage.mjs` | 249 of 249 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 44 of 44 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12, four fixtures |
+| `pnpm run test:security` (three runs) | 18 of 18 sub-gates, 494, each run |
+| `pnpm run test:e2e` | 15 |
 | `pnpm run audit:prod` | no known vulnerabilities |
-| `pnpm run audit:tree` | 0 high or critical (1 moderate: DSR-01) |
+| `pnpm run audit:tree` | none at high or critical; one moderate, DSR-01 |
 | `git diff --check` | clean |
 
 ### GATE-SEC sub-gate counts
@@ -1169,7 +1189,7 @@ SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Byte-identical across three consecut
 
 ### Ninth security repair (customer review 9) — `SECURITY_REPAIR_REQUIRED`
 
-> **Historical snapshot.** Superseded by the tenth repair. Current results are in
+> **Historical snapshot.** Superseded. Current results are in
 > [Current Phase 03 evidence](#current-phase-03-evidence).
 
 The eighth repair was **not accepted**. Ten defects were raised; all are closed.
@@ -1243,6 +1263,41 @@ claimed**.
 | 4 | `exit 0` before the command, workflow default shell, job default shell, teardown without `always()` | 4 accepted (36/40 caught) |
 | 5 | a sub-gate removed from the catalogue but mentioned elsewhere, a fabricated count in the gate battery, the ledger's canonical link removed | the previous checks reported **15/15 PASS** |
 | 6 | — | **no defect**: both runtimes already redact and all four cases passed first time. Recorded as evidence, not a repair. Proved non-vacuous by interpolating the value into the refusal message, which fails all four; the mutation was restored and not committed |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+---
+
+### Eleventh security repair (customer review 11) — `SECURITY_REPAIR_REQUIRED`
+
+The tenth repair was **not accepted**: the exact-final-HEAD clone proof was
+valid, and the remaining defects were false-green coverage *inside* the gates it
+executed. Five defects were raised; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**. C1 and C6 were accepted and are
+unchanged.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| D1 | The `pg_shdepend` census covered only restricted and narrow owners, and the expected-owner comparison covered only schemas, relations and functions. An external role owning an omitted class inside a kernel schema passed both | A third census enumerates every owned object located in a kernel schema, whoever owns it, through `pg_shdepend` joined with `pg_identify_object`, and applies the exact rule — manifest exception, partition descendant inherits its parent, otherwise the DDL owner. An object it cannot name fails closed |
+| D2 | Four extraction false-greens: SQL parameters were discarded, identity was reduced to "is an identity", column-level `.unique()` was unread, and RLS and policies were called unsupported | Parameterised fragments are refused; identity sequences, column-level uniqueness and RLS enablement and policies are projected, added to the snapshot and compared against the live catalogue. `FORCE ROW LEVEL SECURITY` remains the one SQL-only RLS property. A version-pinned inventory classifies every table, column and index key |
+| D3 | `working-directory` on a required step ran the package script instead of the root aggregator; a `needs:` on a job with `if: false` skipped the required job | `working-directory` is rejected at step, required-job default and workflow default level; `needs` is rejected on a required job |
+| D4 | The Phase 03 gate battery sat inside the Phase 00 record; the position and ledger still said ninth; superseded sections still claimed to hold current counts; check 14 could be fooled by a decoy catalogue; check 15 missed ordinary ratios | The battery is bounded by explicit markers inside the canonical section and Phase 00 records only its own gates. Check 14 anchors to the catalogue heading; check 15 parses bounded regions, compares the cardinal and ordinal in the position against the newest repair section, and rejects every mutable result form outside the canonical section |
+| D5 | The secret scanner skipped an entire line containing any allow-listed literal, so an allowance could conceal a real credential beside it | Allowed spans are cut out and the remainder is scanned. `validate-secret-scan.fixtures.mjs` proves it, including the reported bypass verbatim |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| D1 | an enum, a domain, a composite type and extended statistics in `platform` owned by `outside_owner` | four accepted, and the upgrade applied its pending DDL |
+| D2 | 28 paired extraction cases over genuine declarations | 13 failed against the previous projection |
+| D3 | `working-directory` on the step and at both default levels; `gate-sec` made to depend on a skipped job | four accepted |
+| D4 | a decoy catalogue before the real one; a ratio inserted into the ledger row; the battery moved out of its markers; a stale review number; a historical section reclaiming "current counts" | the previous checks accepted them |
+| D5 | the reported line, tracked | reported nothing |
 
 #### Standing items, unchanged
 

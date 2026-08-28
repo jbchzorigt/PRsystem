@@ -37,30 +37,87 @@ const FIXTURES = [
       text.replace('aggregates **eighteen** sub-gates', 'aggregates **seventeen** sub-gates'),
   },
   {
-    name: 'catalogue: the section removed entirely',
+    name: 'catalogue: the section heading removed',
     file: 'runbook',
-    expect: /no GATE-SEC catalogue section/,
-    mutate: (text) =>
-      text.replace(/aggregates \*\*[a-z]+\*\* sub-gates:/, 'aggregates the sub-gates:'),
+    expect: /no "### GATE-SEC sub-gate catalogue" section/,
+    mutate: (text) => text.replace('### GATE-SEC sub-gate catalogue', '### Required check detail'),
   },
   {
-    name: 'ledger: a fake test count restated',
+    // A complete, correct-looking catalogue placed earlier in the file, while
+    // the real one loses an entry. Taking the first match in the document
+    // accepted this.
+    name: 'catalogue: a complete decoy before the real one',
+    file: 'runbook',
+    expect: /the catalogue omits SEC-SCHEDULER/,
+    mutate: (text) => {
+      const decoy = [
+        '## Appendix (decoy)',
+        '',
+        '`GATE-SEC` aggregates **eighteen** sub-gates:',
+        '',
+        '`SEC-ROLE`, `SEC-RLS`, `SEC-ACL-MATRIX`, `SEC-OWNERSHIP`, `SEC-LOCK-EVIDENCE`,',
+        '`SEC-POOL-ERRORS`, `SEC-BOOTSTRAP`, `SEC-SCHEDULER`, `SEC-MAINTENANCE`,',
+        '`SEC-STARTUP`, `SEC-STARTUP-WORKER`, `SEC-REGRESSION`, `SEC-AUDIT`,',
+        '`SEC-PARTITION`, `SEC-POLICE-ISOLATION`, `SEC-KMS`, `SEC-PII-LEAK`,',
+        '`SEC-SECRETS`.',
+        '',
+      ].join('\n');
+      return `${decoy}${text.replace('`SEC-SCHEDULER`, ', '')}`;
+    },
+  },
+  {
+    name: 'ledger: an N/N ratio restated',
     file: 'phase-status',
-    expect: /mutable count is restated outside the canonical section/,
+    expect: /ledger row restates an N\/N ratio/,
     mutate: (text) =>
       text.replace(/^(\| 03 \| Platform kernel \|[^\n]*)$/m, (row) =>
-        row.replace('the full battery', 'the full battery, GATE-SEC 999 tests'),
+        row.replace('the full battery', 'the full battery, 15/15 checks'),
       ),
   },
   {
-    name: 'gate battery: a fake test count restated',
+    name: 'ledger: a test count restated',
     file: 'phase-status',
-    expect: /mutable count is restated outside the canonical section/,
+    expect: /ledger row restates a test count/,
+    mutate: (text) =>
+      text.replace(/^(\| 03 \| Platform kernel \|[^\n]*)$/m, (row) =>
+        row.replace('the full battery', 'the full battery, 999 tests'),
+      ),
+  },
+  {
+    name: 'gate battery: a check count restated',
+    file: 'phase-status',
+    // `15/15 checks` is both a ratio and a check count; the ratio pattern is
+    // listed first, so that is the diagnostic.
+    expect: /gate battery restates an N\/N ratio/,
     mutate: (text) =>
       text.replace(
-        'pnpm run test:security                                   # GATE-SEC',
-        'pnpm run test:security                                   # GATE-SEC — 999 tests',
+        'node tools/validate-governance.mjs                       # GATE-GOV',
+        'node tools/validate-governance.mjs                       # GATE-GOV — 15/15 checks',
       ),
+  },
+  {
+    name: 'gate battery: moved outside its markers',
+    file: 'phase-status',
+    expect: /gate battery is outside the canonical evidence section/,
+    mutate: (text) => {
+      const open = '<!-- phase-03-gate-battery:begin -->';
+      const close = '<!-- phase-03-gate-battery:end -->';
+      const from = text.indexOf(open);
+      const to = text.indexOf(close) + close.length;
+      const block = text.slice(from, to);
+      // Removed from the canonical section and dropped into the Phase 00 record,
+      // which is exactly where it used to be.
+      return text
+        .slice(0, from)
+        .replace('## Phase 00 record', `## Phase 00 record\n\n${block}\n`)
+        .concat(text.slice(to));
+    },
+  },
+  {
+    name: 'gate battery: markers removed',
+    file: 'phase-status',
+    expect: /gate battery has no bounding markers/,
+    mutate: (text) => text.replace('<!-- phase-03-gate-battery:begin -->', ''),
   },
   {
     name: 'ledger: the canonical link removed',
@@ -75,19 +132,9 @@ const FIXTURES = [
       ),
   },
   {
-    name: 'gate battery: the canonical link changed',
-    file: 'phase-status',
-    expect: /gate-battery block does not link/,
-    mutate: (text) =>
-      text.replace(
-        'one place — [Current Phase 03 evidence](#current-phase-03-evidence) —',
-        'one place — [Current Phase 03 evidence](#somewhere-else) —',
-      ),
-  },
-  {
     name: 'canonical section: duplicated',
     file: 'phase-status',
-    expect: /expected exactly one .* section, found 2/,
+    expect: /found 2/,
     mutate: (text) =>
       text.replace(
         '## Current Phase 03 evidence',
@@ -97,8 +144,34 @@ const FIXTURES = [
   {
     name: 'canonical section: removed',
     file: 'phase-status',
-    expect: /expected exactly one .* section, found 0/,
+    expect: /found 0/,
     mutate: (text) => text.replace(/^## Current Phase 03 evidence$/m, '## Evidence'),
+  },
+  {
+    name: 'current position: a stale review number',
+    file: 'phase-status',
+    expect: /says "nine" reviews and "eleventh" repair/,
+    mutate: (text) =>
+      text.replace('eleven customer reviews completed', 'nine customer reviews completed'),
+  },
+  {
+    name: 'current position: a stale repair ordinal',
+    file: 'phase-status',
+    expect: /names the ninth repair; the last section is the eleventh/,
+    mutate: (text) =>
+      text
+        .replace('eleven customer reviews completed', 'nine customer reviews completed')
+        .replace('the eleventh repair is implemented', 'the ninth repair is implemented'),
+  },
+  {
+    name: 'a historical section reclaims the current counts',
+    file: 'phase-status',
+    expect: /superseded section still claims to be current/,
+    mutate: (text) =>
+      text.replace(
+        '> **Historical snapshot.** Superseded. Current results are in',
+        '> **This section holds the current counts.** Superseded. Current results are in',
+      ),
   },
 ];
 
