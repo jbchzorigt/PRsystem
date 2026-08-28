@@ -1075,6 +1075,108 @@ describe('schema comparator mutations', () => {
 });
 
 /**
+ * The migration principal must be the canonical migration login.
+ *
+ * `assertMigrationPrincipal` verified an exact `prsystem_migrate` closure and
+ * treated it as sufficient, exactly as the runtime guard once did. A new LOGIN
+ * with one otherwise-perfect membership could therefore apply DDL: a second
+ * migration credential nothing bootstraps, rotates or audits, accepted by the
+ * real runner.
+ *
+ * Proved through `runMigrations`, not through the guard in isolation: the claim
+ * is about what the deployment command does, and a guard test would pass even if
+ * the runner stopped calling it.
+ */
+describe('the migration runner requires the canonical migration login', () => {
+  const ROGUE = 'prsystem_rogue_migrate_login';
+  const CANONICAL_DATABASE = 'prsystem_migration_canonical';
+  let canonicalAdmin: Pool;
+
+  beforeAll(async () => {
+    await admin.query(`DROP DATABASE IF EXISTS ${CANONICAL_DATABASE} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${CANONICAL_DATABASE}`);
+    await bootstrapCluster({
+      adminUrl: withDatabase(ADMIN_URL, CANONICAL_DATABASE),
+      database: CANONICAL_DATABASE,
+      logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+        principal,
+        password: TEST_LOGIN_PASSWORD,
+      })),
+    });
+    canonicalAdmin = quietPool(
+      { connectionString: withDatabase(ADMIN_URL, CANONICAL_DATABASE), max: 2 },
+      'canonical-migrate',
+    );
+  }, 180000);
+
+  afterAll(async () => {
+    await canonicalAdmin?.end();
+    await admin.query(`DROP OWNED BY ${ROGUE}`).catch(() => undefined);
+    await admin.query(`DROP ROLE IF EXISTS ${ROGUE}`).catch(() => undefined);
+    await admin.query(`DROP DATABASE IF EXISTS ${CANONICAL_DATABASE} WITH (FORCE)`);
+  }, 60000);
+
+  async function ledgerCount(): Promise<number> {
+    const present = await canonicalAdmin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM information_schema.tables
+        WHERE table_schema = 'drizzle' AND table_name = '__drizzle_migrations'`,
+    );
+    if (present.rows[0]?.count === '0') return 0;
+    const applied = await canonicalAdmin.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations',
+    );
+    return Number(applied.rows[0]?.count ?? '0');
+  }
+
+  it('refuses a non-canonical migration login before any DDL', async () => {
+    // Everything about this login is right except which login it is: LOGIN, no
+    // privileged attribute, exactly one membership in prsystem_migrate with the
+    // exact options.
+    await admin.query(`DROP ROLE IF EXISTS ${ROGUE}`);
+    await admin.query(
+      `CREATE ROLE ${ROGUE} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT ` +
+        `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`,
+    );
+    await admin.query(
+      `GRANT prsystem_migrate TO ${ROGUE} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+    await canonicalAdmin.query(
+      `GRANT CONNECT, CREATE ON DATABASE ${CANONICAL_DATABASE} TO ${ROGUE}`,
+    );
+
+    const before = await ledgerCount();
+    const rogueUrl = new URL(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
+    rogueUrl.username = ROGUE;
+    rogueUrl.password = TEST_LOGIN_PASSWORD;
+
+    let raised: unknown;
+    try {
+      await runMigrations(rogueUrl.toString(), { approvedOperatorOwners: ['prsystem'] });
+    } catch (error) {
+      raised = error;
+    }
+
+    expect((raised as { name?: string; reason?: string } | undefined)?.name).toBe('PrincipalError');
+    expect((raised as { reason?: string }).reason).toBe('not_canonical');
+    // Nothing was applied: the refusal happened before any DDL.
+    expect(await ledgerCount()).toBe(before);
+    const schemas = await canonicalAdmin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM information_schema.schemata
+        WHERE schema_name = 'platform'`,
+    );
+    expect(schemas.rows[0]?.count).toBe('0');
+  }, 180000);
+
+  it('accepts the canonical migration login', async () => {
+    // The positive control, through the same runner.
+    const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
+    await expect(
+      runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
+    ).resolves.toMatchObject({ appliedAfter: 2 });
+  }, 180000);
+});
+
+/**
  * The exact ownership manifest, proved on an *upgrade*.
  *
  * Every case drifts one owner on a fully migrated database and then attempts a

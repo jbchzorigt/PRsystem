@@ -635,6 +635,27 @@ export async function assertMigrationPrincipal(pool: Queryable): Promise<Princip
   const facts = await readPrincipalFacts(pool);
   assertNoPrivilegedAttribute(facts);
 
+  // The canonical migration login, and only it — checked before anything else
+  // so a refusal happens before any DDL.
+  //
+  // An exact `prsystem_migrate` closure was treated as sufficient, exactly as
+  // the runtime guard once treated an exact group closure. A new LOGIN with one
+  // otherwise-perfect membership could therefore apply DDL: a second migration
+  // credential that nothing bootstraps, rotates or audits, accepted by the real
+  // runner. The mapping is the one in `roles.ts`, shared with bootstrap and the
+  // runtime guard.
+  const canonicalMigrate = CANONICAL_LOGIN_BY_GROUP['prsystem_migrate'];
+  if (canonicalMigrate === undefined) {
+    throw new PrincipalError('no canonical login is defined for prsystem_migrate', 'not_canonical');
+  }
+  if (facts.sessionUser !== canonicalMigrate) {
+    throw new PrincipalError(
+      `${facts.sessionUser} is not the canonical migration login ` +
+        `(expected ${canonicalMigrate})`,
+      'not_canonical',
+    );
+  }
+
   if (!reaches(facts, 'prsystem_migrate')) {
     throw new PrincipalError(
       `${facts.sessionUser} is not a member of prsystem_migrate`,
