@@ -13,6 +13,7 @@ import { registerCorrelation } from './observability/correlation.plugin';
 import { ApiErrorFilter } from './observability/api-error.filter';
 import { assertApiConnectionPrincipal } from './observability/connection-guard';
 import { assertSchedulerConnectionPrincipal } from './security/scheduler-guard';
+import { SCHEDULER_POOL } from './maintenance/maintenance.module';
 import { OPENAPI_PATH, buildOpenApiDocument } from './openapi-document';
 
 export interface BootstrapOptions {
@@ -31,17 +32,8 @@ export async function createApp(
   // port is bound. A process that cannot prove its identity, or that has no key
   // management, must never reach the point of accepting a request.
   const guardPool = new Pool({ connectionString: config.DATABASE_URL, max: 1 });
-  // D-09. The API control plane may hold a scheduler credential; if it does, it
-  // is verified at startup like every other principal, before a port is bound.
-  const schedulerGuardPool =
-    config.SCHEDULER_DATABASE_URL === undefined
-      ? undefined
-      : new Pool({ connectionString: config.SCHEDULER_DATABASE_URL, max: 1 });
   try {
     await assertApiConnectionPrincipal(guardPool, logger);
-    if (schedulerGuardPool !== undefined) {
-      await assertSchedulerConnectionPrincipal(schedulerGuardPool, logger);
-    }
     // Throws when the adapter is `none`, when a production build asks for the
     // local simulator, or when the configuration is missing or unknown.
     selectKeyManagement({
@@ -53,13 +45,28 @@ export async function createApp(
     // Released whether the guard passed or threw: a refused startup must not
     // leave a connection behind.
     await guardPool.end();
-    if (schedulerGuardPool !== undefined) await schedulerGuardPool.end();
   }
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
     // Nest's own bootstrap logging is suppressed; the redacting logger is authoritative.
     logger: false,
   });
+
+  // D-09. The scheduler pool the *application* owns is the one validated here —
+  // not a throwaway opened and closed during startup, which would verify a
+  // credential and then leave nothing holding it. Still before `listen`, so a
+  // wrong credential means no port is ever bound.
+  const schedulerPool = app.get<Pool | undefined>(SCHEDULER_POOL, { strict: false });
+  if (schedulerPool !== undefined) {
+    try {
+      await assertSchedulerConnectionPrincipal(schedulerPool, logger);
+    } catch (error) {
+      // Nest owns the pool now, so shutting the application down is what closes
+      // it. Doing that here keeps a refused startup from leaking connections.
+      await app.close();
+      throw error;
+    }
+  }
 
   registerCorrelation(app.getHttpAdapter().getInstance());
 

@@ -21,50 +21,82 @@ const redisUrl = nonEmpty.refine((v) => /^rediss?:\/\//.test(v), {
 
 const port = z.coerce.number().int().min(1).max(65535);
 
-export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  APP_ENV: z.enum(['local', 'ci', 'staging', 'production']).default('local'),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+export const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    APP_ENV: z.enum(['local', 'ci', 'staging', 'production']).default('local'),
+    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
-  API_HOST: nonEmpty.default('0.0.0.0'),
-  API_PORT: port.default(3000),
+    API_HOST: nonEmpty.default('0.0.0.0'),
+    API_PORT: port.default(3000),
 
-  DATABASE_URL: postgresUrl,
-  /**
-   * The migration principal's connection string — a restricted, non-superuser
-   * login that is a member of prsystem_migrate and nothing else. Separate from
-   * DATABASE_URL on purpose: the API and worker must never hold it, and the
-   * runner verifies the principal before applying anything.
-   */
-  MIGRATION_DATABASE_URL: postgresUrl.optional(),
-  /**
-   * The job-scheduler principal's connection string (D-09).
-   *
-   * Separate from DATABASE_URL for the same reason MIGRATION_DATABASE_URL is:
-   * issuing a privileged maintenance job and executing one are different powers.
-   * Only the API deployment is given this value. The worker must never hold it,
-   * because a worker that could issue its own authorisation is exactly the
-   * arrangement D-09 exists to prevent.
-   */
-  SCHEDULER_DATABASE_URL: postgresUrl.optional(),
-  REDIS_URL: redisUrl,
+    DATABASE_URL: postgresUrl,
+    /**
+     * The migration principal's connection string — a restricted, non-superuser
+     * login that is a member of prsystem_migrate and nothing else. Separate from
+     * DATABASE_URL on purpose: the API and worker must never hold it, and the
+     * runner verifies the principal before applying anything.
+     */
+    MIGRATION_DATABASE_URL: postgresUrl.optional(),
+    /**
+     * The job-scheduler principal's connection string (D-09).
+     *
+     * Separate from DATABASE_URL for the same reason MIGRATION_DATABASE_URL is:
+     * issuing a privileged maintenance job and executing one are different powers.
+     * Only the API deployment is given this value. The worker must never hold it,
+     * because a worker that could issue its own authorisation is exactly the
+     * arrangement D-09 exists to prevent.
+     */
+    SCHEDULER_DATABASE_URL: postgresUrl.optional(),
+    /**
+     * Whether this deployment has the D-09 scheduler capability.
+     *
+     * Defaults on for the API in production: the capability is part of the
+     * intended production API deployment, so a missing credential there is a
+     * misconfiguration rather than a quiet opt-out. A deployment that genuinely
+     * has no scheduler sets this to `false` explicitly, which is a decision
+     * somebody made rather than a variable somebody forgot.
+     */
+    SCHEDULER_ENABLED: z
+      .enum(['true', 'false'])
+      .optional()
+      .transform((value) => value === undefined || value === 'true'),
+    REDIS_URL: redisUrl,
 
-  /** Key management adapter. `none` fails closed; `local` is refused outside local/ci/test. */
-  KMS_ADAPTER: z.string().default('none'),
-  KMS_SEED: z.string().optional(),
+    /** Key management adapter. `none` fails closed; `local` is refused outside local/ci/test. */
+    KMS_ADAPTER: z.string().default('none'),
+    KMS_SEED: z.string().optional(),
 
-  OBJECT_STORAGE_ENDPOINT: nonEmpty,
-  OBJECT_STORAGE_REGION: nonEmpty.default('us-east-1'),
-  OBJECT_STORAGE_BUCKET: nonEmpty,
-  OBJECT_STORAGE_ACCESS_KEY_ID: nonEmpty,
-  OBJECT_STORAGE_SECRET_ACCESS_KEY: nonEmpty,
+    OBJECT_STORAGE_ENDPOINT: nonEmpty,
+    OBJECT_STORAGE_REGION: nonEmpty.default('us-east-1'),
+    OBJECT_STORAGE_BUCKET: nonEmpty,
+    OBJECT_STORAGE_ACCESS_KEY_ID: nonEmpty,
+    OBJECT_STORAGE_SECRET_ACCESS_KEY: nonEmpty,
 
-  SMTP_HOST: nonEmpty,
-  SMTP_PORT: port,
+    SMTP_HOST: nonEmpty,
+    SMTP_PORT: port,
 
-  OTEL_SERVICE_NAME: nonEmpty.default('prsystem'),
-  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
-});
+    OTEL_SERVICE_NAME: nonEmpty.default('prsystem'),
+    OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
+  })
+  .superRefine((value, ctx) => {
+    // The capability and the credential travel together. A production API with
+    // the scheduler enabled and no SCHEDULER_DATABASE_URL would start, hold no
+    // scheduler pool, and fail only when somebody tried to issue a job.
+    if (
+      value.SCHEDULER_ENABLED &&
+      value.APP_ENV === 'production' &&
+      value.SCHEDULER_DATABASE_URL === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SCHEDULER_DATABASE_URL'],
+        message:
+          'SCHEDULER_DATABASE_URL is required when the scheduler capability is enabled; ' +
+          'set SCHEDULER_ENABLED=false for a deployment that genuinely has no scheduler',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

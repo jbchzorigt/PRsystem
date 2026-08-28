@@ -10,6 +10,7 @@ import { LOGIN_PRINCIPALS, bootstrapCluster, runMigrations } from '@prsystem/db'
 import type { LoginPrincipal } from '@prsystem/db';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { MaintenanceSchedulerService } from '../maintenance/scheduler.service';
+import { SCHEDULER_POOL } from '../maintenance/maintenance.module';
 
 /**
  * D-09 as a deployment fact.
@@ -83,7 +84,53 @@ afterAll(async () => {
 });
 
 describe('the API control plane issues', () => {
-  it('issues a job through the internal service, with the issuer taken from the credential', async () => {
+  it('resolves the service from the running application and issues through its own pool', async () => {
+    // The application is started for real and the service is taken out of the
+    // Nest container. Constructing MaintenanceSchedulerService by hand would
+    // prove the SQL works and say nothing about whether the capability is wired
+    // into the application that ships.
+    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_DATABASE_URL: schedulerUrl });
+    const { createApp } = await import('../bootstrap');
+    const started = await createApp({ port: PORT, serveDocs: false });
+
+    try {
+      const service = started.app.get(MaintenanceSchedulerService);
+      expect(service).toBeInstanceOf(MaintenanceSchedulerService);
+
+      const pool = started.app.get<Pool>(SCHEDULER_POOL, { strict: false });
+      expect(pool).toBeDefined();
+
+      const id = await service.issueMaintenanceJob(
+        {
+          hotelId: HOTEL,
+          realm: 'operation',
+          actorRef: 'whatever_the_caller_says',
+          correlationId: 'corr-container-issue',
+        },
+        JOB_NAME,
+        TEST_LOGIN_PRINCIPALS.worker,
+      );
+
+      const stored = await db.pool.query<{ issuer_ref: string; job_identity: string }>(
+        `SELECT issuer_ref, job_identity FROM platform.job_run WHERE job_run_id = $1`,
+        [id],
+      );
+      expect(stored.rows[0]?.issuer_ref).toBe(TEST_LOGIN_PRINCIPALS.jobScheduler);
+      expect(stored.rows[0]?.job_identity).toBe(TEST_LOGIN_PRINCIPALS.worker);
+
+      // The pool is alive and serving the application, not opened per call.
+      const alive = await pool.query<{ ok: number }>('SELECT 1 AS ok');
+      expect(alive.rows[0]?.ok).toBe(1);
+
+      // Shutting the application down closes it, through the Nest lifecycle.
+      await started.app.close();
+      await expect(async () => pool.query('SELECT 1')).rejects.toThrow(/after calling end/i);
+    } finally {
+      await started.app.close().catch(() => undefined);
+    }
+  }, 120000);
+
+  it('issues through a directly constructed service too', async () => {
     const pool = new Pool({ connectionString: schedulerUrl, max: 1 });
     try {
       const service = new MaintenanceSchedulerService(pool);
