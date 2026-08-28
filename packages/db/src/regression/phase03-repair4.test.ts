@@ -457,7 +457,9 @@ describe('E7 — the migration runner validates ownership before applying DDL', 
       // Wording follows the exact ownership manifest, which states the rule as
       // "this role must own nothing" rather than naming the object class.
       await expect(runMigrations(migrateUrl)).rejects.toThrow(
-        /relation platform\.job_run is owned by prsystem_worker, which must own nothing/,
+        // The census reports the catalogue class, so a reader can tell a
+        // relation from a type or a function without guessing.
+        /pg_class platform\.job_run is owned by prsystem_worker, which must own nothing/,
       );
     } finally {
       await inTarget(`ALTER TABLE platform.job_run OWNER TO prsystem_migrate`);
