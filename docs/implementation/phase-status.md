@@ -1124,18 +1124,20 @@ HEAD, and every step of both exited 0, `format:check` included.
 
 ## Current Phase 03 evidence
 
-**The one canonical place for Phase 03 gate results.** The phase ledger and the
-gate-battery block above link here and restate no counts; `validate-governance`
-check 15 fails if either starts carrying its own copy again, which is how they
-came to read `49 / 439 / 51 / 26 / 3` while this section read something else.
+**The one canonical place for Phase 03 gate results.** The phase ledger row and
+the gate-battery block above link here and restate no counts;
+`validate-governance` check 15 parses both regions and fails if either starts
+carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 /
+3` while this section read something else.
 
 Measured on the tenth-repair tree. Every command exited 0.
 
 | Command | Result |
 | --- | --- |
 | `node tools/validate-governance.mjs` | 15/15 checks |
+| `node tools/validate-governance.fixtures.mjs` | 12/12 drift fixtures caught |
 | `node tools/validate-workspace.mjs` | 15/15 checks |
-| `node tools/scan-secrets.mjs` | 0 findings |
+| `node tools/scan-secrets.mjs` | 326 tracked text files, 0 findings |
 | `pnpm run format:check` | clean |
 | `pnpm run lint` | 16/16 tasks |
 | `pnpm run typecheck` | 25/25 tasks |
@@ -1143,23 +1145,23 @@ Measured on the tenth-repair tree. Every command exited 0.
 | `pnpm run build` | 16/16 tasks |
 | `pnpm run openapi` | document generated |
 | `pnpm run compose:config` | valid |
-| `pnpm run test:migrations` | **98** tests |
+| `pnpm run test:migrations` | **107** tests |
 | `pnpm run test:integration` | **51** tests (db 41, outbox 5, api 5) |
 | `pnpm run test:concurrency` ×3 | **16** tests each run |
 | `pnpm run test:regression` | **51** tests |
-| `node tools/validate-regression-coverage.mjs` | **164/164** checks |
-| `node tools/validate-regression-coverage.fixtures.mjs` | **35/35** bypasses caught |
+| `node tools/validate-regression-coverage.mjs` | **203/203** checks |
+| `node tools/validate-regression-coverage.fixtures.mjs` | **40/40** bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | **12/12** checks, 4 fixtures |
-| `pnpm run test:security` ×3 | **18/18 sub-gates, 484 tests**, each run |
+| `pnpm run test:security` ×3 | **18/18 sub-gates, 488 tests**, each run |
 | `pnpm run test:e2e` | 15 tests |
 | `pnpm run audit:prod` | no known vulnerabilities |
 | `pnpm run audit:tree` | 0 high or critical (1 moderate: DSR-01) |
 | `git diff --check` | clean |
 
-### GATE-SEC — 18 sub-gates, 484 tests
+### GATE-SEC sub-gate counts
 
 SEC-ROLE 21, SEC-RLS 33, SEC-ACL-MATRIX 110, SEC-OWNERSHIP 10, SEC-LOCK-EVIDENCE 16,
-SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 21, SEC-SCHEDULER 55, SEC-MAINTENANCE 24, SEC-STARTUP 34,
+SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 21, SEC-SCHEDULER 55, SEC-MAINTENANCE 24, SEC-STARTUP 38,
 SEC-STARTUP-WORKER 8, SEC-REGRESSION 51, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
 SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Byte-identical across three consecutive runs.
 
@@ -1211,6 +1213,42 @@ no temporary mutation was committed.
 17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
 contained. Selecting `GATE-SEC` as a required GitHub status check remains an
 external action needing an explicit push authorisation, and was not attempted.
+
+---
+
+### Tenth security repair (customer review 10) — `SECURITY_REPAIR_REQUIRED`
+
+The ninth repair was **not accepted**: the clean-clone jobs proved the gates ran,
+and independent negative tests proved several were still incomplete. Six defects
+were raised; all are closed. Phase 03 stays `SECURITY_REPAIR_REQUIRED`, the
+repair is committed and awaiting customer review, and **no acceptance is
+claimed**.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | `assertMigrationPrincipal` verified an exact `prsystem_migrate` closure and treated it as sufficient, so a new LOGIN with one otherwise-perfect membership applied DDL through the real runner | The canonical migration login is required first, before any DDL, from the same `CANONICAL_LOGIN_BY_GROUP` mapping bootstrap and the runtime guard use. Reported as `not_canonical` |
+| 2 | The "whole-database" census queried three catalogues by hand, so foreign tables and enum, domain and composite types were invisible; extension members were exempt from the narrow-owner invariant; and the dependency predicate matched on `objid` with no `classid` | The census reads `pg_shdepend`, which is the catalogue's own record of ownership and covers every ownable class. An unnameable class fails closed. Extension membership is reported, never an exemption. Every dependency match carries `classid`, `objid`, `objsubid`, `refclassid` and `deptype` |
+| 3 | `drizzleProjection` dropped foreign-key `ON UPDATE`, unique `NULLS NOT DISTINCT`, the generated expression and index order, NULL ordering and operator class; `only`, `with` and `concurrently` were unclassified. The mutation tests altered the produced projection, so they proved only the differ | The projection takes its tables as input and `schema-extraction.test.ts` compares pairs of real declarations differing in one property. Every persistent property is projected; `concurrently` is refused as construction-only |
+| 4 | The validator accepted `exit 0` above the exact command, a workflow-level default shell, a required-job default shell, and teardown that had lost `if: always()` | A required step's executable lines must be exactly its command. Custom shells are rejected at step, job-default and workflow-default level. `cleanup: true` is consumed: teardown requires `always()`, everything else requires no condition |
+| 5 | Check 14 scanned every `SEC-*` mention rather than the catalogue section; check 15 looked only at the ledger row, so a fabricated count in the gate battery, a removed or changed canonical link and a duplicated canonical section all passed | Both checks parse their real regions and take an overridable path, and `validate-governance.fixtures.mjs` proves them with nine drift fixtures and three controls |
+| 6 | The refusal of `MIGRATION_DATABASE_URL` was asserted on the thrown error alone, missing the stack and the logger's structured fields | The real entrypoints run as child processes and everything they write is searched, including a field-by-field walk of every JSON line |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| 1 | a non-canonical migration login through `runMigrations` | **applied both migrations**; the call did not throw |
+| 2 | foreign table, enum, domain, composite type, an extension function held by a narrow owner, and extended statistics as an unknown class | 6 accepted |
+| 3 | 14 extraction cases over real declarations | 14 failed; the previous projection took no argument, and the nine properties appear zero times in its source |
+| 4 | `exit 0` before the command, workflow default shell, job default shell, teardown without `always()` | 4 accepted (36/40 caught) |
+| 5 | a sub-gate removed from the catalogue but mentioned elsewhere, a fabricated count in the gate battery, the ledger's canonical link removed | the previous checks reported **15/15 PASS** |
+| 6 | — | **no defect**: both runtimes already redact and all four cases passed first time. Recorded as evidence, not a repair. Proved non-vacuous by interpolating the value into the refusal message, which fails all four; the mutation was restored and not committed |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
 
 ---
 
