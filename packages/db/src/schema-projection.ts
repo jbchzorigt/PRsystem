@@ -5,7 +5,7 @@ import type { SchemaSnapshot } from './schema-snapshot';
 import type { SchemaDifference } from './schema-difference';
 
 /** Only the parts of the snapshot this comparison reads. */
-export type SchemaSnapshotInput = Pick<SchemaSnapshot, 'columns' | 'constraints'>;
+export type SchemaSnapshotInput = Pick<SchemaSnapshot, 'columns' | 'constraints' | 'indexes'>;
 
 /**
  * The Drizzle declaration, projected into the same vocabulary as the canonical
@@ -34,14 +34,22 @@ export interface ProjectedColumn {
 export interface ProjectedConstraint {
   readonly table: string;
   readonly name: string;
-  /** `p` primary key or `u` unique — the two the DSL can state. */
-  readonly kind: 'p' | 'u';
+  /** `p` primary key, `u` unique, `f` foreign key, `c` check. */
+  readonly kind: 'p' | 'u' | 'f' | 'c';
+  readonly definition: string;
+}
+
+export interface ProjectedIndex {
+  readonly table: string;
+  readonly name: string;
   readonly definition: string;
 }
 
 export interface SchemaProjection {
   readonly columns: readonly ProjectedColumn[];
   readonly constraints: readonly ProjectedConstraint[];
+  /** Standalone indexes only; the ones a key creates are projected as constraints. */
+  readonly indexes: readonly ProjectedIndex[];
 }
 
 /** PostgreSQL's `pg_attribute.attidentity` letter for a Drizzle identity kind. */
@@ -50,9 +58,25 @@ function identityLetter(type: string | undefined): string {
   return type === 'always' ? 'a' : 'd';
 }
 
+/**
+ * PostgreSQL's `pg_attribute.attgenerated` letter.
+ *
+ * Only `s` (stored) exists in PostgreSQL 17; virtual generated columns are not
+ * implemented, so any declared generated column is stored.
+ */
+function generatedLetter(_type: string | undefined): string {
+  return 's';
+}
+
+/** Renders a `SQL` fragment as the text PostgreSQL would report. */
+function render(fragment: unknown): string {
+  return dialect.sqlToQuery(fragment as Parameters<typeof dialect.sqlToQuery>[0]).sql;
+}
+
 export function drizzleProjection(): SchemaProjection {
   const columns: ProjectedColumn[] = [];
   const constraints: ProjectedConstraint[] = [];
+  const indexes: ProjectedIndex[] = [];
 
   for (const table of DECLARED_TABLES) {
     const config = getTableConfig(table);
@@ -69,6 +93,12 @@ export function drizzleProjection(): SchemaProjection {
           : dialect.sqlToQuery(column.default as Parameters<typeof dialect.sqlToQuery>[0]).sql;
       const identity = (column as unknown as { generatedIdentity?: { type?: string } })
         .generatedIdentity;
+      // Read from the declaration rather than assumed. Drizzle 0.45.2 expresses
+      // generated columns through `.generatedAlwaysAs()`, so hard-coding "not
+      // generated" meant a declared generated column projected as an ordinary
+      // one and the two declarations could disagree without anything noticing.
+      const generated = (column as unknown as { generated?: { type?: string } | undefined })
+        .generated;
 
       columns.push({
         table: qualified,
@@ -78,10 +108,9 @@ export function drizzleProjection(): SchemaProjection {
           column.notNull ? 'NOT NULL' : 'NULL',
           defaultText === '' ? 'no default' : `default ${defaultText}`,
           identity === undefined ? 'no identity' : `identity ${identityLetter(identity.type)}`,
-          // The DSL has no generated-column form, so every declared column is
-          // ordinary. A generated column appearing in the database is caught as
-          // a snapshot difference.
-          'not generated',
+          generated === undefined
+            ? 'not generated'
+            : `generated ${generatedLetter(generated.type)}`,
         ].join(' | '),
       });
 
@@ -112,9 +141,57 @@ export function drizzleProjection(): SchemaProjection {
         definition: `UNIQUE (${unique.columns.map((column) => column.name).join(', ')})`,
       });
     }
+
+    // Foreign keys, with their referential action. `NO ACTION` is PostgreSQL's
+    // default and is the one form it does not print, so it is omitted here too.
+    for (const foreignKey of config.foreignKeys) {
+      const reference = foreignKey.reference();
+      const foreignConfig = getTableConfig(reference.foreignTable);
+      const foreignQualified = `${foreignConfig.schema ?? 'public'}.${foreignConfig.name}`;
+      const onDelete = (foreignKey.onDelete ?? '').toUpperCase();
+      constraints.push({
+        table: qualified,
+        name: foreignKey.getName(),
+        kind: 'f',
+        definition:
+          `FOREIGN KEY (${reference.columns.map((column) => column.name).join(', ')}) ` +
+          `REFERENCES ${foreignQualified}` +
+          `(${reference.foreignColumns.map((column) => column.name).join(', ')})` +
+          (onDelete === '' || onDelete === 'NO ACTION' ? '' : ` ON DELETE ${onDelete}`),
+      });
+    }
+
+    // Checks. The declaration carries the exact PostgreSQL text of the
+    // predicate, so what is compared is the constraint itself rather than a
+    // rendering of a JavaScript expression.
+    for (const checkConstraint of config.checks) {
+      constraints.push({
+        table: qualified,
+        name: checkConstraint.name,
+        kind: 'c',
+        definition: `CHECK (${render(checkConstraint.value)})`,
+      });
+    }
+
+    for (const declared of config.indexes) {
+      const built = declared.config;
+      const columns = (built.columns ?? []).map((column) =>
+        typeof column === 'object' && column !== null && 'name' in column
+          ? (column as { name: string }).name
+          : render(column),
+      );
+      const where = built.where === undefined ? '' : ` WHERE (${render(built.where)})`;
+      indexes.push({
+        table: qualified,
+        name: built.name ?? '',
+        definition:
+          `CREATE ${built.unique === true ? 'UNIQUE ' : ''}INDEX ${built.name ?? ''} ` +
+          `ON ${qualified} USING ${built.method ?? 'btree'} (${columns.join(', ')})${where}`,
+      });
+    }
   }
 
-  return { columns, constraints };
+  return { columns, constraints, indexes };
 }
 
 /**
@@ -183,11 +260,13 @@ export function diffDeclarations(
     }
   }
 
-  // Keys, for the two kinds the DSL can state. Everything else — foreign keys,
-  // checks, exclusions — is snapshot-only by design and is not projected.
+  // Every constraint kind the DSL can state: primary keys, uniques, foreign
+  // keys with their action, and checks. Only exclusion constraints remain
+  // snapshot-only, because Drizzle 0.45.2 has no faithful form for them.
+  const PROJECTED_KINDS = new Set(['p', 'u', 'f', 'c']);
   const snapshotKeys = new Map(
     snapshot.constraints
-      .filter((c) => (c.kind === 'p' || c.kind === 'u') && declaredTables.has(c.table))
+      .filter((c) => PROJECTED_KINDS.has(c.kind) && declaredTables.has(c.table))
       .map((c) => [`${c.table}.${c.name}`, `${c.kind} ${c.definition}`]),
   );
   const projectedKeys = new Map(
@@ -216,6 +295,50 @@ export function diffDeclarations(
     if (!projectedKeys.has(key)) {
       differences.push({
         kind: 'declaration-key',
+        subject: key,
+        expected: 'declared in schema.ts',
+        actual: `${value} (snapshot only)`,
+      });
+    }
+  }
+
+  // Standalone indexes. The ones a primary key or unique constraint creates are
+  // already compared as constraints, and comparing them again here would ask
+  // Drizzle to declare an index it never writes.
+  const constraintBacked = new Set(
+    snapshot.constraints.filter((c) => c.kind === 'p' || c.kind === 'u').map((c) => c.name),
+  );
+  const snapshotIndexes = new Map(
+    snapshot.indexes
+      .filter((i) => declaredTables.has(i.table) && !constraintBacked.has(i.name))
+      .map((i) => [`${i.table}.${i.name}`, i.definition]),
+  );
+  const projectedIndexes = new Map(
+    projection.indexes.map((i) => [`${i.table}.${i.name}`, i.definition]),
+  );
+
+  for (const [key, value] of projectedIndexes) {
+    const snapshotDefinition = snapshotIndexes.get(key);
+    if (snapshotDefinition === undefined) {
+      differences.push({
+        kind: 'declaration-index',
+        subject: key,
+        expected: 'present in the snapshot',
+        actual: value,
+      });
+    } else if (snapshotDefinition !== value) {
+      differences.push({
+        kind: 'declaration-index',
+        subject: key,
+        expected: snapshotDefinition,
+        actual: value,
+      });
+    }
+  }
+  for (const [key, value] of snapshotIndexes) {
+    if (!projectedIndexes.has(key)) {
+      differences.push({
+        kind: 'declaration-index',
         subject: key,
         expected: 'declared in schema.ts',
         actual: `${value} (snapshot only)`,

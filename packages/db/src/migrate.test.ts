@@ -1515,6 +1515,27 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       kind: 'u',
       definition: 'UNIQUE (provider, provider_event_id)',
     });
+    expect(projection.constraints).toContainEqual({
+      table: 'platform.outbox_delivery',
+      name: 'outbox_delivery_event_id_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (event_id) REFERENCES platform.outbox_event(event_id) ON DELETE RESTRICT',
+    });
+    expect(projection.constraints).toContainEqual({
+      table: 'platform.job_run',
+      name: 'job_run_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text])))",
+    });
+    expect(projection.indexes).toContainEqual({
+      table: 'platform.operational_alert',
+      name: 'operational_alert_open_idx',
+      definition:
+        'CREATE INDEX operational_alert_open_idx ON platform.operational_alert ' +
+        'USING btree (alert_code, raised_at DESC) WHERE (resolved_at IS NULL)',
+    });
   });
 
   const mutations: readonly {
@@ -1628,6 +1649,105 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
             ? { ...c, definition: 'UNIQUE (provider, provider_event_id, event_kind)' }
             : c,
         ),
+      }),
+    },
+    {
+      title: 'a changed generated-column state',
+      kind: 'declaration-column',
+      subject: 'platform.job_run.job_name',
+      mutate: (p) => ({
+        ...p,
+        columns: p.columns.map((c) =>
+          c.table === 'platform.job_run' && c.column === 'job_name'
+            ? { ...c, shape: c.shape.replace('not generated', 'generated s') }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a changed foreign-key action',
+      kind: 'declaration-key',
+      subject: 'platform.outbox_delivery.outbox_delivery_event_id_fkey',
+      mutate: (p) => ({
+        ...p,
+        constraints: p.constraints.map((c) =>
+          c.name === 'outbox_delivery_event_id_fkey'
+            ? { ...c, definition: c.definition.replace('ON DELETE RESTRICT', 'ON DELETE CASCADE') }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped foreign key',
+      kind: 'declaration-key',
+      subject: 'platform.export_artifact.export_artifact_job_run_id_fkey',
+      mutate: (p) => ({
+        ...p,
+        constraints: p.constraints.filter((c) => c.name !== 'export_artifact_job_run_id_fkey'),
+      }),
+    },
+    {
+      title: 'a weakened check constraint',
+      kind: 'declaration-key',
+      subject: 'platform.job_run.job_run_state_known',
+      mutate: (p) => ({
+        ...p,
+        constraints: p.constraints.map((c) =>
+          c.name === 'job_run_state_known'
+            ? {
+                ...c,
+                definition: c.definition.replace("'failed'::text", "'failed'::text, 'any'::text"),
+              }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a changed ordinary index',
+      kind: 'declaration-index',
+      subject: 'platform.job_run.job_run_name_idx',
+      mutate: (p) => ({
+        ...p,
+        indexes: p.indexes.map((i) =>
+          i.name === 'job_run_name_idx'
+            ? { ...i, definition: i.definition.replace('started_at DESC', 'started_at') }
+            : i,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped index predicate',
+      kind: 'declaration-index',
+      subject: 'platform.operational_alert.operational_alert_open_idx',
+      mutate: (p) => ({
+        ...p,
+        indexes: p.indexes.map((i) =>
+          i.name === 'operational_alert_open_idx'
+            ? { ...i, definition: i.definition.replace(' WHERE (resolved_at IS NULL)', '') }
+            : i,
+        ),
+      }),
+    },
+    {
+      title: 'a unique index made non-unique',
+      kind: 'declaration-index',
+      subject: 'platform.idempotency_key.idempotency_key_scope_uq',
+      mutate: (p) => ({
+        ...p,
+        indexes: p.indexes.map((i) =>
+          i.name === 'idempotency_key_scope_uq'
+            ? { ...i, definition: i.definition.replace('CREATE UNIQUE INDEX', 'CREATE INDEX') }
+            : i,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped index',
+      kind: 'declaration-index',
+      subject: 'platform.outbox_delivery.outbox_delivery_claimable_idx',
+      mutate: (p) => ({
+        ...p,
+        indexes: p.indexes.filter((i) => i.name !== 'outbox_delivery_claimable_idx'),
       }),
     },
     {

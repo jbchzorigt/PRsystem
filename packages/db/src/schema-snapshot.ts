@@ -1,13 +1,28 @@
 /**
  * The canonical schema snapshot.
  *
- * Drizzle's DSL expresses tables, columns, types, nullability, defaults,
- * identity, and simple, composite and unique keys — all of which `schema.ts`
- * now states and `schema-projection.ts` compares against this file. What the DSL
- * cannot express is partial-index predicates, expression indexes, foreign keys
- * with their referential actions, exclusion constraints, and the exact text of a
- * check. Those live here, as an explicit declaration rather than as whatever the
- * database happens to hold.
+ * `schema.ts` states everything Drizzle 0.45.2 can state faithfully — tables,
+ * columns, types, nullability, defaults, identity, generated state, simple,
+ * composite and unique keys, foreign keys with their referential action, check
+ * constraints, and ordinary, unique and partial indexes — and
+ * `schema-projection.ts` compares all of it against this file.
+ *
+ * What is left here is what the DSL genuinely cannot express, each with its
+ * reason:
+ *
+ *  - **Row Level Security, policies and `FORCE ROW LEVEL SECURITY`** — no DSL
+ *    form at all.
+ *  - **Grants and default privileges** — Drizzle models schema shape, not ACLs.
+ *  - **Triggers and their functions** — declared in SQL and owned by named
+ *    roles; Drizzle has no trigger form.
+ *  - **Partitioning** — `PARTITION BY`, partition bounds and the `ON ONLY`
+ *    indexes a partitioned parent carries have no DSL form, so the audit
+ *    parents' own keys are compared here and against the live catalogue.
+ *  - **Exclusion constraints** — no DSL form in 0.45.2.
+ *
+ * Anything on that list is also covered by the normalized `pg_dump` comparison
+ * and by the live-catalogue half of the comparator, so it is declared twice,
+ * never left to whatever the database happens to hold.
  *
  * Regenerated deliberately, never automatically: an "update the snapshot to
  * match" step would make the comparator agree with any change, which is the
