@@ -132,3 +132,68 @@ describe('startWorker ordering', () => {
     expect(createConnection).not.toHaveBeenCalled();
   }, 60000);
 });
+
+describe('the worker refuses the migration credential', () => {
+  /**
+   * `MIGRATION_DATABASE_URL` names a principal that can apply DDL. The shared
+   * configuration schema used to declare it, so the worker parsed it and
+   * returned it on every start — while `.env.example` said the worker rejected
+   * it. `workerEnv()` is what `main.ts` calls, so this is the startup path.
+   */
+  const MIGRATION_SECRET = 'migration-only-password-worker';
+  const MIGRATION_URL = `postgresql://prsystem_migrate_login:${MIGRATION_SECRET}@127.0.0.1:55442/prsystem`;
+
+  function workerBaseEnv(): Record<string, string> {
+    return {
+      NODE_ENV: 'test',
+      APP_ENV: 'ci',
+      LOG_LEVEL: 'error',
+      DATABASE_URL: 'postgresql://prsystem_worker_login:pw@127.0.0.1:55442/prsystem',
+      REDIS_URL: 'redis://127.0.0.1:59998',
+      OBJECT_STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
+      OBJECT_STORAGE_BUCKET: 'prsystem-local',
+      OBJECT_STORAGE_ACCESS_KEY_ID: 'test-access-key',
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: 'test-secret-key',
+      SMTP_HOST: '127.0.0.1',
+      SMTP_PORT: '1025',
+    };
+  }
+
+  async function loadWorkerConfig(overrides: Record<string, string>): Promise<Error | undefined> {
+    const { workerEnv, resetEnvCache } = await import('@prsystem/config');
+    delete process.env['MIGRATION_DATABASE_URL'];
+    Object.assign(process.env, workerBaseEnv(), overrides);
+    resetEnvCache();
+    try {
+      workerEnv();
+      return undefined;
+    } catch (error) {
+      return error as Error;
+    } finally {
+      delete process.env['MIGRATION_DATABASE_URL'];
+      resetEnvCache();
+    }
+  }
+
+  it('refuses a supplied MIGRATION_DATABASE_URL', async () => {
+    const error = await loadWorkerConfig({ MIGRATION_DATABASE_URL: MIGRATION_URL });
+    expect(error?.name).toBe('EnvValidationError');
+  });
+
+  it('refuses an empty MIGRATION_DATABASE_URL', async () => {
+    const error = await loadWorkerConfig({ MIGRATION_DATABASE_URL: '' });
+    expect(error?.name).toBe('EnvValidationError');
+  });
+
+  it('never puts the credential in the refusal', async () => {
+    const error = await loadWorkerConfig({ MIGRATION_DATABASE_URL: MIGRATION_URL });
+    expect(error?.message).toContain('MIGRATION_DATABASE_URL');
+    expect(error?.message).not.toContain(MIGRATION_SECRET);
+    expect(String(error?.stack ?? '')).not.toContain(MIGRATION_SECRET);
+  });
+
+  it('starts normally when it is absent', async () => {
+    const error = await loadWorkerConfig({});
+    expect(error).toBeUndefined();
+  });
+});

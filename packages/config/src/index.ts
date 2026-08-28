@@ -7,6 +7,7 @@ export {
   formatIssues,
   postgresUrl,
   registerEnvCacheReset,
+  assertNoMigrationCredential,
 } from './env';
 export type { Env } from './env';
 
@@ -21,3 +22,6 @@ export type { ApiEnv, SchedulerConfig } from './api-env';
 
 export { loadWorkerEnv, workerEnv, resetWorkerEnvCache } from './worker-env';
 export type { WorkerEnv } from './worker-env';
+
+export { migrationEnvSchema, loadMigrationEnv } from './migration-env';
+export type { MigrationEnv } from './migration-env';

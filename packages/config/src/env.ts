@@ -31,13 +31,6 @@ export const envSchema = z.object({
   API_PORT: port.default(3000),
 
   DATABASE_URL: postgresUrl,
-  /**
-   * The migration principal's connection string — a restricted, non-superuser
-   * login that is a member of prsystem_migrate and nothing else. Separate from
-   * DATABASE_URL on purpose: the API and worker must never hold it, and the
-   * runner verifies the principal before applying anything.
-   */
-  MIGRATION_DATABASE_URL: postgresUrl.optional(),
   REDIS_URL: redisUrl,
 
   /** Key management adapter. `none` fails closed; `local` is refused outside local/ci/test. */
@@ -68,7 +61,6 @@ export type Env = z.infer<typeof envSchema>;
 const SECRET_KEYS: readonly string[] = [
   'OBJECT_STORAGE_SECRET_ACCESS_KEY',
   'DATABASE_URL',
-  'MIGRATION_DATABASE_URL',
   'REDIS_URL',
   'KMS_SEED',
 ];
@@ -81,6 +73,35 @@ export class EnvValidationError extends Error {
     this.name = 'EnvValidationError';
     this.issues = issues;
   }
+}
+
+/**
+ * Variables that belong to the migration contract alone.
+ *
+ * `MIGRATION_DATABASE_URL` names a principal that can apply DDL. Neither
+ * long-lived runtime holds it, and neither may receive it — the shared schema
+ * used to declare it, so both runtimes parsed it and returned it while the
+ * environment example said both would reject it.
+ *
+ * Presence is all that is inspected, and presence includes an empty assignment:
+ * `MIGRATION_DATABASE_URL=` is still an operator handing this process a variable
+ * it must not be given, and that mistake is the one worth reporting. The value
+ * itself is never read, parsed, logged or returned.
+ */
+const MIGRATION_ONLY_KEYS = ['MIGRATION_DATABASE_URL'] as const;
+
+/** Refuses a runtime environment that carries the migration credential. */
+export function assertNoMigrationCredential(source: NodeJS.ProcessEnv): void {
+  const present = MIGRATION_ONLY_KEYS.filter((key) => source[key] !== undefined);
+  if (present.length === 0) return;
+  throw new EnvValidationError(
+    present.map(
+      (key) =>
+        `${key}: must not be set on a runtime deployment; it names the migration principal, ` +
+        'which can apply DDL. Supply it to the migration step alone ' +
+        '(see .env.migration.example and docs/implementation/database-bootstrap-runbook.md)',
+    ),
+  );
 }
 
 /**

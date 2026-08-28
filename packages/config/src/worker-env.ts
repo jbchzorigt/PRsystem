@@ -1,4 +1,10 @@
-import { EnvValidationError, loadEnv, registerEnvCacheReset, type Env } from './env';
+import {
+  EnvValidationError,
+  assertNoMigrationCredential,
+  loadEnv,
+  registerEnvCacheReset,
+  type Env,
+} from './env';
 
 /**
  * Worker-specific configuration: the shared contract and nothing else.
@@ -23,6 +29,8 @@ export type WorkerEnv = Env;
 const API_ONLY_KEYS = ['SCHEDULER_DATABASE_URL', 'SCHEDULER_ENABLED'] as const;
 
 export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEnv {
+  assertNoMigrationCredential(source);
+
   const present = API_ONLY_KEYS.filter((key) => source[key] !== undefined);
   if (present.length > 0) {
     throw new EnvValidationError(

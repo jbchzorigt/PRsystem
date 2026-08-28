@@ -237,7 +237,37 @@ check('10', 'Environment example exists, is complete, and carries no real secret
     readFileSync(join(ROOT, '.gitignore'), 'utf8').includes('.env'),
     '.gitignore does not ignore .env',
   );
-  return `${required.length} required keys present, all secret-shaped values are local placeholders`;
+
+  // The runtime template must not carry the migration credential. A developer
+  // who copies this file gets a runtime environment, and both runtimes refuse to
+  // start when handed MIGRATION_DATABASE_URL — so a template containing it would
+  // hand them a process that will not boot, or worse, a credential they did not
+  // mean to have.
+  assert(
+    !/^MIGRATION_DATABASE_URL=/m.test(text),
+    '.env.example is the runtime template and must not contain MIGRATION_DATABASE_URL',
+  );
+
+  const migrationExample = join(ROOT, '.env.migration.example');
+  assert(existsSync(migrationExample), '.env.migration.example is missing');
+  const migrationText = readFileSync(migrationExample, 'utf8');
+  for (const key of ['MIGRATION_DATABASE_URL', 'PRSYSTEM_APPROVED_OPERATOR_OWNERS']) {
+    assert(
+      new RegExp(`^${key}=`, 'm').test(migrationText),
+      `.env.migration.example is missing ${key}`,
+    );
+  }
+  // And the migration template carries nothing else: a copied migration
+  // environment is not a runtime environment.
+  const migrationKeys = [...migrationText.matchAll(/^([A-Z0-9_]+)=/gm)].map((m) => m[1]);
+  assert(
+    migrationKeys.every((k) =>
+      ['MIGRATION_DATABASE_URL', 'PRSYSTEM_APPROVED_OPERATOR_OWNERS'].includes(k),
+    ),
+    `.env.migration.example carries runtime keys: ${migrationKeys.join(', ')}`,
+  );
+
+  return `${required.length} required keys present, runtime and migration templates separated`;
 });
 
 check('11', 'Compose provides the four local backing services', () => {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   EnvValidationError,
+  assertNoMigrationCredential,
   envSchema,
   formatIssues,
   postgresUrl,
@@ -99,6 +100,10 @@ const API_SECRET_KEYS = ['SCHEDULER_DATABASE_URL'] as const;
  *         unusable capability/credential combination.
  */
 export function loadApiEnv(source: NodeJS.ProcessEnv = process.env): ApiEnv {
+  // Before anything is parsed: a runtime that has been handed the migration
+  // credential is misconfigured whatever else is correct.
+  assertNoMigrationCredential(source);
+
   const parsed = apiEnvSchema.safeParse(source);
   if (!parsed.success) {
     throw new EnvValidationError(formatIssues(source, parsed.error.issues, API_SECRET_KEYS));
