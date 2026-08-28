@@ -195,15 +195,41 @@ for (const required of REQUIRED_STEPS) {
   }
 }
 
+// 4a. No required job may be disabled by a job-level condition.
+//
+//     Step-level `if:` was rejected and job-level `if:` was not, so
+//     `jobs.gate-sec.if: false` switched the whole gate off — every step inside
+//     it included — without touching a single step.
+const REQUIRED_JOBS = ['governance', 'verify', 'e2e', 'compose', 'gate-sec'];
+
+for (const jobName of REQUIRED_JOBS) {
+  const job = workflow?.jobs?.[jobName];
+  check(
+    `the '${jobName}' job exists`,
+    job !== undefined,
+    job === undefined ? 'not defined in the workflow' : 'defined',
+  );
+  if (job === undefined) continue;
+
+  const condition = job.if === undefined ? undefined : String(job.if).trim();
+  check(
+    `job '${jobName}' is not disabled by an if: condition`,
+    condition === undefined,
+    condition === undefined ? 'no job-level if:' : `if: ${condition}`,
+  );
+}
+
 // 4b. A job that runs `pnpm` must set pnpm up and install first.
 //
 //     The governance job ran `pnpm run validate:regression-coverage` — which
 //     imports js-yaml — with no pnpm setup and no install at all. It passed
 //     locally because a developer's node_modules is already there, and would
 //     have failed on a clean runner. A CI job must be self-contained.
-const PNPM_JOBS = ['governance', 'verify', 'e2e', 'compose', 'gate-sec'];
-
-for (const job of PNPM_JOBS) {
+//
+//     Jobs are discovered from the workflow rather than listed here. A hard-coded
+//     list only covers the jobs somebody remembered to add to it, which is how
+//     the governance job went unchecked in the first place.
+for (const job of Object.keys(workflow?.jobs ?? {})) {
   const steps = stepsOf(job);
   if (steps.length === 0) continue;
 
@@ -230,6 +256,15 @@ for (const job of PNPM_JOBS) {
     `'${job}' installs with a frozen lockfile`,
     installIndex >= 0,
     installIndex >= 0 ? `install at step ${String(installIndex)}` : 'no frozen-lockfile install',
+  );
+
+  // pnpm has to exist before the install that uses it. Only
+  // install-before-first-use was ordered, so a setup placed after the install
+  // read as correct and would fail on a clean runner.
+  check(
+    `'${job}' sets pnpm up before installing`,
+    setupIndex >= 0 && installIndex >= 0 && setupIndex < installIndex,
+    `setup ${String(setupIndex)}, install ${String(installIndex)}`,
   );
 
   const firstPnpmIndex = steps.findIndex((step) =>
@@ -310,29 +345,49 @@ const REQUIRED_SECURITY_STAGES = [
   'node tools/gate-sec.mjs',
 ];
 
-/** Shell constructs that would let a stage fail without failing the script. */
+/**
+ * Shell constructs that would let a stage fail without failing the script.
+ *
+ * Ordered so the most specific construct is reported: `||` before the bare pipe
+ * it also matches, and a conditional before the `;` its own syntax requires.
+ * Otherwise the diagnostic names an incidental character instead of the thing
+ * that was actually done.
+ */
 const SCRIPT_BYPASSES = [
   { re: /\|\|/, why: '||' },
+  { re: /\b(if|then|else|fi|for|while|case|do|done)\b/, why: 'a shell conditional or loop' },
   { re: /;/, why: ';' },
   { re: /\|(?!\|)/, why: 'a pipe' },
   // A lone `&`: not part of the `&&` chain that legitimately joins the stages.
   { re: /(?<!&)&(?!&)/, why: 'backgrounding' },
-  { re: /\b(if|then|else|fi|for|while|case)\b/, why: 'a shell conditional or loop' },
-  { re: /^\s*(echo|printf|true|:)\b/, why: 'an echoed or no-op command' },
   { re: /\$\(|`/, why: 'command substitution' },
 ];
 
-const scriptBypass = SCRIPT_BYPASSES.find((pattern) => pattern.re.test(securityScript));
-check(
-  'test:security contains no shell construct that could discard a failure',
-  scriptBypass === undefined,
-  scriptBypass ? `contains ${scriptBypass.why}` : 'plain && chain',
-);
+/**
+ * Constructs that only make sense at the start of a stage.
+ *
+ * Applied per stage rather than to the whole script: anchored at the start of
+ * the *script*, `^\s*echo` never matched `... && echo node tools/...`, so the
+ * leading-echo rule was dead for every stage but the first.
+ */
+const STAGE_BYPASSES = [{ re: /^(echo|printf|true|:)\b/, why: 'an echoed or no-op command' }];
 
 const stages = securityScript
   .split('&&')
   .map((stage) => stage.trim())
   .filter((stage) => stage.length > 0);
+
+const stageBypass = stages
+  .map((stage) => STAGE_BYPASSES.find((pattern) => pattern.re.test(stage)))
+  .find((found) => found !== undefined);
+
+const scriptBypass =
+  SCRIPT_BYPASSES.find((pattern) => pattern.re.test(securityScript)) ?? stageBypass;
+check(
+  'test:security contains no shell construct that could discard a failure',
+  scriptBypass === undefined,
+  scriptBypass ? `contains ${scriptBypass.why}` : 'plain && chain',
+);
 
 check(
   'test:security runs exactly the required stages, in order',

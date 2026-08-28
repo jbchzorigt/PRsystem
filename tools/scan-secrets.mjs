@@ -49,6 +49,7 @@ const ALLOWED_VALUES = [
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K', // packages/telemetry — redaction test
   '-----BEGIN PRIVATE KEY-----MIIEvQ', // packages/telemetry — PEM header shape, truncated, not a key
   'must-never-be-recorded', // packages/db — audit payload the constraint must refuse
+  'super-secret-scheduler-password', // packages/config — asserts the scheduler credential is never echoed
 ];
 
 const BINARY_EXT = new Set([

@@ -9,7 +9,7 @@
 // the copy is written to a temporary directory and the validator is pointed at
 // it through PRSYSTEM_CI_WORKFLOW.
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -150,6 +150,60 @@ const FIXTURES = [
       ),
   },
   {
+    // A step-level `if:` was rejected; a job-level one was not. `jobs.gate-sec.if:
+    // false` disables the entire gate, and every step inside it, without
+    // touching a single step.
+    name: 'required job disabled with if: false',
+    expect: /job 'gate-sec' is not disabled/,
+    mutate: (yaml) =>
+      yaml.replace(
+        '  gate-sec:\n    name: GATE-SEC',
+        '  gate-sec:\n    if: false\n    name: GATE-SEC',
+      ),
+  },
+  {
+    // Installing before pnpm exists fails on a clean runner. Only
+    // install-before-first-use was ordered; setup-before-install was not.
+    name: 'pnpm setup after the install that needs it',
+    expect: /'governance' sets pnpm up before installing/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - uses: pnpm/action-setup@v4
+        with:
+          version: \${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ env.NODE_VERSION }}
+          cache: pnpm
+      # The validators below are pnpm scripts`,
+        `      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ env.NODE_VERSION }}
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - uses: pnpm/action-setup@v4
+        with:
+          version: \${{ env.PNPM_VERSION }}
+      # The validators below are pnpm scripts`,
+      ),
+  },
+  {
+    // The pnpm-job list was hard-coded, so a job added later was never checked
+    // at all — the exact situation the governance job was once in.
+    name: 'a newly added pnpm job with no setup or install',
+    expect: /'extra-checks' sets pnpm up before using it/,
+    mutate: (yaml) =>
+      `${yaml}
+  extra-checks:
+    name: extra checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Something useful
+        run: pnpm run lint
+`,
+  },
+  {
     name: 'build after the suite it must precede',
     mutate: (yaml) => {
       const build = `      - name: Build workspace packages from this checkout
@@ -164,6 +218,14 @@ const FIXTURES = [
     },
   },
 ];
+
+/** True when the validator printed a FAIL line matching `expected`. */
+function failedFor(output, expected) {
+  return output
+    .split('\n')
+    .filter((line) => line.startsWith('[FAIL]'))
+    .some((line) => expected.test(line));
+}
 
 let failures = 0;
 const results = [];
@@ -189,16 +251,22 @@ for (const fixture of FIXTURES) {
         env: { ...process.env, PRSYSTEM_CI_WORKFLOW: path },
       },
     );
-    // The validator must reject the mutated workflow.
+    // The validator must reject the mutated workflow, and — where the fixture
+    // says which check should catch it — reject it for that reason. A non-zero
+    // exit alone would be satisfied by any unrelated failure.
+    const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
     const rejected = run.status !== 0;
+    const diagnosed = fixture.expect === undefined ? true : failedFor(output, fixture.expect);
     results.push({
       name: fixture.name,
-      ok: rejected,
-      detail: rejected
-        ? `rejected (exit ${String(run.status)})`
-        : 'ACCEPTED — the bypass was not caught',
+      ok: rejected && diagnosed,
+      detail: !rejected
+        ? 'ACCEPTED — the bypass was not caught'
+        : diagnosed
+          ? `rejected (exit ${String(run.status)})`
+          : `rejected, but not by ${String(fixture.expect)}`,
     });
-    if (!rejected) failures += 1;
+    if (!rejected || !diagnosed) failures += 1;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -210,48 +278,105 @@ for (const fixture of FIXTURES) {
 const packageJsonPath = join(ROOT, 'package.json');
 const originalPackageJson = readFileSync(packageJsonPath, 'utf8');
 
+/**
+ * The real `test:security` script, split into its stages.
+ *
+ * Every fixture below is built from *this*, not from a hand-written string. The
+ * previous fixtures were hand-written and had drifted: each of them had silently
+ * dropped `validate-pool-error-fixture.mjs`, so each mutated several properties
+ * at once and would have been rejected even without the bypass it was named for.
+ */
+const REAL_SCRIPT = String(JSON.parse(originalPackageJson).scripts['test:security'] ?? '');
+const REAL_STAGES = REAL_SCRIPT.split('&&')
+  .map((stage) => stage.trim())
+  .filter((stage) => stage.length > 0);
+
+/** The stage each fixture mutates: the coverage validator itself. */
+const TARGET = REAL_STAGES.findIndex((stage) =>
+  stage.endsWith('tools/validate-regression-coverage.mjs'),
+);
+const POOL_STAGE = REAL_STAGES.find((stage) => stage.includes('validate-pool-error-fixture.mjs'));
+
+const mapTarget = (fn) => REAL_STAGES.map((stage, i) => (i === TARGET ? fn(stage) : stage));
+
 const SCRIPT_FIXTURES = [
   {
-    name: 'script: echoed validator',
-    value:
-      'turbo run build && echo node tools/validate-regression-coverage.mjs && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs',
+    name: 'script: echoed stage',
+    build: () => mapTarget((stage) => `echo ${stage}`).join(' && '),
+    expect: /contains an echoed or no-op command/,
   },
   {
-    name: 'script: piped into tee',
-    value:
-      'turbo run build && node tools/validate-regression-coverage.mjs | tee out.txt && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs',
+    name: 'script: piped stage',
+    build: () => mapTarget((stage) => `${stage} | tee out.txt`).join(' && '),
+    expect: /contains a pipe/,
   },
   {
     name: 'script: || true',
-    value:
-      'turbo run build && node tools/validate-regression-coverage.mjs || true && node tools/gate-sec.mjs',
+    build: () => mapTarget((stage) => `${stage} || true`).join(' && '),
+    expect: /contains \|\|/,
   },
   {
     name: 'script: semicolon chain',
-    value:
-      'turbo run build ; node tools/validate-regression-coverage.mjs ; node tools/gate-sec.mjs',
+    build: () => REAL_STAGES.join(' ; '),
+    expect: /contains ;/,
   },
   {
     name: 'script: shell conditional',
-    value:
-      'turbo run build && if node tools/validate-regression-coverage.mjs; then node tools/gate-sec.mjs; fi',
+    build: () => mapTarget((stage) => `if ${stage}; then true; fi`).join(' && '),
+    expect: /shell conditional or loop/,
   },
   {
-    name: 'script: backgrounded gate',
-    value:
-      'turbo run build && node tools/validate-regression-coverage.mjs && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs &',
+    name: 'script: backgrounded',
+    build: () => `${REAL_STAGES.join(' && ')} &`,
+    expect: /contains backgrounding/,
   },
-  { name: 'script: validator dropped', value: 'turbo run build && node tools/gate-sec.mjs' },
+  {
+    name: 'script: dropped stage',
+    build: () => REAL_STAGES.filter((_, i) => i !== TARGET).join(' && '),
+    expect: /runs exactly the required stages/,
+    // The one fixture that legitimately removes a stage.
+    drops: TARGET,
+  },
   {
     name: 'script: fake command name',
-    value:
-      'turbo run build && node tools/validate-regression-coverage.mjs-DISABLED && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs',
+    build: () => mapTarget((stage) => `${stage}-DISABLED`).join(' && '),
+    expect: /runs exactly the required stages/,
   },
 ];
 
+// The fixture set is only meaningful if it is anchored to a real script.
+results.push({
+  name: 'script fixtures are built from the real test:security',
+  ok: TARGET >= 0 && POOL_STAGE !== undefined && REAL_STAGES.length >= 5,
+  detail: `${String(REAL_STAGES.length)} stage(s), target ${String(TARGET)}`,
+});
+if (!(TARGET >= 0 && POOL_STAGE !== undefined && REAL_STAGES.length >= 5)) failures += 1;
+
 for (const fixture of SCRIPT_FIXTURES) {
+  const value = fixture.build();
+
+  // The mutation must have happened, and must be the only one: every stage the
+  // fixture did not target — `validate-pool-error-fixture.mjs` included — is
+  // still present, so the rejection cannot be blamed on collateral damage.
+  const changed = value !== REAL_SCRIPT;
+  const preserved = REAL_STAGES.every((stage, i) => i === fixture.drops || value.includes(stage));
+  const poolStageKept = fixture.drops === undefined ? value.includes(POOL_STAGE) : true;
+  if (!changed || !preserved || !poolStageKept) {
+    results.push({
+      name: fixture.name,
+      ok: false,
+      detail: !changed
+        ? 'fixture did not change the script'
+        : !poolStageKept
+          ? 'fixture dropped the pool-error stage it was not meant to touch'
+          : 'fixture disturbed a stage it was not meant to touch',
+    });
+    failures += 1;
+    continue;
+  }
+
   const parsed = JSON.parse(originalPackageJson);
-  parsed.scripts['test:security'] = fixture.value;
+  parsed.scripts['test:security'] = value;
   const dir = mkdtempSync(join(tmpdir(), 'prsystem-script-fixture-'));
   const path = join(dir, 'package.json');
   try {
@@ -261,15 +386,19 @@ for (const fixture of SCRIPT_FIXTURES) {
       [join(ROOT, 'tools', 'validate-regression-coverage.mjs')],
       { cwd: ROOT, encoding: 'utf8', env: { ...process.env, PRSYSTEM_ROOT_PACKAGE_JSON: path } },
     );
+    const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
     const rejected = run.status !== 0;
+    const diagnosed = failedFor(output, fixture.expect);
     results.push({
       name: fixture.name,
-      ok: rejected,
-      detail: rejected
-        ? `rejected (exit ${String(run.status)})`
-        : 'ACCEPTED — the bypass was not caught',
+      ok: rejected && diagnosed,
+      detail: !rejected
+        ? 'ACCEPTED — the bypass was not caught'
+        : diagnosed
+          ? `rejected (exit ${String(run.status)})`
+          : `rejected, but not by ${String(fixture.expect)}`,
     });
-    if (!rejected) failures += 1;
+    if (!rejected || !diagnosed) failures += 1;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
