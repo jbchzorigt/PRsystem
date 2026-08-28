@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.8 (Phase 03 fifth security repair — D-09 scheduler, partial-login bootstrap, normalized schema dump)
+**Version:** 1.9 (Phase 03 sixth security repair — credential-bound D-09, exact ownership, full typecheck)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -160,6 +160,13 @@ artefacts below are the traceable output.
 | 03 | Lock contention is observed, not inferred: `pg_locks` and `pg_blocking_pids` identify the holder before it is released | `packages/db/src/concurrency/kernel.test.ts`, `packages/db/src/security/sec-maintenance.test.ts` | `GATE-CONC`, `GATE-SEC` / `SEC-MAINTENANCE` |
 | 03 | Migration determinism by declared Drizzle schema plus byte-identical normalized `pg_dump --schema-only` from the pinned PostgreSQL 17 image | `packages/db/src/schema.ts`, `packages/db/src/test-support/schema-dump.ts` | `pnpm run test:migrations` |
 | 03 | Exact database and schema ACLs cover every grantee, not only PUBLIC and named project roles | `packages/db/src/bootstrap.ts` (`strayGrantees`) | `GATE-SEC` / `SEC-BOOTSTRAP` |
+| 03 | D-09 issuance is an API control-plane capability on its own credential, pool and startup guard; the worker never receives it and no route is exposed in Phase 03 | `apps/api/src/maintenance/scheduler.service.ts`, `apps/api/src/security/scheduler-guard.ts`, `SCHEDULER_DATABASE_URL` | `GATE-SEC` / `SEC-STARTUP` (`scheduler-boundary.test.ts`) |
+| 03 | Issuer and executor identity come from `session_user`; caller-writable custom GUCs are metadata only | `platform.schedule_maintenance_job`, `platform.maintenance_expire_idempotency_keys` | `GATE-SEC` / `SEC-SCHEDULER` |
+| 03 | Terminal jobs and their evidence are frozen, and job text fields are bounded | `platform.job_run_transition_guard`, `job_run` CHECK constraints | `GATE-SEC` / `SEC-SCHEDULER` |
+| 03 | Test and test-support sources are type-checked by the blocking gate | `packages/*/tsconfig.test.json` | `pnpm run typecheck` |
+| 03 | The test harness suppresses only expected teardown terminations and fails on any other idle-client error | `packages/testing/src/pg-harness.ts` | `GATE-SEC` / `SEC-POOL-ERRORS` |
+| 03 | Ownership of the target database and `public` is an explicit approved-operator contract, and owner roles reach exactly what the design says | `packages/db/src/bootstrap.ts`, `packages/db/migrations/0001_kernel.sql` | `GATE-SEC` / `SEC-BOOTSTRAP`, `SEC-REGRESSION` |
+| 03 | CI gate commands are matched exactly and cannot discard their exit status | `tools/validate-regression-coverage.mjs`, `tools/validate-regression-coverage.fixtures.mjs` | `pnpm run validate:ci-bypass-fixtures` |
 
 Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions remains `PENDING` after
 them. Phase 04 is the first phase to move a decision to `COVERED`.

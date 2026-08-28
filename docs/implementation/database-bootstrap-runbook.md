@@ -77,6 +77,37 @@ allow-listed job types — one, in Phase 03. A privileged job row with no issuer
 cannot exist: the `job_run_privileged_has_issuer` check constraint refuses it,
 and the execution function refuses it again behind that.
 
+### Where the scheduler credential lives
+
+Exactly two long-lived deployments remain: the API and the worker.
+
+| | API deployment | Worker deployment |
+| --- | --- | --- |
+| `DATABASE_URL` | `prsystem_api_login` | `prsystem_worker_login` |
+| `SCHEDULER_DATABASE_URL` | `prsystem_job_scheduler_login` | **never set** |
+
+Issuance is an API control-plane capability: its own connection string, its own
+pool, and its own startup principal guard that runs before a port is bound.
+Phase 03 exposes **no route** for it — a public endpoint would need the Phase 04
+authorization pipeline in front of it, and shipping the credential without those
+checks would be worse than not shipping the capability.
+
+What this does and does not buy, stated plainly: a compromised **worker**
+credential can execute a job somebody else issued and cannot issue one — it
+holds no `INSERT` on `job_run`, cannot execute the scheduling function, and its
+own job path refuses the `platform.maintenance.%` namespace. A compromised
+**API** credential *can* issue jobs. That is the power the control plane has,
+and the separation is between issuance and execution, not a claim that both are
+unreachable.
+
+### Identity versus claim
+
+`issuer_ref` and `job_identity` are taken from `session_user` — the principal
+PostgreSQL authenticated — never from `app.actor_ref`. A custom GUC is writable
+by the connection that holds it, so a value read from one records whatever the
+caller last claimed. `app.actor_ref` remains useful as correlation metadata and
+is audited as exactly that.
+
 ### Login policy: all, some, or none
 
 Supplying credentials is optional and partial supply is a supported mode.
@@ -105,7 +136,12 @@ owner `prsystem_migrate`, and the runtime, reader and scheduler roles. Those two
 owner entries are the documented operator exceptions — revoking from them would
 leave a database or schema nobody can administer.
 
-`prsystem_maintenance` is the only role holding `BYPASSRLS`. It owns no object,
+`prsystem_maintenance` is the only role holding `BYPASSRLS`. It is **break-glass
+only** and owns nothing: the cross-tenant maintenance *functions* are owned by
+`prsystem_maintenance_fn`, a separate role that holds no `BYPASSRLS` and
+establishes tenant scope one tenant at a time. The two are easy to confuse
+because their names differ by three characters; nothing in normal operation uses
+the break-glass role. It owns no object,
 holds **no standing grant of any kind** — not even `USAGE` on a schema — no
 application connects as it, and no role is a member of it. It exists as a
 documented break-glass identity for a DBA acting under an incident, with that
@@ -138,6 +174,7 @@ PRSYSTEM_LOGIN_POLICE_PASSWORD='…' \
 PRSYSTEM_LOGIN_AUDIT_READER_PASSWORD='…' \
 PRSYSTEM_LOGIN_POLICE_AUDIT_READER_PASSWORD='…' \
 PRSYSTEM_LOGIN_MIGRATE_PASSWORD='…' \
+PRSYSTEM_LOGIN_JOB_SCHEDULER_PASSWORD='…' \
 pnpm run db:bootstrap
 ```
 

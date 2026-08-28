@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 31, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 16/16 (372 tests), regression 36, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 16/16 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb`, `074a674`, `20d0131`, `15b1380` |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 39, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 18/18 (421 tests), regression 40, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 32/32, CI bypass fixtures 13/13 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb`, `074a674`, `20d0131`, `15b1380`, `6e39256`, _sixth repair pending commit_ |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -103,32 +103,31 @@ tabulated in [requirements-traceability.md](requirements-traceability.md) §2.
 
 ### Test gates
 
-Counts below are the current ones, measured on the tree the fifth repair
-describes. Earlier sections quote the counts current when they were written and
-are labelled as historical snapshots.
+Current counts, measured on the tree the sixth repair describes. Earlier
+sections quote the counts current when they were written and are labelled as
+historical snapshots.
 
 ```bash
-node tools/validate-governance.mjs           # GATE-GOV 13/13
-node tools/validate-workspace.mjs            # 15/15
-node tools/validate-regression-coverage.mjs  # 16/16 — structural CI checks
-node tools/scan-secrets.mjs                  # 0 findings
-pnpm run format:check                        # clean
-pnpm run lint                                # GATE-LINT — 16 projects + e2e sources
-pnpm run typecheck                           # GATE-TYPES — 25 project graphs
-pnpm run test:unit                           # GATE-UNIT — 175 passed
-pnpm run test:migrations                     # GATE-MIGR — 31 passed (fresh, frozen-baseline
-                                             #   upgrade, byte-identical normalized pg_dump,
-                                             #   Drizzle drift check, 20 sensitivity cases)
-pnpm run test:integration                    # GATE-INTEG — 51 passed
-pnpm run test:concurrency                    # GATE-CONC — 16 passed
-pnpm run test:regression                     # 36 passed — every reproduced review defect
-pnpm run test:security                       # GATE-SEC — 16/16 sub-gates, 372 tests
-pnpm run test:e2e                            # GATE-E2E — 15 passed
-pnpm run audit:prod                          # no known vulnerabilities
-pnpm run audit:tree                          # 1 moderate (DSR-01)
-pnpm run build                               # 16 projects
-pnpm run openapi                             # /api/v1 document
-git diff --check                             # clean
+node tools/validate-governance.mjs                       # GATE-GOV 13/13
+node tools/validate-workspace.mjs                        # 15/15
+node tools/validate-regression-coverage.mjs              # 32/32 structural CI checks
+node tools/validate-regression-coverage.fixtures.mjs     # 13/13 CI bypasses rejected
+node tools/scan-secrets.mjs                              # 0 findings
+pnpm run format:check                                    # clean
+pnpm run lint                                            # GATE-LINT — 16 projects + e2e
+pnpm run typecheck                                       # GATE-TYPES — 25 graphs, tests included
+pnpm run test:unit                                       # GATE-UNIT — 175 passed
+pnpm run test:migrations                                 # GATE-MIGR — 39 passed
+pnpm run test:integration                                # GATE-INTEG — 51 passed
+pnpm run test:concurrency                                # GATE-CONC — 16 passed
+pnpm run test:regression                                 # 40 passed
+pnpm run test:security                                   # GATE-SEC — 18/18 sub-gates, 421 tests
+pnpm run test:e2e                                        # GATE-E2E — 15 passed
+pnpm run audit:prod                                      # no known vulnerabilities
+pnpm run audit:tree                                      # 1 moderate (DSR-01)
+pnpm run build                                           # 16 projects
+pnpm run openapi                                         # /api/v1 document
+git diff --check                                         # clean
 ```
 
 Results are recorded in the repair commit message and reported to the customer.
@@ -421,8 +420,8 @@ authoritative table; this is the same content stated in terms of duties.
 | Role | Duty | Grants | `BYPASSRLS` |
 | --- | --- | --- | --- |
 | `prsystem_migrate` | DDL owner; migrations only | owns the schemas and platform tables | no |
-| `prsystem_api` | request handling | DML on `platform`; audit only through the definer wrapper; no `police_audit`; **`SELECT` only** on `outbox_delivery` | no |
-| `prsystem_worker` | jobs and the outbox relay | as API, plus `outbox_delivery` `UPDATE`, export and projection tables, and **column-scoped** `UPDATE (state, finished_at, error_name, as_of)` on `job_run` | no |
+| `prsystem_api` | request handling | DML on `platform`; audit only by executing the definer wrapper, with **no direct grant on either audit stream**; no `police_audit`; **nothing at all** on `outbox_delivery` | no |
+| `prsystem_worker` | jobs and the outbox relay | as API, plus `outbox_delivery` `SELECT, UPDATE`, export and projection tables, **column-scoped** `UPDATE (state, finished_at, error_name, as_of)` on `job_run`, and **no `INSERT`** on `job_run` | no |
 | `prsystem_police` | Police realm | `police` / `police_audit` only | no |
 | `prsystem_audit_writer` | function owner | owns both audit append functions (approved shared owner, ADR-0018) | no |
 | `prsystem_partition_mgr` | function owner | owns the audit streams, their partitions and the partition functions | no |
@@ -797,6 +796,10 @@ uses `actions/checkout`, which provides a real working tree, so the proof was re
 
 ### Fifth security repair (customer review 5) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Counts here (16 sub-gates, 372 GATE-SEC tests) and the
+> role/grant descriptions are those of the fifth pass and are superseded by
+> *Sixth security repair* below.
+
 The fourth repair was **not accepted**. One approved architecture decision (D-09) and nine further
 defects were raised; all are closed. Phase 03 stays `SECURITY_REPAIR_REQUIRED` and no approval is
 claimed. **This section holds the current counts and role model.**
@@ -919,6 +922,52 @@ SEC-ROLE 12, SEC-RLS 33, SEC-ACL-MATRIX 112, SEC-OWNERSHIP 10, **SEC-BOOTSTRAP 1
 **SEC-SCHEDULER 22 (new)**, SEC-MAINTENANCE 24, SEC-STARTUP 13, SEC-STARTUP-WORKER 4,
 SEC-REGRESSION 36, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7, SEC-KMS 17,
 SEC-PII-LEAK 10, SEC-SECRETS 6. **372 tests**, identical across three consecutive runs.
+
+### Sixth security repair (customer review 6) — `SECURITY_REPAIR_REQUIRED`
+
+The fifth repair was **not accepted**. Seven defects were raised; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts.**
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | Eight `TS2304` errors sat unnoticed in `test-support/provision.ts`, because every package excluded test sources from the *typecheck* as well as from the build | The missing `import type { Pool }` is restored, and all nine such packages gained a `tsconfig.test.json` that each package's blocking `typecheck` script now runs alongside the build config. Proven by re-breaking the import and watching the gate fail. |
+| 2 | `rolcanlogin` was read and never asserted; an existing canonical login could hold no membership or the wrong one; database and `public` owners were trusted automatically, whoever they were | LOGIN is required. Every *existing* canonical login must hold exactly its designated group with exact options, in the TypeScript guard and the migration SQL alike. An explicit operator-owner contract refuses every project role as owner outright and additionally requires an approved operator identity; `pg_database_owner` is accepted for `public` only when the database owner is itself approved. Owner-role closure is checked before reconciliation could paper over it. |
+| 3 | D-09 was a database mechanism with no deployable shape, and both issuer and executor were read from the caller-writable `app.actor_ref` | `issuer_ref` and `job_identity` come from `session_user`; execution compares `session_user`; the executor must be a server-validated Worker login; scheduling requires `p_hotel_id = platform.current_hotel_id()`. Issuance is an API control-plane capability on its own `SCHEDULER_DATABASE_URL`, pool and startup guard, with no route in Phase 03, and the worker never receives the credential. Terminal jobs and their evidence are frozen, the text fields are bounded, and the API's unused `SELECT` on `outbox_delivery` is revoked. |
+| 4 | The Drizzle declaration covered 12 of 14 root tables and compared only what it already listed | All 14 are declared, including both audit streams. The exact live root-table set is compared, along with type, nullability, keys, constraints and indexes. The container is resolved through `docker compose ps -q postgres`, never by matching a container name — an unrelated `hotel-platform-postgres` must never be touched. |
+| 5 | CI commands were matched with a substring test, which accepts `\|\| true`, a pipe, backgrounding, `echo`, and a comment | Required commands are matched as exact whole run lines in a named blocking job, with status-discarding constructs rejected. Eleven bypasses are applied to a temporary copy of the workflow by an automated fixture harness that requires the validator to reject each one. |
+| 6 | The pool fix attached an empty error handler to every pool, discarding every idle-client error a suite might genuinely need to see | Pools are tracked with their database, closed before it is dropped, and only an error on a pool explicitly marked as tearing down — matching a termination SQLSTATE or message — is suppressed. Everything else fails the suite. |
+| 7 | Documentation contradicted the code on ownership, audit grants, actor claims and counts | Corrected below; superseded sections are labelled historical snapshots. |
+
+#### What the strengthened checks found
+
+- The typecheck exclusion was hiding **23** errors, not eight: 8 `TS2304`, 2 `TS2440`, 1 `TS2558`
+  and 12 `TS7006`.
+- Making CI matching exact revealed that `validate:regression-coverage` was running in the `compose`
+  job rather than the blocking `governance` job. Moved.
+- Declaring all 14 tables showed the previous comparison had been walking only its own list, so the
+  two audit streams were neither declared nor compared.
+
+#### GATE-SEC — 18 sub-gates, 421 tests
+
+SEC-ROLE 12, SEC-RLS 33, SEC-ACL-MATRIX 111, SEC-OWNERSHIP 10, **SEC-LOCK-EVIDENCE 16 (new)**,
+**SEC-POOL-ERRORS 5 (new)**, SEC-BOOTSTRAP 19, SEC-SCHEDULER 31, SEC-MAINTENANCE 24, SEC-STARTUP 20,
+SEC-STARTUP-WORKER 4, SEC-REGRESSION 40, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
+SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Identical across three consecutive runs.
+
+#### Current role and grant model
+
+Eleven group roles, seven canonical login principals. Corrections this repair made to the record:
+
+- **Break-glass versus function owner.** `prsystem_maintenance` is break-glass only and owns nothing;
+  the maintenance *functions* are owned by `prsystem_maintenance_fn`, which holds no `BYPASSRLS`.
+- **Audit grants.** `prsystem_api` and `prsystem_worker` hold **no direct grant on either audit
+  stream**. They append only by executing the `SECURITY DEFINER` wrapper, whose owner
+  `prsystem_audit_writer` is the sole holder of `INSERT`.
+- **Actor claims.** `app.actor_ref` is correlation metadata. Authorisation compares `session_user`.
+- **Outbox delivery.** The API holds nothing; the relay is entirely a worker concern.
+- **Pool errors.** Only an expected teardown termination is suppressed, and not every raw `Pool` in
+  the tree goes through the helper — the harness and the db suites do, and
+  `assertNoUnexpectedPoolErrors` is what makes an escape a failure rather than a silence.
 
 ---
 
