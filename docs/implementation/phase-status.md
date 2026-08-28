@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 31, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 16/16 (372 tests), regression 36, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 16/16 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb`, _fifth repair pending commit_ |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 31, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 16/16 (372 tests), regression 36, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 16/16 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb`, `074a674`, `20d0131`, `15b1380` |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -870,6 +870,48 @@ The previous arrangement let the worker mint its own authorisation: it held unre
 | No regression suite is omitted | added an unlisted regression file | validator exit 1 |
 
 Every mutation was reverted and the source restored; `ci.yml` was verified byte-identical afterwards.
+
+#### Pristine-clone reproducibility
+
+Two **independent** `git clone --no-hardlinks` checkouts at `074a674`, each with its own isolated
+`TURBO_CACHE_DIR` and **no pre-build step**, verified beforehand to contain zero `dist` directories,
+zero `node_modules` and zero Turborepo caches:
+
+| Clone | Command | Exit | Result |
+| --- | --- | --- | --- |
+| A | `pnpm install --frozen-lockfile` then `pnpm run test:migrations` | 0, 0 | 31 tests |
+| B | `pnpm install --frozen-lockfile` then `pnpm run test:security` | 0, 0 | 16/16 sub-gates |
+
+Clone B ran GATE-SEC without any other gate having produced build output for it; it built
+`packages/db/dist` itself. The main working tree was never cleaned or mutated, and both clones were
+deleted afterwards.
+
+#### Gates executed on the final tree
+
+PostgreSQL **17.6** on aarch64-unknown-linux-musl (Alpine); `btree_gist` and `pgcrypto`.
+
+| Command | Exit | Collected result |
+| --- | --- | --- |
+| `pnpm run validate:governance` | 0 | 13/13 |
+| `pnpm run validate:workspace` | 0 | 15/15 |
+| `pnpm run validate:regression-coverage` | 0 | 16/16 |
+| `pnpm run scan:secrets` | 0 | 0 findings |
+| `pnpm run format:check` | 0 | clean |
+| `pnpm run lint` | 0 | 16/16 tasks |
+| `pnpm run typecheck` | 0 | 25/25 tasks |
+| `pnpm run test:unit` | 0 | 175 tests |
+| `pnpm run build` | 0 | 16/16 tasks |
+| `pnpm run openapi` | 0 | document generated |
+| `pnpm run compose:config` | 0 | valid |
+| `pnpm run test:migrations` | 0 | 31 tests |
+| `pnpm run test:integration` | 0 | 51 tests |
+| `pnpm run test:regression` | 0 | 36 tests |
+| `pnpm run test:e2e` | 0 | 15 tests |
+| `pnpm run audit:prod` | 0 | nothing at moderate or above |
+| `pnpm run audit:tree` | 0 | nothing at high or above |
+| `git diff --check` | 0 | clean |
+| `pnpm run test:security` ×3 | 0, 0, 0 | 16/16 sub-gates, **372 tests**, each run |
+| `pnpm run test:concurrency` ×3 | 0, 0, 0 | **16 tests**, each run |
 
 #### GATE-SEC — 16 sub-gates
 
