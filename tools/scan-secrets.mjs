@@ -50,6 +50,7 @@ const ALLOWED_VALUES = [
   '-----BEGIN PRIVATE KEY-----MIIEvQ', // packages/telemetry — PEM header shape, truncated, not a key
   'must-never-be-recorded', // packages/db — audit payload the constraint must refuse
   'super-secret-scheduler-password', // packages/config — asserts the scheduler credential is never echoed
+  'startup-log-probe-password', // apps/api — asserts no credential reaches the startup logger
 ];
 
 const BINARY_EXT = new Set([
