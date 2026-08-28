@@ -10,10 +10,12 @@
 // logical scope — otherwise the accounting catches nothing unless a suite
 // remembers to ask, which is the defect this replaced.
 //
-// The three fixtures cover the three places an error can arrive:
+// The four fixtures cover the four places an error can arrive:
 //   * a pool on the scratch database;
 //   * the coordination pool the lifecycle opened, which connects elsewhere;
-//   * a pool nothing can attribute to a database at all.
+//   * a pool nothing can attribute to a database at all;
+//   * a pool a suite manages itself, with no createTestDatabase lifecycle to
+//     assert its scope — caught by the unconditional end-of-file check instead.
 
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
@@ -25,6 +27,7 @@ const FIXTURES = [
   { name: 'scratch-database pool', file: 'test-fixtures/unexpected-pool-error.test.ts' },
   { name: 'coordination pool', file: 'test-fixtures/admin-pool-error.test.ts' },
   { name: 'unattributed pool', file: 'test-fixtures/unattributed-pool-error.test.ts' },
+  { name: 'self-managed pool', file: 'test-fixtures/manual-pool-error.test.ts' },
 ];
 
 const checks = [];

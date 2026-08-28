@@ -9,6 +9,7 @@ export {
   adminUrl,
   createRolePool,
   UNATTRIBUTED_SCOPE,
+  assertAllPoolScopesClean,
   assertNoUnexpectedPoolErrors,
   assertScopeClean,
   closeTrackedPools,

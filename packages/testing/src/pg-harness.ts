@@ -105,7 +105,29 @@ export interface PoolErrorEntry {
   readonly code: string | undefined;
 }
 
-const tracked = new Map<Pool, TrackedPool>();
+/**
+ * Pool bookkeeping, held on `globalThis`.
+ *
+ * A test file resolves `@prsystem/testing` to the built package while a vitest
+ * setup file may load this module by relative path; module-scoped state then
+ * splits into two instances, each with its own empty map, and an assertion in
+ * one inspects a map the other writes to. Anchoring the state to the process
+ * makes the accounting independent of how the module was resolved.
+ */
+interface PoolRegistry {
+  readonly tracked: Map<Pool, TrackedPool>;
+  readonly unexpectedByScope: Map<string, PoolErrorEntry[]>;
+}
+
+const REGISTRY_KEY = Symbol.for('prsystem.testing.poolRegistry');
+
+function registry(): PoolRegistry {
+  const host = globalThis as unknown as Record<symbol, PoolRegistry | undefined>;
+  host[REGISTRY_KEY] ??= { tracked: new Map(), unexpectedByScope: new Map() };
+  return host[REGISTRY_KEY];
+}
+
+const tracked = registry().tracked;
 
 /**
  * Unexpected idle-client errors, accounted **per logical test scope**.
@@ -116,7 +138,7 @@ const tracked = new Map<Pool, TrackedPool>();
  * lifecycle's own errors travel with it and are checked when its database is
  * dropped, whether or not the suite thought to ask.
  */
-const unexpectedByScope = new Map<string, PoolErrorEntry[]>();
+const unexpectedByScope = registry().unexpectedByScope;
 
 /**
  * Errors from pools whose scope could not be determined.
@@ -253,6 +275,20 @@ export function assertNoUnexpectedPoolErrors(scope?: string): void {
   const where = scope === undefined ? 'this process' : `scope ${scope}`;
   const detail = entries.map((e) => `${e.label}: ${e.code ?? '(no code)'} ${e.message}`).join('; ');
   throw new Error(`unexpected pool error(s) outside teardown in ${where}: ${detail}`);
+}
+
+/**
+ * Asserts every scope this process recorded, whatever created the pool.
+ *
+ * Registered as a global `afterAll` by `setup-pool-errors.ts`, so it runs at the
+ * end of every test file. Scope accounting covered the lifecycle a scratch
+ * database owns; a suite managing its own `quietPool` — `migrate.test.ts`, for
+ * one — recorded its errors into a scope nothing ever read. Making the final
+ * assertion unconditional means no bucket, default, coordination or
+ * unattributed, can end a run uninspected.
+ */
+export function assertAllPoolScopesClean(): void {
+  assertNoUnexpectedPoolErrors();
 }
 
 /**
