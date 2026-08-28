@@ -1777,6 +1777,13 @@ BEGIN
     RAISE EXCEPTION 'a job may only finish as succeeded or failed' USING ERRCODE = '22023';
   END IF;
 
+  -- The caller must still be the canonical Worker login, checked before the job
+  -- row is read or locked. Identity alone is not authorisation: matching
+  -- `job_identity = session_user` was satisfied by a non-canonical login that
+  -- had created a row naming itself, and by a canonical login that had acquired
+  -- extra reach since its job began.
+  PERFORM platform.assert_exact_role_closure(session_user, 'prsystem_worker');
+
   SELECT * INTO v_job FROM platform.job_run
    WHERE job_run_id = p_job_run_id AND hotel_id = platform.current_hotel_id()
    FOR UPDATE;

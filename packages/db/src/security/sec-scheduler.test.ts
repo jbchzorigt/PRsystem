@@ -1019,3 +1019,237 @@ describe('R8 — only the canonical Worker login may execute', () => {
     expect(Number(result.rows[0]?.['deleted'])).toBeGreaterThan(0);
   }, 60000);
 });
+
+describe('R9 — finish_worker_job revalidates the canonical Worker closure', () => {
+  /**
+   * `finish_worker_job` checked the realm and `job_identity = session_user`, and
+   * never called `platform.assert_exact_role_closure`. Identity alone is not
+   * authorisation: a login that had acquired extra reach since its job began, or
+   * a non-canonical login that had created a row naming itself, still satisfied
+   * `job_identity = session_user` and could terminalise the job.
+   */
+  const EXTRA_WORKER = 'prsystem_worker_extra2_login';
+
+  beforeAll(async () => {
+    await env.admin.query(`DROP ROLE IF EXISTS ${EXTRA_WORKER}`);
+    await env.admin.query(
+      `CREATE ROLE ${EXTRA_WORKER} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`,
+    );
+    await env.admin.query(
+      `GRANT prsystem_worker TO ${EXTRA_WORKER} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+  }, 60000);
+
+  afterAll(async () => {
+    await env.admin.query(`DROP OWNED BY ${EXTRA_WORKER}`).catch(() => undefined);
+    await env.admin.query(`DROP ROLE IF EXISTS ${EXTRA_WORKER}`).catch(() => undefined);
+  }, 30000);
+
+  it('refuses a non-canonical Worker-group login finishing a job assigned to itself', async () => {
+    // The row is controlled, so `job_identity = session_user` genuinely holds:
+    // the only thing standing between this login and a completed job is the
+    // closure check.
+    const id = await seedControlledJob(EXTRA_WORKER, 'platform.projection.extra_finish');
+    const extra = quietPool(
+      { connectionString: env.db.loginUrl(EXTRA_WORKER), max: 1 },
+      'extra-finisher',
+    );
+    try {
+      await expect(
+        attempted(extra, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+
+      const state = await env.admin.query<{ state: string }>(
+        `SELECT state FROM platform.job_run WHERE job_run_id = $1`,
+        [id],
+      );
+      expect(state.rows[0]?.state).toBe('running');
+    } finally {
+      await extra.end();
+    }
+  }, 60000);
+
+  it('refuses the canonical Worker once it has gained a predefined role', async () => {
+    const id = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, async (q) => {
+      const row = await q('SELECT platform.begin_worker_job($1, $2)::text AS id', [
+        'platform.projection.escalated',
+        HOTEL,
+      ]);
+      return String(row.rows[0]?.['id']);
+    });
+
+    // Started clean, escalated afterwards. The finish check must see the graph
+    // as it is now, not as it was when the job began.
+    await env.admin.query(`GRANT pg_read_all_data TO ${EXECUTOR}`);
+    try {
+      await expect(
+        attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await env.admin.query(`REVOKE pg_read_all_data FROM ${EXECUTOR}`).catch(() => undefined);
+    }
+
+    const state = await env.admin.query<{ state: string }>(
+      `SELECT state FROM platform.job_run WHERE job_run_id = $1`,
+      [id],
+    );
+    expect(state.rows[0]?.state).toBe('running');
+  }, 60000);
+
+  it('still lets the clean canonical Worker finish its own ordinary job', async () => {
+    const id = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, async (q) => {
+      const row = await q('SELECT platform.begin_worker_job($1, $2)::text AS id', [
+        'platform.projection.clean_finish',
+        HOTEL,
+      ]);
+      return String(row.rows[0]?.['id']);
+    });
+
+    await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+      q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
+    );
+
+    const state = await env.admin.query<{ state: string }>(
+      `SELECT state FROM platform.job_run WHERE job_run_id = $1`,
+      [id],
+    );
+    expect(state.rows[0]?.state).toBe('succeeded');
+  }, 60000);
+});
+
+describe('R9 — every Worker or Scheduler entry point states its invocation-time guard', () => {
+  /**
+   * The complete catalogue of SECURITY DEFINER functions a Worker or Scheduler
+   * credential can execute, and what each one checks when it is called.
+   *
+   * `finish_worker_job` was the gap: it checked the realm and
+   * `job_identity = session_user` and validated no closure at all. Enumerating
+   * the whole set here means a definer added later, or a grant widened later,
+   * fails this test instead of arriving unguarded and unnoticed.
+   *
+   * Three of the seven deliberately do *not* run the role-closure check, and
+   * saying which is the point of the catalogue. Requiring a Worker closure of
+   * the shared audit wrapper would break the API and Police runtimes that also
+   * hold it; requiring one of the partition helpers would say the guard is
+   * something it is not. Each of those states the guard it actually applies.
+   */
+  const ENTRY_POINTS = [
+    {
+      signature:
+        'platform.schedule_maintenance_job(p_job_name text, p_hotel_id uuid, p_executor_identity text)',
+      grantee: 'prsystem_job_scheduler',
+      closure: true,
+      guard:
+        'role closure for prsystem_job_scheduler, plus a closure check on the named executor ' +
+        'and p_hotel_id = current_hotel_id()',
+    },
+    {
+      signature: 'platform.begin_worker_job(p_job_name text, p_hotel_id uuid)',
+      grantee: 'prsystem_worker',
+      closure: true,
+      guard: 'role closure for prsystem_worker; refuses the platform.maintenance.% namespace',
+    },
+    {
+      signature: 'platform.finish_worker_job(p_job_run_id uuid, p_state text, p_error_name text)',
+      grantee: 'prsystem_worker',
+      closure: true,
+      guard:
+        'role closure for prsystem_worker, then job_identity = session_user, the privileged ' +
+        'namespace refused, and the job still running',
+    },
+    {
+      signature: 'platform.maintenance_expire_idempotency_keys(p_job_run_id uuid)',
+      grantee: 'prsystem_worker',
+      closure: true,
+      guard:
+        'role closure for prsystem_worker, then the exact job name, the assigned identity, the ' +
+        'established tenant, and a running job locked FOR UPDATE',
+    },
+    {
+      signature:
+        'audit.append_platform_audit_event(p_action text, p_outcome text, p_target_type text, p_target_ref text, p_reason text, p_payload jsonb)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure by design — the shared audit wrapper is also held by the API and Police ' +
+        'runtimes. It takes no identity or tenant argument and derives realm, actor and hotel from ' +
+        'the transaction context server-side; it can only append',
+    },
+    {
+      signature:
+        'platform.ensure_month_partitions(p_schema text, p_table text, p_from timestamp with time zone, p_months integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — an allow-list of exactly the two audit streams, so it cannot become a ' +
+        'general CREATE TABLE primitive, plus bounded p_months and a per-stream advisory lock',
+    },
+    {
+      signature: 'platform.check_partition_horizon(p_threshold integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — reads the horizon of the two audit streams and raises an operational ' +
+        'alert; writes nothing else and takes only a bounded threshold',
+    },
+  ] as const;
+
+  it('grants EXECUTE to a Worker or Scheduler on exactly the catalogued definers', async () => {
+    const granted = await env.admin.query<{ signature: string; grantee: string }>(
+      `SELECT n.nspname || '.' || p.proname || '(' ||
+                pg_get_function_identity_arguments(p.oid) || ')' AS signature,
+              g.rolname AS grantee
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         CROSS JOIN LATERAL aclexplode(p.proacl) AS acl
+         JOIN pg_roles g ON g.oid = acl.grantee
+        WHERE p.prosecdef
+          AND acl.privilege_type = 'EXECUTE'
+          AND g.rolname IN ('prsystem_worker', 'prsystem_job_scheduler')
+        ORDER BY 1, 2`,
+    );
+
+    // assert_exact_role_closure is granted to both so the wrappers can call it.
+    // It is the guard itself, not a guarded entry point.
+    const guarded = granted.rows.filter(
+      (row) => !row.signature.startsWith('platform.assert_exact_role_closure'),
+    );
+    expect(guarded.map((row) => `${row.signature} -> ${row.grantee}`).sort()).toEqual(
+      ENTRY_POINTS.map((entry) => `${entry.signature} -> ${entry.grantee}`).sort(),
+    );
+  });
+
+  it('each catalogued definer matches the guard the catalogue claims for it', async () => {
+    for (const entry of ENTRY_POINTS) {
+      const open = entry.signature.indexOf('(');
+      const name = entry.signature.slice(0, open);
+      const args = entry.signature.slice(open + 1, entry.signature.lastIndexOf(')'));
+      const body = await env.admin.query<{ src: string }>(
+        `SELECT p.prosrc AS src
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname || '.' || p.proname = $1
+            AND pg_get_function_identity_arguments(p.oid) = $2`,
+        [name, args],
+      );
+      const src = body.rows[0]?.src ?? '';
+      expect({
+        signature: entry.signature,
+        closure: /assert_exact_role_closure/.test(src),
+      }).toEqual({ signature: entry.signature, closure: entry.closure });
+    }
+  });
+
+  it('the two partition helpers really are confined to the audit streams', async () => {
+    // The catalogue says the allow-list is the guard, so the allow-list is held
+    // to that rather than taken on the comment's word.
+    await expect(
+      attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+        q('SELECT platform.ensure_month_partitions($1, $2, now(), 1)', ['platform', 'job_run']),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+  }, 60000);
+});

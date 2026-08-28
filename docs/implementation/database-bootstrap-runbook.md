@@ -172,6 +172,31 @@ Tests that need a job belonging to a different identity write a controlled
 `job_run` row directly. That exercises "assigned to somebody else" without
 implying a second Worker login is a supported arrangement.
 
+### Invocation-time guards, per entry point
+
+Every `SECURITY DEFINER` function a Worker or Scheduler credential can execute,
+and what it checks when it is called. Three of the seven deliberately do not run
+the role-closure check; saying which, and what they check instead, is the point
+of the table. `sec-scheduler.test.ts` holds the live grants and the live function
+bodies to it, so a definer added later — or a grant widened later — fails the
+gate rather than arriving unguarded.
+
+| Function | Held by | Invocation-time guard |
+| --- | --- | --- |
+| `platform.schedule_maintenance_job` | Scheduler | role closure for `prsystem_job_scheduler`, a closure check on the **named executor**, and `p_hotel_id = current_hotel_id()` |
+| `platform.begin_worker_job` | Worker | role closure for `prsystem_worker`; refuses the `platform.maintenance.%` namespace |
+| `platform.finish_worker_job` | Worker | role closure for `prsystem_worker`, then `job_identity = session_user`, the privileged namespace refused, and the job still running |
+| `platform.maintenance_expire_idempotency_keys` | Worker | role closure for `prsystem_worker`, then the exact job name, the assigned identity, the established tenant, and a running job locked `FOR UPDATE` |
+| `audit.append_platform_audit_event` | Worker, API, Police | **no role closure, by design.** The shared audit wrapper takes no identity or tenant argument and derives realm, actor and hotel from the transaction context server-side. It can only append |
+| `platform.ensure_month_partitions` | Worker | **no role closure.** An allow-list of exactly the two audit streams, so it cannot become a general `CREATE TABLE` primitive, plus a bounded month count and a per-stream advisory lock |
+| `platform.check_partition_horizon` | Worker | **no role closure.** Reads the horizon of the two audit streams and raises an operational alert; writes nothing else and takes only a bounded threshold |
+
+`finish_worker_job` was the gap this table exists to close: it checked the realm
+and `job_identity = session_user` and validated no closure at all. Identity is
+not authorisation — a non-canonical login that had created a row naming itself,
+and a canonical login that had acquired extra reach since its job began, both
+satisfied that comparison.
+
 ### How a job finishes
 
 The Worker holds `SELECT` on `platform.job_run` and nothing else. Ordinary jobs
