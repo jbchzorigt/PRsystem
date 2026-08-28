@@ -254,6 +254,56 @@ const OWNERSHIP_CENSUS_QUERY = `
     FROM owned o
    ORDER BY 1, 2, 3`;
 
+/**
+ * Every owned object located in a kernel schema, whoever owns it.
+ *
+ * The restricted-role census enumerates objects owned by a role that must own
+ * nothing or own only what the manifest names, so an *external* role is outside
+ * it. The expected-owner comparison enumerates schemas, relations and functions,
+ * so an enum, a domain, a composite type or extended statistics is outside that.
+ * An arbitrary role owning an omitted class inside `platform` passed both.
+ *
+ * `pg_identify_object` names any catalogue object generically, so this covers
+ * classes nobody enumerated rather than the three somebody remembered.
+ */
+const KERNEL_OBJECT_CENSUS_QUERY = `
+  SELECT r.rolname::text AS owner,
+         d.classid::regclass::text AS class,
+         o.type::text AS object_type,
+         CASE d.classid
+           WHEN 'pg_proc'::regclass THEN (
+             SELECT n.nspname || '.' || p.proname || '(' ||
+                    pg_get_function_identity_arguments(p.oid) || ')'
+               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE p.oid = d.objid)
+           WHEN 'pg_class'::regclass THEN (
+             SELECT n.nspname || '.' || c.relname
+               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.oid = d.objid)
+           ELSE o.identity
+         END::text AS name,
+         (SELECT pn.nspname || '.' || pc.relname
+            FROM pg_inherits i
+            JOIN pg_class pc ON pc.oid = i.inhparent
+            JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+           WHERE i.inhrelid = d.objid AND d.classid = 'pg_class'::regclass)::text AS parent
+    FROM pg_shdepend d
+    JOIN pg_roles r ON r.oid = d.refobjid
+    CROSS JOIN LATERAL pg_identify_object(d.classid, d.objid, d.objsubid) o
+   WHERE d.deptype = 'o'
+     AND d.refclassid = 'pg_authid'::regclass
+     AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
+     AND o.schema = ANY($1)
+   ORDER BY 1, 2, 4`;
+
+interface KernelObjectRow {
+  readonly owner: string;
+  readonly class: string;
+  readonly object_type: string;
+  readonly name: string | null;
+  readonly parent: string | null;
+}
+
 interface CensusRow {
   readonly owner: string;
   readonly class: string;
@@ -351,6 +401,32 @@ export async function assertOwnershipManifest(
         (row.extension === null
           ? ''
           : ` (it belongs to extension ${row.extension}, which is ` + 'not an exemption)'),
+    );
+  }
+
+  // Everything inside a kernel schema, whoever owns it, held to the exact
+  // expected-owner rule.
+  const kernelObjects = await client.query<KernelObjectRow>(KERNEL_OBJECT_CENSUS_QUERY, [
+    [...KERNEL_SCHEMAS],
+  ]);
+  for (const row of kernelObjects.rows) {
+    if (row.name === null) {
+      throw new MigrationOwnershipError(
+        `an object of class ${row.class} (${row.object_type}) in a kernel schema cannot be ` +
+          'identified by the ownership census. Unrecognised classes fail closed: extend the ' +
+          'census rather than letting the object through unjudged',
+      );
+    }
+    const expected =
+      row.class === 'pg_proc'
+        ? (FUNCTION_OWNERSHIP_MANIFEST[row.name] ?? DEFAULT_KERNEL_OWNER)
+        : (OWNERSHIP_MANIFEST[row.name] ??
+          (row.parent === null ? undefined : OWNERSHIP_MANIFEST[row.parent]) ??
+          DEFAULT_KERNEL_OWNER);
+    if (row.owner === expected) continue;
+    throw new MigrationOwnershipError(
+      `${row.object_type} ${row.name} (class ${row.class}) in a kernel schema is owned by ` +
+        `${row.owner}; the manifest requires ${expected}`,
     );
   }
 

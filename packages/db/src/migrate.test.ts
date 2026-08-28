@@ -1695,6 +1695,67 @@ describe('ownership manifest on upgrade', () => {
     expect(membership).toMatch(/dep\.deptype = 'e'/);
   });
 
+  /**
+   * Every object inside a kernel schema has an expected owner, whoever owns it
+   * now.
+   *
+   * Two checks each covered part of the ground and neither covered this. The
+   * census enumerates objects owned by a *restricted or narrow* role, so an
+   * external role is outside it. The expected-owner comparison enumerates
+   * schemas, relations and functions, so an enum, a domain, a composite type or
+   * extended statistics is outside that. An arbitrary role owning an omitted
+   * class inside `platform` therefore passed both.
+   */
+  const EXTERNAL_OWNER = 'outside_owner';
+
+  const EXTERNAL_OWNERSHIP_CASES = [
+    {
+      what: 'an enum type',
+      create: `CREATE TYPE platform.probe_enum AS ENUM ('a', 'b')`,
+      own: `ALTER TYPE platform.probe_enum OWNER TO ${EXTERNAL_OWNER}`,
+      drop: `DROP TYPE IF EXISTS platform.probe_enum`,
+      subject: /platform\.probe_enum/,
+    },
+    {
+      what: 'a domain',
+      create: `CREATE DOMAIN platform.probe_domain AS text`,
+      own: `ALTER DOMAIN platform.probe_domain OWNER TO ${EXTERNAL_OWNER}`,
+      drop: `DROP DOMAIN IF EXISTS platform.probe_domain`,
+      subject: /platform\.probe_domain/,
+    },
+    {
+      what: 'a composite type',
+      create: `CREATE TYPE platform.probe_composite AS (a int, b text)`,
+      own: `ALTER TYPE platform.probe_composite OWNER TO ${EXTERNAL_OWNER}`,
+      drop: `DROP TYPE IF EXISTS platform.probe_composite`,
+      subject: /platform\.probe_composite/,
+    },
+    {
+      what: 'extended statistics',
+      create: `CREATE STATISTICS platform.probe_stat (dependencies)
+                 ON job_name, state FROM platform.job_run`,
+      own: `ALTER STATISTICS platform.probe_stat OWNER TO ${EXTERNAL_OWNER}`,
+      drop: `DROP STATISTICS IF EXISTS platform.probe_stat`,
+      subject: /probe_stat|pg_statistic_ext|cannot identify/,
+    },
+  ] as const;
+
+  for (const kernelCase of EXTERNAL_OWNERSHIP_CASES) {
+    it(`refuses ${kernelCase.what} in a kernel schema owned by an external role`, async () => {
+      await admin.query(`DROP ROLE IF EXISTS ${EXTERNAL_OWNER}`).catch(() => undefined);
+      await admin.query(`CREATE ROLE ${EXTERNAL_OWNER} NOLOGIN`);
+      try {
+        const raised = await refusesUpgrade([kernelCase.create, kernelCase.own], [kernelCase.drop]);
+        expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+        expect((raised as Error).message).toMatch(kernelCase.subject);
+      } finally {
+        await pool.query(kernelCase.drop).catch(() => undefined);
+        await admin.query(`DROP OWNED BY ${EXTERNAL_OWNER}`).catch(() => undefined);
+        await admin.query(`DROP ROLE IF EXISTS ${EXTERNAL_OWNER}`).catch(() => undefined);
+      }
+    }, 120000);
+  }
+
   it('applies the pending migration once ownership is intact', async () => {
     // The positive control. Every case above reverts in its own `finally`, so a
     // green result here proves the manifest rejects drift rather than everything.
