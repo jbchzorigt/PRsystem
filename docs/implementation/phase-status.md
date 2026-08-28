@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 22, `GATE-INTEG` 51, `GATE-CONC` 17, `GATE-SEC` 14/14 (326 tests), regression 23, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 9/9 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, _fourth repair pending commit_ |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 22, `GATE-INTEG` 51, `GATE-CONC` 17, `GATE-SEC` 14/14 (326 tests), regression 23, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 9/9 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb` |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -456,7 +456,7 @@ as historical snapshots where they differ.
 node tools/validate-governance.mjs    # GATE-GOV 13/13
 node tools/validate-workspace.mjs     # 15/15
 node tools/validate-regression-coverage.mjs  # 9/9 — no security regression suite omitted
-node tools/scan-secrets.mjs           # 270 tracked text files, 0 findings
+node tools/scan-secrets.mjs           # 283 tracked text files, 0 findings
 pnpm run format:check                 # clean
 pnpm run lint                         # GATE-LINT — 16 projects + e2e sources
 pnpm run typecheck                    # GATE-TYPES — 25 project graphs
@@ -700,7 +700,7 @@ PostgreSQL **17.6** on aarch64-unknown-linux-musl (Alpine); `btree_gist` and `pg
 | `pnpm run validate:governance` | 0 | 13/13 |
 | `pnpm run validate:workspace` | 0 | 15/15 |
 | `pnpm run validate:regression-coverage` | 0 | 9/9 |
-| `pnpm run scan:secrets` | 0 | 270 files, 0 findings |
+| `pnpm run scan:secrets` | 0 | 283 files, 0 findings |
 | `pnpm run format:check` | 0 | clean |
 | `pnpm run lint` | 0 | 16/16 tasks |
 | `pnpm run typecheck` | 0 | 25/25 tasks |
@@ -722,6 +722,44 @@ GATE-SEC sub-gates, identical across all three runs: SEC-ROLE 12, SEC-RLS 31, SE
 SEC-OWNERSHIP 10, SEC-MAINTENANCE 24, SEC-STARTUP 13, SEC-STARTUP-WORKER 4, **SEC-REGRESSION 23**
 (9 before this repair, because two suites were excluded), SEC-AUDIT 42, SEC-PARTITION 14,
 SEC-POLICE-ISOLATION 7, SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6.
+
+#### Clean-checkout reproducibility proof
+
+Run in a disposable `git clone --no-hardlinks` of this repository at `4cf3adb`, never in the working
+tree, with an isolated `TURBO_CACHE_DIR` and **no pre-build step** — each gate had to build the
+checked-out source itself.
+
+State before the run, verified rather than assumed:
+
+| Check | Result |
+| --- | --- |
+| `dist` directories present | 0 |
+| `node_modules` directories present | 0 |
+| Turborepo caches present | 0 |
+| Files under `packages/*/dist` | 0 |
+| Tracked build output in git | 0 |
+| Worktree clean at the cloned commit | yes |
+
+| Command (CI's own) | Exit | Collected result |
+| --- | --- | --- |
+| `pnpm install --frozen-lockfile` | 0 | lockfile honoured |
+| `pnpm run validate:regression-coverage` | 0 | 9/9 |
+| `pnpm run scan:secrets` | 0 | 283 tracked text files, 0 findings |
+| `pnpm run test:migrations` | 0 | 22 tests |
+| `pnpm run test:security` | 0 | 14/14 sub-gates |
+| `pnpm run test:integration` | 0 | 51 tests |
+| `pnpm run test:concurrency` | 0 | 17 tests |
+| `pnpm run test:regression` | 0 | 23 tests |
+
+Counts match the working-tree run exactly, and `packages/db/dist/migrate.js` — which the migration
+race child process requires by path — was produced by the run itself.
+
+**This proof found a real defect.** A first attempt used `git archive`, which has no `.git`
+directory; `tools/scan-secrets.mjs` enumerates tracked files with `git ls-files` and died on an
+unhandled exception, failing GATE-SEC with an unreadable stack trace. The scanner now reports what is
+missing and exits 2, so an environment without git metadata cannot be confused with a clean scan. CI
+uses `actions/checkout`, which provides a real working tree, so the proof was repeated with
+`git clone` — the equivalent environment.
 
 #### External and manual actions still pending
 
