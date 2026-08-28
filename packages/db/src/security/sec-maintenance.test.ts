@@ -12,7 +12,14 @@ import { quietPool } from '@prsystem/testing';
  */
 
 const HOTEL = '3c3c3c3c-3c3c-4c3c-8c3c-3c3c3c3c3c3c';
-const ACTOR = 'actor-maintenance';
+// Correlation metadata, written to `app.actor_ref`. Deliberately not an
+// identity: authorisation compares `session_user`, and this value is only ever
+// carried into the audit payload.
+const ACTOR = 'actor_maintenance';
+/** The authenticated principal every worker connection in this suite runs as. */
+const EXECUTOR = 'prsystem_worker_login';
+/** A second Worker-member login, created for the cross-executor case. */
+const OTHER_EXECUTOR = 'prsystem_worker_alt_login';
 const JOB_NAME = 'platform.maintenance.expire_idempotency_keys';
 const SCHEDULER = 'actor-scheduler';
 
@@ -91,7 +98,7 @@ async function attempted<T>(ctx: Ctx, work: Parameters<typeof committed<T>>[1]):
  * seeded its own job row would be exercising a privilege the worker does not
  * have — and would keep passing if the scheduler boundary were removed.
  */
-async function seedJob(jobName = JOB_NAME, identity = ACTOR, hotel = HOTEL): Promise<string> {
+async function seedJob(jobName = JOB_NAME, identity = EXECUTOR, hotel = HOTEL): Promise<string> {
   const client = await env.jobScheduler.connect();
   try {
     await client.query('BEGIN');
@@ -117,7 +124,7 @@ async function seedJob(jobName = JOB_NAME, identity = ACTOR, hotel = HOTEL): Pro
  * A job row that did not come from the scheduler, created with the superuser
  * connection. Used only to prove the execution function refuses it.
  */
-async function seedUnissuedJob(jobName = JOB_NAME, identity = ACTOR): Promise<string> {
+async function seedUnissuedJob(jobName = JOB_NAME, identity = EXECUTOR): Promise<string> {
   const client = await env.admin.connect();
   try {
     await client.query('BEGIN');
@@ -151,9 +158,19 @@ async function seedExpired(key: string): Promise<string> {
 
 beforeAll(async () => {
   env = await provisionKernelDatabase('sec_maintenance');
+  // A second, genuine Worker-member login. The executor identity is now a
+  // server-validated principal, so "assigned to somebody else" needs a somebody
+  // else that actually exists.
+  await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`);
+  await env.admin.query(`CREATE ROLE ${OTHER_EXECUTOR} LOGIN PASSWORD 'unused_local_only' INHERIT`);
+  await env.admin.query(
+    `GRANT prsystem_worker TO ${OTHER_EXECUTOR} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+  );
 }, 120000);
 
 afterAll(async () => {
+  await env.admin.query(`DROP OWNED BY ${OTHER_EXECUTOR}`).catch(() => undefined);
+  await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`).catch(() => undefined);
   await env.close();
 }, 30000);
 
@@ -219,7 +236,7 @@ describe('authorisation', () => {
     // matters is a job that genuinely exists, is genuinely valid, and belongs to
     // somebody else: the refusal must come from tenant scope, not from absence.
     const otherHotel = '4d4d4d4d-4d4d-4d4d-8d4d-4d4d4d4d4d4d';
-    const foreignJob = await seedJob(JOB_NAME, ACTOR, otherHotel);
+    const foreignJob = await seedJob(JOB_NAME, EXECUTOR, otherHotel);
     // Tenant B also has an expired key, so a leak would have something to delete.
     await committed({ hotel: otherHotel }, (q) =>
       q(
@@ -287,11 +304,11 @@ describe('authorisation', () => {
   });
 
   it('refuses a job belonging to another actor', async () => {
-    const job = await seedJob(JOB_NAME, 'someone-else');
+    const job = await seedJob(JOB_NAME, OTHER_EXECUTOR);
     await attempted({}, async (q) => {
       await expect(
         q('SELECT platform.maintenance_expire_idempotency_keys($1)', [job]),
-      ).rejects.toThrow(/belongs to another actor/i);
+      ).rejects.toThrow(/is assigned to .*, not to /i);
     });
   });
 });
@@ -584,15 +601,15 @@ describe('job_run state integrity', () => {
   });
 
   it('refuses to let the worker reassign the job identity', async () => {
-    const id = await seedJob(JOB_NAME, 'someone-else');
+    const id = await seedJob(JOB_NAME, OTHER_EXECUTOR);
 
     await expect(
       attempted({}, (q) =>
-        q(`UPDATE platform.job_run SET job_identity = $2 WHERE job_run_id = $1`, [id, ACTOR]),
+        q(`UPDATE platform.job_run SET job_identity = $2 WHERE job_run_id = $1`, [id, EXECUTOR]),
       ),
     ).rejects.toMatchObject({ code: '42501' });
 
-    expect((await readJob(id))['job_identity']).toBe('someone-else');
+    expect((await readJob(id))['job_identity']).toBe(OTHER_EXECUTOR);
   });
 
   it('refuses to move a hotel_id, even to the same value', async () => {
@@ -672,14 +689,16 @@ describe('outbox delivery least privilege', () => {
     }
   });
 
-  it('still lets the API read delivery state', async () => {
-    // The positive control for the grant above: SELECT is retained deliberately.
+  it('refuses an API read of delivery state', async () => {
+    // The relay is entirely a worker concern. The API held a SELECT no code path
+    // used; a retained grant nobody exercises is reach the design does not need.
     const client = await env.api.connect();
     try {
       await client.query('BEGIN');
       await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL]);
-      const rows = await client.query(`SELECT count(*)::int AS n FROM platform.outbox_delivery`);
-      expect(Number(rows.rows[0]?.['n'])).toBeGreaterThanOrEqual(0);
+      await expect(
+        client.query(`SELECT count(*) FROM platform.outbox_delivery`),
+      ).rejects.toMatchObject({ code: '42501' });
     } finally {
       await client.query('ROLLBACK').catch(() => undefined);
       client.release();

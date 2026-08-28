@@ -37,6 +37,16 @@ export const envSchema = z.object({
    * runner verifies the principal before applying anything.
    */
   MIGRATION_DATABASE_URL: postgresUrl.optional(),
+  /**
+   * The job-scheduler principal's connection string (D-09).
+   *
+   * Separate from DATABASE_URL for the same reason MIGRATION_DATABASE_URL is:
+   * issuing a privileged maintenance job and executing one are different powers.
+   * Only the API deployment is given this value. The worker must never hold it,
+   * because a worker that could issue its own authorisation is exactly the
+   * arrangement D-09 exists to prevent.
+   */
+  SCHEDULER_DATABASE_URL: postgresUrl.optional(),
   REDIS_URL: redisUrl,
 
   /** Key management adapter. `none` fails closed; `local` is refused outside local/ci/test. */
@@ -63,6 +73,7 @@ const SECRET_KEYS = new Set([
   'OBJECT_STORAGE_SECRET_ACCESS_KEY',
   'DATABASE_URL',
   'MIGRATION_DATABASE_URL',
+  'SCHEDULER_DATABASE_URL',
   'REDIS_URL',
   'KMS_SEED',
 ]);

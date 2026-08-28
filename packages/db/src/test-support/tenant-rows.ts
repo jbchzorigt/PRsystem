@@ -58,7 +58,9 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.outbox_delivery',
-    grants: { api: ['SELECT'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // The relay is entirely a worker concern: the API holds nothing here. A
+    // retained SELECT nobody exercised was reach the design does not need.
+    grants: { api: [], worker: ['SELECT', 'UPDATE'], police: [] },
     insert: () => ({ sql: '', values: [] }),
     insertableByRuntime: false,
   },
@@ -88,9 +90,11 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     // platform.schedule_maintenance_job, which only the scheduler may execute.
     grants: { api: ['SELECT'], worker: ['SELECT', 'UPDATE'], police: [] },
     insert: (hotelId, n) => ({
+      // Shapes matter here: job_name and job_identity carry bounded CHECK
+      // constraints, so the fixture builds values a real caller could.
       sql: `INSERT INTO platform.job_run (hotel_id, job_name, job_identity)
-            VALUES ($1, $2, 'identity-fixture')`,
-      values: [hotelId, `job-fixture-${String(n)}`],
+            VALUES ($1, $2, 'identity_fixture')`,
+      values: [hotelId, `job_fixture_${String(n)}`],
     }),
     updateColumn: 'state',
   },

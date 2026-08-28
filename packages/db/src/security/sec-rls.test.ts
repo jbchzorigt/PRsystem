@@ -128,19 +128,26 @@ describe('classification manifest', () => {
 describe('tenant isolation across CRUD, per runtime login', () => {
   for (const entry of TENANT_TABLES) {
     const qualified = `${entry.schema}.${entry.table}`;
+    const spec = TENANT_ROW_SPECS.find((t) => t.name === qualified);
+    if (spec === undefined) throw new Error(`no row fixture for ${qualified}`);
 
-    it(`${qualified}: unscoped SELECT returns nothing`, async () => {
+    it(`${qualified}: unscoped SELECT is confined or refused`, async () => {
       const client = await env.api.connect();
       try {
-        const result = await client.query(`SELECT 1 FROM ${qualified}`);
-        expect(result.rowCount).toBe(0);
+        if (spec.grants.api.includes('SELECT')) {
+          // The policy supplies the predicate: no scope, no rows.
+          const result = await client.query(`SELECT 1 FROM ${qualified}`);
+          expect(result.rowCount).toBe(0);
+        } else {
+          // The API holds no SELECT here at all, so the refusal is the grant.
+          await expect(client.query(`SELECT 1 FROM ${qualified}`)).rejects.toMatchObject({
+            code: '42501',
+          });
+        }
       } finally {
         client.release();
       }
     });
-
-    const spec = TENANT_ROW_SPECS.find((t) => t.name === qualified);
-    if (spec === undefined) throw new Error(`no row fixture for ${qualified}`);
 
     it(`${qualified}: unscoped INSERT is refused for the policy's own reason`, async () => {
       // A **complete** row. The previous shape inserted only `hotel_id` and

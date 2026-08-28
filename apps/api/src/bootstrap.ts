@@ -12,6 +12,7 @@ import { AppModule } from './app.module';
 import { registerCorrelation } from './observability/correlation.plugin';
 import { ApiErrorFilter } from './observability/api-error.filter';
 import { assertApiConnectionPrincipal } from './observability/connection-guard';
+import { assertSchedulerConnectionPrincipal } from './security/scheduler-guard';
 import { OPENAPI_PATH, buildOpenApiDocument } from './openapi-document';
 
 export interface BootstrapOptions {
@@ -30,8 +31,17 @@ export async function createApp(
   // port is bound. A process that cannot prove its identity, or that has no key
   // management, must never reach the point of accepting a request.
   const guardPool = new Pool({ connectionString: config.DATABASE_URL, max: 1 });
+  // D-09. The API control plane may hold a scheduler credential; if it does, it
+  // is verified at startup like every other principal, before a port is bound.
+  const schedulerGuardPool =
+    config.SCHEDULER_DATABASE_URL === undefined
+      ? undefined
+      : new Pool({ connectionString: config.SCHEDULER_DATABASE_URL, max: 1 });
   try {
     await assertApiConnectionPrincipal(guardPool, logger);
+    if (schedulerGuardPool !== undefined) {
+      await assertSchedulerConnectionPrincipal(schedulerGuardPool, logger);
+    }
     // Throws when the adapter is `none`, when a production build asks for the
     // local simulator, or when the configuration is missing or unknown.
     selectKeyManagement({
@@ -43,6 +53,7 @@ export async function createApp(
     // Released whether the guard passed or threw: a refused startup must not
     // leave a connection behind.
     await guardPool.end();
+    if (schedulerGuardPool !== undefined) await schedulerGuardPool.end();
   }
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {

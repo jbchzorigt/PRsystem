@@ -613,6 +613,21 @@ CREATE TABLE platform.job_run (
   -- A privileged maintenance job exists only because a scheduler issued it.
   CONSTRAINT job_run_privileged_has_issuer CHECK (
     job_name NOT LIKE 'platform.maintenance.%' OR issuer_ref IS NOT NULL
+  ),
+  -- Bounded shapes. An unbounded identity column is a place to store something
+  -- that is not an identity, and these values are read back into audit payloads
+  -- and error messages.
+  CONSTRAINT job_run_job_name_shape CHECK (
+    job_name ~ '^[a-z][a-z0-9_.]{2,127}$'
+  ),
+  CONSTRAINT job_run_identity_shape CHECK (
+    job_identity ~ '^[A-Za-z_][A-Za-z0-9_]{0,62}$'
+  ),
+  CONSTRAINT job_run_issuer_shape CHECK (
+    issuer_ref IS NULL OR issuer_ref ~ '^[A-Za-z_][A-Za-z0-9_]{0,62}$'
+  ),
+  CONSTRAINT job_run_error_name_bounded CHECK (
+    error_name IS NULL OR length(error_name) BETWEEN 1 AND 128
   )
 );
 --> statement-breakpoint
@@ -639,12 +654,14 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- Terminal is terminal. Without this a completed job could be reset to
-  -- running and replayed, which is the same effect the idempotency rules exist
-  -- to prevent.
-  IF OLD.state <> 'running' AND NEW.state IS DISTINCT FROM OLD.state THEN
-    RAISE EXCEPTION 'job % is already %; a terminal job cannot transition to %',
-      OLD.job_run_id, OLD.state, NEW.state USING ERRCODE = '22023';
+  -- Terminal is terminal, and terminal evidence is frozen. Restricting only the
+  -- state column left the finish time, the error name and the scope rewritable
+  -- after the fact, so the record of what happened could be edited once the job
+  -- could no longer be replayed.
+  IF OLD.state <> 'running' AND NEW IS DISTINCT FROM OLD THEN
+    RAISE EXCEPTION
+      'job % is already %; a terminal job and its evidence are frozen',
+      OLD.job_run_id, OLD.state USING ERRCODE = '22023';
   END IF;
 
   IF OLD.state = 'running' AND NEW.state NOT IN ('running', 'succeeded', 'failed') THEN
@@ -1202,10 +1219,13 @@ BEGIN
     RAISE EXCEPTION 'job % is already %; a completed job cannot be replayed',
       p_job_run_id, v_job.state USING ERRCODE = '22023';
   END IF;
-  -- The job must belong to the actor running it, or a job row becomes a bearer
-  -- token any actor could present.
-  IF v_job.job_identity IS DISTINCT FROM v_actor THEN
-    RAISE EXCEPTION 'job % belongs to another actor', p_job_run_id USING ERRCODE = '42501';
+  -- The job must belong to the principal running it. `session_user`, not
+  -- `app.actor_ref`: the GUC is caller-writable, so comparing against it would
+  -- let any Worker connection claim any executor identity by setting a string.
+  -- The GUC remains useful as correlation metadata and is audited as such.
+  IF v_job.job_identity IS DISTINCT FROM session_user THEN
+    RAISE EXCEPTION 'job % is assigned to %, not to %',
+      p_job_run_id, v_job.job_identity, session_user USING ERRCODE = '42501';
   END IF;
   -- D-09: only a scheduler-issued job authorises privileged maintenance. A job
   -- row with no issuer was not issued through platform.schedule_maintenance_job,
@@ -1349,10 +1369,10 @@ GRANT SELECT, INSERT, UPDATE ON platform.idempotency_key TO prsystem_api, prsyst
 GRANT SELECT, INSERT ON platform.outbox_event TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
 -- No INSERT: delivery rows are created only by the append-only event trigger.
--- The relay is a worker concern. The API has no code path that claims, publishes
--- or fails a delivery, so it holds read visibility only; the worker keeps the
--- UPDATE its claim/CAS/publish/fail transitions actually need.
-GRANT SELECT ON platform.outbox_delivery TO prsystem_api;
+-- The relay is entirely a worker concern. The API has no code path that reads,
+-- claims, publishes or fails a delivery, so it holds nothing at all here: a
+-- retained SELECT nobody uses is reach the design does not need.
+REVOKE ALL ON platform.outbox_delivery FROM prsystem_api;
 --> statement-breakpoint
 GRANT SELECT, UPDATE ON platform.outbox_delivery TO prsystem_worker;
 --> statement-breakpoint
@@ -1466,10 +1486,14 @@ CREATE OR REPLACE FUNCTION platform.schedule_maintenance_job(
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_realm    text := platform.current_realm();
-  v_issuer   text := platform.current_actor_ref();
+  -- The authenticated principal, not a caller-supplied value. `app.actor_ref` is
+  -- a custom GUC the connection can rewrite at will, so an issuer read from it
+  -- records whatever the caller last claimed. `session_user` is established by
+  -- authentication and cannot be changed by SQL the session executes.
+  v_issuer   text := session_user;
   v_job_id   uuid;
 BEGIN
-  IF v_realm IS NULL OR v_issuer IS NULL THEN
+  IF v_realm IS NULL THEN
     RAISE EXCEPTION 'scheduling requires an established transaction context'
       USING ERRCODE = '42501';
   END IF;
@@ -1491,6 +1515,28 @@ BEGIN
   IF p_hotel_id IS NULL OR p_executor_identity IS NULL OR p_executor_identity = '' THEN
     RAISE EXCEPTION 'a scheduled job needs a hotel scope and an executor identity'
       USING ERRCODE = '22023';
+  END IF;
+
+  -- The scope must be the caller's own established scope. FORCE RLS would also
+  -- refuse a row for another tenant, but stating it here makes the rule explicit
+  -- and gives a diagnosable error instead of a policy violation.
+  IF p_hotel_id IS DISTINCT FROM platform.current_hotel_id() THEN
+    RAISE EXCEPTION 'a job may only be scheduled for the established tenant scope'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- The executor is a real, server-validated Worker principal: a login that
+  -- exists and is a member of prsystem_worker. A free-text executor identity
+  -- would let a scheduler address a job to something that can never run it, or
+  -- to a name a compromised credential could later adopt.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_roles r
+     WHERE r.rolname = p_executor_identity
+       AND r.rolcanlogin
+       AND pg_has_role(r.oid, 'prsystem_worker'::regrole::oid, 'MEMBER')
+  ) THEN
+    RAISE EXCEPTION 'executor % is not a Worker login principal', p_executor_identity
+      USING ERRCODE = '42501';
   END IF;
 
   -- Every authorisation-bearing column is written here, server-side. The caller
@@ -1558,8 +1604,10 @@ BEGIN
       p_job_name USING ERRCODE = '42501';
   END IF;
 
+  -- The authenticated principal, for the same reason the privileged path uses
+  -- it: `app.actor_ref` is caller-writable and is correlation metadata only.
   INSERT INTO platform.job_run (hotel_id, job_name, job_identity, state, started_at)
-  VALUES (p_hotel_id, p_job_name, v_actor, 'running', pg_catalog.now())
+  VALUES (p_hotel_id, p_job_name, session_user, 'running', pg_catalog.now())
   RETURNING job_run_id INTO v_job_id;
 
   RETURN v_job_id;

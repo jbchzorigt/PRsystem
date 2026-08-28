@@ -80,13 +80,16 @@ export const SUB_GATES = [
   },
   {
     id: 'SEC-STARTUP',
-    what: 'real API startup refuses before a port is bound',
+    what: 'real API startup refuses before a port is bound, scheduler credential included',
     filter: '@prsystem/api',
     suite: 'src/security',
     needsDatabase: true,
     artefacts: [
       'apps/api/src/observability/connection-guard.ts',
       'apps/api/src/security/startup-order.test.ts',
+      'apps/api/src/security/scheduler-guard.ts',
+      'apps/api/src/security/scheduler-boundary.test.ts',
+      'apps/api/src/maintenance/scheduler.service.ts',
     ],
   },
   {
