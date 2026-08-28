@@ -986,3 +986,232 @@ describe('schema comparator mutations', () => {
     expect(await compareSchema(comparatorPool)).toEqual([]);
   }, 60000);
 });
+
+/**
+ * The exact ownership manifest, proved on an *upgrade*.
+ *
+ * Every case drifts one owner on a fully migrated database and then attempts a
+ * journal that has one genuinely new migration pending. The refusal has to
+ * happen before that DDL runs, so each case asserts the probe table does not
+ * exist and the ledger did not grow — "it failed eventually" is not the property
+ * being claimed.
+ */
+describe('ownership manifest on upgrade', () => {
+  const OWNERSHIP_DATABASE = 'prsystem_migration_ownership';
+  const PROBE_TABLE = 'ownership_probe';
+  let ownershipUrl: string;
+  let pending: string;
+  let pool: Pool;
+
+  /** A journal identical to the shipped one plus one new, real migration. */
+  function journalWithPendingMigration(): string {
+    const folder = mkdtempSync(join(tmpdir(), 'prsystem-ownership-'));
+    mkdirSync(join(folder, 'meta'), { recursive: true });
+    const journal = JSON.parse(
+      readFileSync(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8'),
+    ) as { entries: { idx: number; tag: string; version: string; when: number }[] };
+
+    for (const entry of journal.entries) {
+      copyFileSync(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
+    }
+    const last = journal.entries[journal.entries.length - 1]!;
+    writeFileSync(
+      join(folder, '0002_ownership_probe.sql'),
+      `CREATE TABLE platform.${PROBE_TABLE} (id int primary key);\n`,
+      'utf8',
+    );
+    writeFileSync(
+      join(folder, 'meta', '_journal.json'),
+      JSON.stringify({
+        ...journal,
+        entries: [
+          ...journal.entries,
+          { ...last, idx: last.idx + 1, tag: '0002_ownership_probe', when: last.when + 1 },
+        ],
+      }),
+      'utf8',
+    );
+    return folder;
+  }
+
+  async function probeApplied(): Promise<boolean> {
+    const found = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM information_schema.tables
+        WHERE table_schema = 'platform' AND table_name = $1`,
+      [PROBE_TABLE],
+    );
+    return found.rows[0]?.count !== '0';
+  }
+
+  async function ledgerSize(): Promise<number> {
+    return (await ledgerRows(pool)).length;
+  }
+
+  /**
+   * Applies `mutate`, requires the upgrade to be refused with no new DDL, then
+   * reverts. The revert runs whatever happened, so one failing case cannot
+   * cascade into the next.
+   */
+  async function refusesUpgrade(
+    mutate: string[],
+    revert: string[],
+    options: { readonly approvedOperatorOwners?: readonly string[] } = {},
+  ): Promise<unknown> {
+    const before = await ledgerSize();
+    // On the ownership database, not the cluster's default: `admin` is
+    // connected elsewhere and would report "schema platform does not exist".
+    for (const statement of mutate) await pool.query(statement);
+    try {
+      let raised: unknown;
+      try {
+        await runMigrations(ownershipUrl, { migrationsFolder: pending, ...options });
+      } catch (error) {
+        raised = error;
+      }
+      // No new DDL: the probe table does not exist and the ledger did not grow.
+      expect({ probe: await probeApplied(), ledger: await ledgerSize() }).toEqual({
+        probe: false,
+        ledger: before,
+      });
+      return raised;
+    } finally {
+      for (const statement of revert) await pool.query(statement).catch(() => undefined);
+    }
+  }
+
+  beforeAll(async () => {
+    await admin.query(`DROP DATABASE IF EXISTS ${OWNERSHIP_DATABASE} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${OWNERSHIP_DATABASE}`);
+    await bootstrapCluster({
+      adminUrl: withDatabase(ADMIN_URL, OWNERSHIP_DATABASE),
+      database: OWNERSHIP_DATABASE,
+      logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+        principal,
+        password: TEST_LOGIN_PASSWORD,
+      })),
+    });
+    ownershipUrl = asMigrationLogin(withDatabase(ADMIN_URL, OWNERSHIP_DATABASE));
+    await runMigrations(ownershipUrl);
+    pending = journalWithPendingMigration();
+    pool = quietPool({ connectionString: withDatabase(ADMIN_URL, OWNERSHIP_DATABASE), max: 2 });
+  }, 180000);
+
+  afterAll(async () => {
+    await pool?.end();
+    await admin.query(`DROP DATABASE IF EXISTS ${OWNERSHIP_DATABASE} WITH (FORCE)`);
+  }, 60000);
+
+  it('refuses when no approved operator owner is configured', async () => {
+    // Not a warning and not a skip. A deployment that has not declared which
+    // identity owns its database has not declared its ownership contract, and a
+    // runner that quietly proceeded would be strictest exactly where it was
+    // configured and silent everywhere else.
+    const saved = process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'];
+    delete process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'];
+    try {
+      const raised = await refusesUpgrade([], []);
+      expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+      expect((raised as Error).message).toMatch(/PRSYSTEM_APPROVED_OPERATOR_OWNERS is required/);
+    } finally {
+      if (saved !== undefined) process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'] = saved;
+    }
+  }, 120000);
+
+  it('refuses when the configured value is empty', async () => {
+    const raised = await refusesUpgrade([], [], { approvedOperatorOwners: ['   ', ''] });
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+  }, 120000);
+
+  it('refuses a database owner that is not an approved operator', async () => {
+    // A real, non-project identity: an operator account nobody declared.
+    const raised = await refusesUpgrade([], [], {
+      approvedOperatorOwners: ['some_other_operator'],
+    });
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/not an approved operator owner/);
+  }, 120000);
+
+  it('refuses a runtime-owned kernel schema', async () => {
+    const raised = await refusesUpgrade(
+      [`ALTER SCHEMA platform OWNER TO prsystem_api`],
+      [`ALTER SCHEMA platform OWNER TO prsystem_migrate`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/prsystem_api/);
+  }, 120000);
+
+  it('refuses a runtime-owned kernel relation', async () => {
+    const raised = await refusesUpgrade(
+      [`ALTER TABLE platform.job_run OWNER TO prsystem_worker`],
+      [`ALTER TABLE platform.job_run OWNER TO prsystem_migrate`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/prsystem_worker/);
+  }, 120000);
+
+  it('refuses a kernel owner role that owns the wrong object', async () => {
+    // The case "the owner is one of the four kernel owners" could never catch.
+    // prsystem_maintenance_fn owning platform.job_run would let the owner of the
+    // maintenance functions rewrite the very ledger constraining them.
+    const raised = await refusesUpgrade(
+      [`ALTER TABLE platform.job_run OWNER TO prsystem_maintenance_fn`],
+      [`ALTER TABLE platform.job_run OWNER TO prsystem_migrate`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(
+      /platform\.job_run is owned by prsystem_maintenance_fn; the manifest requires prsystem_migrate/,
+    );
+  }, 120000);
+
+  it('refuses a runtime-owned SECURITY DEFINER function', async () => {
+    const raised = await refusesUpgrade(
+      [`ALTER FUNCTION platform.schedule_maintenance_job(text, uuid, text) OWNER TO prsystem_api`],
+      [
+        `ALTER FUNCTION platform.schedule_maintenance_job(text, uuid, text) OWNER TO prsystem_maintenance_fn`,
+      ],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/prsystem_api/);
+  }, 120000);
+
+  it('refuses a wrongly owned drizzle schema', async () => {
+    const raised = await refusesUpgrade(
+      [`ALTER SCHEMA drizzle OWNER TO prsystem_partition_mgr`],
+      [`ALTER SCHEMA drizzle OWNER TO prsystem_migrate`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/schema drizzle/);
+  }, 120000);
+
+  it('refuses a wrongly owned migration ledger', async () => {
+    const raised = await refusesUpgrade(
+      [`ALTER TABLE drizzle.__drizzle_migrations OWNER TO prsystem_police`],
+      [`ALTER TABLE drizzle.__drizzle_migrations OWNER TO prsystem_migrate`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/__drizzle_migrations/);
+  }, 120000);
+
+  it('refuses an audit partition parent handed to the DDL owner', async () => {
+    // The partitioned parents belong to prsystem_partition_mgr. "Some kernel
+    // owner" is not the contract; the named one is.
+    const raised = await refusesUpgrade(
+      [`ALTER TABLE audit.platform_event OWNER TO prsystem_migrate`],
+      [`ALTER TABLE audit.platform_event OWNER TO prsystem_partition_mgr`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/audit\.platform_event/);
+  }, 120000);
+
+  it('applies the pending migration once ownership is intact', async () => {
+    // The positive control. Every case above reverts in its own `finally`, so a
+    // green result here proves the manifest rejects drift rather than everything.
+    const before = await ledgerSize();
+    const outcome = await runMigrations(ownershipUrl, { migrationsFolder: pending });
+    expect(outcome.appliedAfter).toBe(before + 1);
+    expect(await probeApplied()).toBe(true);
+
+    await pool.query(`DROP TABLE platform.${PROBE_TABLE}`);
+    await pool.query(`DELETE FROM drizzle.__drizzle_migrations WHERE id > $1`, [before]);
+  }, 120000);
+});

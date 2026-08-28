@@ -97,3 +97,15 @@ export {
 } from './schema-comparator';
 export type { SchemaDifference } from './schema-comparator';
 export { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
+
+export {
+  KERNEL_OWNERS,
+  KERNEL_SCHEMAS,
+  DEFAULT_KERNEL_OWNER,
+  OWNERSHIP_MANIFEST,
+  MigrationOwnershipError,
+  assertOwnershipManifest,
+  expectedOwnerOf,
+  rolesThatOwnNothing,
+} from './ownership-manifest';
+export type { OwnedObject } from './ownership-manifest';

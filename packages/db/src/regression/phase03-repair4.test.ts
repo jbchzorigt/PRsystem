@@ -454,12 +454,11 @@ describe('E7 — the migration runner validates ownership before applying DDL', 
   it('refuses when a runtime role owns a kernel relation', async () => {
     await inTarget(`ALTER TABLE platform.job_run OWNER TO prsystem_worker`);
     try {
-      await expect(runMigrations(migrateUrl)).rejects.toMatchObject({
-        name: 'MigrationOwnershipError',
-        message: expect.stringMatching(
-          /job_run is owned by the project role prsystem_worker/,
-        ) as unknown as string,
-      });
+      // Wording follows the exact ownership manifest, which states the rule as
+      // "this role must own nothing" rather than naming the object class.
+      await expect(runMigrations(migrateUrl)).rejects.toThrow(
+        /relation platform\.job_run is owned by prsystem_worker, which must own nothing/,
+      );
     } finally {
       await inTarget(`ALTER TABLE platform.job_run OWNER TO prsystem_migrate`);
     }

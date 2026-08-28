@@ -2,8 +2,9 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { approvedOperatorOwnersFromEnv, projectRoles } from './bootstrap';
+import { approvedOperatorOwnersFromEnv } from './bootstrap';
 import { assertMigrationPrincipal } from './principal-guard';
+import { MigrationOwnershipError, assertOwnershipManifest } from './ownership-manifest';
 
 /**
  * Versioned migration runner (ADR-0004, CLAUDE.md §10).
@@ -30,10 +31,7 @@ export const MIGRATION_ROLE = 'prsystem_migrate';
  */
 export const MIGRATION_LOCK_KEY = 4_021_970_301;
 
-/** Raised when ownership has drifted, before any new DDL is applied. */
-export class MigrationOwnershipError extends Error {
-  override readonly name = 'MigrationOwnershipError';
-}
+export { MigrationOwnershipError } from './ownership-manifest';
 
 export interface MigrationOutcome {
   /** Migrations recorded in the ledger before this run. */
@@ -44,6 +42,14 @@ export interface MigrationOutcome {
 
 export interface RunMigrationsOptions {
   readonly migrationsFolder?: string;
+  /**
+   * Operator identities allowed to own the database and schema `public`.
+   *
+   * Defaults to `PRSYSTEM_APPROVED_OPERATOR_OWNERS`. One of the two must be
+   * present: the runner refuses to migrate a database whose ownership it has
+   * not been told how to judge.
+   */
+  readonly approvedOperatorOwners?: readonly string[];
 }
 
 /** Anything that can run a query — a Client or a Pool. */
@@ -68,96 +74,40 @@ async function ledgerCount(client: Client): Promise<number> {
 /**
  * Refuses to migrate a database whose ownership has drifted.
  *
- * Covers the database, schema `public`, the kernel schemas and the objects
- * already inside them. A runtime, reader, scheduler, Police or Worker role that
- * owns any of these holds rights the design never granted and that no ACL
- * reconciliation can revoke.
+ * Delegates to the exact manifest: every object has one expected owner, not
+ * merely an owner drawn from the set of kernel owner roles. Being one of the
+ * four was never sufficient — `prsystem_maintenance_fn` owning
+ * `platform.job_run` would have passed, and would have handed the maintenance
+ * function owner the ability to rewrite the very ledger constraining it.
  */
-async function assertMigrationOwnership(client: Client): Promise<void> {
-  const approved = approvedOperatorOwnersFromEnv();
-  // Two rules, deliberately different in strength.
-  //
-  // "No project role may own a kernel object" is unconditional: it needs no
-  // configuration and it is the property that actually matters.
-  //
-  // "The owner must be one of these named operators" is an explicit tightening a
-  // deployment opts into through PRSYSTEM_APPROVED_OPERATOR_OWNERS. The runner
-  // cannot infer it — the migration principal never owns the database, so there
-  // is no honest default: one would refuse every real deployment, the other
-  // would approve every owner.
-  const approvedSet = approved === undefined ? undefined : new Set(approved);
+async function assertMigrationOwnership(
+  client: Client,
+  approved: ReadonlySet<string>,
+): Promise<void> {
+  await assertOwnershipManifest(client, approved);
+}
 
-  /** The four roles that legitimately own kernel objects. */
-  const kernelOwners = new Set([
-    'prsystem_migrate',
-    'prsystem_audit_writer',
-    'prsystem_partition_mgr',
-    'prsystem_maintenance_fn',
-  ]);
-  // Every project role may own the *database* or `public`: none of them should.
-  const forbiddenForDatabase = projectRoles();
-  // Kernel schemas and relations are owned by the DDL owner and its three
-  // function owners; every other project role — runtime, reader, scheduler,
-  // Police, Worker, any login — is drift.
-  const forbiddenForKernel = new Set(
-    [...forbiddenForDatabase].filter((role) => !kernelOwners.has(role)),
-  );
-
-  const owners = await client.query<{ kind: string; name: string; owner: string }>(
-    `SELECT 'database' AS kind, d.datname AS name, pg_get_userbyid(d.datdba) AS owner
-       FROM pg_database d WHERE d.datname = current_database()
-     UNION ALL
-     SELECT 'schema', n.nspname, pg_get_userbyid(n.nspowner)
-       FROM pg_namespace n
-      WHERE n.nspname IN ('public', 'platform', 'audit', 'police_audit', 'police')
-     UNION ALL
-     SELECT 'relation', n.nspname || '.' || c.relname, pg_get_userbyid(c.relowner)
-       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname IN ('platform', 'audit', 'police_audit', 'police')
-        AND c.relkind IN ('r', 'p', 'v', 'm', 'S')`,
-  );
-
-  for (const row of owners.rows) {
-    const isDatabaseScope =
-      row.kind === 'database' || (row.kind === 'schema' && row.name === 'public');
-    const forbidden = isDatabaseScope ? forbiddenForDatabase : forbiddenForKernel;
-    if (forbidden.has(row.owner)) {
-      throw new MigrationOwnershipError(
-        `${row.kind} ${row.name} is owned by the project role ${row.owner}; ` +
-          `no runtime, reader, scheduler, Police, Worker or login role may own it`,
-      );
-    }
+/**
+ * The approved operator owners for this run, or a refusal.
+ *
+ * Mandatory. A deployment that has not declared which operator identity owns its
+ * database has not declared its ownership contract at all, and a runner that
+ * quietly skipped the check in that case would be strictest exactly where it was
+ * configured and silent everywhere else.
+ */
+function requireApprovedOwners(options: RunMigrationsOptions): ReadonlySet<string> {
+  const configured = options.approvedOperatorOwners ?? approvedOperatorOwnersFromEnv();
+  const names = (configured ?? []).map((name) => name.trim()).filter((name) => name.length > 0);
+  if (names.length === 0) {
+    throw new MigrationOwnershipError(
+      'PRSYSTEM_APPROVED_OPERATOR_OWNERS is required and must name at least one operator ' +
+        'identity allowed to own the database. There is no default: the migration principal ' +
+        'never owns the database, so any inferred value would either refuse every real ' +
+        'deployment or approve every owner. ' +
+        'See docs/implementation/database-bootstrap-runbook.md',
+    );
   }
-
-  // The database and `public` additionally need an approved operator owner.
-  // `pg_database_owner` resolves to the database owner, which is checked here.
-  for (const row of owners.rows.filter(
-    (candidate) =>
-      candidate.kind === 'database' || (candidate.kind === 'schema' && candidate.name === 'public'),
-  )) {
-    if (approvedSet === undefined) continue;
-    if (row.owner === 'pg_database_owner') continue;
-    if (!approvedSet.has(row.owner)) {
-      throw new MigrationOwnershipError(
-        `${row.kind} ${row.name} is owned by ${row.owner}, which is not an approved operator ` +
-          `owner (approved: ${[...approvedSet].join(', ')}). Set ` +
-          `PRSYSTEM_APPROVED_OPERATOR_OWNERS to declare the operator identities this deployment uses.`,
-      );
-    }
-  }
-
-  // And a kernel object's owner must be one of the four, even when the role is
-  // not a project role at all.
-  for (const row of owners.rows.filter(
-    (candidate) =>
-      candidate.kind === 'relation' || (candidate.kind === 'schema' && candidate.name !== 'public'),
-  )) {
-    if (!kernelOwners.has(row.owner)) {
-      throw new MigrationOwnershipError(
-        `${row.kind} ${row.name} is owned by ${row.owner}, which is not a kernel owner role`,
-      );
-    }
-  }
+  return new Set(names);
 }
 
 export async function runMigrations(
@@ -167,6 +117,10 @@ export async function runMigrations(
   const resolved: RunMigrationsOptions =
     typeof options === 'string' ? { migrationsFolder: options } : options;
   const migrationsFolder = resolved.migrationsFolder ?? MIGRATIONS_FOLDER;
+
+  // Before a connection is even opened: missing ownership configuration stops
+  // the run, not a later statement.
+  const approved = requireApprovedOwners(resolved);
 
   // A single Client, not a Pool: the advisory lock, the SET ROLE and the journal
   // application must all be the same backend, or the lock protects nothing.
@@ -195,7 +149,7 @@ export async function runMigrations(
     // back, so applying an upgrade onto a drifted database would be creating new
     // objects inside something already escapable. Checked again afterwards,
     // because a migration could in principle change it.
-    await assertMigrationOwnership(client);
+    await assertMigrationOwnership(client, approved);
 
     // Read *after* the lock: another runner may have applied the journal while
     // this one waited, which is exactly the case that must be a clean no-op.
@@ -203,7 +157,7 @@ export async function runMigrations(
     await migrate(drizzle(client), { migrationsFolder });
     const appliedAfter = await ledgerCount(client);
 
-    await assertMigrationOwnership(client);
+    await assertMigrationOwnership(client, approved);
 
     return { appliedBefore, appliedAfter };
   } finally {
