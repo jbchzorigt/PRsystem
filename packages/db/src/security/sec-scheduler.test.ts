@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
+import { TEST_LOGIN_PASSWORD, quietPool } from '@prsystem/testing';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
 
@@ -119,7 +120,9 @@ async function seedExpired(key: string, hotel = HOTEL): Promise<void> {
 beforeAll(async () => {
   env = await provisionKernelDatabase('sec_scheduler');
   await env.admin.query(`DROP ROLE IF EXISTS ${OTHER_EXECUTOR}`);
-  await env.admin.query(`CREATE ROLE ${OTHER_EXECUTOR} LOGIN PASSWORD 'unused_local_only' INHERIT`);
+  await env.admin.query(
+    `CREATE ROLE ${OTHER_EXECUTOR} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`,
+  );
   await env.admin.query(
     `GRANT prsystem_worker TO ${OTHER_EXECUTOR} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
   );
@@ -580,6 +583,23 @@ describe('authorisation is bound to the credential, not to a claim', () => {
   });
 });
 
+/** Runs one statement as the table owner, where the trigger and CHECKs apply. */
+async function asOwner(sql: string, values: unknown[] = []): Promise<unknown> {
+  const client = await env.admin.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL]);
+    const result = await client.query(sql, values);
+    await client.query('ROLLBACK');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 describe('terminal jobs and their evidence are frozen', () => {
   it('refuses to rewrite the finish time of a completed job', async () => {
     const id = await issue();
@@ -588,10 +608,16 @@ describe('terminal jobs and their evidence are frozen', () => {
       q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
     );
 
+    // The worker has no UPDATE at all now, so it is refused on the grant …
     await expect(
       attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
         q(`UPDATE platform.job_run SET finished_at = now() WHERE job_run_id = $1`, [id]),
       ),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    // … and the freeze still holds for a principal that *can* write the table.
+    await expect(
+      asOwner(`UPDATE platform.job_run SET finished_at = now() WHERE job_run_id = $1`, [id]),
     ).rejects.toMatchObject({ code: '22023' });
   });
 
@@ -606,6 +632,10 @@ describe('terminal jobs and their evidence are frozen', () => {
       attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
         q(`UPDATE platform.job_run SET error_name = 'rewritten' WHERE job_run_id = $1`, [id]),
       ),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    await expect(
+      asOwner(`UPDATE platform.job_run SET error_name = 'rewritten' WHERE job_run_id = $1`, [id]),
     ).rejects.toMatchObject({ code: '22023' });
   });
 });
@@ -635,15 +665,207 @@ describe('bounded shapes', () => {
   });
 
   it('refuses an over-long error name', async () => {
+    // Exercised as the table owner: the worker cannot write the column at all
+    // now, so the CHECK would never be reached through it.
+    const id = await issue();
+    await expect(
+      asOwner(
+        `UPDATE platform.job_run SET state = 'failed', finished_at = now(), error_name = $2
+          WHERE job_run_id = $1`,
+        [id, 'e'.repeat(200)],
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+});
+
+describe('R7 — the role graph is validated at invocation time', () => {
+  const DUAL = 'prsystem_dual_role_login';
+  const OVERPRIVILEGED = 'prsystem_overprivileged_login';
+
+  it('refuses a login holding both Scheduler and Worker powers', async () => {
+    // Bootstrap normalises memberships, but nothing stopped an operator adding a
+    // second group afterwards: the functions trusted the graph as of the last
+    // bootstrap rather than as of the call.
+    await env.admin.query(`DROP ROLE IF EXISTS ${DUAL}`);
+    await env.admin.query(`CREATE ROLE ${DUAL} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`);
+    await env.admin.query(
+      `GRANT prsystem_job_scheduler TO ${DUAL} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+    await env.admin.query(
+      `GRANT prsystem_worker TO ${DUAL} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+    const dual = quietPool({ connectionString: env.db.loginUrl(DUAL), max: 1 }, 'dual');
+    try {
+      // It can reach both powers, which is the separation D-09 exists to make
+      // impossible. Issuing is refused …
+      await expect(
+        attempted(dual, {}, (q) =>
+          q('SELECT platform.schedule_maintenance_job($1, $2, $3)', [JOB_NAME, HOTEL, EXECUTOR]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+
+      // … and so is executing a job that a legitimate scheduler issued.
+      const id = await issue();
+      await expect(
+        attempted(dual, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await dual.end();
+      await env.admin.query(`DROP OWNED BY ${DUAL}`).catch(() => undefined);
+      await env.admin.query(`DROP ROLE IF EXISTS ${DUAL}`).catch(() => undefined);
+    }
+  }, 60000);
+
+  it('refuses a Worker login that also reaches a predefined role', async () => {
+    await env.admin.query(`DROP ROLE IF EXISTS ${OVERPRIVILEGED}`);
+    await env.admin.query(
+      `CREATE ROLE ${OVERPRIVILEGED} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`,
+    );
+    await env.admin.query(
+      `GRANT prsystem_worker TO ${OVERPRIVILEGED} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+    const over = quietPool({ connectionString: env.db.loginUrl(OVERPRIVILEGED), max: 1 }, 'over');
+    try {
+      // Issued while the login is still clean, then escalated. The execution
+      // check must see the graph as it is *now*, not as it was at issue time.
+      const id = await issue(HOTEL, OVERPRIVILEGED);
+      await env.admin.query(`GRANT pg_read_all_data TO ${OVERPRIVILEGED}`);
+      await expect(
+        attempted(over, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await over.end();
+      await env.admin.query(`DROP OWNED BY ${OVERPRIVILEGED}`).catch(() => undefined);
+      await env.admin.query(`DROP ROLE IF EXISTS ${OVERPRIVILEGED}`).catch(() => undefined);
+    }
+  }, 60000);
+
+  it('refuses to schedule for an executor that is over-privileged', async () => {
+    await env.admin.query(`DROP ROLE IF EXISTS ${OVERPRIVILEGED}`);
+    await env.admin.query(
+      `CREATE ROLE ${OVERPRIVILEGED} LOGIN PASSWORD '${TEST_LOGIN_PASSWORD}' INHERIT`,
+    );
+    await env.admin.query(
+      `GRANT prsystem_worker TO ${OVERPRIVILEGED} WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+    await env.admin.query(`ALTER ROLE ${OVERPRIVILEGED} BYPASSRLS`);
+    try {
+      await expect(
+        attempted(env.jobScheduler, {}, (q) =>
+          q('SELECT platform.schedule_maintenance_job($1, $2, $3)', [
+            JOB_NAME,
+            HOTEL,
+            OVERPRIVILEGED,
+          ]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await env.admin.query(`ALTER ROLE ${OVERPRIVILEGED} NOBYPASSRLS`).catch(() => undefined);
+      await env.admin.query(`DROP OWNED BY ${OVERPRIVILEGED}`).catch(() => undefined);
+      await env.admin.query(`DROP ROLE IF EXISTS ${OVERPRIVILEGED}`).catch(() => undefined);
+    }
+  }, 60000);
+
+  it('still accepts the canonical principals', async () => {
+    // The positive control: the checks above must reject drift, not everything.
+    const id = await issue();
+    await seedExpired('idem_invocation_control');
+    const result = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+      q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
+    );
+    expect(Number(result.rows[0]?.['deleted'])).toBeGreaterThan(0);
+  }, 60000);
+});
+
+describe('R7 — a Worker cannot forge job completion', () => {
+  it("cannot terminalize another Worker login's ordinary job", async () => {
+    // Created *by* the other login, so its identity is genuine rather than
+    // something this test reassigned — job_identity is immutable anyway.
+    const other = quietPool(
+      { connectionString: env.db.loginUrl(OTHER_EXECUTOR), max: 1 },
+      'other-worker',
+    );
+    try {
+      const id = await committed(other, { actor: WORKER_ACTOR, realm: 'hotel' }, async (q) => {
+        const row = await q('SELECT platform.begin_worker_job($1, $2)::text AS id', [
+          'platform.projection.other_login',
+          HOTEL,
+        ]);
+        return String(row.rows[0]?.['id']);
+      });
+
+      // Direct UPDATE is refused on the grant …
+      await expect(
+        attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q(
+            `UPDATE platform.job_run SET state = 'succeeded', finished_at = now()
+              WHERE job_run_id = $1`,
+            [id],
+          ),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+
+      // … and the narrow function refuses it too, because the job is not this
+      // principal's. Without this, revoking UPDATE would only move the hole.
+      await expect(
+        attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+          q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+
+      const state = await env.admin.query<{ state: string }>(
+        `SELECT state FROM platform.job_run WHERE job_run_id = $1`,
+        [id],
+      );
+      expect(state.rows[0]?.state).toBe('running');
+    } finally {
+      await other.end();
+    }
+  }, 60000);
+
+  it('cannot mark a privileged job succeeded without running its maintenance function', async () => {
     const id = await issue();
     await expect(
       attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
         q(
-          `UPDATE platform.job_run SET state = 'failed', finished_at = now(), error_name = $2
+          `UPDATE platform.job_run SET state = 'succeeded', finished_at = now()
             WHERE job_run_id = $1`,
-          [id, 'e'.repeat(200)],
+          [id],
         ),
       ),
-    ).rejects.toMatchObject({ code: '23514' });
-  });
+    ).rejects.toMatchObject({ code: '42501' });
+
+    const state = await env.admin.query<{ state: string }>(
+      `SELECT state FROM platform.job_run WHERE job_run_id = $1`,
+      [id],
+    );
+    expect(state.rows[0]?.state).toBe('running');
+  }, 60000);
+
+  it('can finish its own ordinary job through the narrow function', async () => {
+    // The positive control: ordinary transitions remain possible, through a
+    // path that records who did them.
+    const id = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, async (q) => {
+      const row = await q('SELECT platform.begin_worker_job($1, $2)::text AS id', [
+        'platform.projection.own_job',
+        HOTEL,
+      ]);
+      return String(row.rows[0]?.['id']);
+    });
+
+    await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+      q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
+    );
+
+    const state = await env.admin.query<Record<string, unknown>>(
+      `SELECT state, finished_at FROM platform.job_run WHERE job_run_id = $1`,
+      [id],
+    );
+    expect(state.rows[0]?.['state']).toBe('succeeded');
+    expect(state.rows[0]?.['finished_at']).not.toBeNull();
+  }, 60000);
 });

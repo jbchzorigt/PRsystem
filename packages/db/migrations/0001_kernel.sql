@@ -1200,6 +1200,10 @@ BEGIN
     RAISE EXCEPTION 'maintenance requires a running job identity' USING ERRCODE = '22023';
   END IF;
 
+  -- The executing principal must still be a Worker-only login. Validated here,
+  -- not merely when the job was issued: a login can acquire reach in between.
+  PERFORM platform.assert_exact_role_closure(session_user, 'prsystem_worker');
+
   -- FOR UPDATE, and only a *running* job of exactly this kind belonging to this
   -- tenant. The lock is what makes two concurrent invocations sharing one job
   -- impossible: the second waits, then finds the job no longer running.
@@ -1384,15 +1388,13 @@ GRANT SELECT ON platform.job_run, platform.export_artifact TO prsystem_api;
 --> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON platform.export_artifact TO prsystem_worker;
 --> statement-breakpoint
--- Column-scoped, not table-wide. The worker records how its own job ended; it
--- cannot restate which job it was or whose identity it ran under, which is what
--- platform.maintenance_expire_idempotency_keys authorises on.
--- No INSERT. Job rows are created only by platform.begin_worker_job (ordinary
--- jobs) or platform.schedule_maintenance_job (privileged, scheduler-only), so a
--- worker cannot mint its own maintenance authorisation.
+-- Read only. No INSERT: job rows come from platform.begin_worker_job (ordinary)
+-- or platform.schedule_maintenance_job (privileged, scheduler-only). No UPDATE
+-- either: column-scoping stopped the worker restating *which* job a row was, and
+-- still let it mark any tenant-visible row succeeded — another Worker's job
+-- included, and a privileged job whose maintenance function had never run.
+-- Ordinary transitions go through platform.finish_worker_job.
 GRANT SELECT ON platform.job_run TO prsystem_worker;
---> statement-breakpoint
-GRANT UPDATE (state, finished_at, error_name, as_of) ON platform.job_run TO prsystem_worker;
 --> statement-breakpoint
 GRANT SELECT ON platform.projection_checkpoint, platform.projection_freshness
   TO prsystem_api, prsystem_worker;
@@ -1473,6 +1475,87 @@ GRANT EXECUTE ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid) TO 
 --> statement-breakpoint
 
 -- ------------------------------------------------- D-09 scheduler boundary
+
+-- Exact role-closure validation, evaluated when a privileged function is
+-- *called* rather than when the cluster was last bootstrapped.
+--
+-- Bootstrap normalises memberships, but nothing stops an operator granting a
+-- second group afterwards. A function that trusted the graph as of the last
+-- bootstrap would happily accept a login that had since become both Scheduler
+-- and Worker — which is precisely the separation D-09 exists to create.
+CREATE OR REPLACE FUNCTION platform.assert_exact_role_closure(
+  p_login text,
+  p_group text
+) RETURNS void
+  LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_oid oid;
+  r record;
+BEGIN
+  SELECT oid INTO v_oid FROM pg_roles WHERE rolname = p_login;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'principal % does not exist', p_login USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE oid = v_oid AND rolcanlogin) THEN
+    RAISE EXCEPTION 'principal % is not a LOGIN role', p_login USING ERRCODE = '42501';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_roles
+     WHERE oid = v_oid
+       AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION 'principal % holds a privileged attribute', p_login USING ERRCODE = '42501';
+  END IF;
+
+  -- Exactly one direct membership, in the expected group, with exact options.
+  IF (SELECT count(*) FROM pg_auth_members WHERE member = v_oid) <> 1 THEN
+    RAISE EXCEPTION 'principal % must hold exactly one group membership', p_login
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_auth_members am
+      JOIN pg_roles g ON g.oid = am.roleid
+     WHERE am.member = v_oid
+       AND g.rolname = p_group
+       AND am.admin_option = false
+       AND am.inherit_option = true
+       AND am.set_option = true
+  ) THEN
+    RAISE EXCEPTION
+      'principal % must be a member of % with exactly ADMIN FALSE, INHERIT TRUE, SET TRUE',
+      p_login, p_group USING ERRCODE = '42501';
+  END IF;
+
+  -- And nothing else is reachable: no second project group, no predefined role,
+  -- no ADMIN OPTION anywhere in the closure.
+  FOR r IN
+    SELECT g.rolname AS reached
+      FROM pg_roles g
+     WHERE g.rolname <> p_login
+       AND g.rolname <> p_group
+       AND pg_has_role(v_oid, g.oid, 'MEMBER')
+  LOOP
+    RAISE EXCEPTION 'principal % unexpectedly reaches %', p_login, r.reached
+      USING ERRCODE = '42501';
+  END LOOP;
+
+  IF EXISTS (SELECT 1 FROM pg_auth_members WHERE member = v_oid AND admin_option) THEN
+    RAISE EXCEPTION 'principal % holds ADMIN OPTION', p_login USING ERRCODE = '42501';
+  END IF;
+END;
+$$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.assert_exact_role_closure(text, text) OWNER TO prsystem_maintenance_fn;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.assert_exact_role_closure(text, text) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.assert_exact_role_closure(text, text)
+  TO prsystem_job_scheduler, prsystem_worker;
+--> statement-breakpoint
 -- Issuing a privileged maintenance job and executing one are different powers
 -- held by different credentials. The scheduler can create an authorisation but
 -- cannot act on it; the worker can act on an authorisation but cannot create
@@ -1525,19 +1608,12 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- The executor is a real, server-validated Worker principal: a login that
-  -- exists and is a member of prsystem_worker. A free-text executor identity
-  -- would let a scheduler address a job to something that can never run it, or
-  -- to a name a compromised credential could later adopt.
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_roles r
-     WHERE r.rolname = p_executor_identity
-       AND r.rolcanlogin
-       AND pg_has_role(r.oid, 'prsystem_worker'::regrole::oid, 'MEMBER')
-  ) THEN
-    RAISE EXCEPTION 'executor % is not a Worker login principal', p_executor_identity
-      USING ERRCODE = '42501';
-  END IF;
+  -- Both principals are validated exactly, now, at invocation time: the caller
+  -- must be a Scheduler-only login and the named executor a Worker-only login.
+  -- Membership alone is not enough — a login holding both groups could issue a
+  -- job and then execute it, which is the whole separation D-09 creates.
+  PERFORM platform.assert_exact_role_closure(session_user, 'prsystem_job_scheduler');
+  PERFORM platform.assert_exact_role_closure(p_executor_identity, 'prsystem_worker');
 
   -- Every authorisation-bearing column is written here, server-side. The caller
   -- supplies only the scope and the executor it is delegating to.
@@ -1613,6 +1689,65 @@ BEGIN
   RETURN v_job_id;
 END;
 $$;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION platform.finish_worker_job(
+  p_job_run_id  uuid,
+  p_state       text,
+  p_error_name  text DEFAULT NULL
+) RETURNS void
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_job platform.job_run;
+BEGIN
+  IF platform.current_realm() IS NULL THEN
+    RAISE EXCEPTION 'finishing a job requires an established transaction context'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_state IS DISTINCT FROM 'succeeded' AND p_state IS DISTINCT FROM 'failed' THEN
+    RAISE EXCEPTION 'a job may only finish as succeeded or failed' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_job FROM platform.job_run
+   WHERE job_run_id = p_job_run_id AND hotel_id = platform.current_hotel_id()
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no job_run % for this tenant', p_job_run_id USING ERRCODE = '22023';
+  END IF;
+
+  -- The job belongs to the authenticated principal, not to whoever holds a
+  -- connection. Column-scoped UPDATE on job_run still let any Worker terminalize
+  -- any tenant-visible row, including another Worker's.
+  IF v_job.job_identity IS DISTINCT FROM session_user THEN
+    RAISE EXCEPTION 'job % is assigned to %, not to %',
+      p_job_run_id, v_job.job_identity, session_user USING ERRCODE = '42501';
+  END IF;
+
+  -- The privileged namespace terminalises only inside its own audited
+  -- maintenance function, after the business effect and the audit record have
+  -- both succeeded in that transaction.
+  IF v_job.job_name LIKE 'platform.maintenance.%' THEN
+    RAISE EXCEPTION
+      'job % is a privileged maintenance job; it completes only through its maintenance function',
+      p_job_run_id USING ERRCODE = '42501';
+  END IF;
+
+  IF v_job.state IS DISTINCT FROM 'running' THEN
+    RAISE EXCEPTION 'job % is already %', p_job_run_id, v_job.state USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE platform.job_run
+     SET state = p_state, finished_at = pg_catalog.now(), error_name = p_error_name
+   WHERE job_run_id = p_job_run_id;
+END;
+$$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.finish_worker_job(uuid, text, text) OWNER TO prsystem_maintenance_fn;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.finish_worker_job(uuid, text, text) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.finish_worker_job(uuid, text, text) TO prsystem_worker;
 --> statement-breakpoint
 
 ALTER FUNCTION platform.begin_worker_job(text, uuid) OWNER TO prsystem_maintenance_fn;

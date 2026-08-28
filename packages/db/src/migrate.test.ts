@@ -459,7 +459,9 @@ describe('schema fingerprint sensitivity', () => {
     // The table-level ACL is unchanged here: only the column list narrows.
     const before = await schemaFingerprint(pool);
 
-    await pool.query(`REVOKE UPDATE (as_of) ON platform.job_run FROM prsystem_worker`);
+    // The remaining column-scoped grant: the maintenance definer may set only
+    // the three columns that record how its own job ended.
+    await pool.query(`REVOKE UPDATE (error_name) ON platform.job_run FROM prsystem_maintenance_fn`);
 
     expect(await schemaFingerprint(pool)).not.toBe(before);
   }, 60000);

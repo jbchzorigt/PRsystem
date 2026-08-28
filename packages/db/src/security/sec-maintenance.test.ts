@@ -120,6 +120,14 @@ async function seedJob(jobName = JOB_NAME, identity = EXECUTOR, hotel = HOTEL): 
   }
 }
 
+/** Starts an ordinary, non-privileged job as the worker principal. */
+async function beginOrdinaryJob(jobName: string): Promise<string> {
+  return committed({}, async (q) => {
+    const row = await q('SELECT platform.begin_worker_job($1, $2)::text AS id', [jobName, HOTEL]);
+    return String(row.rows[0]?.['id']);
+  });
+}
+
 /**
  * A job row that did not come from the scheduler, created with the superuser
  * connection. Used only to prove the execution function refuses it.
@@ -399,10 +407,16 @@ describe('a successful run is accountable and atomic', () => {
       const pidB = (await b.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
       expect(pidA).not.toBe(pidB);
 
-      // A locks the real, committed job row.
-      await a.query('SELECT job_run_id FROM platform.job_run WHERE job_run_id = $1 FOR UPDATE', [
-        job,
-      ]);
+      // A takes the row lock the only way a Worker can: by invoking the
+      // maintenance function, which locks the job row FOR UPDATE inside itself.
+      // A direct `SELECT ... FOR UPDATE` would need an UPDATE privilege the
+      // worker no longer holds, and taking the lock through the real path is
+      // the more faithful test anyway.
+      const applied = await a.query(
+        'SELECT * FROM platform.maintenance_expire_idempotency_keys($1)',
+        [job],
+      );
+      expect(Number(applied.rows[0]?.['deleted'])).toBeGreaterThan(0);
 
       // B submits the maintenance function and blocks inside it.
       const bResult = b
@@ -431,12 +445,7 @@ describe('a successful run is accountable and atomic', () => {
         await new Promise((r) => setTimeout(r, 25));
       }
 
-      // Only now does A do the work and commit.
-      const applied = await a.query(
-        'SELECT * FROM platform.maintenance_expire_idempotency_keys($1)',
-        [job],
-      );
-      expect(Number(applied.rows[0]?.['deleted'])).toBeGreaterThan(0);
+      // Only now does A commit, releasing the lock B is queued on.
       await a.query('COMMIT');
 
       // B resumes, and loses for exactly the expected reason.
@@ -556,15 +565,13 @@ describe('job_run state integrity', () => {
   }
 
   it('lets the worker record how its own job ended', async () => {
-    // The positive control. Without it, every refusal below could be explained
-    // by the worker having lost the ability to write job rows at all.
-    const id = await seedJob();
+    // Through the narrow function: the worker holds no UPDATE on job_run.
+    // Without this control, every refusal below could be explained by the
+    // worker having lost the ability to finish a job at all.
+    const id = await beginOrdinaryJob('platform.projection.own_finish');
 
     await committed({}, (q) =>
-      q(
-        `UPDATE platform.job_run SET state = 'succeeded', finished_at = now() WHERE job_run_id = $1`,
-        [id],
-      ),
+      q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
     );
 
     const after = await readJob(id);
@@ -573,14 +580,10 @@ describe('job_run state integrity', () => {
   });
 
   it('lets the worker record a failure with an error name', async () => {
-    const id = await seedJob();
+    const id = await beginOrdinaryJob('platform.projection.own_failure');
 
     await committed({}, (q) =>
-      q(
-        `UPDATE platform.job_run SET state = 'failed', finished_at = now(), error_name = $2
-          WHERE job_run_id = $1`,
-        [id, 'SomeError'],
-      ),
+      q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'failed', 'SomeError']),
     );
 
     expect((await readJob(id))['state']).toBe('failed');
@@ -622,15 +625,18 @@ describe('job_run state integrity', () => {
   });
 
   it('refuses to return a terminal job to running', async () => {
-    // The replay path: finish a job, then reset it so the maintenance function
-    // accepts it a second time.
-    const id = await seedJob();
+    // The replay path: finish a job, then reset it. The worker cannot write the
+    // table at all, and the narrow function refuses a job that is not running.
+    const id = await beginOrdinaryJob('platform.projection.replay_probe');
     await committed({}, (q) =>
-      q(
-        `UPDATE platform.job_run SET state = 'succeeded', finished_at = now() WHERE job_run_id = $1`,
-        [id],
-      ),
+      q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
     );
+
+    await expect(
+      attempted({}, (q) =>
+        q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
+      ),
+    ).rejects.toMatchObject({ code: '22023' });
 
     await expect(
       attempted({}, (q) =>
@@ -639,36 +645,31 @@ describe('job_run state integrity', () => {
           [id],
         ),
       ),
-    ).rejects.toMatchObject({ code: '22023' });
+    ).rejects.toMatchObject({ code: '42501' });
 
     expect((await readJob(id))['state']).toBe('succeeded');
   });
 
   it('refuses to flip one terminal state to the other', async () => {
-    const id = await seedJob();
+    const id = await beginOrdinaryJob('platform.projection.flip_probe');
     await committed({}, (q) =>
-      q(`UPDATE platform.job_run SET state = 'failed', finished_at = now() WHERE job_run_id = $1`, [
-        id,
-      ]),
+      q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'failed', 'SomeError']),
     );
 
     await expect(
       attempted({}, (q) =>
-        q(`UPDATE platform.job_run SET state = 'succeeded' WHERE job_run_id = $1`, [id]),
+        q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'succeeded', null]),
       ),
     ).rejects.toMatchObject({ code: '22023' });
   });
 
   it('refuses an unknown state', async () => {
-    const id = await seedJob();
+    const id = await beginOrdinaryJob('platform.projection.state_probe');
     await expect(
       attempted({}, (q) =>
-        q(`UPDATE platform.job_run SET state = 'cancelled' WHERE job_run_id = $1`, [id]),
+        q('SELECT platform.finish_worker_job($1, $2, $3)', [id, 'cancelled', null]),
       ),
-      // The table check constraint and the transition guard both reject it.
-    ).rejects.toMatchObject({
-      code: expect.stringMatching(/^(22023|23514)$/) as unknown as string,
-    });
+    ).rejects.toMatchObject({ code: '22023' });
   });
 });
 

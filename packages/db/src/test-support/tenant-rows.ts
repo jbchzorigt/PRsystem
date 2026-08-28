@@ -85,10 +85,11 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.job_run',
-    // D-09: no runtime holds INSERT. Ordinary job rows come from
-    // platform.begin_worker_job, privileged ones from
-    // platform.schedule_maintenance_job, which only the scheduler may execute.
-    grants: { api: ['SELECT'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // D-09: no runtime holds INSERT or UPDATE. Rows come from
+    // platform.begin_worker_job (ordinary) or platform.schedule_maintenance_job
+    // (privileged, scheduler-only); transitions go through
+    // platform.finish_worker_job or the audited maintenance function.
+    grants: { api: ['SELECT'], worker: ['SELECT'], police: [] },
     insert: (hotelId, n) => ({
       // Shapes matter here: job_name and job_identity carry bounded CHECK
       // constraints, so the fixture builds values a real caller could.
