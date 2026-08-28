@@ -1,4 +1,8 @@
 import { execFileSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+
+/** The repository root, where docker-compose.yml lives. */
+const COMPOSE_ROOT = resolve(dirname(__filename), '..', '..', '..', '..');
 
 /**
  * A deterministic, normalized `pg_dump --schema-only` of one database.
@@ -67,16 +71,43 @@ export function schemaDump(options: DumpOptions): string {
   return normalizeDump(raw, options.database);
 }
 
-/** The container running the pinned PostgreSQL, discovered once. */
+/**
+ * The container running this project's pinned PostgreSQL.
+ *
+ * Resolved through the Compose project's `postgres` service, never by scanning
+ * for the first container whose *name* happens to contain "postgres". A
+ * developer machine can easily be running an unrelated `hotel-platform-postgres`
+ * or somebody else's database container, and dumping — or worse, executing
+ * against — a stranger's container is not a mistake a test suite should be able
+ * to make.
+ *
+ * `PRSYSTEM_POSTGRES_CONTAINER` overrides it with an explicit id, which is
+ * verified to exist before it is used.
+ */
 export function pinnedContainer(): string {
-  const name = execFileSync(
-    'docker',
-    ['ps', '--filter', 'name=postgres', '--format', '{{.Names}}'],
-    { encoding: 'utf8' },
-  )
+  const explicit = process.env['PRSYSTEM_POSTGRES_CONTAINER'];
+  if (explicit !== undefined && explicit.length > 0) {
+    const found = execFileSync('docker', ['ps', '-q', '--no-trunc', '--filter', `id=${explicit}`], {
+      encoding: 'utf8',
+    }).trim();
+    if (found.length === 0) {
+      throw new Error(`PRSYSTEM_POSTGRES_CONTAINER=${explicit} is not a running container`);
+    }
+    return explicit;
+  }
+
+  const id = execFileSync('docker', ['compose', 'ps', '-q', 'postgres'], {
+    encoding: 'utf8',
+    cwd: COMPOSE_ROOT,
+  })
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)[0];
-  if (name === undefined) throw new Error('no running PostgreSQL container found');
-  return name;
+
+  if (id === undefined) {
+    throw new Error(
+      'the PRsystem compose `postgres` service is not running; start it with `pnpm run compose:up`',
+    );
+  }
+  return id;
 }

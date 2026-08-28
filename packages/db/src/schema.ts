@@ -161,6 +161,40 @@ export const operationalAlert = platform.table('operational_alert', {
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 });
 
+/**
+ * The two append-only audit streams. Declared as their root partitioned tables:
+ * the partitions themselves are created by
+ * `platform.ensure_month_partitions`, which is SQL-only territory and is
+ * covered by the normalized dump rather than by this declaration.
+ */
+export const platformEvent = auditSchema.table('platform_event', {
+  eventId: uuid('event_id').notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  realm: text('realm').notNull(),
+  action: text('action').notNull(),
+  outcome: text('outcome').notNull(),
+  actorRef: text('actor_ref'),
+  hotelId: uuid('hotel_id'),
+  targetType: text('target_type'),
+  targetRef: text('target_ref'),
+  reason: text('reason'),
+  correlationId: text('correlation_id'),
+  causationId: text('causation_id'),
+  payload: jsonb('payload').notNull(),
+});
+
+export const securityEvent = policeAudit.table('security_event', {
+  eventId: uuid('event_id').notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  action: text('action').notNull(),
+  outcome: text('outcome').notNull(),
+  actorRef: text('actor_ref'),
+  caseRef: text('case_ref'),
+  reason: text('reason'),
+  correlationId: text('correlation_id'),
+  payload: jsonb('payload').notNull(),
+});
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -175,4 +209,6 @@ export const DECLARED_TABLES = [
   internalGate,
   featureFlag,
   operationalAlert,
+  platformEvent,
+  securityEvent,
 ] as const;

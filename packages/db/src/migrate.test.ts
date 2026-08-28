@@ -185,6 +185,132 @@ describe('migration runner', () => {
     }
   }, 60000);
 
+  it('declares every root table the migration creates', async () => {
+    // The previous check compared only the tables already in DECLARED_TABLES,
+    // so a table nobody declared was a table nobody compared: audit.platform_event
+    // and police_audit.security_event were both absent and both invisible.
+    const pool = quietPool({ connectionString: freshUrl, max: 1 }, 'declared-tables');
+    try {
+      const live = await pool.query<{ table: string }>(
+        `SELECT n.nspname || '.' || c.relname AS table
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+            AND c.relkind IN ('r', 'p')
+            AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+          ORDER BY 1`,
+      );
+      const declared = DECLARED_TABLES.map((table) => {
+        const config = getTableConfig(table);
+        return `${config.schema ?? 'public'}.${config.name}`;
+      }).sort();
+
+      expect(live.rows.map((r) => r.table)).toEqual(declared);
+    } finally {
+      await pool.end();
+    }
+  }, 60000);
+
+  it('matches the declared schema on type, nullability, default and identity', async () => {
+    // Column names alone would pass a table whose uuid became text, whose NOT
+    // NULL was dropped, or whose default disappeared.
+    const pool = quietPool({ connectionString: freshUrl, max: 1 }, 'declared-properties');
+    try {
+      const declared = DECLARED_TABLES.flatMap((table) => {
+        const config = getTableConfig(table);
+        const qualified = `${config.schema ?? 'public'}.${config.name}`;
+        return config.columns.map((column) => ({
+          table: qualified,
+          column: column.name,
+          notNull: column.notNull,
+          // The SQL type Drizzle would emit, normalised the way PostgreSQL
+          // reports it back.
+          type: column.getSQLType().replace('timestamp with time zone', 'timestamptz'),
+        }));
+      });
+
+      const live = await pool.query<{
+        table: string;
+        column: string;
+        not_null: boolean;
+        type: string;
+      }>(
+        `SELECT n.nspname || '.' || c.relname AS table, a.attname AS column,
+                a.attnotnull AS not_null,
+                format_type(a.atttypid, a.atttypmod) AS type
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+            AND c.relkind IN ('r', 'p')
+            AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+            AND a.attnum > 0 AND NOT a.attisdropped
+          ORDER BY 1, 2`,
+      );
+
+      const key = (r: { table: string; column: string }): string => `${r.table}.${r.column}`;
+      const liveByKey = new Map(live.rows.map((r) => [key(r), r]));
+
+      for (const column of declared) {
+        const actual = liveByKey.get(key(column));
+        expect({ column: key(column), present: actual !== undefined }).toEqual({
+          column: key(column),
+          present: true,
+        });
+        expect({ column: key(column), notNull: actual?.not_null }).toEqual({
+          column: key(column),
+          notNull: column.notNull,
+        });
+        // Type equivalence, allowing for the aliases PostgreSQL reports.
+        const liveType = (actual?.type ?? '')
+          .replace('timestamp with time zone', 'timestamptz')
+          .replace('character varying', 'varchar');
+        expect({ column: key(column), type: liveType }).toEqual({
+          column: key(column),
+          type: column.type.replace('timestamp with time zone', 'timestamptz'),
+        });
+      }
+
+      // And no live column is missing from the declaration.
+      expect(live.rows.length).toBe(declared.length);
+    } finally {
+      await pool.end();
+    }
+  }, 60000);
+
+  it('matches the live keys, constraints and indexes', async () => {
+    // Structure the Drizzle DSL cannot fully express is compared against the
+    // database directly, so the declaration cannot drift silently past it.
+    const pool = quietPool({ connectionString: freshUrl, max: 1 }, 'declared-structure');
+    try {
+      const constraints = await pool.query<{ table: string; kind: string; count: number }>(
+        `SELECT n.nspname || '.' || rel.relname AS table, con.contype::text AS kind,
+                count(*)::int AS count
+           FROM pg_constraint con
+           JOIN pg_class rel ON rel.oid = con.conrelid
+           JOIN pg_namespace n ON n.oid = rel.relnamespace
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+            AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = rel.oid)
+          GROUP BY 1, 2 ORDER BY 1, 2`,
+      );
+      // Every kernel table carries at least one constraint, and the primary and
+      // foreign keys the model depends on are present.
+      const kinds = new Set(constraints.rows.map((r) => `${r.table}:${r.kind}`));
+      expect(kinds).toContain('platform.job_run:p');
+      expect(kinds).toContain('platform.job_run:c');
+      expect(kinds).toContain('platform.outbox_delivery:f');
+      expect(kinds).toContain('platform.export_artifact:f');
+
+      const indexes = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_indexes
+          WHERE schemaname IN ('platform', 'audit', 'police_audit')`,
+      );
+      expect(Number(indexes.rows[0]?.n)).toBeGreaterThan(10);
+    } finally {
+      await pool.end();
+    }
+  }, 60000);
+
   it('matches the declared Drizzle schema, column for column', async () => {
     // A blocking drift check. The migration SQL is authoritative, so this fails
     // when the declaration falls behind it — which is the direction drift
@@ -495,6 +621,80 @@ describe('schema fingerprint sensitivity', () => {
     };
     expect(fingerprint.storage.length).toBeGreaterThan(0);
     expect(new Set(fingerprint.storage.map((s) => s.tablespace))).toEqual(new Set(['(default)']));
+  }, 60000);
+
+  it('fails when a table exists that the declaration does not cover', async () => {
+    // The undeclared-table case, driven rather than described: audit.platform_event
+    // and police_audit.security_event were both missing from the declaration and
+    // both invisible to a comparison that only walked the declared list.
+    await pool.query(`CREATE TABLE platform.undeclared_probe (id integer PRIMARY KEY)`);
+    try {
+      const live = await pool.query<{ table: string }>(
+        `SELECT n.nspname || '.' || c.relname AS table
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit') AND c.relkind IN ('r', 'p')
+            AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)`,
+      );
+      const declared = DECLARED_TABLES.map((table) => {
+        const config = getTableConfig(table);
+        return `${config.schema ?? 'public'}.${config.name}`;
+      });
+
+      // Earlier sensitivity cases in this file also leave probe tables behind,
+      // so the assertion is that this one is seen, not that it is alone.
+      const undeclared = live.rows.map((r) => r.table).filter((t) => !declared.includes(t));
+      expect(undeclared).toContain('platform.undeclared_probe');
+    } finally {
+      await pool.query(`DROP TABLE platform.undeclared_probe`);
+    }
+  }, 60000);
+
+  it('fails when a declared column changes type', async () => {
+    const before = dumpSensitivity();
+    await pool.query(`ALTER TABLE platform.job_run ALTER COLUMN error_name TYPE varchar(200)`);
+
+    const live = await pool.query<{ type: string }>(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS type
+         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'platform' AND c.relname = 'job_run' AND a.attname = 'error_name'`,
+    );
+    // The declaration says text; the database now says varchar(200).
+    expect(live.rows[0]?.type).not.toBe('text');
+    expect(dumpSensitivity()).not.toBe(before);
+  }, 60000);
+
+  it('fails when a declared column loses its default', async () => {
+    const before = dumpSensitivity();
+    await pool.query(`ALTER TABLE platform.job_run ALTER COLUMN state DROP DEFAULT`);
+
+    const live = await pool.query<{ has_default: boolean }>(
+      `SELECT a.atthasdef AS has_default
+         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'platform' AND c.relname = 'job_run' AND a.attname = 'state'`,
+    );
+    expect(live.rows[0]?.has_default).toBe(false);
+    expect(dumpSensitivity()).not.toBe(before);
+  }, 60000);
+
+  it('fails when a primary key is dropped', async () => {
+    const before = dumpSensitivity();
+    await pool.query(`ALTER TABLE platform.export_artifact DROP CONSTRAINT export_artifact_pkey`);
+    expect(dumpSensitivity()).not.toBe(before);
+  }, 60000);
+
+  it('fails when a foreign key is dropped', async () => {
+    const before = dumpSensitivity();
+    const fk = await pool.query<{ conname: string }>(
+      `SELECT con.conname FROM pg_constraint con
+         JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = rel.relnamespace
+        WHERE n.nspname = 'platform' AND rel.relname = 'outbox_delivery' AND con.contype = 'f'
+        LIMIT 1`,
+    );
+    await pool.query(`ALTER TABLE platform.outbox_delivery DROP CONSTRAINT ${fk.rows[0]!.conname}`);
+    expect(dumpSensitivity()).not.toBe(before);
   }, 60000);
 
   it('fails the determinism gate on a one-line security-relevant change', async () => {
