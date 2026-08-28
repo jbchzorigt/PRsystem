@@ -211,6 +211,89 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     liveIndexes.map((i) => ({ key: `${i.table}.${i.name}`, value: i.definition })),
   );
 
+  // ---------------------------------------------------- identity sequences
+  const liveIdentity = (
+    await pool.query<{ table: string; column: string; sequence: string; shape: string }>(
+      `SELECT n.nspname || '.' || t.relname AS table, a.attname AS column,
+              sn.nspname || '.' || sc.relname AS sequence,
+              'start ' || s.seqstart || ' | increment ' || s.seqincrement ||
+              ' | min ' || s.seqmin || ' | max ' || s.seqmax ||
+              ' | cache ' || s.seqcache ||
+              CASE WHEN s.seqcycle THEN ' | cycle' ELSE ' | no cycle' END AS shape
+         FROM pg_attribute a
+         JOIN pg_class t ON t.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+         JOIN pg_depend d ON d.refobjid = t.oid AND d.refobjsubid = a.attnum
+              AND d.classid = 'pg_class'::regclass AND d.deptype = 'i'
+         JOIN pg_class sc ON sc.oid = d.objid AND sc.relkind = 'S'
+         JOIN pg_namespace sn ON sn.oid = sc.relnamespace
+         JOIN pg_sequence s ON s.seqrelid = sc.oid
+        WHERE a.attidentity <> '' AND n.nspname = ANY($1)
+        ORDER BY 1, 2`,
+      [schemas],
+    )
+  ).rows;
+  compareSets(
+    differences,
+    'identity-sequence',
+    EXPECTED_SCHEMA_SNAPSHOT.identitySequences.map((entry) => ({
+      key: `${entry.table}.${entry.column}`,
+      value: `${entry.sequence} | ${entry.shape}`,
+    })),
+    liveIdentity.map((entry) => ({
+      key: `${entry.table}.${entry.column}`,
+      value: `${entry.sequence} | ${entry.shape}`,
+    })),
+  );
+
+  // ------------------------------------------------------------------- RLS
+  const liveRls = (
+    await pool.query<{ table: string; enabled: boolean; forced: boolean }>(
+      `SELECT n.nspname || '.' || c.relname AS table,
+              c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1) AND c.relkind IN ('r', 'p')
+          AND (c.relrowsecurity OR c.relforcerowsecurity)
+        ORDER BY 1`,
+      [schemas],
+    )
+  ).rows;
+  compareSets(
+    differences,
+    'rls',
+    EXPECTED_SCHEMA_SNAPSHOT.rls.map((entry) => ({
+      key: entry.table,
+      value: `enabled ${String(entry.enabled)} | forced ${String(entry.forced)}`,
+    })),
+    liveRls.map((entry) => ({
+      key: entry.table,
+      value: `enabled ${String(entry.enabled)} | forced ${String(entry.forced)}`,
+    })),
+  );
+
+  // -------------------------------------------------------------- policies
+  const livePolicies = (
+    await pool.query<{ table: string; name: string; definition: string }>(
+      `SELECT schemaname || '.' || tablename AS table, policyname AS name,
+              'AS ' || permissive || ' FOR ' || cmd ||
+              ' TO ' || array_to_string(roles, ', ') ||
+              coalesce(' USING (' || qual || ')', '') ||
+              coalesce(' WITH CHECK (' || with_check || ')', '') AS definition
+         FROM pg_policies WHERE schemaname = ANY($1)
+        ORDER BY 1, 2`,
+      [schemas],
+    )
+  ).rows;
+  compareSets(
+    differences,
+    'policy',
+    EXPECTED_SCHEMA_SNAPSHOT.policies.map((entry) => ({
+      key: `${entry.table}.${entry.name}`,
+      value: entry.definition,
+    })),
+    livePolicies.map((entry) => ({ key: `${entry.table}.${entry.name}`, value: entry.definition })),
+  );
+
   return differences;
 }
 

@@ -51,10 +51,37 @@ export interface IndexSnapshot {
   readonly definition: string;
 }
 
+/** An identity column's backing sequence, as PostgreSQL stores it. */
+export interface IdentitySequenceSnapshot {
+  readonly table: string;
+  readonly column: string;
+  readonly sequence: string;
+  /** `start … increment … min … max … cache … cycle` */
+  readonly shape: string;
+}
+
+/** Row level security enablement, per table. */
+export interface RlsSnapshot {
+  readonly table: string;
+  readonly enabled: boolean;
+  /** SQL-only: Drizzle 0.45.2 has no `FORCE ROW LEVEL SECURITY` form. */
+  readonly forced: boolean;
+}
+
+export interface PolicySnapshot {
+  readonly table: string;
+  readonly name: string;
+  /** `AS … FOR … TO … USING (…) WITH CHECK (…)` */
+  readonly definition: string;
+}
+
 export interface SchemaSnapshot {
   readonly columns: readonly ColumnSnapshot[];
   readonly constraints: readonly ConstraintSnapshot[];
   readonly indexes: readonly IndexSnapshot[];
+  readonly identitySequences: readonly IdentitySequenceSnapshot[];
+  readonly rls: readonly RlsSnapshot[];
+  readonly policies: readonly PolicySnapshot[];
 }
 
 export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
@@ -1088,6 +1115,67 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'security_event_pk',
       definition:
         'CREATE UNIQUE INDEX security_event_pk ON ONLY police_audit.security_event USING btree (occurred_at, event_id)',
+    },
+  ],
+  identitySequences: [
+    {
+      table: 'platform.outbox_event',
+      column: 'event_id',
+      sequence: 'platform.outbox_event_event_id_seq',
+      shape: 'start 1 | increment 1 | min 1 | max 9223372036854775807 | cache 1 | no cycle',
+    },
+  ],
+  rls: [
+    { table: 'platform.export_artifact', enabled: true, forced: true },
+    { table: 'platform.idempotency_key', enabled: true, forced: true },
+    { table: 'platform.inbox_consumption', enabled: true, forced: true },
+    { table: 'platform.job_run', enabled: true, forced: true },
+    { table: 'platform.outbox_delivery', enabled: true, forced: true },
+    { table: 'platform.outbox_event', enabled: true, forced: true },
+    { table: 'platform.provider_event', enabled: true, forced: true },
+  ],
+  policies: [
+    {
+      table: 'platform.export_artifact',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+    },
+    {
+      table: 'platform.idempotency_key',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+    },
+    {
+      table: 'platform.inbox_consumption',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+    },
+    {
+      table: 'platform.job_run',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+    },
+    {
+      table: 'platform.outbox_delivery',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+    },
+    {
+      table: 'platform.outbox_event',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+    },
+    {
+      table: 'platform.provider_event',
+      name: 'tenant_isolation',
+      definition:
+        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
     },
   ],
 };

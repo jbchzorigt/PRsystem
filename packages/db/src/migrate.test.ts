@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -1778,6 +1779,104 @@ describe('ownership manifest on upgrade', () => {
  * run stayed green. These cases run without a database, because the property is
  * about the declarations rather than about any deployment.
  */
+/**
+ * Shipped-schema mutations, applied to `schema.ts` itself.
+ *
+ * The declaration-mutation cases below alter a produced projection. These edit
+ * the real file, reload the module, and require `compareDeclarationToSnapshot()`
+ * to become non-empty — which is the property that actually protects the
+ * schema: a change a developer makes to `schema.ts` must not pass.
+ *
+ * The file is restored in `finally` and its bytes are compared afterwards, so a
+ * failing case cannot leave the repository modified.
+ */
+describe('a real edit to schema.ts is caught', () => {
+  const SCHEMA_PATH = resolve(__dirname, 'schema.ts');
+  const ORIGINAL = readFileSync(SCHEMA_PATH, 'utf8');
+
+  const EDITS = [
+    {
+      title: 'a foreign key loses its ON DELETE action',
+      find: ".onDelete('restrict')",
+      replace: '',
+    },
+    {
+      title: 'a check predicate is weakened',
+      find: "sql`(state = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text]))`",
+      replace:
+        "sql`(state = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text, 'any'::text]))`",
+    },
+    {
+      title: 'an index loses its descending order',
+      find: 'table.startedAt.desc().nullsFirst()',
+      replace: 'table.startedAt',
+    },
+    {
+      title: 'an index loses its partial predicate',
+      find: '.where(sql`resolved_at IS NULL`)',
+      replace: '',
+    },
+    {
+      title: 'the identity sequence gains a step',
+      find: '.generatedAlwaysAsIdentity()',
+      replace: '.generatedAlwaysAsIdentity({ increment: 2 })',
+    },
+    {
+      title: 'a table loses row level security',
+      find: '.enableRLS();',
+      replace: ';',
+    },
+    {
+      title: 'a tenant-isolation policy is weakened',
+      find: 'using: sql`(hotel_id = platform.current_hotel_id())`',
+      replace: 'using: sql`(true)`',
+    },
+    {
+      title: 'a column loses NOT NULL',
+      find: "jobName: text('job_name').notNull()",
+      replace: "jobName: text('job_name')",
+    },
+  ] as const;
+
+  afterAll(() => {
+    writeFileSync(SCHEMA_PATH, ORIGINAL, 'utf8');
+  });
+
+  for (const edit of EDITS) {
+    it(`reports ${edit.title}`, async () => {
+      expect(ORIGINAL).toContain(edit.find);
+      try {
+        writeFileSync(SCHEMA_PATH, ORIGINAL.replace(edit.find, edit.replace), 'utf8');
+        // A child process, not a dynamic import: the module graph in this
+        // worker has already loaded `schema.ts`, and re-importing it would
+        // compare the version held in memory rather than the edited file.
+        const probe = spawnSync(
+          'pnpm',
+          [
+            'exec',
+            'tsx',
+            '-e',
+            "import { compareDeclarationToSnapshot } from './src/schema-projection';" +
+              'const d = compareDeclarationToSnapshot();' +
+              'process.stdout.write(String(d.length));',
+          ],
+          { cwd: resolve(__dirname, '..'), encoding: 'utf8', timeout: 120000 },
+        );
+        // A thrown extractor (a parameterised fragment, say) is also a
+        // detection, but an empty diff is not.
+        const detected = probe.status !== 0 || Number(probe.stdout) > 0;
+        expect({ edit: edit.title, detected }).toEqual({ edit: edit.title, detected: true });
+      } finally {
+        writeFileSync(SCHEMA_PATH, ORIGINAL, 'utf8');
+      }
+    }, 60000);
+  }
+
+  it('leaves schema.ts byte-identical', () => {
+    expect(readFileSync(SCHEMA_PATH, 'utf8')).toBe(ORIGINAL);
+  });
+});
+
 describe('the Drizzle declaration and the canonical snapshot are bound together', () => {
   it('agrees with the snapshot as shipped', () => {
     expect(diffDeclarations(drizzleProjection(), EXPECTED_SCHEMA_SNAPSHOT)).toEqual([]);

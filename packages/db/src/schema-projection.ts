@@ -5,7 +5,10 @@ import type { SchemaSnapshot } from './schema-snapshot';
 import type { SchemaDifference } from './schema-difference';
 
 /** Only the parts of the snapshot this comparison reads. */
-export type SchemaSnapshotInput = Pick<SchemaSnapshot, 'columns' | 'constraints' | 'indexes'>;
+export type SchemaSnapshotInput = Pick<
+  SchemaSnapshot,
+  'columns' | 'constraints' | 'indexes' | 'identitySequences' | 'rls' | 'policies'
+>;
 
 /**
  * The Drizzle declaration, projected into the same vocabulary as the canonical
@@ -57,11 +60,32 @@ export interface ProjectedIndex {
   readonly definition: string;
 }
 
+export interface ProjectedIdentitySequence {
+  readonly table: string;
+  readonly column: string;
+  readonly sequence: string;
+  readonly shape: string;
+}
+
+export interface ProjectedRls {
+  readonly table: string;
+  readonly enabled: boolean;
+}
+
+export interface ProjectedPolicy {
+  readonly table: string;
+  readonly name: string;
+  readonly definition: string;
+}
+
 export interface SchemaProjection {
   readonly columns: readonly ProjectedColumn[];
   readonly constraints: readonly ProjectedConstraint[];
   /** Standalone indexes only; the ones a key creates are projected as constraints. */
   readonly indexes: readonly ProjectedIndex[];
+  readonly identitySequences: readonly ProjectedIdentitySequence[];
+  readonly rls: readonly ProjectedRls[];
+  readonly policies: readonly ProjectedPolicy[];
 }
 
 /** PostgreSQL's `pg_attribute.attidentity` letter for a Drizzle identity kind. */
@@ -80,9 +104,26 @@ function generatedLetter(_type: string | undefined): string {
   return 's';
 }
 
-/** Renders a `SQL` fragment as the text PostgreSQL would report. */
+/**
+ * Renders a `SQL` fragment as the text PostgreSQL would report.
+ *
+ * A parameterised fragment is refused. `sqlToQuery` returns the text with `$1`
+ * placeholders and the values separately, so two declarations differing only by
+ * a literal rendered identically and a value change was silent — in a generated
+ * expression, a check, an expression index or a partial predicate. A schema
+ * declaration has no parameters: PostgreSQL stores the literal, so the
+ * declaration should carry the literal too.
+ */
 function render(fragment: unknown): string {
-  return dialect.sqlToQuery(fragment as Parameters<typeof dialect.sqlToQuery>[0]).sql;
+  const query = dialect.sqlToQuery(fragment as Parameters<typeof dialect.sqlToQuery>[0]);
+  if (query.params.length > 0) {
+    throw new Error(
+      `schema fragment "${query.sql}" is parameterised (${String(query.params.length)} ` +
+        'parameter(s)). Schema declarations are compared as text and PostgreSQL stores the ' +
+        'literal, so a parameter would make a value change invisible: write the literal',
+    );
+  }
+  return query.sql;
 }
 
 /** The parts of Drizzle's index configuration this projection reads. */
@@ -159,6 +200,9 @@ export function drizzleProjection(
   const columns: ProjectedColumn[] = [];
   const constraints: ProjectedConstraint[] = [];
   const indexes: ProjectedIndex[] = [];
+  const identitySequences: ProjectedIdentitySequence[] = [];
+  const rls: ProjectedRls[] = [];
+  const policies: ProjectedPolicy[] = [];
 
   for (const table of tables) {
     const config = getTableConfig(table);
@@ -199,6 +243,61 @@ export function drizzleProjection(
       });
 
       if (column.primary) simplePrimary.push(column.name);
+
+      // The identity's backing sequence. `attidentity` says a column is an
+      // identity; it says nothing about the sequence's start, step or bounds,
+      // all of which are persistent and all of which changed silently.
+      const identityConfig = (
+        column as unknown as {
+          generatedIdentity?: {
+            sequenceName?: string;
+            sequenceOptions?: {
+              startWith?: number | string;
+              increment?: number | string;
+              minValue?: number | string;
+              maxValue?: number | string;
+              cache?: number | string;
+              cycle?: boolean;
+            };
+          };
+        }
+      ).generatedIdentity;
+      if (identityConfig !== undefined) {
+        const options = identityConfig.sequenceOptions ?? {};
+        identitySequences.push({
+          table: qualified,
+          column: column.name,
+          // PostgreSQL's default name for an identity sequence.
+          sequence: `${config.schema ?? 'public'}.${identityConfig.sequenceName ?? `${config.name}_${column.name}_seq`}`,
+          shape: [
+            `start ${String(options.startWith ?? 1)}`,
+            `increment ${String(options.increment ?? 1)}`,
+            `min ${String(options.minValue ?? 1)}`,
+            `max ${String(options.maxValue ?? '9223372036854775807')}`,
+            `cache ${String(options.cache ?? 1)}`,
+            options.cycle === true ? 'cycle' : 'no cycle',
+          ].join(' | '),
+        });
+      }
+
+      // A column-level `.unique()` is a table constraint PostgreSQL records
+      // exactly like a table-level one. Reading only `config.uniqueConstraints`
+      // meant declaring uniqueness on the column produced nothing at all.
+      const uniqueColumn = column as unknown as {
+        isUnique?: boolean;
+        uniqueName?: string;
+        uniqueType?: string;
+      };
+      if (uniqueColumn.isUnique === true) {
+        constraints.push({
+          table: qualified,
+          name: uniqueColumn.uniqueName ?? `${config.name}_${column.name}_unique`,
+          kind: 'u',
+          definition:
+            `UNIQUE${uniqueColumn.uniqueType === 'not distinct' ? ' NULLS NOT DISTINCT' : ''} ` +
+            `(${column.name})`,
+        });
+      }
     }
 
     if (simplePrimary.length > 0) {
@@ -298,9 +397,43 @@ export function drizzleProjection(
           `USING ${built.method ?? 'btree'} (${columns.join(', ')})${storage}${where}`,
       });
     }
+
+    // Row level security. `FORCE ROW LEVEL SECURITY` stays SQL-only — Drizzle
+    // 0.45.2 has no form for it — but ordinary enablement and the policies
+    // themselves are expressible, and calling them unsupported left the two
+    // descriptions of the same rule uncompared.
+    const tableRls = (config as unknown as { enableRLS?: boolean }).enableRLS;
+    if (tableRls === true) rls.push({ table: qualified, enabled: true });
+
+    for (const policy of (config as unknown as { policies?: readonly unknown[] }).policies ?? []) {
+      const declared = policy as {
+        name?: string;
+        as?: string;
+        for?: string;
+        to?: string | readonly string[];
+        using?: unknown;
+        withCheck?: unknown;
+      };
+      const roles =
+        declared.to === undefined
+          ? 'public'
+          : Array.isArray(declared.to)
+            ? declared.to.join(', ')
+            : String(declared.to);
+      policies.push({
+        table: qualified,
+        name: declared.name ?? '',
+        definition:
+          `AS ${(declared.as ?? 'permissive').toUpperCase()} ` +
+          `FOR ${(declared.for ?? 'all').toUpperCase()} ` +
+          `TO ${roles}` +
+          (declared.using === undefined ? '' : ` USING (${render(declared.using)})`) +
+          (declared.withCheck === undefined ? '' : ` WITH CHECK (${render(declared.withCheck)})`),
+      });
+    }
   }
 
-  return { columns, constraints, indexes };
+  return { columns, constraints, indexes, identitySequences, rls, policies };
 }
 
 /**
@@ -455,5 +588,65 @@ export function diffDeclarations(
     }
   }
 
+  // Identity sequences, RLS enablement and policies, each compared both ways.
+  compareKeyed(
+    differences,
+    'declaration-identity',
+    projection.identitySequences.map((entry) => [
+      `${entry.table}.${entry.column}`,
+      `${entry.sequence} | ${entry.shape}`,
+    ]),
+    snapshot.identitySequences
+      .filter((entry) => declaredTables.has(entry.table))
+      .map((entry) => [`${entry.table}.${entry.column}`, `${entry.sequence} | ${entry.shape}`]),
+  );
+
+  compareKeyed(
+    differences,
+    'declaration-rls',
+    projection.rls.map((entry) => [entry.table, String(entry.enabled)]),
+    snapshot.rls
+      .filter((entry) => declaredTables.has(entry.table) && entry.enabled)
+      .map((entry) => [entry.table, String(entry.enabled)]),
+  );
+
+  compareKeyed(
+    differences,
+    'declaration-policy',
+    projection.policies.map((entry) => [`${entry.table}.${entry.name}`, entry.definition]),
+    snapshot.policies
+      .filter((entry) => declaredTables.has(entry.table))
+      .map((entry) => [`${entry.table}.${entry.name}`, entry.definition]),
+  );
+
   return differences;
+}
+
+/** Compares two keyed sets in both directions. */
+function compareKeyed(
+  into: SchemaDifference[],
+  kind: string,
+  projected: readonly (readonly [string, string])[],
+  snapshot: readonly (readonly [string, string])[],
+): void {
+  const snapshotMap = new Map(snapshot);
+  const projectedMap = new Map(projected);
+  for (const [key, value] of projectedMap) {
+    const expected = snapshotMap.get(key);
+    if (expected === undefined) {
+      into.push({ kind, subject: key, expected: 'present in the snapshot', actual: value });
+    } else if (expected !== value) {
+      into.push({ kind, subject: key, expected, actual: value });
+    }
+  }
+  for (const [key, value] of snapshotMap) {
+    if (!projectedMap.has(key)) {
+      into.push({
+        kind,
+        subject: key,
+        expected: 'declared in schema.ts',
+        actual: `${value} (snapshot only)`,
+      });
+    }
+  }
 }

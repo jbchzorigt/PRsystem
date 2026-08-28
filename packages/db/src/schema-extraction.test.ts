@@ -6,6 +6,7 @@ import {
   foreignKey,
   index,
   integer,
+  pgPolicy,
   pgSchema,
   primaryKey,
   text,
@@ -262,5 +263,167 @@ describe('columns, keys and checks still project', () => {
     expect(projection.constraints).toContainEqual(
       expect.objectContaining({ name: 'probe_check', definition: 'CHECK ((length(a) > 0))' }),
     );
+  });
+});
+
+describe('SQL parameters are refused, never silently dropped', () => {
+  it('refuses a parameterised check predicate', () => {
+    // `sqlToQuery` returns `$1` placeholders and the values separately, so two
+    // declarations differing only by a literal rendered identically and the
+    // change was invisible. A schema declaration has no parameters: PostgreSQL
+    // stores the literal.
+    const parameterised = probe.table('param_a', { a: text('a') }, () => [
+      check('probe_check', sql`a <> ${'forbidden'}`),
+    ]);
+    expect(() => drizzleProjection([parameterised])).toThrow(/parameterised/);
+  });
+
+  it('refuses a parameterised index predicate', () => {
+    const parameterised = probe.table('param_b', { a: text('a') }, (t) => [
+      index('probe_idx')
+        .on(t.a)
+        .where(sql`a <> ${'forbidden'}`),
+    ]);
+    expect(() => drizzleProjection([parameterised])).toThrow(/parameterised/);
+  });
+
+  it('refuses a parameterised generated expression', () => {
+    const parameterised = probe.table('param_c', {
+      a: text('a'),
+      g: text('g').generatedAlwaysAs(sql`concat(a, ${'suffix'})`),
+    });
+    expect(() => drizzleProjection([parameterised])).toThrow(/parameterised/);
+  });
+
+  it('accepts the same predicate written as a literal', () => {
+    const literal = probe.table('param_d', { a: text('a') }, () => [
+      check('probe_check', sql`a <> 'forbidden'`),
+    ]);
+    expect(constraintOf(literal, 'probe_check')?.definition).toBe("CHECK (a <> 'forbidden')");
+  });
+});
+
+describe('identity sequence metadata', () => {
+  const plain = probe.table('id_a', {
+    id: bigint('id', { mode: 'bigint' }).generatedAlwaysAsIdentity(),
+  });
+  const stepped = probe.table('id_b', {
+    id: bigint('id', { mode: 'bigint' }).generatedAlwaysAsIdentity({ increment: 2 }),
+  });
+  const named = probe.table('id_c', {
+    id: bigint('id', { mode: 'bigint' }).generatedAlwaysAsIdentity({ name: 'custom_seq' }),
+  });
+  const cycling = probe.table('id_d', {
+    id: bigint('id', { mode: 'bigint' }).generatedAlwaysAsIdentity({ cycle: true }),
+  });
+
+  const sequenceOf = (table: ProjectableTable): string =>
+    JSON.stringify(drizzleProjection([table]).identitySequences);
+
+  it('projects the sequence, so its options are not an empty diff', () => {
+    expect(sequenceOf(plain)).toContain('increment 1');
+    expect(sequenceOf(stepped)).toContain('increment 2');
+    expect(sequenceOf(plain)).not.toBe(sequenceOf(stepped));
+  });
+
+  it('projects the sequence name and the cycle setting', () => {
+    expect(sequenceOf(named)).toContain('custom_seq');
+    expect(sequenceOf(plain)).not.toBe(sequenceOf(named));
+    expect(sequenceOf(cycling)).toContain('| cycle');
+    expect(sequenceOf(plain)).toContain('no cycle');
+  });
+
+  it('defaults to PostgreSQL’s own start, bounds and cache', () => {
+    expect(sequenceOf(plain)).toContain('start 1');
+    expect(sequenceOf(plain)).toContain('min 1');
+    expect(sequenceOf(plain)).toContain('max 9223372036854775807');
+    expect(sequenceOf(plain)).toContain('cache 1');
+  });
+});
+
+describe('column-level uniqueness', () => {
+  const none = probe.table('cu_a', { a: text('a') });
+  const unique = probe.table('cu_b', { a: text('a').unique() });
+  const named = probe.table('cu_c', { a: text('a').unique('probe_named_unique') });
+  const notDistinct = probe.table('cu_d', {
+    a: text('a').unique('probe_named_unique', { nulls: 'not distinct' }),
+  });
+
+  it('projects a column-level unique as the constraint PostgreSQL records', () => {
+    expect(drizzleProjection([none]).constraints).toHaveLength(0);
+    expect(drizzleProjection([unique]).constraints).toContainEqual(
+      expect.objectContaining({ kind: 'u', definition: 'UNIQUE (a)' }),
+    );
+  });
+
+  it('projects the declared constraint name', () => {
+    expect(constraintOf(named, 'probe_named_unique')?.definition).toBe('UNIQUE (a)');
+    expect(constraintOf(unique, 'cu_b_a_unique')?.definition).toBe('UNIQUE (a)');
+  });
+
+  it('projects column-level NULLS NOT DISTINCT', () => {
+    expect(constraintOf(notDistinct, 'probe_named_unique')?.definition).toBe(
+      'UNIQUE NULLS NOT DISTINCT (a)',
+    );
+    expect(constraintOf(notDistinct, 'probe_named_unique')?.definition).not.toBe(
+      constraintOf(named, 'probe_named_unique')?.definition,
+    );
+  });
+});
+
+describe('row level security and policies', () => {
+  const off = probe.table('rls_a', { a: text('a'), hotelId: text('hotel_id') });
+  const on = probe.table('rls_b', { a: text('a'), hotelId: text('hotel_id') }).enableRLS();
+  const policied = probe
+    .table('rls_c', { a: text('a'), hotelId: text('hotel_id') }, () => [
+      pgPolicy('probe_policy', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ])
+    .enableRLS();
+  const widened = probe
+    .table('rls_d', { a: text('a'), hotelId: text('hotel_id') }, () => [
+      pgPolicy('probe_policy', { using: sql`(true)` }),
+    ])
+    .enableRLS();
+  const restrictive = probe
+    .table('rls_e', { a: text('a'), hotelId: text('hotel_id') }, () => [
+      pgPolicy('probe_policy', {
+        as: 'restrictive',
+        for: 'select',
+        to: 'prsystem_api',
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ])
+    .enableRLS();
+
+  it('projects RLS enablement, so turning it off is not an empty diff', () => {
+    expect(drizzleProjection([off]).rls).toEqual([]);
+    expect(drizzleProjection([on]).rls).toEqual([
+      { table: 'extraction_probe.rls_b', enabled: true },
+    ]);
+  });
+
+  it('projects the policy predicate, so weakening it is not an empty diff', () => {
+    const strict = drizzleProjection([policied]).policies[0]?.definition;
+    const weak = drizzleProjection([widened]).policies[0]?.definition;
+    expect(strict).toContain('USING ((hotel_id = platform.current_hotel_id()))');
+    expect(weak).toContain('USING ((true))');
+    expect(strict).not.toBe(weak);
+  });
+
+  it('projects permissiveness, command and roles, with PostgreSQL defaults', () => {
+    expect(drizzleProjection([policied]).policies[0]?.definition).toContain(
+      'AS PERMISSIVE FOR ALL TO public',
+    );
+    expect(drizzleProjection([restrictive]).policies[0]?.definition).toContain(
+      'AS RESTRICTIVE FOR SELECT TO prsystem_api',
+    );
+  });
+
+  it('projects WITH CHECK separately from USING', () => {
+    expect(drizzleProjection([policied]).policies[0]?.definition).toContain('WITH CHECK');
+    expect(drizzleProjection([widened]).policies[0]?.definition).not.toContain('WITH CHECK');
   });
 });
