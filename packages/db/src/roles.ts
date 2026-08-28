@@ -40,3 +40,33 @@ export const ROLES_WITHOUT_BYPASSRLS: readonly DatabaseRole[] = [
   DATABASE_ROLES.policeAuditReader,
   DATABASE_ROLES.jobScheduler,
 ];
+
+/**
+ * The one login principal each group role has, and the single source of that
+ * mapping.
+ *
+ * Bootstrap provisions these, the startup guards require them, and
+ * `platform.assert_exact_role_closure` enforces the same rule inside the
+ * database. Keeping the table here means those three cannot disagree by drifting
+ * apart — `sec-role.test.ts` asserts the SQL agrees with this object, because
+ * SQL cannot import it.
+ *
+ * Phase 03 supports exactly one login per group; horizontal processes of a
+ * runtime share its credential rather than each holding their own.
+ */
+export const LOGIN_PRINCIPALS = {
+  prsystem_api_login: 'prsystem_api',
+  prsystem_worker_login: 'prsystem_worker',
+  prsystem_police_login: 'prsystem_police',
+  prsystem_audit_reader_login: 'prsystem_audit_reader',
+  prsystem_police_audit_reader_login: 'prsystem_police_audit_reader',
+  prsystem_migrate_login: 'prsystem_migrate',
+  prsystem_job_scheduler_login: 'prsystem_job_scheduler',
+} as const;
+
+export type LoginPrincipal = keyof typeof LOGIN_PRINCIPALS;
+
+/** The same mapping, by group. Derived, never written out a second time. */
+export const CANONICAL_LOGIN_BY_GROUP: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(LOGIN_PRINCIPALS).map(([login, group]) => [group, login]),
+);

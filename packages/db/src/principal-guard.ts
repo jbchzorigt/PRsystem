@@ -1,3 +1,4 @@
+import { CANONICAL_LOGIN_BY_GROUP } from './roles';
 /** Anything that can run a query — a Client or a Pool. Migrations use a single
  *  Client so the guard, the advisory lock and the journal share one backend. */
 export interface Queryable {
@@ -29,7 +30,8 @@ export class PrincipalError extends Error {
       | 'missing_membership'
       | 'forbidden_principal'
       | 'admin_option'
-      | 'membership_options',
+      | 'membership_options'
+      | 'not_canonical',
   ) {
     super(message);
   }
@@ -342,6 +344,9 @@ const ALLOWED_RUNTIME_CLOSURE: Readonly<Record<string, readonly string[]>> = {
 /** Every group a non-migration principal may be verified against. */
 export type ContainedGroup = keyof typeof ALLOWED_RUNTIME_CLOSURE & string;
 
+/** The contained groups, as a value. */
+const CONTAINED_GROUPS = Object.keys(ALLOWED_RUNTIME_CLOSURE) as readonly ContainedGroup[];
+
 /**
  * The complete migration membership graph, as edges.
  *
@@ -389,21 +394,16 @@ const RUNTIME_PRINCIPALS = [
 /**
  * The one group each contained principal may join. A group role itself joins
  * nothing, so it maps to `null` and any membership at all is unexpected.
+ *
+ * Derived from the single canonical mapping in `roles.ts` rather than written
+ * out again: bootstrap, these guards and `platform.assert_exact_role_closure`
+ * must agree about which login belongs to which group, and three hand-kept
+ * copies of that table is three chances for them to disagree.
  */
-const EXPECTED_PRINCIPAL_GROUP: Readonly<Record<string, string | null>> = {
-  prsystem_api: null,
-  prsystem_worker: null,
-  prsystem_police: null,
-  prsystem_audit_reader: null,
-  prsystem_police_audit_reader: null,
-  prsystem_job_scheduler: null,
-  prsystem_api_login: 'prsystem_api',
-  prsystem_worker_login: 'prsystem_worker',
-  prsystem_police_login: 'prsystem_police',
-  prsystem_audit_reader_login: 'prsystem_audit_reader',
-  prsystem_police_audit_reader_login: 'prsystem_police_audit_reader',
-  prsystem_job_scheduler_login: 'prsystem_job_scheduler',
-};
+const EXPECTED_PRINCIPAL_GROUP: Readonly<Record<string, string | null>> = Object.fromEntries([
+  ...CONTAINED_GROUPS.map((group) => [group, null] as const),
+  ...CONTAINED_GROUPS.map((group) => [CANONICAL_LOGIN_BY_GROUP[group] as string, group] as const),
+]);
 
 /**
  * The migration graph must be exactly right, not merely free of extras.
@@ -675,6 +675,24 @@ export async function assertRuntimePrincipal(
 ): Promise<PrincipalFacts> {
   const facts = await readPrincipalFacts(pool);
   assertNoPrivilegedAttribute(facts);
+
+  // The canonical login for the group, and only it.
+  //
+  // An exact closure is necessary and was treated as sufficient: a new LOGIN
+  // with one otherwise-perfect membership passed, so an operator could mint a
+  // second API, Worker, Police, reader or Scheduler credential that nothing
+  // bootstraps, rotates or audits and every startup guard accepted. Phase 03
+  // supports one login per group, shared by every process of that runtime.
+  const canonical = CANONICAL_LOGIN_BY_GROUP[expectedGroup];
+  if (canonical === undefined) {
+    throw new PrincipalError(`no canonical login is defined for ${expectedGroup}`, 'not_canonical');
+  }
+  if (facts.sessionUser !== canonical) {
+    throw new PrincipalError(
+      `${facts.sessionUser} is not the canonical login for ${expectedGroup} (expected ${canonical})`,
+      'not_canonical',
+    );
+  }
 
   if (!reaches(facts, expectedGroup)) {
     throw new PrincipalError(

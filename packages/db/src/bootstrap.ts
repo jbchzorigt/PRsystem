@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Client, Pool } from 'pg';
 import { INTENDED_MEMBERSHIP_OPTIONS } from './principal-guard';
+import { CANONICAL_LOGIN_BY_GROUP, LOGIN_PRINCIPALS } from './roles';
+import type { LoginPrincipal } from './roles';
+
+// Re-exported so existing importers keep one import site; the mapping itself is
+// declared once, in `roles.ts`.
+export { LOGIN_PRINCIPALS } from './roles';
+export type { LoginPrincipal } from './roles';
 
 /**
  * Cluster bootstrap runner.
@@ -58,17 +65,6 @@ export const UNREACHABLE_ROLES = [
 ] as const;
 
 /** The login principals a deployment creates, and the single group each joins. */
-export const LOGIN_PRINCIPALS = {
-  prsystem_api_login: 'prsystem_api',
-  prsystem_worker_login: 'prsystem_worker',
-  prsystem_police_login: 'prsystem_police',
-  prsystem_audit_reader_login: 'prsystem_audit_reader',
-  prsystem_police_audit_reader_login: 'prsystem_police_audit_reader',
-  prsystem_migrate_login: 'prsystem_migrate',
-  prsystem_job_scheduler_login: 'prsystem_job_scheduler',
-} as const;
-
-export type LoginPrincipal = keyof typeof LOGIN_PRINCIPALS;
 
 export class BootstrapError extends Error {
   override readonly name = 'BootstrapError';
@@ -264,7 +260,7 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
  * and the break-glass role are reached by nobody.
  */
 function canonicalLoginByGroup(): ReadonlyMap<string, string> {
-  return new Map(Object.entries(LOGIN_PRINCIPALS).map(([login, group]) => [group, login]));
+  return new Map(Object.entries(CANONICAL_LOGIN_BY_GROUP));
 }
 
 /**
