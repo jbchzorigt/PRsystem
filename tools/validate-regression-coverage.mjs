@@ -187,6 +187,23 @@ function defaultShell(node) {
   return typeof shell === 'string' && shell.trim().length > 0 ? shell : undefined;
 }
 
+/**
+ * A `working-directory` on a step, or a `defaults.run.working-directory`.
+ *
+ * Every required command is a root script. Run from a package directory,
+ * `pnpm run test:security` is that package's own script rather than the root
+ * GATE-SEC aggregator — the step still reads as exactly right and executes
+ * something else entirely.
+ */
+function workingDirectory(node) {
+  const direct = node?.['working-directory'];
+  if (typeof direct === 'string' && direct.trim().length > 0) return direct;
+  const fromDefaults = node?.defaults?.run?.['working-directory'];
+  return typeof fromDefaults === 'string' && fromDefaults.trim().length > 0
+    ? fromDefaults
+    : undefined;
+}
+
 // A workflow-level default shell applies to every `run` step in every job, so
 // one line at the top of the file disables all of them while every step still
 // reads as correct.
@@ -197,16 +214,49 @@ check(
   workflowShell === undefined ? 'no defaults.run.shell' : `defaults.run.shell: ${workflowShell}`,
 );
 
+const workflowDirectory = workingDirectory(workflow);
+check(
+  'the workflow declares no default working-directory',
+  workflowDirectory === undefined,
+  workflowDirectory === undefined
+    ? 'no defaults.run.working-directory'
+    : `defaults.run.working-directory: ${workflowDirectory}`,
+);
+
 for (const required of REQUIRED_JOBS) {
   const steps = stepsOf(required.job);
   let previousIndex = -1;
 
   // The same rule as the workflow default, scoped to one required job.
-  const jobShell = defaultShell(workflow?.jobs?.[required.job]);
+  const job = workflow?.jobs?.[required.job];
+  const jobShell = defaultShell(job);
   check(
     `the '${required.job}' job declares no default shell`,
     jobShell === undefined,
     jobShell === undefined ? 'no defaults.run.shell' : `defaults.run.shell: ${jobShell}`,
+  );
+
+  const jobDirectory = workingDirectory(job);
+  check(
+    `the '${required.job}' job declares no default working-directory`,
+    jobDirectory === undefined,
+    jobDirectory === undefined
+      ? 'no defaults.run.working-directory'
+      : `defaults.run.working-directory: ${jobDirectory}`,
+  );
+
+  // GitHub skips a job whose dependency was skipped, so one `if: false` on an
+  // upstream job silently removes the required one from the run while the
+  // required job itself still reads as correct. Validating the whole dependency
+  // closure would mean reasoning about every upstream condition; refusing
+  // `needs` on a required job is the property that actually has to hold, and it
+  // is checkable exactly.
+  const needs = job?.needs;
+  const declaredNeeds = needs === undefined ? [] : Array.isArray(needs) ? needs : [String(needs)];
+  check(
+    `the '${required.job}' job depends on no other job`,
+    declaredNeeds.length === 0,
+    declaredNeeds.length === 0 ? 'no needs' : `needs: ${declaredNeeds.join(', ')}`,
   );
 
   for (const spec of required.steps) {
@@ -255,6 +305,13 @@ for (const required of REQUIRED_JOBS) {
       `'${spec.run}' runs under the default shell`,
       shell === undefined,
       shell === undefined ? 'no custom shell' : `shell: ${shell}`,
+    );
+
+    const directory = workingDirectory(step);
+    check(
+      `'${spec.run}' runs from the repository root`,
+      directory === undefined,
+      directory === undefined ? 'no working-directory' : `working-directory: ${directory}`,
     );
 
     // `cleanup: true` is consumed, not decorative. Teardown must be

@@ -330,6 +330,57 @@ const FIXTURES = [
       ),
   },
   {
+    // The exact command, under the default shell, with no condition — and run
+    // in a package directory, where `pnpm run test:security` is the package's
+    // own script rather than the root GATE-SEC aggregator.
+    name: 'working-directory on a required step',
+    expect: /working-directory/i,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Run the fail-closed security aggregator
+        run: pnpm run test:security`,
+        `      - name: Run the fail-closed security aggregator
+        working-directory: apps/api
+        run: pnpm run test:security`,
+      ),
+  },
+  {
+    name: 'workflow-level default working-directory',
+    expect: /working-directory/i,
+    mutate: (yaml) =>
+      yaml.replace(
+        'concurrency:',
+        'defaults:\n  run:\n    working-directory: apps/api\n\nconcurrency:',
+      ),
+  },
+  {
+    name: 'job-level default working-directory on gate-sec',
+    expect: /working-directory/i,
+    mutate: (yaml) =>
+      yaml.replace(
+        '  gate-sec:\n    name: GATE-SEC',
+        '  gate-sec:\n    defaults:\n      run:\n        working-directory: apps/api\n    name: GATE-SEC',
+      ),
+  },
+  {
+    // GitHub skips a job whose dependency was skipped, so one `if: false` on an
+    // upstream job silently removes the required one from the run.
+    name: 'gate-sec made to depend on a skipped job',
+    expect: /needs/i,
+    mutate: (yaml) =>
+      `${yaml.replace(
+        '  gate-sec:\n    name: GATE-SEC',
+        '  gate-sec:\n    needs: [never-runs]\n    name: GATE-SEC',
+      )}
+  never-runs:
+    name: never runs
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+`,
+  },
+  {
     name: 'build after the suite it must precede',
     mutate: (yaml) => {
       const build = `      - name: Build workspace packages from this checkout
