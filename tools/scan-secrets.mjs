@@ -65,7 +65,28 @@ const BINARY_EXT = new Set([
   '.ttf',
 ]);
 
-const files = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
+// Tracked files only, enumerated by git. If git metadata is unavailable the scan
+// cannot know what is tracked, so it fails closed with a legible message rather
+// than dying on an unhandled exception — or, worse, scanning nothing and
+// reporting a clean result.
+let tracked;
+try {
+  tracked = execFileSync('git', ['ls-files', '-z'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+} catch (error) {
+  console.error(
+    'scan-secrets: cannot enumerate tracked files. This gate needs a git working tree ' +
+      '(CI uses actions/checkout, which provides one); a `git archive` extraction does not have ' +
+      'the metadata to tell tracked files from stray ones.',
+  );
+  console.error(`  ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
+  process.exit(2);
+}
+
+const files = tracked
   .split('\0')
   .filter(Boolean)
   .filter((f) => !BINARY_EXT.has(extname(f)))
