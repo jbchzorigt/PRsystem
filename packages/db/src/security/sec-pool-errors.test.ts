@@ -61,9 +61,10 @@ afterAll(async () => {
 }, 60000);
 
 afterEach(() => {
-  // These tests deliberately provoke pool errors, so the shared report is
-  // cleared between them. A suite that does not provoke them must not.
-  resetPoolErrorReport();
+  // These tests deliberately provoke pool errors on their own database, so the
+  // report for *that database* is cleared between them. The reset is scoped: it
+  // cannot erase another suite's failure, which the process-global version did.
+  resetPoolErrorReport(db.name);
 });
 
 describe('unexpected idle-client errors', () => {
@@ -72,20 +73,20 @@ describe('unexpected idle-client errors', () => {
     try {
       // Establish and release a connection, so the pool holds one idle.
       await pool.query('SELECT 1');
-      expect(unexpectedPoolErrorReport()).toHaveLength(0);
+      expect(unexpectedPoolErrorReport(db.name)).toHaveLength(0);
 
       // Nothing has marked this pool as tearing down: the termination below is
       // exactly the kind of infrastructure fault the gate must not swallow.
       const killed = await killIdleBackends(db.name);
       expect(killed).toBeGreaterThan(0);
 
-      await eventually(() => unexpectedPoolErrorReport().length > 0);
+      await eventually(() => unexpectedPoolErrorReport(db.name).length > 0);
 
-      const report = unexpectedPoolErrorReport();
+      const report = unexpectedPoolErrorReport(db.name);
       expect(report[0]?.label).toBe('unexpected-probe');
       // And the assertion a suite calls in afterAll fails on it.
       expect(() => {
-        assertNoUnexpectedPoolErrors();
+        assertNoUnexpectedPoolErrors(db.name);
       }).toThrow(/unexpected pool error/i);
     } finally {
       await pool.end().catch(() => undefined);
@@ -106,9 +107,9 @@ describe('unexpected idle-client errors', () => {
       // Give any error the same window the previous test needed.
       await new Promise((r) => setTimeout(r, 500));
 
-      expect(unexpectedPoolErrorReport()).toHaveLength(0);
+      expect(unexpectedPoolErrorReport(db.name)).toHaveLength(0);
       expect(() => {
-        assertNoUnexpectedPoolErrors();
+        assertNoUnexpectedPoolErrors(db.name);
       }).not.toThrow();
     } finally {
       await pool.end().catch(() => undefined);
@@ -124,7 +125,7 @@ describe('unexpected idle-client errors', () => {
 
     await scratch.drop();
 
-    expect(unexpectedPoolErrorReport()).toHaveLength(0);
+    expect(unexpectedPoolErrorReport(scratch.name)).toHaveLength(0);
     // The pool was ended by the drop, not left open. `pg` throws synchronously
     // on an ended pool, so the call is wrapped rather than awaited directly.
     await expect(async () => pool.query('SELECT 1')).rejects.toThrow(/after calling end/i);
@@ -139,7 +140,7 @@ describe('unexpected idle-client errors', () => {
       await expect(pool.query('SELECT * FROM does_not_exist')).rejects.toMatchObject({
         code: '42P01',
       });
-      expect(unexpectedPoolErrorReport()).toHaveLength(0);
+      expect(unexpectedPoolErrorReport(db.name)).toHaveLength(0);
     } finally {
       await pool.end().catch(() => undefined);
     }
@@ -152,6 +153,6 @@ describe('unexpected idle-client errors', () => {
     await closeTrackedPools(db.name);
 
     await expect(async () => pool.query('SELECT 1')).rejects.toThrow(/after calling end/i);
-    expect(unexpectedPoolErrorReport()).toHaveLength(0);
+    expect(unexpectedPoolErrorReport(db.name)).toHaveLength(0);
   }, 60000);
 });

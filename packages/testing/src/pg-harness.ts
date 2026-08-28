@@ -87,7 +87,27 @@ export interface PoolErrorEntry {
 }
 
 const tracked = new Map<Pool, TrackedPool>();
-const unexpectedPoolErrors: PoolErrorEntry[] = [];
+
+/**
+ * Unexpected idle-client errors, accounted **per database**.
+ *
+ * A single process-global list made every suite share one mutable report: a
+ * `reset` in one suite erased another suite's failure, and only the suites that
+ * remembered to call the assertion ever failed on one. Keying by database means
+ * a database's own errors travel with it and are checked when it is dropped,
+ * whether or not the suite thought to ask.
+ */
+const unexpectedByDatabase = new Map<string, PoolErrorEntry[]>();
+
+/** Errors from pools whose database could not be determined. */
+const UNATTRIBUTED = '(unattributed)';
+
+function recordUnexpected(database: string | undefined, entry: PoolErrorEntry): void {
+  const key = database ?? UNATTRIBUTED;
+  const existing = unexpectedByDatabase.get(key);
+  if (existing === undefined) unexpectedByDatabase.set(key, [entry]);
+  else existing.push(entry);
+}
 
 /**
  * SQLSTATEs and messages PostgreSQL produces when it terminates a connection
@@ -127,7 +147,7 @@ export function quietPool(config: PoolConfig, label = 'pool'): Pool {
     }
     const entry = { label, message: error.message, code: error.code };
     record.unexpected.push(entry);
-    unexpectedPoolErrors.push(entry);
+    recordUnexpected(record.database, entry);
   });
 
   return pool;
@@ -176,13 +196,20 @@ export async function closeTrackedPools(database?: string): Promise<void> {
 }
 
 /** Every idle-client error that was *not* an expected teardown termination. */
-export function unexpectedPoolErrorReport(): readonly PoolErrorEntry[] {
-  return [...unexpectedPoolErrors];
+export function unexpectedPoolErrorReport(database?: string): readonly PoolErrorEntry[] {
+  if (database !== undefined) return [...(unexpectedByDatabase.get(database) ?? [])];
+  return [...unexpectedByDatabase.values()].flat();
 }
 
-/** Clears the recorded errors. For the tests that assert on this machinery. */
-export function resetPoolErrorReport(): void {
-  unexpectedPoolErrors.length = 0;
+/**
+ * Clears the recorded errors for one database.
+ *
+ * Scoped deliberately: a suite that deliberately provokes an error must be able
+ * to clear its own, and must not be able to clear anybody else's. Calling this
+ * with no argument is refused for that reason.
+ */
+export function resetPoolErrorReport(database: string): void {
+  unexpectedByDatabase.delete(database);
 }
 
 /**
@@ -191,12 +218,12 @@ export function resetPoolErrorReport(): void {
  * Suites that open pools call this in `afterAll`, so an infrastructure fault
  * during a run is a failure rather than a silence.
  */
-export function assertNoUnexpectedPoolErrors(): void {
-  if (unexpectedPoolErrors.length === 0) return;
-  const detail = unexpectedPoolErrors
-    .map((e) => `${e.label}: ${e.code ?? '(no code)'} ${e.message}`)
-    .join('; ');
-  throw new Error(`unexpected pool error(s) outside teardown: ${detail}`);
+export function assertNoUnexpectedPoolErrors(database?: string): void {
+  const entries = unexpectedPoolErrorReport(database);
+  if (entries.length === 0) return;
+  const scope = database === undefined ? 'this process' : `database ${database}`;
+  const detail = entries.map((e) => `${e.label}: ${e.code ?? '(no code)'} ${e.message}`).join('; ');
+  throw new Error(`unexpected pool error(s) outside teardown in ${scope}: ${detail}`);
 }
 
 export const TEST_LOGIN_PRINCIPALS = {
@@ -287,6 +314,10 @@ export async function createTestDatabase(suite: string): Promise<TestDatabase> {
       await pool.end().catch(() => undefined);
       await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
       await admin.end();
+      // Every suite that creates a database gets this check, whether or not it
+      // remembered to ask for it. Pools were closed in order above, so anything
+      // recorded here happened while the database was still expected to work.
+      assertNoUnexpectedPoolErrors(name);
     },
   };
 }

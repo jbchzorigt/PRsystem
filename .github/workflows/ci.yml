@@ -139,6 +139,10 @@ jobs:
         run: pnpm run test:regression
         env:
           DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
+      - name: Prove an unexpected idle-pool error fails an ordinary suite
+        run: pnpm run validate:pool-error-fixture
+        env:
+          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
       - name: Report service state
         if: always()
         run: docker compose ps
