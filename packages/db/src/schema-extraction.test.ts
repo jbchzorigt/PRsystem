@@ -14,6 +14,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { drizzleProjection } from './schema-projection';
+import type { ProjectableTable } from './schema-projection';
 
 /**
  * Extraction fidelity, proved on real declarations.
@@ -36,15 +37,15 @@ const parent = probe.table('parent', {
 });
 
 /** Projects one table and returns the entry for `name`, or undefined. */
-function constraintOf(table: Parameters<typeof drizzleProjection>[0][number], name: string) {
+function constraintOf(table: ProjectableTable, name: string) {
   return drizzleProjection([table]).constraints.find((entry) => entry.name === name);
 }
 
-function indexOf(table: Parameters<typeof drizzleProjection>[0][number], name: string) {
+function indexOf(table: ProjectableTable, name: string) {
   return drizzleProjection([table]).indexes.find((entry) => entry.name === name);
 }
 
-function columnOf(table: Parameters<typeof drizzleProjection>[0][number], name: string) {
+function columnOf(table: ProjectableTable, name: string) {
   return drizzleProjection([table]).columns.find((entry) => entry.column === name);
 }
 
