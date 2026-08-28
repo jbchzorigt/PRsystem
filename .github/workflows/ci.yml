@@ -19,9 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      # The validators below are pnpm scripts that import js-yaml. Without an
+      # install this job passes only on a machine that already has node_modules,
+      # which a clean runner does not.
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
       - name: Validate governance documents
         run: node tools/validate-governance.mjs
       - name: Validate workspace structure
@@ -68,7 +77,6 @@ jobs:
       # and must not block every phase. Registered, reviewed in Phases 20 and 22.
       - name: Audit full dependency tree
         run: pnpm run audit:tree
-        continue-on-error: true
 
   e2e:
     name: portal shell end-to-end

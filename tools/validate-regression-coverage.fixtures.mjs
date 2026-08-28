@@ -106,6 +106,50 @@ const FIXTURES = [
       ),
   },
   {
+    name: 'step disabled with if: false',
+    mutate: (yaml) =>
+      yaml.replace(
+        REGRESSION_STEP,
+        `${REGRESSION_STEP.split('\n')[0]}\n        if: false\n${REGRESSION_STEP.split('\n')[1]}`,
+      ),
+  },
+  {
+    name: 'expression-based continue-on-error',
+    mutate: (yaml) =>
+      yaml.replace(
+        REGRESSION_STEP,
+        `${REGRESSION_STEP.split('\n')[0]}\n        continue-on-error: \${{ github.event_name == 'push' }}\n${REGRESSION_STEP.split('\n')[1]}`,
+      ),
+  },
+  {
+    name: 'governance loses its pnpm install',
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Validate governance documents`,
+        '      - name: Validate governance documents',
+      ),
+  },
+  {
+    name: 'governance loses its pnpm setup',
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - uses: pnpm/action-setup@v4
+        with:
+          version: \${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ env.NODE_VERSION }}
+          cache: pnpm
+      # The validators below are pnpm scripts`,
+        `      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ env.NODE_VERSION }}
+      # The validators below are pnpm scripts`,
+      ),
+  },
+  {
     name: 'build after the suite it must precede',
     mutate: (yaml) => {
       const build = `      - name: Build workspace packages from this checkout
@@ -159,6 +203,85 @@ for (const fixture of FIXTURES) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// Root-script bypasses. The validator reads package.json from ROOT, so each of
+// these is applied to a temporary copy of the repository's package.json that the
+// validator is pointed at through PRSYSTEM_ROOT_PACKAGE_JSON.
+const packageJsonPath = join(ROOT, 'package.json');
+const originalPackageJson = readFileSync(packageJsonPath, 'utf8');
+
+const SCRIPT_FIXTURES = [
+  {
+    name: 'script: echoed validator',
+    value:
+      'turbo run build && echo node tools/validate-regression-coverage.mjs && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs',
+  },
+  {
+    name: 'script: piped into tee',
+    value:
+      'turbo run build && node tools/validate-regression-coverage.mjs | tee out.txt && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs',
+  },
+  {
+    name: 'script: || true',
+    value:
+      'turbo run build && node tools/validate-regression-coverage.mjs || true && node tools/gate-sec.mjs',
+  },
+  {
+    name: 'script: semicolon chain',
+    value:
+      'turbo run build ; node tools/validate-regression-coverage.mjs ; node tools/gate-sec.mjs',
+  },
+  {
+    name: 'script: shell conditional',
+    value:
+      'turbo run build && if node tools/validate-regression-coverage.mjs; then node tools/gate-sec.mjs; fi',
+  },
+  {
+    name: 'script: backgrounded gate',
+    value:
+      'turbo run build && node tools/validate-regression-coverage.mjs && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs &',
+  },
+  { name: 'script: validator dropped', value: 'turbo run build && node tools/gate-sec.mjs' },
+  {
+    name: 'script: fake command name',
+    value:
+      'turbo run build && node tools/validate-regression-coverage.mjs-DISABLED && node tools/validate-regression-coverage.fixtures.mjs && node tools/gate-sec.mjs',
+  },
+];
+
+for (const fixture of SCRIPT_FIXTURES) {
+  const parsed = JSON.parse(originalPackageJson);
+  parsed.scripts['test:security'] = fixture.value;
+  const dir = mkdtempSync(join(tmpdir(), 'prsystem-script-fixture-'));
+  const path = join(dir, 'package.json');
+  try {
+    writeFileSync(path, JSON.stringify(parsed, null, 2));
+    const run = spawnSync(
+      process.execPath,
+      [join(ROOT, 'tools', 'validate-regression-coverage.mjs')],
+      { cwd: ROOT, encoding: 'utf8', env: { ...process.env, PRSYSTEM_ROOT_PACKAGE_JSON: path } },
+    );
+    const rejected = run.status !== 0;
+    results.push({
+      name: fixture.name,
+      ok: rejected,
+      detail: rejected
+        ? `rejected (exit ${String(run.status)})`
+        : 'ACCEPTED — the bypass was not caught',
+    });
+    if (!rejected) failures += 1;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+results.push({
+  name: 'control: package.json is unmodified',
+  ok: readFileSync(packageJsonPath, 'utf8') === originalPackageJson,
+  detail:
+    readFileSync(packageJsonPath, 'utf8') === originalPackageJson ? 'byte-identical' : 'MODIFIED',
+});
+if (readFileSync(packageJsonPath, 'utf8') !== originalPackageJson) failures += 1;
 
 // And the unmodified workflow must still pass, or the fixtures prove nothing.
 const control = spawnSync(

@@ -195,6 +195,84 @@ for (const required of REQUIRED_STEPS) {
   }
 }
 
+// 4b. A job that runs `pnpm` must set pnpm up and install first.
+//
+//     The governance job ran `pnpm run validate:regression-coverage` — which
+//     imports js-yaml — with no pnpm setup and no install at all. It passed
+//     locally because a developer's node_modules is already there, and would
+//     have failed on a clean runner. A CI job must be self-contained.
+const PNPM_JOBS = ['governance', 'verify', 'e2e', 'compose', 'gate-sec'];
+
+for (const job of PNPM_JOBS) {
+  const steps = stepsOf(job);
+  if (steps.length === 0) continue;
+
+  const usesPnpm = steps.some((step) =>
+    commandLines(step).some((line) => line.startsWith('pnpm ')),
+  );
+  if (!usesPnpm) continue;
+
+  const setupIndex = steps.findIndex((step) =>
+    typeof step?.uses === 'string' ? step.uses.startsWith('pnpm/action-setup') : false,
+  );
+  check(
+    `'${job}' sets pnpm up before using it`,
+    setupIndex >= 0,
+    setupIndex >= 0
+      ? `pnpm/action-setup at step ${String(setupIndex)}`
+      : 'no pnpm/action-setup step',
+  );
+
+  const installIndex = steps.findIndex((step) =>
+    runsExactly(step, 'pnpm install --frozen-lockfile'),
+  );
+  check(
+    `'${job}' installs with a frozen lockfile`,
+    installIndex >= 0,
+    installIndex >= 0 ? `install at step ${String(installIndex)}` : 'no frozen-lockfile install',
+  );
+
+  const firstPnpmIndex = steps.findIndex((step) =>
+    commandLines(step).some((line) => line.startsWith('pnpm ') && !line.startsWith('pnpm install')),
+  );
+  check(
+    `'${job}' installs before its first pnpm command`,
+    setupIndex >= 0 && installIndex >= 0 && installIndex < firstPnpmIndex,
+    `setup ${String(setupIndex)}, install ${String(installIndex)}, first pnpm ${String(firstPnpmIndex)}`,
+  );
+}
+
+// 4c. Steps must not be disabled by an `if:` condition, and continuation must
+//     not be smuggled in through an expression.
+for (const [jobName, job] of Object.entries(workflow?.jobs ?? {})) {
+  for (const step of job?.steps ?? []) {
+    const lines = commandLines(step);
+    if (lines.length === 0) continue;
+    const label = `${jobName}/${step.name ?? lines[0].slice(0, 40)}`;
+
+    if (step.if !== undefined) {
+      const condition = String(step.if).trim();
+      // `if: always()` on a cleanup step is legitimate; a falsey literal or an
+      // arbitrary expression on a gate step is a disabled gate.
+      const benign = condition === 'always()' || condition === '${{ always() }}';
+      check(
+        `step '${label}' is not disabled by an if: condition`,
+        benign,
+        benign ? `if: ${condition}` : `if: ${condition}`,
+      );
+    }
+
+    const coe = step['continue-on-error'];
+    if (coe !== undefined && coe !== false && coe !== 'false') {
+      check(
+        `step '${label}' does not continue on error`,
+        false,
+        `continue-on-error: ${String(coe)}`,
+      );
+    }
+  }
+}
+
 // 5. Build ordering, by step position rather than by appearance in the file.
 for (const job of ['compose', 'gate-sec']) {
   const steps = stepsOf(job);
@@ -210,21 +288,56 @@ for (const job of ['compose', 'gate-sec']) {
   );
 }
 
-// 6. And the root script must run the validator before GATE-SEC, with no
-//    bypass of its own.
-const rootScripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts ?? {};
-const securityScript = rootScripts['test:security'] ?? '';
-const scriptBypass = BYPASS_PATTERNS.filter(
-  (p) => p.why !== 'a pipe, which reports the last command status',
-).find((pattern) => pattern.re.test(securityScript));
-const runsValidatorFirst =
-  securityScript.includes('validate-regression-coverage') &&
-  securityScript.indexOf('validate-regression-coverage') < securityScript.indexOf('gate-sec.mjs') &&
-  scriptBypass === undefined;
+// 6. The root `test:security` script, parsed structurally.
+//
+//    A substring-and-order check accepts `echo node tools/gate-sec.mjs`,
+//    `... | tee log`, `if ...; then ...; fi`, a trailing `&`, and a command
+//    whose *name* merely contains the validator's filename. The script is
+//    therefore split into its `&&` stages, and each stage must be an exact,
+//    recognised command.
+// Overridable so the negative-fixture harness can point this validator at a
+// mutated *copy* of package.json without touching the real one.
+const ROOT_PACKAGE_JSON = process.env['PRSYSTEM_ROOT_PACKAGE_JSON'] ?? join(ROOT, 'package.json');
+const rootScripts = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8')).scripts ?? {};
+const securityScript = String(rootScripts['test:security'] ?? '');
+
+/** The exact stages `test:security` must run, in this order. */
+const REQUIRED_SECURITY_STAGES = [
+  'turbo run build',
+  'node tools/validate-regression-coverage.mjs',
+  'node tools/validate-regression-coverage.fixtures.mjs',
+  'node tools/gate-sec.mjs',
+];
+
+/** Shell constructs that would let a stage fail without failing the script. */
+const SCRIPT_BYPASSES = [
+  { re: /\|\|/, why: '||' },
+  { re: /;/, why: ';' },
+  { re: /\|(?!\|)/, why: 'a pipe' },
+  // A lone `&`: not part of the `&&` chain that legitimately joins the stages.
+  { re: /(?<!&)&(?!&)/, why: 'backgrounding' },
+  { re: /\b(if|then|else|fi|for|while|case)\b/, why: 'a shell conditional or loop' },
+  { re: /^\s*(echo|printf|true|:)\b/, why: 'an echoed or no-op command' },
+  { re: /\$\(|`/, why: 'command substitution' },
+];
+
+const scriptBypass = SCRIPT_BYPASSES.find((pattern) => pattern.re.test(securityScript));
 check(
-  'pnpm run test:security validates regression coverage before GATE-SEC, without a bypass',
-  runsValidatorFirst,
-  scriptBypass ? `bypass: ${scriptBypass.why}` : securityScript || '(missing)',
+  'test:security contains no shell construct that could discard a failure',
+  scriptBypass === undefined,
+  scriptBypass ? `contains ${scriptBypass.why}` : 'plain && chain',
+);
+
+const stages = securityScript
+  .split('&&')
+  .map((stage) => stage.trim())
+  .filter((stage) => stage.length > 0);
+
+check(
+  'test:security runs exactly the required stages, in order',
+  stages.length === REQUIRED_SECURITY_STAGES.length &&
+    stages.every((stage, index) => stage === REQUIRED_SECURITY_STAGES[index]),
+  stages.length === 0 ? '(missing)' : stages.join(' && '),
 );
 
 const width = Math.max(...checks.map((c) => c.name.length));
