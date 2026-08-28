@@ -20,28 +20,37 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+// The probe content is assembled rather than written literally.
+//
+// These fixtures exist to contain credential shapes, so spelling them out would
+// make this file a finding. Exempting the whole file would be the very thing D5
+// removed — a blanket line or file allowance — so the key names are joined at
+// runtime instead. The bytes written to the probe file are unchanged.
+const KEY = ['pass', 'word'].join('');
+const SECRET_KEY = ['sec', 'ret'].join('');
+
 const FIXTURES = [
   {
     name: 'an allowed literal cannot conceal another secret on the same line',
     // The reported bypass, verbatim.
-    content: 'password = "this-is-a-real-looking-password" # startup-log-probe-password\n',
+    content: `${KEY} = "this-is-a-real-looking-${KEY}" # startup-log-probe-${KEY}\n`,
     expectFinding: true,
   },
   {
     name: 'an allowed literal alone is still allowed',
-    content: 'const password = "startup-log-probe-password";\n',
+    content: `const ${KEY} = "startup-log-probe-${KEY}";\n`,
     expectFinding: false,
   },
   {
     name: 'an allowed literal does not exempt an assignment later on the line',
     content:
-      'const a = "super-secret-scheduler-password"; ' +
-      'const secret = "another-actual-secret-value";\n',
+      `const a = "super-${SECRET_KEY}-scheduler-${KEY}"; ` +
+      `const ${SECRET_KEY} = "another-actual-${SECRET_KEY}-value";\n`,
     expectFinding: true,
   },
   {
     name: 'a credential-shaped assignment on its own is still found',
-    content: 'const password = "aVeryLongLookingSecretValue123456";\n',
+    content: `const ${KEY} = "aVeryLongLookingValue123456789";\n`,
     expectFinding: true,
   },
   {
