@@ -124,8 +124,17 @@ export interface OwnedObject {
  *
  * Extension members are excluded: `btree_gist` and `pgcrypto` install their
  * functions into `public` owned by whoever ran `CREATE EXTENSION`, and those are
- * not kernel objects. `pg_depend.deptype = 'e'` is the catalogue's own record of
- * that, so the exclusion is a fact rather than a name list to maintain.
+ * not kernel objects. `pg_depend` is the catalogue's own record of that, so the
+ * exclusion is a fact rather than a name list to maintain.
+ *
+ * The dependency is matched on its full identity — `classid`, `objid`,
+ * `objsubid`, `refclassid` and `deptype`. OIDs are unique within a catalogue and
+ * not across them, so `objid = c.oid` alone compares an OID from `pg_class`
+ * against OIDs recorded for `pg_proc`, `pg_type` and every other catalogue.
+ *
+ * This exclusion governs which objects the *expected-owner* comparison covers.
+ * It is not an exemption from the narrow-owner census, which reports extension
+ * membership and refuses regardless.
  */
 const MANIFEST_QUERY = `
   -- ::text on every name. The first branch of a UNION fixes the column type,
@@ -149,8 +158,14 @@ const MANIFEST_QUERY = `
          false
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = ANY($1)
-     AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
-     AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = c.oid AND e.deptype = 'e')
+     AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_depend e
+        WHERE e.classid = 'pg_class'::regclass
+          AND e.objid = c.oid
+          AND e.objsubid = 0
+          AND e.refclassid = 'pg_extension'::regclass
+          AND e.deptype = 'e')
   UNION ALL
   SELECT 'function',
          n.nspname || '.' || p.proname || '(' ||
@@ -158,84 +173,95 @@ const MANIFEST_QUERY = `
          pg_get_userbyid(p.proowner)::text, NULL, p.prosecdef
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = ANY($1)
-     AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = p.oid AND e.deptype = 'e')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_depend e
+        WHERE e.classid = 'pg_proc'::regclass
+          AND e.objid = p.oid
+          AND e.objsubid = 0
+          AND e.refclassid = 'pg_extension'::regclass
+          AND e.deptype = 'e')
   ORDER BY 1, 2`;
 
 /**
- * Objects owned by a role that must own nothing, anywhere in the database.
+ * Every object a role owns, from PostgreSQL's own ownership dependency.
  *
- * System schemas are excluded, and so are indexes and TOAST relations: none of
- * those can be given an owner independently of the table they belong to, so
- * reporting them names an artefact instead of the object an operator has to
- * fix. The table itself is still reported.
- */
-const STRAY_OWNERSHIP_QUERY = `
-  SELECT 'schema'::text AS kind, n.nspname::text AS name,
-         pg_get_userbyid(n.nspowner)::text AS owner
-    FROM pg_namespace n
-   WHERE pg_get_userbyid(n.nspowner) = ANY($1)
-     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
-  UNION ALL
-  SELECT 'relation', n.nspname || '.' || c.relname, pg_get_userbyid(c.relowner)::text
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-   WHERE pg_get_userbyid(c.relowner) = ANY($1) AND c.relkind IN ('r','p','v','m','S')
-     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
-  UNION ALL
-  SELECT 'function',
-         n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
-         pg_get_userbyid(p.proowner)::text
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE pg_get_userbyid(p.proowner) = ANY($1)
-     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
-  UNION ALL
-  SELECT 'database', d.datname::text, pg_get_userbyid(d.datdba)::text
-    FROM pg_database d
-   WHERE d.datname = current_database() AND pg_get_userbyid(d.datdba) = ANY($1)
-   ORDER BY 1, 2`;
-
-/**
- * Everything a narrow owner owns, anywhere in the database.
+ * `pg_shdepend` with `deptype = 'o'` and `refclassid = pg_authid` *is* the
+ * catalogue's record of ownership, so it covers every ownable class rather than
+ * the three a hand-written scan happened to query. Foreign tables, enums,
+ * domains, composite types, foreign data wrappers, servers, extensions and
+ * everything else arrive without being enumerated here — which is the point: a
+ * class nobody thought of is reported rather than silently skipped.
  *
- * Partition descendants are resolved through `pg_inherits` and reported by their
- * root, so `audit.platform_event_2026_08` is accepted because
- * `audit.platform_event` is declared — a fact from the catalogue rather than a
- * name pattern. Extension members are excluded through `pg_depend`, for the same
- * reason.
+ * `class` is the catalogue the object lives in. `name` is resolved for the
+ * classes this census knows how to name, and is null otherwise, which the
+ * caller treats as a failure: an unrecognised ownable class must fail closed.
+ *
+ * Extension membership is reported, not used as an exemption. It is matched on
+ * the full dependency identity — `classid`, `objid`, `refclassid` and
+ * `deptype` — because OIDs are unique per catalogue and not across them, so
+ * matching on `objid` alone compares an OID from one catalogue against an OID
+ * from another.
  */
-const NARROW_OWNER_CENSUS_QUERY = `
-  WITH roots AS (
-    SELECT c.oid,
-           coalesce(
-             (SELECT pn.nspname || '.' || pc.relname
-                FROM pg_inherits i
-                JOIN pg_class pc ON pc.oid = i.inhparent
-                JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-               WHERE i.inhrelid = c.oid),
-             n.nspname || '.' || c.relname
-           ) AS root_name,
-           n.nspname || '.' || c.relname AS name,
-           pg_get_userbyid(c.relowner) AS owner
-      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE pg_get_userbyid(c.relowner) = ANY($1)
-       AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
-       AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
-       AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = c.oid AND e.deptype = 'e')
+const OWNERSHIP_CENSUS_QUERY = `
+  WITH owned AS (
+    SELECT d.classid, d.objid, r.rolname AS owner
+      FROM pg_shdepend d
+      JOIN pg_roles r ON r.oid = d.refobjid
+     WHERE d.deptype = 'o'
+       AND d.refclassid = 'pg_authid'::regclass
+       AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
+       AND r.rolname = ANY($1)
   )
-  SELECT 'relation'::text AS kind, root_name::text AS name, owner::text FROM roots
-  UNION ALL
-  SELECT 'schema', n.nspname::text, pg_get_userbyid(n.nspowner)::text
-    FROM pg_namespace n
-   WHERE pg_get_userbyid(n.nspowner) = ANY($1)
-     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
-  UNION ALL
-  SELECT 'function',
-         n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
-         pg_get_userbyid(p.proowner)::text
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-   WHERE pg_get_userbyid(p.proowner) = ANY($1)
-     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
-     AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = p.oid AND e.deptype = 'e')
-  ORDER BY 1, 2`;
+  SELECT o.owner::text AS owner,
+         o.classid::regclass::text AS class,
+         CASE o.classid
+           WHEN 'pg_class'::regclass THEN (
+             SELECT n.nspname || '.' || c.relname
+               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.oid = o.objid)
+           WHEN 'pg_proc'::regclass THEN (
+             SELECT n.nspname || '.' || p.proname || '(' ||
+                    pg_get_function_identity_arguments(p.oid) || ')'
+               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE p.oid = o.objid)
+           WHEN 'pg_namespace'::regclass THEN (
+             SELECT n.nspname FROM pg_namespace n WHERE n.oid = o.objid)
+           WHEN 'pg_type'::regclass THEN (
+             SELECT n.nspname || '.' || t.typname
+               FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE t.oid = o.objid)
+           WHEN 'pg_extension'::regclass THEN (
+             SELECT e.extname FROM pg_extension e WHERE e.oid = o.objid)
+           WHEN 'pg_database'::regclass THEN (
+             SELECT d2.datname FROM pg_database d2 WHERE d2.oid = o.objid)
+           ELSE NULL
+         END::text AS name,
+         (SELECT c.relkind::text FROM pg_class c WHERE c.oid = o.objid
+           AND o.classid = 'pg_class'::regclass) AS relkind,
+         (SELECT pn.nspname || '.' || pc.relname
+            FROM pg_inherits i
+            JOIN pg_class pc ON pc.oid = i.inhparent
+            JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+           WHERE i.inhrelid = o.objid AND o.classid = 'pg_class'::regclass)::text AS parent,
+         (SELECT e.extname
+            FROM pg_depend dep
+            JOIN pg_extension e ON e.oid = dep.refobjid
+           WHERE dep.classid = o.classid
+             AND dep.objid = o.objid
+             AND dep.objsubid = 0
+             AND dep.refclassid = 'pg_extension'::regclass
+             AND dep.deptype = 'e')::text AS extension
+    FROM owned o
+   ORDER BY 1, 2, 3`;
+
+interface CensusRow {
+  readonly owner: string;
+  readonly class: string;
+  readonly name: string | null;
+  readonly relkind: string | null;
+  readonly parent: string | null;
+  readonly extension: string | null;
+}
 
 export interface ManifestClient {
   query<R>(text: string, values?: unknown[]): Promise<{ rows: R[] }>;
@@ -281,43 +307,50 @@ export async function assertOwnershipManifest(
     );
   }
 
-  const strays = await client.query<{ kind: string; name: string; owner: string }>(
-    STRAY_OWNERSHIP_QUERY,
-    [[...rolesThatOwnNothing()]],
-  );
-  const stray = strays.rows[0];
-  if (stray !== undefined) {
-    // Ordered and counted. An unordered `rows[0]` reported whichever object the
-    // planner happened to return first — for a table it was as likely to name
-    // the primary-key index as the table — so the same drift produced different
-    // messages on different runs.
-    const others = strays.rows.length - 1;
-    throw new MigrationOwnershipError(
-      `${stray.kind} ${stray.name} is owned by ${stray.owner}, which must own nothing: ` +
-        'no runtime, reader, scheduler, break-glass or login role may own any object' +
-        (others > 0 ? ` (and ${String(others)} further object(s))` : ''),
-    );
-  }
+  // One census, over PostgreSQL's own ownership dependency, for every role that
+  // must own nothing and every narrow owner. `pg_shdepend` covers every ownable
+  // class, so a foreign table, an enum, a domain, a composite type or a class
+  // nobody anticipated arrives here instead of being missed by a hand-written
+  // scan of three catalogues.
+  const censusRoles = [...rolesThatOwnNothing(), ...NARROW_OWNERS];
+  const census = await client.query<CensusRow>(OWNERSHIP_CENSUS_QUERY, [censusRoles]);
+  const ownsNothing = rolesThatOwnNothing();
 
-  // The three narrow owners, across the whole database.
-  //
-  // They were excluded from the census entirely, so any of them could own an
-  // arbitrary relation or function in `public` or in a schema an operator
-  // created, and nothing looked. Everything they legitimately own is either
-  // named in the manifest or a partition descendant of something named there.
-  const narrow = await client.query<{ kind: string; name: string; owner: string }>(
-    NARROW_OWNER_CENSUS_QUERY,
-    [[...NARROW_OWNERS]],
-  );
-  for (const row of narrow.rows) {
+  for (const row of census.rows) {
+    // An ownable class this census cannot name is a class it cannot judge.
+    // Skipping it silently is how foreign tables and types went unseen.
+    if (row.name === null) {
+      throw new MigrationOwnershipError(
+        `${row.owner} owns an object of class ${row.class} that the ownership census cannot ` +
+          'identify. Unrecognised ownable classes fail closed: extend the census rather than ' +
+          'letting the object through unjudged',
+      );
+    }
+
+    if (ownsNothing.has(row.owner)) {
+      throw new MigrationOwnershipError(
+        `${row.class} ${row.name} is owned by ${row.owner}, which must own nothing: ` +
+          'no runtime, reader, scheduler, break-glass or login role may own any object',
+      );
+    }
+
+    // A narrow owner holds only what the manifest names, or a partition
+    // descendant of something it names. Extension membership is reported for
+    // diagnosis and is deliberately not an exemption: an extension function
+    // handed to a narrow owner is still an object the manifest never granted it.
     const declared =
-      row.kind === 'function'
+      row.class === 'pg_proc'
         ? FUNCTION_OWNERSHIP_MANIFEST[row.name] === row.owner
-        : OWNERSHIP_MANIFEST[row.name] === row.owner;
+        : OWNERSHIP_MANIFEST[row.name] === row.owner ||
+          (row.parent !== null && OWNERSHIP_MANIFEST[row.parent] === row.owner);
     if (declared) continue;
+
     throw new MigrationOwnershipError(
-      `${row.kind} ${row.name} is owned by ${row.owner}, which owns only what the manifest ` +
-        'names: a narrow owner may hold nothing else, in any schema',
+      `${row.class} ${row.name} is owned by ${row.owner}, which owns only what the manifest ` +
+        'names: a narrow owner may hold nothing else, in any schema' +
+        (row.extension === null
+          ? ''
+          : ` (it belongs to extension ${row.extension}, which is ` + 'not an exemption)'),
     );
   }
 

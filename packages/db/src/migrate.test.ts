@@ -1377,7 +1377,8 @@ describe('ownership manifest on upgrade', () => {
       [`ALTER SCHEMA drizzle OWNER TO prsystem_migrate`],
     );
     expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
-    expect((raised as Error).message).toMatch(/schema drizzle/);
+    // Reported by the census, which names the catalogue class.
+    expect((raised as Error).message).toMatch(/pg_namespace drizzle/);
   }, 120000);
 
   it('refuses a wrongly owned migration ledger', async () => {
@@ -1563,6 +1564,136 @@ describe('ownership manifest on upgrade', () => {
       runMigrations(ownershipUrl, { migrationsFolder: MIGRATIONS_FOLDER }),
     ).resolves.toBeDefined();
   }, 120000);
+
+  /**
+   * The census must cover every ownable class, not the three it happened to
+   * query.
+   *
+   * `pg_class`, `pg_proc` and `pg_namespace` were scanned by hand, so a foreign
+   * table, an enum, a domain or a composite type owned by a narrow owner was
+   * invisible. Extension members were excluded from the invariant altogether,
+   * which turned "a narrow owner owns only what the manifest names" into "…
+   * unless somebody made it an extension member".
+   */
+  it('refuses a foreign table owned by a narrow owner', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE FOREIGN DATA WRAPPER census_probe_fdw`,
+        `CREATE SERVER census_probe_server FOREIGN DATA WRAPPER census_probe_fdw`,
+        `CREATE FOREIGN TABLE platform.census_probe_ft (id int) SERVER census_probe_server`,
+        `ALTER FOREIGN TABLE platform.census_probe_ft OWNER TO prsystem_partition_mgr`,
+      ],
+      [
+        `DROP FOREIGN TABLE IF EXISTS platform.census_probe_ft`,
+        `DROP SERVER IF EXISTS census_probe_server CASCADE`,
+        `DROP FOREIGN DATA WRAPPER IF EXISTS census_probe_fdw CASCADE`,
+      ],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/census_probe_ft/);
+  }, 120000);
+
+  it('refuses an enum type owned by a narrow owner', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE TYPE platform.census_probe_enum AS ENUM ('a', 'b')`,
+        `ALTER TYPE platform.census_probe_enum OWNER TO prsystem_audit_writer`,
+      ],
+      [`DROP TYPE IF EXISTS platform.census_probe_enum`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/census_probe_enum/);
+  }, 120000);
+
+  it('refuses a domain type owned by a narrow owner', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE DOMAIN platform.census_probe_domain AS text CHECK (VALUE <> '')`,
+        `ALTER DOMAIN platform.census_probe_domain OWNER TO prsystem_maintenance_fn`,
+      ],
+      [`DROP DOMAIN IF EXISTS platform.census_probe_domain`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/census_probe_domain/);
+  }, 120000);
+
+  it('refuses a composite type owned by a runtime role', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE TYPE platform.census_probe_composite AS (a int, b text)`,
+        `ALTER TYPE platform.census_probe_composite OWNER TO prsystem_api`,
+      ],
+      [`DROP TYPE IF EXISTS platform.census_probe_composite`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/census_probe_composite/);
+  }, 120000);
+
+  it('refuses an extension object owned by a narrow owner', async () => {
+    // Extension membership is not an exemption. A narrow owner holding an
+    // extension function owns something the manifest never granted it, and the
+    // fact that an extension created the object changes nothing about that.
+    const raised = await refusesUpgrade(
+      [`ALTER FUNCTION public.digest(text, text) OWNER TO prsystem_audit_writer`],
+      [`ALTER FUNCTION public.digest(text, text) OWNER TO prsystem_migrate`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/digest/);
+  }, 120000);
+
+  it('refuses an unknown ownable class rather than ignoring it', async () => {
+    // Extended statistics are ownable, are recorded in pg_shdepend, and are not
+    // a class this census knows how to name. Failing closed is the only safe
+    // answer: silently skipping an unrecognised class is exactly how foreign
+    // tables and types went unseen.
+    const raised = await refusesUpgrade(
+      [
+        `CREATE STATISTICS platform.census_probe_stat (dependencies)
+           ON job_name, state FROM platform.job_run`,
+        `ALTER STATISTICS platform.census_probe_stat OWNER TO prsystem_partition_mgr`,
+      ],
+      [`DROP STATISTICS IF EXISTS platform.census_probe_stat`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/cannot identify|pg_statistic_ext/);
+  }, 120000);
+
+  it('matches extension dependencies on their full catalogue identity', () => {
+    // A structural check, deliberately, and it is worth saying why rather than
+    // leaving the reader to assume a behavioural one was skipped for effort.
+    //
+    // The defect is that `pg_depend.objid = c.oid` with no `classid` compares an
+    // OID from pg_class against OIDs recorded for pg_proc, pg_type and every
+    // other catalogue — OIDs are unique within a catalogue, not across them. A
+    // behavioural case would need a kernel relation whose OID equals an
+    // extension member's OID in another catalogue, and PostgreSQL allocates
+    // OIDs from a single global counter, so two objects created at different
+    // times cannot collide. The collision is reachable only after counter
+    // wraparound, which a test cannot construct. So the predicate is asserted
+    // directly instead of being demonstrated.
+    const source = readFileSync(resolve(__dirname, 'ownership-manifest.ts'), 'utf8');
+    const predicates = [...source.matchAll(/FROM pg_depend e\b([\s\S]*?)\)/g)].map((m) => m[1]);
+    expect(predicates.length).toBeGreaterThan(0);
+    for (const predicate of predicates) {
+      expect(predicate).toMatch(/e\.classid\s*=/);
+      expect(predicate).toMatch(/e\.objid\s*=/);
+      expect(predicate).toMatch(/e\.objsubid\s*=/);
+      expect(predicate).toMatch(/e\.refclassid\s*=\s*'pg_extension'::regclass/);
+      expect(predicate).toMatch(/e\.deptype\s*=\s*'e'/);
+    }
+
+    // And the census resolves extension membership the same way, on the
+    // dependency's full identity rather than on its object id alone.
+    const census = source.slice(source.indexOf('OWNERSHIP_CENSUS_QUERY'));
+    const membership = census.slice(
+      census.indexOf('FROM pg_depend dep'),
+      census.indexOf('::text AS extension'),
+    );
+    expect(membership).toMatch(/dep\.classid = o\.classid/);
+    expect(membership).toMatch(/dep\.objid = o\.objid/);
+    expect(membership).toMatch(/dep\.refclassid = 'pg_extension'::regclass/);
+    expect(membership).toMatch(/dep\.deptype = 'e'/);
+  });
 
   it('applies the pending migration once ownership is intact', async () => {
     // The positive control. Every case above reverts in its own `finally`, so a
