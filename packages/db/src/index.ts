@@ -89,3 +89,11 @@ export type { PartitionHorizon } from './kernel/partitions';
 export { AUDIT_GRANT_POLICY, RUNTIME_ROLES, TABLE_CLASSIFICATION } from './classification';
 export type { ClassificationViolation, ClassifiedTable, TableClass } from './classification';
 export { validateClassification } from './classification-check';
+export {
+  COMPARED_SCHEMAS,
+  assertSchemaMatchesDeclaration,
+  compareSchema,
+  declaredTableNames,
+} from './schema-comparator';
+export type { SchemaDifference } from './schema-comparator';
+export { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';

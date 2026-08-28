@@ -11,6 +11,7 @@ import { MIGRATIONS_FOLDER, runMigrations } from './migrate';
 import { schemaFingerprint } from './test-support/schema-fingerprint';
 import { pinnedContainer, schemaDump } from './test-support/schema-dump';
 import { DECLARED_TABLES } from './schema';
+import { assertSchemaMatchesDeclaration, compareSchema } from './schema-comparator';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 
 /**
@@ -32,6 +33,8 @@ const FRESH_DATABASE = 'prsystem_migration_fresh';
 const UPGRADE_DATABASE = 'prsystem_migration_upgrade';
 /** A throwaway database the fingerprint sensitivity tests are allowed to tamper with. */
 const SENSITIVITY_DATABASE = 'prsystem_migration_sensitivity';
+/** A pristine database for the comparator mutation tests. */
+const COMPARATOR_DATABASE = 'prsystem_migration_comparator';
 
 function withDatabase(url: string, database: string): string {
   const parsed = new URL(url);
@@ -95,7 +98,12 @@ beforeAll(async () => {
       }
     }
   };
-  for (const database of [FRESH_DATABASE, UPGRADE_DATABASE, SENSITIVITY_DATABASE]) {
+  for (const database of [
+    FRESH_DATABASE,
+    UPGRADE_DATABASE,
+    SENSITIVITY_DATABASE,
+    COMPARATOR_DATABASE,
+  ]) {
     await retry(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     await retry(`CREATE DATABASE ${database}`);
     // Cluster bootstrap first: the migration refuses to run without it.
@@ -111,7 +119,12 @@ beforeAll(async () => {
 }, 120000);
 
 afterAll(async () => {
-  for (const database of [FRESH_DATABASE, UPGRADE_DATABASE, SENSITIVITY_DATABASE]) {
+  for (const database of [
+    FRESH_DATABASE,
+    UPGRADE_DATABASE,
+    SENSITIVITY_DATABASE,
+    COMPARATOR_DATABASE,
+  ]) {
     await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
   }
   await admin.end();
@@ -311,36 +324,25 @@ describe('migration runner', () => {
     }
   }, 60000);
 
-  it('matches the declared Drizzle schema, column for column', async () => {
-    // A blocking drift check. The migration SQL is authoritative, so this fails
-    // when the declaration falls behind it — which is the direction drift
-    // actually travels.
-    const pool = quietPool({ connectionString: freshUrl, max: 1 });
+  it('matches the declaration exactly, through the shared comparator', async () => {
+    // The blocking check and the mutation tests below call the *same* function.
+    // Two implementations would let the gate and its own proof disagree.
+    const pool = quietPool({ connectionString: freshUrl, max: 1 }, 'comparator-fresh');
     try {
-      const declared = DECLARED_TABLES.flatMap((table) => {
-        const config = getTableConfig(table);
-        return config.columns.map((column) => ({
-          table: `${config.schema ?? 'public'}.${config.name}`,
-          column: column.name,
-          notNull: column.notNull,
-        }));
-      }).sort((a, b) => (a.table + a.column).localeCompare(b.table + b.column));
+      await expect(assertSchemaMatchesDeclaration(pool)).resolves.toBeUndefined();
+      expect(await compareSchema(pool)).toEqual([]);
+    } finally {
+      await pool.end();
+    }
+  }, 60000);
 
-      const tables = [...new Set(declared.map((d) => d.table))];
-      const live = await pool.query<{ table: string; column: string; not_null: boolean }>(
-        `SELECT c.table_schema || '.' || c.table_name AS table, c.column_name AS column,
-                (c.is_nullable = 'NO') AS not_null
-           FROM information_schema.columns c
-          WHERE c.table_schema || '.' || c.table_name = ANY($1)
-          ORDER BY 1, 2`,
-        [tables],
-      );
-      const actual = live.rows
-        .map((r) => ({ table: r.table, column: r.column, notNull: r.not_null }))
-        .sort((a, b) => (a.table + a.column).localeCompare(b.table + b.column));
-
-      expect(declared.length).toBeGreaterThan(0);
-      expect(actual).toEqual(declared);
+  it('matches the declaration on the upgraded database too', async () => {
+    // The dump comparison alone cannot catch a defect the fresh and upgrade
+    // paths share, because they run the same SQL. This compares each against a
+    // declaration instead.
+    const pool = quietPool({ connectionString: upgradeUrl, max: 1 }, 'comparator-upgrade');
+    try {
+      expect(await compareSchema(pool)).toEqual([]);
     } finally {
       await pool.end();
     }
@@ -814,4 +816,173 @@ describe('transactional failure recovery', () => {
       await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     }
   }, 120000);
+});
+
+/**
+ * Mutation tests for the exact comparator.
+ *
+ * Their own database: the sensitivity describe above deliberately leaves probe
+ * tables and views behind, and a comparator that reports those as undeclared —
+ * correctly — would make every "restored to clean" assertion here fail for the
+ * wrong reason.
+ */
+describe('schema comparator mutations', () => {
+  const comparatorUrl = asMigrationLogin(withDatabase(ADMIN_URL, COMPARATOR_DATABASE));
+  let comparatorPool: Pool;
+
+  beforeAll(async () => {
+    await runMigrations(comparatorUrl);
+    comparatorPool = quietPool(
+      { connectionString: withDatabase(ADMIN_URL, COMPARATOR_DATABASE), max: 1 },
+      'comparator-mutations',
+    );
+    // The starting point must be clean, or every assertion below is meaningless.
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 120000);
+
+  afterAll(async () => {
+    await comparatorPool?.end();
+  });
+
+  it('the comparator rejects a dropped column default', async () => {
+    // Each of these calls the same compareSchema the blocking gate calls, and
+    // asserts on the specific difference it introduced — not merely that
+    // something changed.
+    await comparatorPool.query(`ALTER TABLE platform.job_run ALTER COLUMN state DROP DEFAULT`);
+    const differences = await compareSchema(comparatorPool);
+    expect(differences).toContainEqual(
+      expect.objectContaining({ kind: 'column', subject: 'platform.job_run.state' }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.job_run ALTER COLUMN state SET DEFAULT 'running'`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a changed column type', async () => {
+    await comparatorPool.query(
+      `ALTER TABLE platform.job_run ALTER COLUMN error_name TYPE varchar(200)`,
+    );
+    const differences = await compareSchema(comparatorPool);
+    expect(differences).toContainEqual(
+      expect.objectContaining({ kind: 'column', subject: 'platform.job_run.error_name' }),
+    );
+    await comparatorPool.query(`ALTER TABLE platform.job_run ALTER COLUMN error_name TYPE text`);
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped NOT NULL', async () => {
+    await comparatorPool.query(`ALTER TABLE platform.job_run ALTER COLUMN job_name DROP NOT NULL`);
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'column', subject: 'platform.job_run.job_name' }),
+    );
+    await comparatorPool.query(`ALTER TABLE platform.job_run ALTER COLUMN job_name SET NOT NULL`);
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped primary key', async () => {
+    await comparatorPool.query(
+      `ALTER TABLE platform.export_artifact DROP CONSTRAINT export_artifact_pkey`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({
+        kind: 'constraint',
+        subject: 'platform.export_artifact.export_artifact_pkey',
+      }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.export_artifact ADD CONSTRAINT export_artifact_pkey PRIMARY KEY (export_id)`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped composite audit primary key', async () => {
+    // The audit parent's key is composite, which the Drizzle DSL cannot state;
+    // it lives in the canonical snapshot and must still be compared.
+    const definition = await comparatorPool.query<{ definition: string }>(
+      `SELECT pg_get_constraintdef(con.oid) AS definition
+         FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = rel.relnamespace
+        WHERE n.nspname = 'audit' AND rel.relname = 'platform_event' AND con.contype = 'p'`,
+    );
+    expect(definition.rows[0]?.definition).toMatch(/PRIMARY KEY \(.*,.*\)/);
+
+    await comparatorPool.query(
+      `ALTER TABLE audit.platform_event DROP CONSTRAINT platform_event_pk`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'constraint' }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE audit.platform_event ADD CONSTRAINT platform_event_pk ${definition.rows[0]!.definition}`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped foreign key', async () => {
+    const fk = await comparatorPool.query<{ conname: string; definition: string }>(
+      `SELECT con.conname, pg_get_constraintdef(con.oid) AS definition
+         FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = rel.relnamespace
+        WHERE n.nspname = 'platform' AND rel.relname = 'outbox_delivery' AND con.contype = 'f'
+        LIMIT 1`,
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.outbox_delivery DROP CONSTRAINT ${fk.rows[0]!.conname}`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'constraint' }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.outbox_delivery ADD CONSTRAINT ${fk.rows[0]!.conname} ${fk.rows[0]!.definition}`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped check constraint', async () => {
+    const check = await comparatorPool.query<{ definition: string }>(
+      `SELECT pg_get_constraintdef(con.oid) AS definition
+         FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = rel.relnamespace
+        WHERE n.nspname = 'platform' AND rel.relname = 'job_run'
+          AND con.conname = 'job_run_state_known'`,
+    );
+    await comparatorPool.query(`ALTER TABLE platform.job_run DROP CONSTRAINT job_run_state_known`);
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({
+        kind: 'constraint',
+        subject: 'platform.job_run.job_run_state_known',
+      }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.job_run ADD CONSTRAINT job_run_state_known ${check.rows[0]!.definition}`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a changed index definition', async () => {
+    const before = await comparatorPool.query<{ definition: string }>(
+      `SELECT indexdef AS definition FROM pg_indexes
+        WHERE schemaname = 'platform' AND indexname = 'job_run_name_idx'`,
+    );
+    await comparatorPool.query(`DROP INDEX platform.job_run_name_idx`);
+    // Same name, different column list: a partial or reordered index is a
+    // different index, and the definition is what says so.
+    await comparatorPool.query(`CREATE INDEX job_run_name_idx ON platform.job_run (job_identity)`);
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'index', subject: 'platform.job_run.job_run_name_idx' }),
+    );
+    await comparatorPool.query(`DROP INDEX platform.job_run_name_idx`);
+    await comparatorPool.query(before.rows[0]!.definition);
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects an undeclared table', async () => {
+    await comparatorPool.query(`CREATE TABLE platform.comparator_probe (id integer PRIMARY KEY)`);
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'table', subject: 'platform.comparator_probe' }),
+    );
+    await comparatorPool.query(`DROP TABLE platform.comparator_probe`);
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
 });
