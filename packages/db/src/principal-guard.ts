@@ -470,6 +470,77 @@ export async function assertMigrationGraph(pool: Queryable): Promise<void> {
  * runtime principal against every owner and privileged role, by MEMBER (which
  * covers ADMIN-only edges), USAGE, SET and ADMIN alike.
  */
+/**
+ * Every canonical login that exists must hold exactly its designated edge.
+ *
+ * Checking only for *unexpected* memberships passes a cluster in which a login
+ * exists with no membership at all, or with somebody else's group. An absent
+ * login is fine — a deployment may manage it elsewhere — but one that exists and
+ * is wired wrongly is a principal that will authenticate and then behave as
+ * something the design never sanctioned.
+ */
+export async function assertCanonicalLoginEdges(pool: Queryable): Promise<void> {
+  const expected = Object.entries(EXPECTED_PRINCIPAL_GROUP).filter(
+    ([, group]) => group !== null,
+  ) as [string, string][];
+
+  const present = await pool.query<{ rolname: string; rolcanlogin: boolean }>(
+    `SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = ANY($1)`,
+    [expected.map(([login]) => login)],
+  );
+  const existing = new Map(present.rows.map((r) => [r.rolname, r]));
+
+  const edges = await pool.query<{
+    member: string;
+    role: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT m.rolname AS member, g.rolname AS role,
+            am.admin_option, am.inherit_option, am.set_option
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE m.rolname = ANY($1)`,
+    [expected.map(([login]) => login)],
+  );
+
+  for (const [login, group] of expected) {
+    const role = existing.get(login);
+    if (role === undefined) continue; // absent is permitted, and never created
+
+    if (!role.rolcanlogin) {
+      throw new PrincipalError(
+        `canonical principal ${login} exists but lacks LOGIN`,
+        'missing_membership',
+      );
+    }
+
+    const held = edges.rows.filter((e) => e.member === login);
+    if (held.length !== 1 || held[0]?.role !== group) {
+      throw new PrincipalError(
+        `canonical login ${login} must be a member of exactly ${group}; found ` +
+          `[${held.map((e) => e.role).join(', ') || 'none'}]`,
+        held.length === 0 ? 'missing_membership' : 'unexpected_membership',
+      );
+    }
+    const edge = held[0];
+    if (
+      edge.admin_option !== INTENDED_MEMBERSHIP_OPTIONS.admin ||
+      edge.inherit_option !== INTENDED_MEMBERSHIP_OPTIONS.inherit ||
+      edge.set_option !== INTENDED_MEMBERSHIP_OPTIONS.set
+    ) {
+      throw new PrincipalError(
+        `canonical login ${login} membership in ${group} carries ADMIN ` +
+          `${String(edge.admin_option)}, INHERIT ${String(edge.inherit_option)}, ` +
+          `SET ${String(edge.set_option)}`,
+        'membership_options',
+      );
+    }
+  }
+}
+
 export async function assertRuntimeContainment(pool: Queryable): Promise<void> {
   const reach = await pool.query<{ member: string; role: string; capabilities: string }>(
     `SELECT m.rolname AS member, g.rolname AS role,
@@ -577,7 +648,11 @@ export async function assertMigrationPrincipal(pool: Queryable): Promise<Princip
   assertNoAdminCapability(facts);
   assertMembershipOptions(facts);
   await assertMigrationGraph(pool);
+  // Containment first: "this runtime can reach an owner role" is both more
+  // urgent and more actionable than "this login has two memberships", and the
+  // two findings usually describe the same drift from different angles.
   await assertRuntimeContainment(pool);
+  await assertCanonicalLoginEdges(pool);
 
   const allowed = new Set(ALLOWED_MIGRATION_CLOSURE);
   const unexpected = facts.memberOf.filter((role) => !allowed.has(role));

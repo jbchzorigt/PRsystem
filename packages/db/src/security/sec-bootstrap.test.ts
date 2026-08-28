@@ -433,3 +433,188 @@ describe('exact database and schema ACLs', () => {
     }
   }, 120000);
 });
+
+describe('R6-1 — an omitted canonical login must actually be a login', () => {
+  it('fails closed on a canonical principal that has lost LOGIN', async () => {
+    // `rolcanlogin` was read and never asserted, so a canonical principal that
+    // had been turned into a group role passed validation. A deployment would
+    // then start, connect nowhere, and blame the network.
+    await dropAllLogins();
+    await admin.query(`CREATE ROLE prsystem_police_login NOLOGIN INHERIT`);
+    await admin.query(
+      `GRANT prsystem_police TO prsystem_police_login WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+
+    await expect(
+      bootstrapCluster({
+        adminUrl: db.url,
+        database: db.name,
+        logins: [credential('prsystem_api_login')],
+      }),
+    ).rejects.toMatchObject({
+      name: 'BootstrapError',
+      message: expect.stringMatching(/prsystem_police_login.*LOGIN/s) as unknown as string,
+    });
+  }, 120000);
+
+  it('accepts the same principal once LOGIN is restored', async () => {
+    // The positive control: LOGIN is the only thing that changed.
+    await admin.query(`ALTER ROLE prsystem_police_login LOGIN`);
+
+    const result = await bootstrapCluster({
+      adminUrl: db.url,
+      database: db.name,
+      logins: [credential('prsystem_api_login')],
+    });
+    expect(result.loginsValidated).toBe(1);
+  }, 120000);
+});
+
+describe('R6-2 — every existing canonical login must hold its exact expected edge', () => {
+  it('fails closed when an existing login has no membership at all', async () => {
+    await dropAllLogins();
+    await admin.query(`CREATE ROLE prsystem_worker_login LOGIN PASSWORD 'x' INHERIT`);
+
+    await expect(
+      bootstrapCluster({
+        adminUrl: db.url,
+        database: db.name,
+        logins: [credential('prsystem_api_login')],
+      }),
+    ).rejects.toMatchObject({
+      name: 'BootstrapError',
+      message: expect.stringMatching(
+        /prsystem_worker_login.*expected exactly/s,
+      ) as unknown as string,
+    });
+  }, 120000);
+
+  it('fails closed when an existing login holds the wrong group', async () => {
+    await dropAllLogins();
+    await admin.query(`CREATE ROLE prsystem_worker_login LOGIN PASSWORD 'x' INHERIT`);
+    // The API group, not the worker group: reach the design never granted it.
+    await admin.query(
+      `GRANT prsystem_api TO prsystem_worker_login WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+    );
+
+    await expect(
+      bootstrapCluster({
+        adminUrl: db.url,
+        database: db.name,
+        logins: [credential('prsystem_api_login')],
+      }),
+    ).rejects.toMatchObject({ name: 'BootstrapError' });
+  }, 120000);
+});
+
+describe('R6-3 — database and public schema ownership is an explicit contract', () => {
+  it('refuses a runtime role as the target database owner', async () => {
+    await dropAllLogins();
+    const original = await admin.query<{ owner: string }>(
+      `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1`,
+      [db.name],
+    );
+    await admin.query(`ALTER DATABASE ${db.name} OWNER TO prsystem_api`);
+    try {
+      // Previously the owner was trusted automatically, whoever it was: a
+      // runtime role owning the database was silently added to the ACL
+      // allow-list and its implicit rights were never questioned.
+      await expect(
+        bootstrapCluster({ adminUrl: db.url, database: db.name, logins: [] }),
+      ).rejects.toMatchObject({
+        name: 'BootstrapError',
+        message: expect.stringMatching(/prsystem_api.*owner/s) as unknown as string,
+      });
+    } finally {
+      await admin.query(`ALTER DATABASE ${db.name} OWNER TO ${original.rows[0]!.owner}`);
+    }
+  }, 120000);
+
+  it('refuses a runtime role as the owner of schema public', async () => {
+    const target = new Client({ connectionString: db.url });
+    await target.connect();
+    let original = 'pg_database_owner';
+    try {
+      const owner = await target.query<{ owner: string }>(
+        `SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'public'`,
+      );
+      original = owner.rows[0]!.owner;
+      await target.query(`ALTER SCHEMA public OWNER TO prsystem_worker`);
+    } finally {
+      await target.end();
+    }
+
+    try {
+      await expect(
+        bootstrapCluster({ adminUrl: db.url, database: db.name, logins: [] }),
+      ).rejects.toMatchObject({
+        name: 'BootstrapError',
+        message: expect.stringMatching(/prsystem_worker.*owner/s) as unknown as string,
+      });
+    } finally {
+      const restore = new Client({ connectionString: db.url });
+      await restore.connect();
+      try {
+        await restore.query(`ALTER SCHEMA public OWNER TO ${original}`);
+      } finally {
+        await restore.end();
+      }
+    }
+  }, 120000);
+
+  it('accepts the approved operator owner', async () => {
+    // The positive control for the contract: the compose operator identity.
+    const result = await bootstrapCluster({
+      adminUrl: db.url,
+      database: db.name,
+      logins: ALL_PRINCIPALS.map((p) => credential(p)),
+    });
+    expect(result.groupRoles).toBe(GROUP_ROLES.length);
+  }, 120000);
+});
+
+describe('R6-4 — transitive owner drift is detected', () => {
+  it('rejects an owner role that can reach a bridge role', async () => {
+    await admin.query(`DROP ROLE IF EXISTS prsystem_r64_bridge`);
+    await admin.query(`CREATE ROLE prsystem_r64_bridge NOLOGIN`);
+    try {
+      // prsystem_audit_writer is an owner role. Nothing in the runtime closure
+      // changes here, so a check that only looked at runtime principals sees a
+      // clean cluster.
+      await admin.query(
+        `GRANT prsystem_r64_bridge TO prsystem_audit_writer WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+      );
+
+      await expect(
+        bootstrapCluster({
+          adminUrl: db.url,
+          database: db.name,
+          logins: ALL_PRINCIPALS.map((p) => credential(p)),
+        }),
+      ).rejects.toMatchObject({
+        name: 'BootstrapError',
+        message: expect.stringMatching(
+          /prsystem_audit_writer.*prsystem_r64_bridge/s,
+        ) as unknown as string,
+      });
+    } finally {
+      await admin.query(`REVOKE prsystem_r64_bridge FROM prsystem_audit_writer`);
+      await admin.query(`DROP ROLE IF EXISTS prsystem_r64_bridge`);
+    }
+  }, 120000);
+
+  it('rejects an owner role that reaches a predefined role', async () => {
+    await admin.query(`GRANT pg_read_all_data TO prsystem_partition_mgr`);
+    try {
+      await expect(
+        bootstrapCluster({
+          adminUrl: db.url,
+          database: db.name,
+          logins: ALL_PRINCIPALS.map((p) => credential(p)),
+        }),
+      ).rejects.toMatchObject({ name: 'BootstrapError' });
+    } finally {
+      await admin.query(`REVOKE pg_read_all_data FROM prsystem_partition_mgr`);
+    }
+  }, 120000);
+});

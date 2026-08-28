@@ -158,6 +158,60 @@ BEGIN
       r.contained_name, r.reached_name USING ERRCODE = '42501';
   END LOOP;
 
+  -- Every canonical login that exists must hold exactly its designated edge.
+  -- An absent login is fine; one that exists with no membership, or with
+  -- somebody else's group, will authenticate and then behave as something the
+  -- design never sanctioned.
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('prsystem_api_login',                'prsystem_api'),
+      ('prsystem_worker_login',             'prsystem_worker'),
+      ('prsystem_police_login',             'prsystem_police'),
+      ('prsystem_audit_reader_login',       'prsystem_audit_reader'),
+      ('prsystem_police_audit_reader_login','prsystem_police_audit_reader'),
+      ('prsystem_job_scheduler_login',      'prsystem_job_scheduler'),
+      ('prsystem_migrate_login',            'prsystem_migrate')
+    ) AS t(login_name, group_name)
+  LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.login_name) THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r.login_name AND rolcanlogin) THEN
+        RAISE EXCEPTION 'canonical principal % exists but lacks LOGIN', r.login_name
+          USING ERRCODE = '42501';
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_auth_members am
+          JOIN pg_roles m ON m.oid = am.member
+          JOIN pg_roles g ON g.oid = am.roleid
+         WHERE m.rolname = r.login_name AND g.rolname = r.group_name
+           AND am.admin_option = false AND am.inherit_option = true AND am.set_option = true
+      ) THEN
+        RAISE EXCEPTION
+          'canonical login % must be a member of % with exactly ADMIN FALSE, INHERIT TRUE, SET TRUE',
+          r.login_name, r.group_name USING ERRCODE = '42501';
+      END IF;
+    END IF;
+  END LOOP;
+
+  -- Owner roles must reach exactly what the design says and nothing else. An
+  -- owner granted a predefined or bridge role changes no runtime closure, so a
+  -- check that looked only at runtime principals would see a clean cluster.
+  FOR r IN
+    SELECT m.rolname AS member, g.rolname AS role
+      FROM pg_auth_members am
+      JOIN pg_roles m ON m.oid = am.member
+      JOIN pg_roles g ON g.oid = am.roleid
+     WHERE m.rolname IN ('prsystem_migrate', 'prsystem_audit_writer',
+                         'prsystem_partition_mgr', 'prsystem_maintenance_fn',
+                         'prsystem_maintenance')
+       AND NOT (m.rolname = 'prsystem_migrate'
+                AND g.rolname IN ('prsystem_audit_writer', 'prsystem_partition_mgr',
+                                  'prsystem_maintenance_fn'))
+  LOOP
+    RAISE EXCEPTION 'owner role % unexpectedly reaches %', r.member, r.role
+      USING ERRCODE = '42501';
+  END LOOP;
+
   -- The migration graph must be exactly right, not merely free of extras: a
   -- cluster missing prsystem_migrate -> prsystem_audit_writer has no extra reach
   -- anywhere, yet cannot own what this migration is about to create.

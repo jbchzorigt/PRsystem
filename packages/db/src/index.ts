@@ -22,6 +22,7 @@ export {
   FORBIDDEN_FOR_RUNTIME,
   INTENDED_MEMBERSHIP_OPTIONS,
   PrincipalError,
+  assertCanonicalLoginEdges,
   assertMigrationGraph,
   assertMigrationPrincipal,
   assertRuntimeContainment,

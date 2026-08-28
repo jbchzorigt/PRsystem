@@ -106,6 +106,13 @@ export interface BootstrapOptions {
    * which is what a production run does when logins are managed by IaC.
    */
   readonly logins?: readonly LoginCredential[];
+  /**
+   * Operator identities permitted to own the target database and schema
+   * `public`. Defaults to the identity performing the bootstrap, which is the
+   * one a deployment has actually authorised. Project roles are refused
+   * whatever this list says.
+   */
+  readonly approvedOperatorOwners?: readonly string[];
 }
 
 export interface BootstrapResult {
@@ -201,9 +208,25 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
         new Set(supplied.map((c) => c.principal)),
       );
 
-      await applyDatabaseGrants(targetPool, options.database);
+      // Who is allowed to own this database, resolved before anything trusts an
+      // owner. Default: the identity running the bootstrap.
+      const connectedAs = await clusterPool.query<{ user: string }>('SELECT current_user AS user');
+      const approvedOwners = new Set<string>(
+        options.approvedOperatorOwners ?? [connectedAs.rows[0]!.user],
+      );
+      const ownership = await assertOwnershipContract(targetPool, options.database, approvedOwners);
+
+      // Checked *before* reconciliation. Reconciliation would revoke the edge and
+      // leave a clean cluster behind, which is the right repair for a stale
+      // login grant and the wrong response to an owner role that has acquired
+      // reach: silently repairing that hides the escalation that produced it.
+      await assertOwnerClosure(clusterPool, false);
+
+      await applyDatabaseGrants(targetPool, options.database, ownership);
       await reconcileMemberships(clusterPool);
-      await assertInvariants(clusterPool, targetPool, options.database);
+      // And again afterwards, this time also requiring every expected edge.
+      await assertOwnerClosure(clusterPool, true);
+      await assertInvariants(clusterPool, targetPool, options.database, ownership);
 
       return {
         groupRoles: GROUP_ROLES.length,
@@ -369,7 +392,11 @@ async function applyGroupRoles(pool: Pool): Promise<void> {
  * Exact final grants, not additive ones. Stale privileges are revoked first, so
  * a role that once held CREATE does not keep it because nobody remembered.
  */
-async function applyDatabaseGrants(pool: Pool, database: string): Promise<void> {
+async function applyDatabaseGrants(
+  pool: Pool,
+  database: string,
+  ownership: OwnershipContract,
+): Promise<void> {
   await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM PUBLIC', [database]);
   await pool.query('REVOKE ALL ON SCHEMA public FROM PUBLIC');
 
@@ -392,9 +419,142 @@ async function applyDatabaseGrants(pool: Pool, database: string): Promise<void> 
   // "Exact final grants" has to mean every grantee, not only the ones this file
   // happens to name. A grant handed to some unrelated role by an operator, or
   // left behind by an earlier tool, is exactly the grant nobody is looking at.
-  for (const grantee of await strayGrantees(pool, database)) {
+  for (const grantee of await strayGrantees(pool, database, ownership)) {
     await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM %I', [database, grantee]);
     await executeFormatted(pool, 'REVOKE ALL ON SCHEMA public FROM %I', [grantee]);
+  }
+}
+
+/**
+ * Roles that may never own the target database or schema `public`.
+ *
+ * Ownership carries implicit, unrevokable rights. A runtime that owned the
+ * database could grant itself anything at any time, so no amount of ACL
+ * reconciliation would contain it — and the previous implementation added
+ * whatever it found as owner to the ACL allow-list without asking what it was.
+ */
+function projectRoles(): ReadonlySet<string> {
+  return new Set<string>([...GROUP_ROLES, ...Object.keys(LOGIN_PRINCIPALS)]);
+}
+
+/** PostgreSQL's own owner of `public` since 15. Conditionally acceptable. */
+const PG_DATABASE_OWNER = 'pg_database_owner';
+
+export interface OwnershipContract {
+  readonly databaseOwner: string;
+  readonly publicSchemaOwner: string;
+}
+
+/**
+ * The explicit operator-owner contract.
+ *
+ * The database and schema `public` must be owned by an approved operator
+ * identity — by default the identity performing the bootstrap, which is the one
+ * a deployment has actually authorised. Every project role is refused outright,
+ * whatever the approved list says: a runtime, reader, scheduler, canonical
+ * login, migration owner, function owner or break-glass role owning the
+ * database is a privilege the design never granted and cannot take back.
+ *
+ * `pg_database_owner` is accepted for `public` only when the database owner is
+ * itself approved, because it resolves to exactly that role.
+ */
+async function assertOwnershipContract(
+  target: Pool,
+  database: string,
+  approved: ReadonlySet<string>,
+): Promise<OwnershipContract> {
+  const forbidden = projectRoles();
+
+  const owners = await target.query<{ database_owner: string; schema_owner: string }>(
+    `SELECT (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = $1) AS database_owner,
+            (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'public')
+              AS schema_owner`,
+    [database],
+  );
+  const row = owners.rows[0];
+  if (row === undefined) {
+    throw new BootstrapError(`cannot read ownership of database ${database}`);
+  }
+
+  if (forbidden.has(row.database_owner)) {
+    throw new BootstrapError(
+      `database ${database} is owned by the project role ${row.database_owner}; ` +
+        `no runtime, reader, scheduler, login, migration, function-owner or break-glass role ` +
+        `may be a database owner`,
+    );
+  }
+  if (!approved.has(row.database_owner)) {
+    throw new BootstrapError(
+      `database ${database} is owned by ${row.database_owner}, which is not an approved operator ` +
+        `owner (approved: ${[...approved].join(', ')})`,
+    );
+  }
+
+  if (row.schema_owner === PG_DATABASE_OWNER) {
+    // Resolves to the database owner, which the check above already approved.
+    return { databaseOwner: row.database_owner, publicSchemaOwner: row.schema_owner };
+  }
+  if (forbidden.has(row.schema_owner)) {
+    throw new BootstrapError(
+      `schema public is owned by the project role ${row.schema_owner}; ` +
+        `no project role may be a schema owner`,
+    );
+  }
+  if (!approved.has(row.schema_owner)) {
+    throw new BootstrapError(
+      `schema public is owned by ${row.schema_owner}, which is not an approved operator owner`,
+    );
+  }
+
+  return { databaseOwner: row.database_owner, publicSchemaOwner: row.schema_owner };
+}
+
+/** The owner roles, and the only memberships each of them may hold. */
+const OWNER_ROLE_CLOSURE: Readonly<Record<string, readonly string[]>> = {
+  prsystem_migrate: ['prsystem_audit_writer', 'prsystem_partition_mgr', 'prsystem_maintenance_fn'],
+  prsystem_audit_writer: [],
+  prsystem_partition_mgr: [],
+  prsystem_maintenance_fn: [],
+  prsystem_maintenance: [],
+};
+
+/**
+ * Owner roles must reach exactly what the design says and nothing else.
+ *
+ * Containment previously looked only at runtime principals, so an owner role
+ * granted a predefined role — or a bridge role leading anywhere — changed no
+ * runtime closure and passed every check, while every object those owners hold
+ * became reachable through them.
+ */
+async function assertOwnerClosure(pool: Pool, requireExpected: boolean): Promise<void> {
+  const edges = await pool.query<{ member: string; role: string }>(
+    `SELECT m.rolname AS member, g.rolname AS role
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE m.rolname = ANY($1)
+      ORDER BY 1, 2`,
+    [Object.keys(OWNER_ROLE_CLOSURE)],
+  );
+
+  for (const edge of edges.rows) {
+    const permitted = OWNER_ROLE_CLOSURE[edge.member] ?? [];
+    if (!permitted.includes(edge.role)) {
+      throw new BootstrapError(
+        `owner role ${edge.member} unexpectedly reaches ${edge.role}; ` +
+          `an owner role may reach only ${permitted.length > 0 ? permitted.join(', ') : 'nothing'}`,
+      );
+    }
+  }
+
+  if (!requireExpected) return;
+
+  for (const [member, expected] of Object.entries(OWNER_ROLE_CLOSURE)) {
+    for (const role of expected) {
+      if (!edges.rows.some((e) => e.member === member && e.role === role)) {
+        throw new BootstrapError(`owner role ${member} is missing its edge to ${role}`);
+      }
+    }
   }
 }
 
@@ -406,21 +566,19 @@ async function applyDatabaseGrants(pool: Pool, database: string): Promise<void> 
  * legitimately owns), the DDL owner, and the runtime, reader and scheduler
  * roles. Anything else is stale or unexpected and is revoked.
  */
-async function strayGrantees(pool: Pool, database: string): Promise<string[]> {
+async function strayGrantees(
+  pool: Pool,
+  database: string,
+  ownership: OwnershipContract,
+): Promise<string[]> {
   const allowed = new Set<string>(['prsystem_migrate', ...RUNTIME_AND_READER_ROLES]);
 
-  const owner = await pool.query<{ owner: string }>(
-    `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1`,
-    [database],
-  );
-  // The database owner keeps its implicit rights; revoking from it would leave
-  // a database nobody can administer.
-  if (owner.rows[0] !== undefined) allowed.add(owner.rows[0].owner);
-
-  const schemaOwner = await pool.query<{ owner: string }>(
-    `SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'public'`,
-  );
-  if (schemaOwner.rows[0] !== undefined) allowed.add(schemaOwner.rows[0].owner);
+  // The owners keep their implicit rights — revoking from them would leave a
+  // database or schema nobody can administer — but only because
+  // `assertOwnershipContract` has already established that they are approved
+  // operator identities rather than whatever happened to hold the row.
+  allowed.add(ownership.databaseOwner);
+  allowed.add(ownership.publicSchemaOwner);
 
   const grantees = await pool.query<{ grantee: string }>(
     `SELECT DISTINCT grantee FROM (
@@ -537,6 +695,17 @@ async function validateOmittedLogins(
       );
     }
 
+    // A canonical principal that cannot log in is not a login. This attribute
+    // was read and never asserted, so a principal turned into a group role
+    // passed validation and the deployment that owns it failed to connect with
+    // nothing to explain why.
+    if (!attributes.rolcanlogin) {
+      throw new BootstrapError(
+        `existing principal ${login} is not managed by this run and lacks LOGIN; ` +
+          `a canonical login principal must be able to connect`,
+      );
+    }
+
     // Exact membership, with exact options. An IaC-managed principal that has
     // acquired a second group, or the same group with ADMIN OPTION, is drift.
     const edges = await pool.query<{
@@ -585,7 +754,12 @@ async function validateOmittedLogins(
  * lock so it describes a settled cluster, not one another runner is mid-way
  * through changing.
  */
-async function assertInvariants(pool: Pool, target: Pool, database: string): Promise<void> {
+async function assertInvariants(
+  pool: Pool,
+  target: Pool,
+  database: string,
+  ownership: OwnershipContract,
+): Promise<void> {
   const privileged = await pool.query<{ rolname: string; attribute: string }>(
     `SELECT rolname,
             CASE WHEN rolsuper THEN 'SUPERUSER'
@@ -674,7 +848,7 @@ async function assertInvariants(pool: Pool, target: Pool, database: string): Pro
   // And the grantee set is exactly what the design accounts for. Checking only
   // PUBLIC and the roles this file names would leave any other grantee — the
   // one nobody is looking at — unexamined, while the runbook claimed exactness.
-  const stray = await strayGrantees(target, database);
+  const stray = await strayGrantees(target, database, ownership);
   if (stray.length > 0) {
     throw new BootstrapError(
       `unexpected grantee(s) on the target database or schema public: ${stray.join(', ')}`,

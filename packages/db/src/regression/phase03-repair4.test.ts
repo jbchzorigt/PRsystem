@@ -287,3 +287,58 @@ describe('E4 — principal verification cannot be switched off', () => {
     });
   });
 });
+
+describe('E5 — every existing canonical login must hold its exact edge', () => {
+  it('rejects a canonical login that exists with no membership', async () => {
+    await admin.query(`REVOKE prsystem_police FROM prsystem_police_login`);
+    try {
+      await expect(runMigrations(migrateUrl)).rejects.toMatchObject({
+        name: 'PrincipalError',
+        reason: 'missing_membership',
+      });
+
+      const sqlError = await runPreconditionSql();
+      expect(sqlError?.code).toBe('42501');
+      expect(sqlError?.message).toMatch(/must be a member of/i);
+    } finally {
+      await admin.query(
+        `GRANT prsystem_police TO prsystem_police_login WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+      );
+    }
+  });
+
+  it('rejects a canonical login that has lost LOGIN', async () => {
+    await admin.query(`ALTER ROLE prsystem_audit_reader_login NOLOGIN`);
+    try {
+      await expect(runMigrations(migrateUrl)).rejects.toMatchObject({
+        name: 'PrincipalError',
+      });
+
+      const sqlError = await runPreconditionSql();
+      expect(sqlError?.code).toBe('42501');
+      expect(sqlError?.message).toMatch(/lacks LOGIN/i);
+    } finally {
+      await admin.query(`ALTER ROLE prsystem_audit_reader_login LOGIN`);
+    }
+  });
+
+  it('rejects an owner role that reaches a bridge role', async () => {
+    await admin.query(`DROP ROLE IF EXISTS prsystem_e5_bridge`);
+    await admin.query(`CREATE ROLE prsystem_e5_bridge NOLOGIN`);
+    try {
+      await admin.query(
+        `GRANT prsystem_e5_bridge TO prsystem_maintenance_fn WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+      );
+      const sqlError = await runPreconditionSql();
+      expect(sqlError?.code).toBe('42501');
+      expect(sqlError?.message).toMatch(/owner role .* unexpectedly reaches/i);
+    } finally {
+      await admin.query(`REVOKE prsystem_e5_bridge FROM prsystem_maintenance_fn`);
+      await admin.query(`DROP ROLE IF EXISTS prsystem_e5_bridge`);
+    }
+  });
+
+  it('accepts the cluster once every login edge is exact', async () => {
+    expect(await runPreconditionSql()).toBeUndefined();
+  });
+});
