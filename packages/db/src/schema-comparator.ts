@@ -2,6 +2,8 @@ import type { Pool } from 'pg';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { DECLARED_TABLES } from './schema';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
+import { compareDeclarationToSnapshot } from './schema-projection';
+import type { SchemaDifference } from './schema-difference';
 
 /**
  * The exact schema comparator.
@@ -15,16 +17,13 @@ import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
  * This compares the live database against a *declaration* instead — Drizzle for
  * what its DSL expresses, an explicit canonical snapshot for the SQL-only
  * properties — so a schema that is uniformly wrong is still wrong.
+ *
+ * The two declarations are also compared to each other. Without that, `schema.ts`
+ * was consulted only for its table names, and an edit to a declared column or key
+ * passed silently while the snapshot still agreed with the database.
  */
 
-export interface SchemaDifference {
-  /** `table`, `column`, `primaryKey`, `foreignKey`, `unique`, `check`, `index`. */
-  readonly kind: string;
-  /** The object the difference is about, qualified. */
-  readonly subject: string;
-  readonly expected: string;
-  readonly actual: string;
-}
+export type { SchemaDifference };
 
 /** The kernel schemas the comparator governs. */
 export const COMPARED_SCHEMAS = ['platform', 'audit', 'police_audit'] as const;
@@ -68,7 +67,10 @@ export function declaredTableNames(): string[] {
  * on the specific one it introduced.
  */
 export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
-  const differences: SchemaDifference[] = [];
+  // Declaration against declaration first: it needs no database, and a
+  // disagreement here means the two halves of the contract have drifted apart
+  // whatever the live schema happens to hold.
+  const differences: SchemaDifference[] = [...compareDeclarationToSnapshot()];
   const schemas = [...COMPARED_SCHEMAS];
 
   // ---------------------------------------------------------------- tables
@@ -179,12 +181,21 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   );
 
   // --------------------------------------------------------------- indexes
+  // Partition children are excluded through `pg_inherits`, the catalogue's own
+  // record of the relationship. Excluding them by a `%_20%` name pattern was a
+  // guess about how partitions happen to be named: it silently stopped covering
+  // them the moment the naming changed, and it also hid any ordinary table whose
+  // name matched.
   const liveIndexes = (
     await pool.query<LiveIndex>(
-      `SELECT schemaname || '.' || tablename AS table, indexname AS name, indexdef AS definition
-         FROM pg_indexes
-        WHERE schemaname = ANY($1)
-          AND tablename NOT LIKE '%\\_20%'
+      `SELECT n.nspname || '.' || t.relname AS table, i.relname AS name,
+              pg_get_indexdef(ix.indexrelid) AS definition
+         FROM pg_index ix
+         JOIN pg_class i ON i.oid = ix.indexrelid
+         JOIN pg_class t ON t.oid = ix.indrelid
+         JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = ANY($1)
+          AND NOT EXISTS (SELECT 1 FROM pg_inherits inh WHERE inh.inhrelid = t.oid)
         ORDER BY 1, 2`,
       [schemas],
     )

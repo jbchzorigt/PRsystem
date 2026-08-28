@@ -1,10 +1,13 @@
 /**
  * The canonical schema snapshot.
  *
- * Drizzle's DSL expresses tables, columns, types and nullability; it does not
- * express partial-index predicates, expression indexes, composite audit primary
- * keys, exclusion constraints, or the exact text of a check. Those live here, as
- * an explicit declaration rather than as whatever the database happens to hold.
+ * Drizzle's DSL expresses tables, columns, types, nullability, defaults,
+ * identity, and simple, composite and unique keys — all of which `schema.ts`
+ * now states and `schema-projection.ts` compares against this file. What the DSL
+ * cannot express is partial-index predicates, expression indexes, foreign keys
+ * with their referential actions, exclusion constraints, and the exact text of a
+ * check. Those live here, as an explicit declaration rather than as whatever the
+ * database happens to hold.
  *
  * Regenerated deliberately, never automatically: an "update the snapshot to
  * match" step would make the comparator agree with any change, which is the

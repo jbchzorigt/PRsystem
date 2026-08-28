@@ -109,3 +109,10 @@ export {
   rolesThatOwnNothing,
 } from './ownership-manifest';
 export type { OwnedObject } from './ownership-manifest';
+
+export {
+  drizzleProjection,
+  compareDeclarationToSnapshot,
+  diffDeclarations,
+} from './schema-projection';
+export type { SchemaProjection, ProjectedColumn, ProjectedConstraint } from './schema-projection';

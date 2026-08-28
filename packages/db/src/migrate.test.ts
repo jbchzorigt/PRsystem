@@ -11,7 +11,13 @@ import { MIGRATIONS_FOLDER, runMigrations } from './migrate';
 import { schemaFingerprint } from './test-support/schema-fingerprint';
 import { pinnedContainer, schemaDump } from './test-support/schema-dump';
 import { DECLARED_TABLES } from './schema';
-import { assertSchemaMatchesDeclaration, compareSchema } from './schema-comparator';
+import {
+  COMPARED_SCHEMAS,
+  assertSchemaMatchesDeclaration,
+  compareSchema,
+} from './schema-comparator';
+import { diffDeclarations, drizzleProjection } from './schema-projection';
+import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 
 /**
@@ -225,35 +231,27 @@ describe('migration runner', () => {
   }, 60000);
 
   it('matches the declared schema on type, nullability, default and identity', async () => {
-    // Column names alone would pass a table whose uuid became text, whose NOT
-    // NULL was dropped, or whose default disappeared.
+    // The title used to overstate this: it compared column names, types and
+    // nullability only, so a lost default or a dropped identity passed it. The
+    // Drizzle declaration now states both, and this compares the whole shape.
     const pool = quietPool({ connectionString: freshUrl, max: 1 }, 'declared-properties');
     try {
-      const declared = DECLARED_TABLES.flatMap((table) => {
-        const config = getTableConfig(table);
-        const qualified = `${config.schema ?? 'public'}.${config.name}`;
-        return config.columns.map((column) => ({
-          table: qualified,
-          column: column.name,
-          notNull: column.notNull,
-          // The SQL type Drizzle would emit, normalised the way PostgreSQL
-          // reports it back.
-          type: column.getSQLType().replace('timestamp with time zone', 'timestamptz'),
-        }));
-      });
+      const declared = drizzleProjection().columns;
 
-      const live = await pool.query<{
-        table: string;
-        column: string;
-        not_null: boolean;
-        type: string;
-      }>(
+      const live = await pool.query<{ table: string; column: string; shape: string }>(
         `SELECT n.nspname || '.' || c.relname AS table, a.attname AS column,
-                a.attnotnull AS not_null,
-                format_type(a.atttypid, a.atttypmod) AS type
+                format_type(a.atttypid, a.atttypmod)
+                  || ' | ' || CASE WHEN a.attnotnull THEN 'NOT NULL' ELSE 'NULL' END
+                  || ' | ' || CASE WHEN d.adbin IS NULL THEN 'no default'
+                                   ELSE 'default ' || pg_get_expr(d.adbin, d.adrelid) END
+                  || ' | ' || CASE WHEN a.attidentity = '' THEN 'no identity'
+                                   ELSE 'identity ' || a.attidentity::text END
+                  || ' | ' || CASE WHEN a.attgenerated = '' THEN 'not generated'
+                                   ELSE 'generated ' || a.attgenerated::text END AS shape
            FROM pg_attribute a
            JOIN pg_class c ON c.oid = a.attrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
+           LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
           WHERE n.nspname IN ('platform', 'audit', 'police_audit')
             AND c.relkind IN ('r', 'p')
             AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
@@ -262,25 +260,12 @@ describe('migration runner', () => {
       );
 
       const key = (r: { table: string; column: string }): string => `${r.table}.${r.column}`;
-      const liveByKey = new Map(live.rows.map((r) => [key(r), r]));
+      const liveByKey = new Map(live.rows.map((r) => [key(r), r.shape]));
 
       for (const column of declared) {
-        const actual = liveByKey.get(key(column));
-        expect({ column: key(column), present: actual !== undefined }).toEqual({
+        expect({ column: key(column), shape: liveByKey.get(key(column)) }).toEqual({
           column: key(column),
-          present: true,
-        });
-        expect({ column: key(column), notNull: actual?.not_null }).toEqual({
-          column: key(column),
-          notNull: column.notNull,
-        });
-        // Type equivalence, allowing for the aliases PostgreSQL reports.
-        const liveType = (actual?.type ?? '')
-          .replace('timestamp with time zone', 'timestamptz')
-          .replace('character varying', 'varchar');
-        expect({ column: key(column), type: liveType }).toEqual({
-          column: key(column),
-          type: column.type.replace('timestamp with time zone', 'timestamptz'),
+          shape: column.shape,
         });
       }
 
@@ -897,7 +882,7 @@ describe('schema comparator mutations', () => {
   }, 60000);
 
   it('the comparator rejects a dropped composite audit primary key', async () => {
-    // The audit parent's key is composite, which the Drizzle DSL cannot state;
+    // The audit parent's key is composite. The Drizzle DSL states it now, and
     // it lives in the canonical snapshot and must still be compared.
     const definition = await comparatorPool.query<{ definition: string }>(
       `SELECT pg_get_constraintdef(con.oid) AS definition
@@ -974,6 +959,108 @@ describe('schema comparator mutations', () => {
     );
     await comparatorPool.query(`DROP INDEX platform.job_run_name_idx`);
     await comparatorPool.query(before.rows[0]!.definition);
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped column identity', async () => {
+    // platform.outbox_event.event_id is GENERATED ALWAYS AS IDENTITY. Dropping
+    // it leaves the type, nullability and default all unchanged, so nothing but
+    // the identity itself distinguishes the two schemas.
+    await comparatorPool.query(
+      `ALTER TABLE platform.outbox_event ALTER COLUMN event_id DROP IDENTITY`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'column', subject: 'platform.outbox_event.event_id' }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.outbox_event ALTER COLUMN event_id ADD GENERATED ALWAYS AS IDENTITY`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a changed identity kind', async () => {
+    // ALWAYS to BY DEFAULT: the column stays an identity column and stops being
+    // one the application cannot override.
+    await comparatorPool.query(
+      `ALTER TABLE platform.outbox_event ALTER COLUMN event_id SET GENERATED BY DEFAULT`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({ kind: 'column', subject: 'platform.outbox_event.event_id' }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.outbox_event ALTER COLUMN event_id SET GENERATED ALWAYS`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a dropped unique constraint', async () => {
+    await comparatorPool.query(
+      `ALTER TABLE platform.provider_event DROP CONSTRAINT provider_event_uq`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({
+        kind: 'constraint',
+        subject: 'platform.provider_event.provider_event_uq',
+      }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.provider_event
+         ADD CONSTRAINT provider_event_uq UNIQUE (provider, provider_event_id)`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('the comparator rejects a widened unique constraint', async () => {
+    // Same name, different columns: a uniqueness rule that no longer holds what
+    // it says it holds. A presence-only check would not see this.
+    await comparatorPool.query(
+      `ALTER TABLE platform.provider_event DROP CONSTRAINT provider_event_uq`,
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.provider_event
+         ADD CONSTRAINT provider_event_uq UNIQUE (provider, provider_event_id, event_kind)`,
+    );
+    expect(await compareSchema(comparatorPool)).toContainEqual(
+      expect.objectContaining({
+        kind: 'constraint',
+        subject: 'platform.provider_event.provider_event_uq',
+      }),
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.provider_event DROP CONSTRAINT provider_event_uq`,
+    );
+    await comparatorPool.query(
+      `ALTER TABLE platform.provider_event
+         ADD CONSTRAINT provider_event_uq UNIQUE (provider, provider_event_id)`,
+    );
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('covers every partition child through pg_inherits, not a name pattern', async () => {
+    // The index scan used to exclude partitions by a `%_20%` table-name match.
+    // A partition named outside that pattern was silently compared as though it
+    // were a root table; an ordinary table matching it was silently skipped.
+    const children = await comparatorPool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM pg_inherits i
+         JOIN pg_class c ON c.oid = i.inhrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY($1)`,
+      [[...COMPARED_SCHEMAS]],
+    );
+    // There are partition children, so the exclusion is doing real work.
+    expect(Number(children.rows[0]?.count)).toBeGreaterThan(0);
+
+    // A partition whose name does not match the old pattern at all.
+    await comparatorPool.query(
+      `CREATE TABLE audit.platform_event_archive PARTITION OF audit.platform_event
+         FOR VALUES FROM ('1999-01-01+00') TO ('2000-01-01+00')`,
+    );
+    try {
+      expect(await compareSchema(comparatorPool)).toEqual([]);
+    } finally {
+      await comparatorPool.query(`DROP TABLE audit.platform_event_archive`);
+    }
     expect(await compareSchema(comparatorPool)).toEqual([]);
   }, 60000);
 
@@ -1214,4 +1301,186 @@ describe('ownership manifest on upgrade', () => {
     await pool.query(`DROP TABLE platform.${PROBE_TABLE}`);
     await pool.query(`DELETE FROM drizzle.__drizzle_migrations WHERE id > $1`, [before]);
   }, 120000);
+});
+
+/**
+ * The two declarations, held to each other.
+ *
+ * `schema.ts` used to be consulted for one thing only — its list of table names
+ * — so an edit to a declared column's type, nullability, default or key changed
+ * nothing the gate looked at. The snapshot still matched the database and the
+ * run stayed green. These cases run without a database, because the property is
+ * about the declarations rather than about any deployment.
+ */
+describe('the Drizzle declaration and the canonical snapshot are bound together', () => {
+  it('agrees with the snapshot as shipped', () => {
+    expect(diffDeclarations(drizzleProjection(), EXPECTED_SCHEMA_SNAPSHOT)).toEqual([]);
+  });
+
+  it('projects the defaults, identity and keys the DSL states', () => {
+    const projection = drizzleProjection();
+    // Not a vacuous projection: it carries the properties the DSL was extended
+    // to express, so "it agrees" above is a statement about something.
+    expect(projection.columns).toContainEqual({
+      table: 'platform.job_run',
+      column: 'state',
+      shape: "text | NOT NULL | default 'running'::text | no identity | not generated",
+    });
+    expect(projection.columns).toContainEqual({
+      table: 'platform.outbox_event',
+      column: 'event_id',
+      shape: 'bigint | NOT NULL | no default | identity a | not generated',
+    });
+    expect(projection.constraints).toContainEqual({
+      table: 'audit.platform_event',
+      name: 'platform_event_pk',
+      kind: 'p',
+      definition: 'PRIMARY KEY (occurred_at, event_id)',
+    });
+    expect(projection.constraints).toContainEqual({
+      table: 'platform.provider_event',
+      name: 'provider_event_uq',
+      kind: 'u',
+      definition: 'UNIQUE (provider, provider_event_id)',
+    });
+  });
+
+  const mutations: readonly {
+    readonly title: string;
+    readonly mutate: (
+      p: ReturnType<typeof drizzleProjection>,
+    ) => ReturnType<typeof drizzleProjection>;
+    readonly kind: string;
+    readonly subject: string;
+  }[] = [
+    {
+      title: 'a changed column type',
+      kind: 'declaration-column',
+      subject: 'platform.job_run.error_name',
+      mutate: (p) => ({
+        ...p,
+        columns: p.columns.map((c) =>
+          c.table === 'platform.job_run' && c.column === 'error_name'
+            ? { ...c, shape: c.shape.replace('text |', 'character varying(200) |') }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped NOT NULL',
+      kind: 'declaration-column',
+      subject: 'platform.job_run.job_name',
+      mutate: (p) => ({
+        ...p,
+        columns: p.columns.map((c) =>
+          c.table === 'platform.job_run' && c.column === 'job_name'
+            ? { ...c, shape: c.shape.replace('NOT NULL', 'NULL') }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped default',
+      kind: 'declaration-column',
+      subject: 'platform.job_run.state',
+      mutate: (p) => ({
+        ...p,
+        columns: p.columns.map((c) =>
+          c.table === 'platform.job_run' && c.column === 'state'
+            ? { ...c, shape: c.shape.replace("default 'running'::text", 'no default') }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped identity',
+      kind: 'declaration-column',
+      subject: 'platform.outbox_event.event_id',
+      mutate: (p) => ({
+        ...p,
+        columns: p.columns.map((c) =>
+          c.table === 'platform.outbox_event' && c.column === 'event_id'
+            ? { ...c, shape: c.shape.replace('identity a', 'no identity') }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a removed column',
+      kind: 'declaration-column',
+      subject: 'platform.job_run.issuer_ref',
+      mutate: (p) => ({
+        ...p,
+        columns: p.columns.filter(
+          (c) => !(c.table === 'platform.job_run' && c.column === 'issuer_ref'),
+        ),
+      }),
+    },
+    {
+      title: 'an added column the snapshot does not have',
+      kind: 'declaration-column',
+      subject: 'platform.job_run.invented',
+      mutate: (p) => ({
+        ...p,
+        columns: [
+          ...p.columns,
+          {
+            table: 'platform.job_run',
+            column: 'invented',
+            shape: 'text | NULL | no default | no identity | not generated',
+          },
+        ],
+      }),
+    },
+    {
+      title: 'a reordered composite primary key',
+      kind: 'declaration-key',
+      subject: 'audit.platform_event.platform_event_pk',
+      mutate: (p) => ({
+        ...p,
+        constraints: p.constraints.map((c) =>
+          c.name === 'platform_event_pk'
+            ? { ...c, definition: 'PRIMARY KEY (event_id, occurred_at)' }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a widened unique constraint',
+      kind: 'declaration-key',
+      subject: 'platform.provider_event.provider_event_uq',
+      mutate: (p) => ({
+        ...p,
+        constraints: p.constraints.map((c) =>
+          c.name === 'provider_event_uq'
+            ? { ...c, definition: 'UNIQUE (provider, provider_event_id, event_kind)' }
+            : c,
+        ),
+      }),
+    },
+    {
+      title: 'a dropped unique constraint',
+      kind: 'declaration-key',
+      subject: 'platform.provider_event.provider_event_uq',
+      mutate: (p) => ({
+        ...p,
+        constraints: p.constraints.filter((c) => c.name !== 'provider_event_uq'),
+      }),
+    },
+  ];
+
+  for (const mutation of mutations) {
+    it(`reports ${mutation.title} in schema.ts`, () => {
+      const differences = diffDeclarations(
+        mutation.mutate(drizzleProjection()),
+        EXPECTED_SCHEMA_SNAPSHOT,
+      );
+      expect(differences).toContainEqual(
+        expect.objectContaining({ kind: mutation.kind, subject: mutation.subject }),
+      );
+      // And the unmutated projection is still clean, so the case is about the
+      // mutation rather than about a projection that never agreed.
+      expect(diffDeclarations(drizzleProjection(), EXPECTED_SCHEMA_SNAPSHOT)).toEqual([]);
+    });
+  }
 });
