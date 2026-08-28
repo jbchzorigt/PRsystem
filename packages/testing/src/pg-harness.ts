@@ -19,6 +19,15 @@ export function adminUrl(): string {
 /** Every database this harness creates carries the prefix, so cleanup is unambiguous. */
 export const TEST_DATABASE_PREFIX = 'prsystem_test_';
 
+/**
+ * `application_name` prefix of the coordination pool a scratch database owns.
+ *
+ * Set so the pool is identifiable in `pg_stat_activity` — which makes it
+ * diagnosable during an incident and lets the negative fixture provoke an error
+ * on exactly that backend instead of on whatever else happened to be idle.
+ */
+export const TEST_ADMIN_APPLICATION_NAME = 'prsystem_test_admin';
+
 export function testDatabaseName(suite: string): string {
   if (!/^[a-z][a-z0-9_]{2,40}$/.test(suite)) {
     throw new Error('suite name must be lower snake case');
@@ -74,6 +83,16 @@ interface TrackedPool {
   readonly label: string;
   /** The database this pool connects to, so a drop closes only its own pools. */
   readonly database: string | undefined;
+  /**
+   * The logical test scope this pool belongs to.
+   *
+   * Usually the database it connects to, but not always: the admin pool a
+   * `createTestDatabase` lifecycle opens connects to the *coordination*
+   * database, and accounting it there meant its errors were filed under a
+   * database no teardown ever asserted. The scope is the lifecycle, so every
+   * pool a scratch database owns is checked when that database is dropped.
+   */
+  readonly scope: string;
   /** Set once the pool is knowingly about to lose its server. */
   tearingDown: boolean;
   readonly suppressed: string[];
@@ -89,23 +108,28 @@ export interface PoolErrorEntry {
 const tracked = new Map<Pool, TrackedPool>();
 
 /**
- * Unexpected idle-client errors, accounted **per database**.
+ * Unexpected idle-client errors, accounted **per logical test scope**.
  *
  * A single process-global list made every suite share one mutable report: a
  * `reset` in one suite erased another suite's failure, and only the suites that
- * remembered to call the assertion ever failed on one. Keying by database means
- * a database's own errors travel with it and are checked when it is dropped,
- * whether or not the suite thought to ask.
+ * remembered to call the assertion ever failed on one. Keying by scope means a
+ * lifecycle's own errors travel with it and are checked when its database is
+ * dropped, whether or not the suite thought to ask.
  */
-const unexpectedByDatabase = new Map<string, PoolErrorEntry[]>();
+const unexpectedByScope = new Map<string, PoolErrorEntry[]>();
 
-/** Errors from pools whose database could not be determined. */
-const UNATTRIBUTED = '(unattributed)';
+/**
+ * Errors from pools whose scope could not be determined.
+ *
+ * Not a quiet bucket: every scratch-database teardown asserts it as well as its
+ * own scope. An error nobody could attribute is still an error, and leaving it
+ * unexamined was the same silence as not recording it.
+ */
+export const UNATTRIBUTED_SCOPE = '(unattributed)';
 
-function recordUnexpected(database: string | undefined, entry: PoolErrorEntry): void {
-  const key = database ?? UNATTRIBUTED;
-  const existing = unexpectedByDatabase.get(key);
-  if (existing === undefined) unexpectedByDatabase.set(key, [entry]);
+function recordUnexpected(scope: string, entry: PoolErrorEntry): void {
+  const existing = unexpectedByScope.get(scope);
+  if (existing === undefined) unexpectedByScope.set(scope, [entry]);
   else existing.push(entry);
 }
 
@@ -128,12 +152,17 @@ function isTeardownTermination(error: Error & { code?: string }): boolean {
  * out-of-band `error` event, so no assertion can pass because an error went
  * missing.
  */
-export function quietPool(config: PoolConfig, label = 'pool'): Pool {
+export function quietPool(config: PoolConfig, label = 'pool', scope?: string): Pool {
   const pool = new Pool(config);
+  const database = databaseOf(config);
   const record: TrackedPool = {
     pool,
     label,
-    database: databaseOf(config),
+    database,
+    // Explicit scope wins: it is how a lifecycle claims a pool that connects
+    // somewhere else. Otherwise the database it connects to, and failing that
+    // the unattributed bucket, which is asserted rather than ignored.
+    scope: scope ?? database ?? UNATTRIBUTED_SCOPE,
     tearingDown: false,
     suppressed: [],
     unexpected: [],
@@ -147,7 +176,7 @@ export function quietPool(config: PoolConfig, label = 'pool'): Pool {
     }
     const entry = { label, message: error.message, code: error.code };
     record.unexpected.push(entry);
-    recordUnexpected(record.database, entry);
+    recordUnexpected(record.scope, entry);
   });
 
   return pool;
@@ -196,9 +225,9 @@ export async function closeTrackedPools(database?: string): Promise<void> {
 }
 
 /** Every idle-client error that was *not* an expected teardown termination. */
-export function unexpectedPoolErrorReport(database?: string): readonly PoolErrorEntry[] {
-  if (database !== undefined) return [...(unexpectedByDatabase.get(database) ?? [])];
-  return [...unexpectedByDatabase.values()].flat();
+export function unexpectedPoolErrorReport(scope?: string): readonly PoolErrorEntry[] {
+  if (scope !== undefined) return [...(unexpectedByScope.get(scope) ?? [])];
+  return [...unexpectedByScope.values()].flat();
 }
 
 /**
@@ -208,8 +237,8 @@ export function unexpectedPoolErrorReport(database?: string): readonly PoolError
  * to clear its own, and must not be able to clear anybody else's. Calling this
  * with no argument is refused for that reason.
  */
-export function resetPoolErrorReport(database: string): void {
-  unexpectedByDatabase.delete(database);
+export function resetPoolErrorReport(scope: string): void {
+  unexpectedByScope.delete(scope);
 }
 
 /**
@@ -218,12 +247,24 @@ export function resetPoolErrorReport(database: string): void {
  * Suites that open pools call this in `afterAll`, so an infrastructure fault
  * during a run is a failure rather than a silence.
  */
-export function assertNoUnexpectedPoolErrors(database?: string): void {
-  const entries = unexpectedPoolErrorReport(database);
+export function assertNoUnexpectedPoolErrors(scope?: string): void {
+  const entries = unexpectedPoolErrorReport(scope);
   if (entries.length === 0) return;
-  const scope = database === undefined ? 'this process' : `database ${database}`;
+  const where = scope === undefined ? 'this process' : `scope ${scope}`;
   const detail = entries.map((e) => `${e.label}: ${e.code ?? '(no code)'} ${e.message}`).join('; ');
-  throw new Error(`unexpected pool error(s) outside teardown in ${scope}: ${detail}`);
+  throw new Error(`unexpected pool error(s) outside teardown in ${where}: ${detail}`);
+}
+
+/**
+ * Asserts one scope and the unattributed bucket together.
+ *
+ * The complete logical scope of a `createTestDatabase` lifecycle: the scratch
+ * database's own pools, the coordination pool it opened, and anything that could
+ * not be attributed at all.
+ */
+export function assertScopeClean(scope: string): void {
+  assertNoUnexpectedPoolErrors(scope);
+  assertNoUnexpectedPoolErrors(UNATTRIBUTED_SCOPE);
 }
 
 export const TEST_LOGIN_PRINCIPALS = {
@@ -286,14 +327,25 @@ async function withProvisioningRetry(work: () => Promise<unknown>): Promise<void
 
 export async function createTestDatabase(suite: string): Promise<TestDatabase> {
   const name = testDatabaseName(suite);
-  const admin = quietPool({ connectionString: adminUrl(), max: 1, connectionTimeoutMillis: 5000 });
+  // Scoped to this lifecycle even though it connects to the coordination
+  // database, and named so a fixture can target exactly this backend.
+  const admin = quietPool(
+    {
+      connectionString: adminUrl(),
+      max: 1,
+      connectionTimeoutMillis: 5000,
+      application_name: `${TEST_ADMIN_APPLICATION_NAME}:${name}`,
+    },
+    `admin:${name}`,
+    name,
+  );
 
   await admin.query('SELECT 1');
   await withProvisioningRetry(() => admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
   await withProvisioningRetry(() => admin.query(`CREATE DATABASE ${name}`));
 
   const url = withDatabase(adminUrl(), name);
-  const pool = quietPool({ connectionString: url, max: 8 });
+  const pool = quietPool({ connectionString: url, max: 8 }, `scratch:${name}`, name);
 
   return {
     name,
@@ -317,7 +369,10 @@ export async function createTestDatabase(suite: string): Promise<TestDatabase> {
       // Every suite that creates a database gets this check, whether or not it
       // remembered to ask for it. Pools were closed in order above, so anything
       // recorded here happened while the database was still expected to work.
-      assertNoUnexpectedPoolErrors(name);
+      // The whole logical scope, not just the scratch database: the coordination
+      // pool belongs to this lifecycle, and an unattributable error is still an
+      // error.
+      assertScopeClean(name);
     },
   };
 }
