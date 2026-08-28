@@ -204,6 +204,69 @@ const FIXTURES = [
 `,
   },
   {
+    // GitHub runs `shell: bash -c 'true' {0}` by executing `true` and never the
+    // script. The `run:` line is still exactly right, so an exact-line check
+    // reads it as correct and the gate never runs.
+    name: 'custom shell template on a blocking gate step',
+    expect: /shell/i,
+    mutate: (yaml) =>
+      yaml.replace(
+        REGRESSION_STEP,
+        `${REGRESSION_STEP.split('\n')[0]}\n        shell: bash -c 'true' {0}\n${REGRESSION_STEP.split('\n')[1]}`,
+      ),
+  },
+  {
+    // A required stage disappears while the validator stays green, because it
+    // only ever required a subset of the blocking commands.
+    name: 'the migration gate removed from the compose job',
+    expect: /pnpm run test:migrations/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Migration gate against real PostgreSQL
+        run: pnpm run test:migrations
+        env:
+          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
+`,
+        '',
+      ),
+  },
+  {
+    name: 'the E2E suite removed from its job',
+    expect: /pnpm run test:e2e/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Portal shell smoke tests
+        run: pnpm run test:e2e
+`,
+        '',
+      ),
+  },
+  {
+    name: 'the production audit removed from verify',
+    expect: /pnpm run audit:prod/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Audit production dependencies
+        run: pnpm run audit:prod
+`,
+        '',
+      ),
+  },
+  {
+    name: 'the compose cleanup step removed',
+    expect: /docker compose down -v/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Stop backing services
+        if: always()
+        run: docker compose down -v
+
+  # A distinct job`,
+        `
+  # A distinct job`,
+      ),
+  },
+  {
     name: 'build after the suite it must precede',
     mutate: (yaml) => {
       const build = `      - name: Build workspace packages from this checkout

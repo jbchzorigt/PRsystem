@@ -13,6 +13,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { SUB_GATES } from './gate-sec-config.mjs';
+import { REQUIRED_JOBS, REQUIRED_JOB_NAMES } from './ci-manifest.mjs';
 import { REGRESSION_DIR, REGRESSION_SUITES } from './regression-manifest.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -149,49 +150,70 @@ function isBlocking(step) {
   return flag === undefined || flag === false || flag === 'false';
 }
 
-/** Steps that must exist, exactly, in a named blocking job. */
-const REQUIRED_STEPS = [
-  { job: 'compose', command: 'pnpm run test:regression', needsDatabase: true },
-  { job: 'compose', command: 'pnpm run build', needsDatabase: false },
-  { job: 'gate-sec', command: 'pnpm run test:security', needsDatabase: true },
-  { job: 'gate-sec', command: 'pnpm run build', needsDatabase: false },
-  { job: 'governance', command: 'pnpm run validate:regression-coverage', needsDatabase: false },
-  { job: 'governance', command: 'pnpm run validate:ci-bypass-fixtures', needsDatabase: false },
-];
+/**
+ * A step must not carry a custom shell template.
+ *
+ * `shell: bash -c 'true' {0}` executes `true` and never the script, so an
+ * exact-line check reads the step as correct while the command never runs.
+ * There is no allow-list here on purpose: none of these steps needs a shell
+ * other than the runner's default, and an allow-list would be one more thing to
+ * keep exact.
+ */
+function customShell(step) {
+  const shell = step?.shell;
+  return typeof shell === 'string' && shell.trim().length > 0 ? shell : undefined;
+}
 
-for (const required of REQUIRED_STEPS) {
-  const step = stepsOf(required.job).find((candidate) => runsExactly(candidate, required.command));
-  const label = `CI runs '${required.command}' exactly, in the '${required.job}' job`;
+for (const required of REQUIRED_JOBS) {
+  const steps = stepsOf(required.job);
+  let previousIndex = -1;
 
-  check(
-    label,
-    step !== undefined,
-    step === undefined
-      ? `no step whose run line is exactly '${required.command}'`
-      : `step: ${step.name ?? '(unnamed)'}`,
-  );
-  if (step === undefined) continue;
-
-  const bypass = bypassIn(step);
-  check(
-    `'${required.command}' cannot discard its exit status`,
-    bypass === undefined,
-    bypass ?? 'no bypass construct',
-  );
-
-  check(
-    `'${required.command}' is blocking`,
-    isBlocking(step),
-    `continue-on-error: ${String(step['continue-on-error'] ?? '(absent)')}`,
-  );
-
-  if (required.needsDatabase) {
-    const url = step.env?.DATABASE_URL;
-    check(
-      `'${required.command}' is given a database`,
-      typeof url === 'string' && url.length > 0,
-      typeof url === 'string' ? 'DATABASE_URL supplied' : 'no DATABASE_URL',
+  for (const spec of required.steps) {
+    const index = steps.findIndex(
+      (candidate, at) => at > previousIndex && runsExactly(candidate, spec.run),
     );
+    const step = index >= 0 ? steps[index] : undefined;
+    const label = `CI runs '${spec.run}' exactly, in the '${required.job}' job`;
+
+    check(
+      label,
+      step !== undefined,
+      step === undefined
+        ? `no step whose run line is exactly '${spec.run}'` +
+            (previousIndex >= 0 ? ' after the preceding required step' : '')
+        : `step ${String(index)}: ${step.name ?? '(unnamed)'}`,
+    );
+    if (step === undefined) continue;
+    previousIndex = index;
+
+    const bypass = bypassIn(step);
+    check(
+      `'${spec.run}' cannot discard its exit status`,
+      bypass === undefined,
+      bypass ?? 'no bypass construct',
+    );
+
+    check(
+      `'${spec.run}' is blocking`,
+      isBlocking(step),
+      `continue-on-error: ${String(step['continue-on-error'] ?? '(absent)')}`,
+    );
+
+    const shell = customShell(step);
+    check(
+      `'${spec.run}' runs under the default shell`,
+      shell === undefined,
+      shell === undefined ? 'no custom shell' : `shell: ${shell}`,
+    );
+
+    if (spec.needsDatabase === true) {
+      const url = step.env?.DATABASE_URL;
+      check(
+        `'${spec.run}' is given a database`,
+        typeof url === 'string' && url.length > 0,
+        typeof url === 'string' ? 'DATABASE_URL supplied' : 'no DATABASE_URL',
+      );
+    }
   }
 }
 
@@ -200,9 +222,7 @@ for (const required of REQUIRED_STEPS) {
 //     Step-level `if:` was rejected and job-level `if:` was not, so
 //     `jobs.gate-sec.if: false` switched the whole gate off — every step inside
 //     it included — without touching a single step.
-const REQUIRED_JOBS = ['governance', 'verify', 'e2e', 'compose', 'gate-sec'];
-
-for (const jobName of REQUIRED_JOBS) {
+for (const jobName of REQUIRED_JOB_NAMES) {
   const job = workflow?.jobs?.[jobName];
   check(
     `the '${jobName}' job exists`,
