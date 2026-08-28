@@ -84,7 +84,14 @@ Exactly two long-lived deployments remain: the API and the worker.
 | | API deployment | Worker deployment |
 | --- | --- | --- |
 | `DATABASE_URL` | `prsystem_api_login` | `prsystem_worker_login` |
+| `SCHEDULER_ENABLED` | `true` for a deployment with the capability | **never set** |
 | `SCHEDULER_DATABASE_URL` | `prsystem_job_scheduler_login` | **never set** |
+
+The worker does not merely ignore those two variables — its configuration does
+not declare them, and it **refuses to start** if either is present. Ignoring
+them would be worse: an operator who copied the API's environment into the
+worker has broken the D-09 separation, and a worker that starts anyway leaves
+them believing it still holds.
 
 Issuance is an API control-plane capability: its own connection string, its own
 pool, and its own startup principal guard.
@@ -95,9 +102,21 @@ guard validates *that* pool, after the container exists and before the port is
 bound — not a throwaway opened and closed during startup, which would verify a
 credential and then leave nothing holding it.
 
-`SCHEDULER_ENABLED` defaults on. A production API with the capability enabled and
-no `SCHEDULER_DATABASE_URL` fails environment validation rather than starting and
-discovering the gap when somebody tries to issue a job.
+The capability and its credential are one decision. `SCHEDULER_ENABLED=true`
+**requires** `SCHEDULER_DATABASE_URL` in every environment, not only production;
+`SCHEDULER_ENABLED=false` **forbids** it, because a scheduler credential in a
+deployment that will never use it is a live credential nobody is accounting for.
+Both combinations fail environment validation before anything is constructed.
+Unset defaults to enabled for `APP_ENV=production` — the production API is the
+deployment that has the capability, so a missing credential there is a
+misconfiguration rather than a quiet opt-out — and disabled everywhere else. That
+default lives only in the API-specific configuration path, so no other
+deployment can inherit it.
+
+When the capability is disabled there is **no scheduler pool and no scheduler
+service**: the module registers neither, so there is nothing to resolve and
+nothing holding a privileged connection. OpenAPI generation constructs the
+application with the capability explicitly disabled for the same reason.
 Phase 03 exposes **no route** for it — a public endpoint would need the Phase 04
 authorization pipeline in front of it, and shipping the credential without those
 checks would be worse than not shipping the capability.

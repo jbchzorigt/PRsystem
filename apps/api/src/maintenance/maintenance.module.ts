@@ -1,7 +1,8 @@
 import { Global, Module } from '@nestjs/common';
-import type { OnApplicationShutdown } from '@nestjs/common';
+import type { DynamicModule, OnApplicationShutdown } from '@nestjs/common';
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
+import type { SchedulerConfig } from '@prsystem/config';
 import { MaintenanceSchedulerService } from './scheduler.service';
 
 /** Injection token for the application-owned scheduler pool. */
@@ -18,43 +19,50 @@ export const SCHEDULER_POOL = Symbol('SCHEDULER_POOL');
  */
 @Injectable()
 export class SchedulerPoolLifecycle implements OnApplicationShutdown {
-  constructor(@Inject(SCHEDULER_POOL) private readonly pool: Pool | undefined) {}
+  constructor(@Inject(SCHEDULER_POOL) private readonly pool: Pool) {}
 
   async onApplicationShutdown(): Promise<void> {
-    await this.pool?.end();
+    await this.pool.end();
   }
 }
 
+/**
+ * The D-09 scheduler capability, as a module that either exists or does not.
+ *
+ * Configuration is injected, never read from `process.env` here. The provider
+ * used to read the raw variable, which made `SCHEDULER_ENABLED` decorative: a
+ * deployment could declare the capability off and still have the credential
+ * opened, held and usable. Whether the capability exists is decided once, during
+ * validation, and this module is handed the answer.
+ *
+ * When it is disabled there is no pool, no lifecycle hook and no service —
+ * nothing to resolve and nothing holding a privileged connection.
+ */
 @Global()
-@Module({
-  providers: [
-    {
-      provide: SCHEDULER_POOL,
-      useFactory: (): Pool | undefined => {
-        // Read directly rather than through the validated `env()`.
-        //
-        // This factory runs whenever the module is instantiated, including from
-        // `openapi.ts`, which generates the document without binding a port or
-        // contacting a dependency and therefore has no runtime environment at
-        // all. Demanding the full validated environment here made document
-        // generation fail. Whether the capability is *required* is still decided
-        // by env validation, which the API startup path does run.
-        const url = process.env['SCHEDULER_DATABASE_URL'];
-        // Undefined when the deployment has no scheduler capability. The API
-        // that is meant to have it fails startup earlier, in the guard.
-        return url === undefined || url.length === 0
-          ? undefined
-          : new Pool({ connectionString: url, max: 4 });
-      },
-    },
-    SchedulerPoolLifecycle,
-    {
-      provide: MaintenanceSchedulerService,
-      useFactory: (pool: Pool | undefined): MaintenanceSchedulerService | undefined =>
-        pool === undefined ? undefined : new MaintenanceSchedulerService(pool),
-      inject: [SCHEDULER_POOL],
-    },
-  ],
-  exports: [SCHEDULER_POOL, MaintenanceSchedulerService],
-})
-export class MaintenanceModule {}
+@Module({})
+export class MaintenanceModule {
+  static forRoot(scheduler: SchedulerConfig): DynamicModule {
+    if (!scheduler.enabled) {
+      return { module: MaintenanceModule, providers: [], exports: [] };
+    }
+
+    const databaseUrl = scheduler.databaseUrl;
+    return {
+      module: MaintenanceModule,
+      providers: [
+        {
+          provide: SCHEDULER_POOL,
+          useFactory: (): Pool => new Pool({ connectionString: databaseUrl, max: 4 }),
+        },
+        SchedulerPoolLifecycle,
+        {
+          provide: MaintenanceSchedulerService,
+          useFactory: (pool: Pool): MaintenanceSchedulerService =>
+            new MaintenanceSchedulerService(pool),
+          inject: [SCHEDULER_POOL],
+        },
+      ],
+      exports: [SCHEDULER_POOL, MaintenanceSchedulerService],
+    };
+  }
+}

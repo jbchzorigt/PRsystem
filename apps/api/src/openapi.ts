@@ -11,9 +11,15 @@ import { buildOpenApiDocument } from './openapi-document';
  * Run by `pnpm run openapi`; the output is a build artefact, not a committed file.
  */
 async function generate(): Promise<void> {
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
-    logger: false,
-  });
+  // Explicitly without the scheduler capability. Document generation binds no
+  // port and contacts no dependency, so it must not construct a privileged pool
+  // — and stating that here means it cannot acquire one from an ambient
+  // variable that happens to be set in the shell running the build.
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule.forRoot({ scheduler: { enabled: false } }),
+    new FastifyAdapter(),
+    { logger: false },
+  );
   await app.init();
 
   const document = buildOpenApiDocument(app);

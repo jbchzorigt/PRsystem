@@ -56,8 +56,53 @@ function baseEnv(): Record<string, string> {
   };
 }
 
+/**
+ * Resolves a provider, or `undefined` when the module never registered it.
+ *
+ * Nest throws for an unknown token even with `strict: false`, and "the provider
+ * does not exist" is exactly the state these tests assert.
+ */
+function tryGet<T>(
+  container: {
+    get<TInput, TResult>(
+      token: string | symbol | (new (...args: never[]) => TInput),
+      options: { strict: boolean },
+    ): TResult;
+  },
+  token: string | symbol | (new (...args: never[]) => unknown),
+): T | undefined {
+  try {
+    return container.get<unknown, T>(token, { strict: false });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Starts the API and returns the name of the error it refused with, or
+ * `'(started)'` when it started.
+ *
+ * Deliberately not `expect(createApp(...)).rejects`: when the call resolves
+ * instead of rejecting, vitest serialises the resolved value into the diff, and
+ * a whole running Nest application exhausts the heap before the assertion is
+ * ever reported.
+ */
+async function startupErrorName(): Promise<string> {
+  const { createApp } = await import('../bootstrap');
+  let started: { app: NestFastifyApplication; port: number } | undefined;
+  try {
+    started = await createApp({ port: PORT, serveDocs: false });
+  } catch (error) {
+    return (error as Error).name;
+  } finally {
+    await started?.app.close().catch(() => undefined);
+  }
+  return '(started)';
+}
+
 function applyEnv(overrides: Record<string, string>): void {
   delete process.env['SCHEDULER_DATABASE_URL'];
+  delete process.env['SCHEDULER_ENABLED'];
   Object.assign(process.env, baseEnv(), overrides);
   resetEnvCache();
 }
@@ -79,6 +124,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env['SCHEDULER_DATABASE_URL'];
+  delete process.env['SCHEDULER_ENABLED'];
   await db?.drop();
   resetEnvCache();
 });
@@ -89,7 +135,11 @@ describe('the API control plane issues', () => {
     // Nest container. Constructing MaintenanceSchedulerService by hand would
     // prove the SQL works and say nothing about whether the capability is wired
     // into the application that ships.
-    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_DATABASE_URL: schedulerUrl });
+    applyEnv({
+      DATABASE_URL: apiUrl,
+      SCHEDULER_ENABLED: 'true',
+      SCHEDULER_DATABASE_URL: schedulerUrl,
+    });
     const { createApp } = await import('../bootstrap');
     const started = await createApp({ port: PORT, serveDocs: false });
 
@@ -170,7 +220,7 @@ describe('the API refuses to start with the wrong scheduler credential', () => {
   it('refuses when SCHEDULER_DATABASE_URL is not the scheduler principal', async () => {
     // The API's own principal, handed to the scheduler slot: a valid connection
     // and the wrong authority.
-    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_DATABASE_URL: apiUrl });
+    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_ENABLED: 'true', SCHEDULER_DATABASE_URL: apiUrl });
 
     expect(await isListening()).toBe(false);
     const { createApp } = await import('../bootstrap');
@@ -181,7 +231,7 @@ describe('the API refuses to start with the wrong scheduler credential', () => {
   }, 120000);
 
   it('refuses a superuser scheduler credential', async () => {
-    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_DATABASE_URL: db.url });
+    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_ENABLED: 'true', SCHEDULER_DATABASE_URL: db.url });
 
     const { createApp } = await import('../bootstrap');
     await expect(createApp({ port: PORT, serveDocs: false })).rejects.toMatchObject({
@@ -193,7 +243,11 @@ describe('the API refuses to start with the wrong scheduler credential', () => {
 
   it('starts with the correct scheduler credential', async () => {
     // The positive control: the only thing that changed is the credential.
-    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_DATABASE_URL: schedulerUrl });
+    applyEnv({
+      DATABASE_URL: apiUrl,
+      SCHEDULER_ENABLED: 'true',
+      SCHEDULER_DATABASE_URL: schedulerUrl,
+    });
 
     const { createApp } = await import('../bootstrap');
     let app: NestFastifyApplication | undefined;
@@ -229,5 +283,78 @@ describe('the worker deployment never receives the scheduler credential', () => 
       const source = readFileSync(resolve(workerSrc, file), 'utf8');
       expect(source).not.toMatch(/schedule_maintenance_job|MaintenanceSchedulerService/);
     }
+  });
+});
+
+describe('the scheduler capability is a decision, not a leftover variable', () => {
+  it('builds no scheduler pool and no scheduler service when the capability is disabled', async () => {
+    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_ENABLED: 'false' });
+
+    const { createApp } = await import('../bootstrap');
+    const started = await createApp({ port: PORT, serveDocs: false });
+    try {
+      expect(tryGet(started.app, SCHEDULER_POOL)).toBeUndefined();
+      expect(tryGet(started.app, MaintenanceSchedulerService)).toBeUndefined();
+    } finally {
+      await started.app.close();
+    }
+  }, 120000);
+
+  it('refuses to start a disabled API that was handed a scheduler credential', async () => {
+    // Stale privileged configuration. Creating the pool anyway is what made
+    // SCHEDULER_ENABLED decorative: the flag said off and the credential was
+    // still opened, held and usable.
+    applyEnv({
+      DATABASE_URL: apiUrl,
+      SCHEDULER_ENABLED: 'false',
+      SCHEDULER_DATABASE_URL: schedulerUrl,
+    });
+
+    expect(await isListening()).toBe(false);
+    expect(await startupErrorName()).toBe('EnvValidationError');
+    expect(await isListening()).toBe(false);
+  }, 120000);
+
+  it('refuses to start an enabled API with no scheduler credential', async () => {
+    applyEnv({ DATABASE_URL: apiUrl, SCHEDULER_ENABLED: 'true' });
+
+    expect(await startupErrorName()).toBe('EnvValidationError');
+    expect(await isListening()).toBe(false);
+  }, 120000);
+
+  it('ignores a scheduler credential in the ambient environment when told disabled', async () => {
+    // The provider must take its configuration from the injected value, not
+    // from process.env. With the credential present and the capability
+    // explicitly disabled, nothing may be constructed.
+    const { Test } = await import('@nestjs/testing');
+    const { AppModule } = await import('../app.module');
+
+    applyEnv({ DATABASE_URL: apiUrl });
+    process.env['SCHEDULER_DATABASE_URL'] = schedulerUrl;
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule.forRoot({ scheduler: { enabled: false } })],
+    }).compile();
+    try {
+      expect(tryGet(moduleRef, SCHEDULER_POOL)).toBeUndefined();
+      expect(tryGet(moduleRef, MaintenanceSchedulerService)).toBeUndefined();
+    } finally {
+      await moduleRef.close();
+      delete process.env['SCHEDULER_DATABASE_URL'];
+    }
+  }, 60000);
+
+  it('generates the OpenAPI document with the capability explicitly disabled', () => {
+    const source = readFileSync(resolve(__dirname, '..', 'openapi.ts'), 'utf8');
+    expect(source).toMatch(/AppModule\.forRoot\(\s*\{\s*scheduler:\s*\{\s*enabled:\s*false\s*\}/);
+  });
+
+  it('takes the credential from injected configuration, never from process.env', () => {
+    const source = readFileSync(
+      resolve(__dirname, '..', 'maintenance', 'maintenance.module.ts'),
+      'utf8',
+    );
+    // Prose about process.env is fine; reading it in the provider is the defect.
+    expect(source).not.toMatch(/process\.env\s*[[.]/);
   });
 });

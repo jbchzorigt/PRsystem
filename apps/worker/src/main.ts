@@ -1,13 +1,13 @@
 import { Worker } from 'bullmq';
 import { Pool } from 'pg';
-import { env } from '@prsystem/config';
+import { workerEnv } from '@prsystem/config';
 import { selectKeyManagement } from '@prsystem/ports';
 import { createLogger, newRequestId, runWithCorrelation } from '@prsystem/telemetry';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
 import { startWorker } from './startup';
 
 async function main(): Promise<void> {
-  const config = env();
+  const config = workerEnv();
   const logger = createLogger({
     level: config.LOG_LEVEL,
     serviceName: `${config.OTEL_SERVICE_NAME}-worker`,

@@ -4,7 +4,7 @@ import { RequestMethod } from '@nestjs/common';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { SwaggerModule } from '@nestjs/swagger';
 import { createLogger } from '@prsystem/telemetry';
-import { env } from '@prsystem/config';
+import { apiEnv } from '@prsystem/config';
 import { Pool } from 'pg';
 import { API_PREFIX, UNVERSIONED_PATHS } from '@prsystem/contracts';
 import { selectKeyManagement } from '@prsystem/ports';
@@ -25,7 +25,7 @@ export interface BootstrapOptions {
 export async function createApp(
   options: BootstrapOptions = {},
 ): Promise<{ app: NestFastifyApplication; port: number }> {
-  const config = env();
+  const config = apiEnv();
   const logger = createLogger({ level: config.LOG_LEVEL, serviceName: config.OTEL_SERVICE_NAME });
 
   // Security preconditions run before anything is constructed and long before a
@@ -47,18 +47,23 @@ export async function createApp(
     await guardPool.end();
   }
 
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule.forRoot({ scheduler: config.scheduler }),
+    new FastifyAdapter(),
     // Nest's own bootstrap logging is suppressed; the redacting logger is authoritative.
-    logger: false,
-  });
+    { logger: false },
+  );
 
   // D-09. The scheduler pool the *application* owns is the one validated here —
   // not a throwaway opened and closed during startup, which would verify a
   // credential and then leave nothing holding it. Still before `listen`, so a
   // wrong credential means no port is ever bound.
-  const schedulerPool = app.get<Pool | undefined>(SCHEDULER_POOL, { strict: false });
-  if (schedulerPool !== undefined) {
+  if (config.scheduler.enabled) {
+    const schedulerPool = app.get<Pool | undefined>(SCHEDULER_POOL, { strict: false });
     try {
+      if (schedulerPool === undefined) {
+        throw new Error('the scheduler capability is enabled but no pool was registered');
+      }
       await assertSchedulerConnectionPrincipal(schedulerPool, logger);
     } catch (error) {
       // Nest owns the pool now, so shutting the application down is what closes
