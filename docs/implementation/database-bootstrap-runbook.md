@@ -64,7 +64,7 @@ separate credentials, separate sessions and separate deployment responsibilities
 | | Scheduler | Worker |
 | --- | --- | --- |
 | Creates a privileged maintenance job | **yes**, through `platform.schedule_maintenance_job` only | no — holds no `INSERT` on `job_run` at all |
-| Executes a privileged maintenance job | no — cannot execute `platform.maintenance_expire_idempotency_keys` | **yes**, and only a job whose executor identity is its own transaction actor |
+| Executes a privileged maintenance job | no — cannot execute `platform.maintenance_expire_idempotency_keys` | **yes**, and only a job whose executor identity equals its own `session_user` |
 | Direct table privilege on `platform.job_run` | **none** | `SELECT`, and `UPDATE` scoped to `(state, finished_at, error_name, as_of)` |
 | Creates ordinary, non-privileged jobs | no | **yes**, through `platform.begin_worker_job`, which rejects the `platform.maintenance.%` namespace categorically |
 
@@ -87,7 +87,17 @@ Exactly two long-lived deployments remain: the API and the worker.
 | `SCHEDULER_DATABASE_URL` | `prsystem_job_scheduler_login` | **never set** |
 
 Issuance is an API control-plane capability: its own connection string, its own
-pool, and its own startup principal guard that runs before a port is bound.
+pool, and its own startup principal guard.
+
+The pool is **registered in the Nest application container** and lives for the
+life of the process; Nest closes it through `OnApplicationShutdown`. The startup
+guard validates *that* pool, after the container exists and before the port is
+bound — not a throwaway opened and closed during startup, which would verify a
+credential and then leave nothing holding it.
+
+`SCHEDULER_ENABLED` defaults on. A production API with the capability enabled and
+no `SCHEDULER_DATABASE_URL` fails environment validation rather than starting and
+discovering the gap when somebody tries to issue a job.
 Phase 03 exposes **no route** for it — a public endpoint would need the Phase 04
 authorization pipeline in front of it, and shipping the credential without those
 checks would be worse than not shipping the capability.
@@ -99,6 +109,29 @@ own job path refuses the `platform.maintenance.%` namespace. A compromised
 **API** credential *can* issue jobs. That is the power the control plane has,
 and the separation is between issuance and execution, not a claim that both are
 unreachable.
+
+### Validated at call time, not at bootstrap
+
+Bootstrap normalises memberships, and nothing stops an operator granting a second
+group afterwards. `platform.assert_exact_role_closure` therefore re-validates a
+principal whenever a privileged function is *called*: LOGIN, no privileged
+attribute, exactly one direct membership in the expected group with exactly
+`ADMIN FALSE, INHERIT TRUE, SET TRUE`, nothing else reachable — a second project
+group or a predefined role alike — and no ADMIN OPTION.
+
+The scheduler validates itself and its named executor; the maintenance function
+validates the executing principal. A login that has become both Scheduler and
+Worker can do neither. Multiple deployment-managed Worker logins remain
+supported: each is held to the same exact Worker-only closure.
+
+### How a job finishes
+
+The Worker holds `SELECT` on `platform.job_run` and nothing else. Ordinary jobs
+transition through `platform.finish_worker_job`, which requires
+`job_identity = session_user`, refuses the `platform.maintenance.%` namespace,
+and refuses a job that is not running. A privileged maintenance job becomes
+`succeeded` only inside its own audited maintenance function, after the business
+effect and the audit record have both succeeded in that transaction.
 
 ### Identity versus claim
 

@@ -2,7 +2,6 @@ import { Global, Module } from '@nestjs/common';
 import type { OnApplicationShutdown } from '@nestjs/common';
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
-import { env } from '@prsystem/config';
 import { MaintenanceSchedulerService } from './scheduler.service';
 
 /** Injection token for the application-owned scheduler pool. */
@@ -32,10 +31,20 @@ export class SchedulerPoolLifecycle implements OnApplicationShutdown {
     {
       provide: SCHEDULER_POOL,
       useFactory: (): Pool | undefined => {
-        const url = env().SCHEDULER_DATABASE_URL;
+        // Read directly rather than through the validated `env()`.
+        //
+        // This factory runs whenever the module is instantiated, including from
+        // `openapi.ts`, which generates the document without binding a port or
+        // contacting a dependency and therefore has no runtime environment at
+        // all. Demanding the full validated environment here made document
+        // generation fail. Whether the capability is *required* is still decided
+        // by env validation, which the API startup path does run.
+        const url = process.env['SCHEDULER_DATABASE_URL'];
         // Undefined when the deployment has no scheduler capability. The API
         // that is meant to have it fails startup earlier, in the guard.
-        return url === undefined ? undefined : new Pool({ connectionString: url, max: 4 });
+        return url === undefined || url.length === 0
+          ? undefined
+          : new Pool({ connectionString: url, max: 4 });
       },
     },
     SchedulerPoolLifecycle,
