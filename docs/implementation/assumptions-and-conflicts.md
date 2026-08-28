@@ -105,7 +105,8 @@ document. Each is resolved by precedence, not by choice.
 - **Boundary.** The scheduler may issue a privileged job through the narrow function and can do
   nothing else: no `INSERT`, no `UPDATE`, no ownership on `job_run`, and it cannot execute the
   maintenance function it authorises. The worker may execute an issued job whose executor identity
-  matches its transaction actor, and cannot create one: it holds no `INSERT`, and its separate
+  matches its authenticated `session_user` — never `app.actor_ref`, which the connection holding it
+  can rewrite — and cannot create one: it holds no `INSERT`, and its separate
   `platform.begin_worker_job` path rejects the `platform.maintenance.%` namespace categorically.
   Credentials, sessions and deployment responsibilities are separate.
 - **Enforcement.** `platform.schedule_maintenance_job` (fixed `search_path`, owned by

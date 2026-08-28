@@ -22,10 +22,14 @@ queried, retained and access-controlled as business data ([04](04-logical-data-m
 
 Decided in [ADR-0018](adr/ADR-0018-audit-partitioning.md).
 
-| Stream | Schema | Readable by |
-| --- | --- | --- |
-| `audit.platform_event` | `audit` | Hotel, Operation and Platform roles per permission |
-| `police_audit.security_event` | `police_audit` | `prsystem_police` only |
+No runtime role holds a direct privilege on either stream. Writes go through the `SECURITY DEFINER`
+append wrapper owned by `prsystem_audit_writer`, which is the sole holder of `INSERT`; reads belong
+to two dedicated reader roles that hold scoped `SELECT` and no write.
+
+| Stream | Schema | Written by | Readable by |
+| --- | --- | --- | --- |
+| `audit.platform_event` | `audit` | `audit.append_platform_audit_event` (owner `prsystem_audit_writer`) | `prsystem_audit_reader` |
+| `police_audit.security_event` | `police_audit` | `police_audit.append_police_security_event` (owner `prsystem_audit_writer`) | `prsystem_police_audit_reader` |
 
 - **Monthly range partitions keyed on server `occurred_at`**, never a business-effective or
   client-supplied time. A backdated arrival still lands in the month it was actually recorded.

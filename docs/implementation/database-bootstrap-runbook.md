@@ -401,10 +401,20 @@ No procedure here removes an unrelated container, database or volume.
 
 ## 6. Required check
 
-`GATE-SEC` (`pnpm run test:security`) aggregates `SEC-ROLE`, `SEC-RLS`,
-`SEC-AUDIT`, `SEC-PARTITION`, `SEC-POLICE-ISOLATION`, `SEC-KMS`, `SEC-PII-LEAK`
-and `SEC-SECRETS`. It fails closed on an unavailable database, a skipped suite, a
-sub-gate that ran zero tests, or a missing artefact.
+`GATE-SEC` (`pnpm run test:security`) aggregates **eighteen** sub-gates:
+
+`SEC-ROLE`, `SEC-RLS`, `SEC-ACL-MATRIX`, `SEC-OWNERSHIP`, `SEC-LOCK-EVIDENCE`,
+`SEC-POOL-ERRORS`, `SEC-BOOTSTRAP`, `SEC-SCHEDULER`, `SEC-MAINTENANCE`,
+`SEC-STARTUP`, `SEC-STARTUP-WORKER`, `SEC-REGRESSION`, `SEC-AUDIT`,
+`SEC-PARTITION`, `SEC-POLICE-ISOLATION`, `SEC-KMS`, `SEC-PII-LEAK`,
+`SEC-SECRETS`.
+
+This list is the one in `tools/gate-sec-config.mjs`; `validate-governance`
+compares the two and fails if they drift, because a catalogue that lists eight of
+eighteen reads as a complete gate and is not one.
+
+It fails closed on an unavailable database, a skipped suite, a sub-gate that ran
+zero tests, or a missing artefact.
 
 It runs as its **own GitHub Actions job** named exactly `GATE-SEC`, because only a
 job name is selectable as a required check — a step inside another job is not.

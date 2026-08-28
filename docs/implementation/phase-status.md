@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | **`SECURITY_REPAIR_REQUIRED`** — customer review rejected the database bootstrap and privilege model; repair in progress, no acceptance claimed |
+| Phase state | **`SECURITY_REPAIR_REQUIRED`** — nine customer reviews completed; the ninth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 49, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 18/18 (439 tests), regression 51, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, coverage 51/51, CI bypass fixtures 26/26, pool fixture 3/3 | `8a62b0b` … `85d745c`, `66c2c65`, `f3e0c16`, `f88cc38`, `46fdce1`, `816756d`, `41b1e35`, `08f0fa0`, _final documentation commit_ |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the ninth repair; see the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -108,30 +108,33 @@ sections quote the counts current when they were written and are labelled as
 historical snapshots.
 
 ```bash
-node tools/validate-governance.mjs                       # GATE-GOV 13/13
-node tools/validate-workspace.mjs                        # 15/15
-node tools/validate-regression-coverage.mjs              # 51/51 structural CI checks
-node tools/validate-regression-coverage.fixtures.mjs     # 26/26 bypasses rejected
-node tools/validate-pool-error-fixture.mjs               # 3/3 — an idle-pool error fails a suite
-node tools/scan-secrets.mjs                              # 0 findings
-pnpm run format:check                                    # clean
-pnpm run lint                                            # GATE-LINT — 16 projects + e2e
-pnpm run typecheck                                       # GATE-TYPES — 25 graphs, tests included
-pnpm run test:unit                                       # GATE-UNIT — 175 passed
-pnpm run test:migrations                                 # GATE-MIGR — 49 passed
-pnpm run test:integration                                # GATE-INTEG — 51 passed
-pnpm run test:concurrency                                # GATE-CONC — 16 passed
-pnpm run test:regression                                 # 51 passed
-pnpm run test:security                                   # GATE-SEC — 18/18 sub-gates, 439 tests
-pnpm run test:e2e                                        # GATE-E2E — 15 passed
-pnpm run audit:prod                                      # no known vulnerabilities
-pnpm run audit:tree                                      # clean at high; now blocking
-pnpm run build                                           # 16 projects
-pnpm run openapi                                         # /api/v1 document
-git diff --check                                         # clean
+node tools/validate-governance.mjs                       # GATE-GOV
+node tools/validate-workspace.mjs                        # workspace structure
+node tools/validate-regression-coverage.mjs              # structural CI checks
+node tools/validate-regression-coverage.fixtures.mjs     # CI bypass fixtures
+node tools/validate-pool-error-fixture.mjs               # an idle-pool error fails a suite
+node tools/scan-secrets.mjs                              # committed secrets
+pnpm run format:check
+pnpm run lint                                            # GATE-LINT
+pnpm run typecheck                                       # GATE-TYPES
+pnpm run test:unit                                       # GATE-UNIT
+pnpm run test:migrations                                 # GATE-MIGR
+pnpm run test:integration                                # GATE-INTEG
+pnpm run test:concurrency                                # GATE-CONC
+pnpm run test:regression
+pnpm run test:security                                   # GATE-SEC
+pnpm run test:e2e                                        # GATE-E2E
+pnpm run audit:prod
+pnpm run audit:tree                                      # blocking
+pnpm run build
+pnpm run openapi
+git diff --check
 ```
 
-Results are recorded in the repair commit message and reported to the customer.
+The commands are listed without their counts on purpose. Measured results live in
+one place — [Current Phase 03 evidence](#current-phase-03-evidence) — because two
+copies of a moving number is how this block came to disagree with the section
+below it.
 
 ### Security and concurrency evidence
 
@@ -813,7 +816,7 @@ maintenance job and executing one are separate powers with separate credentials.
 | | Scheduler | Worker |
 | --- | --- | --- |
 | Issues a privileged maintenance job | **yes**, via `platform.schedule_maintenance_job` only | no — holds no `INSERT` on `job_run` |
-| Executes one | no | **yes**, only when its transaction actor is the named executor |
+| Executes one | no | **yes**, only when its authenticated `session_user` is the named executor |
 | Direct privilege on `platform.job_run` | **none** | `SELECT` only — transitions go through `platform.finish_worker_job` |
 | Ordinary non-privileged jobs | no | **yes**, via `platform.begin_worker_job`, which refuses the `platform.maintenance.%` namespace categorically |
 
@@ -1110,6 +1113,95 @@ documentation commit on top of it. Three of the jobs cannot be affected by a mar
 the two that can — `governance`, whose validators read these documents, and `verify`, whose
 `format:check` globs them — were re-run in two further fresh, dependency-free clones of the final
 HEAD, and every step of both exited 0, `format:check` included.
+
+---
+
+## Current Phase 03 evidence
+
+**The one canonical place for Phase 03 gate results.** The phase ledger and the
+gate-battery block above link here and restate no counts; `validate-governance`
+check 15 fails if either starts carrying its own copy again, which is how they
+came to read `49 / 439 / 51 / 26 / 3` while this section read something else.
+
+Measured on the ninth-repair tree. Every command exited 0.
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15/15 checks |
+| `node tools/validate-workspace.mjs` | 15/15 checks |
+| `node tools/scan-secrets.mjs` | 0 findings |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 16/16 tasks |
+| `pnpm run typecheck` | 25/25 tasks |
+| `pnpm run test:unit` | 19/19 tasks |
+| `pnpm run build` | 16/16 tasks |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run test:migrations` | **98** tests |
+| `pnpm run test:integration` | **51** tests (db 41, outbox 5, api 5) |
+| `pnpm run test:concurrency` ×3 | **16** tests each run |
+| `pnpm run test:regression` | **51** tests |
+| `node tools/validate-regression-coverage.mjs` | **164/164** checks |
+| `node tools/validate-regression-coverage.fixtures.mjs` | **35/35** bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | **12/12** checks, 4 fixtures |
+| `pnpm run test:security` ×3 | **18/18 sub-gates, 484 tests**, each run |
+| `pnpm run test:e2e` | 15 tests |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | 0 high or critical (1 moderate: DSR-01) |
+| `git diff --check` | clean |
+
+### GATE-SEC — 18 sub-gates, 484 tests
+
+SEC-ROLE 21, SEC-RLS 33, SEC-ACL-MATRIX 110, SEC-OWNERSHIP 10, SEC-LOCK-EVIDENCE 16,
+SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 21, SEC-SCHEDULER 55, SEC-MAINTENANCE 24, SEC-STARTUP 34,
+SEC-STARTUP-WORKER 8, SEC-REGRESSION 51, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
+SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Byte-identical across three consecutive runs.
+
+---
+
+### Ninth security repair (customer review 9) — `SECURITY_REPAIR_REQUIRED`
+
+The eighth repair was **not accepted**. Ten defects were raised; all are closed.
+Phase 03 stays `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting
+customer review, and **no acceptance is claimed**.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| B1 | `MIGRATION_DATABASE_URL` was declared in the shared runtime schema, so `ApiEnv` and `WorkerEnv` both parsed and returned it while `.env.example` claimed both rejected it | The shared schema no longer declares it. `loadMigrationEnv` owns the migration-only contract; both runtime loaders refuse the variable by presence, empty assignment included, and never echo its value. The templates are split into runtime-only and migration-only, enforced by `validate-workspace`. No shipped API or worker source reads the key or imports the loader |
+| B2 | `assertRuntimePrincipal` verified an exact group closure and never that `session_user` was the canonical login for it, so a new LOGIN with one otherwise-perfect membership passed startup | One canonical mapping in `roles.ts`, from which bootstrap and the guards both read. The guard requires the canonical login for all six contained groups, reporting `not_canonical`. A test holds the SQL `CASE` to the same table, and another asserts only `roles.ts` declares it |
+| B3 | `finish_worker_job` checked the realm and `job_identity = session_user` and never called `assert_exact_role_closure` | The closure is revalidated before the job row is read or locked. The repair also found the catalogue incomplete: a Worker can execute **seven** definers, not four. All seven are enumerated with the guard each applies — three deliberately run no closure — and the live grants and bodies are held to that list |
+| B4 | Only the scheduler guard's own failure closed the application; correlation setup, the OpenAPI document and `app.listen()` ran outside any cleanup, so an `EADDRINUSE` left a privileged scheduler connection alive in a process that had not started | Every step from the container's creation to the successful return runs inside one `try`; any failure closes the application and rethrows the original error unchanged. The scheduler pool carries an `application_name` so its backends are visible and assertable |
+| B5 | The manifest accepted any name in `PRSYSTEM_APPROVED_OPERATOR_OWNERS`, so a kernel owner could be approved as database owner — while bootstrap forbade every project role there unconditionally | Every group role and canonical login is rejected as owner of the database or `public` before the allow-list is consulted. The project-role definition moved to `roles.ts` so bootstrap and the manifest read one set |
+| B6 | Functions were keyed by `schema.name`, so an added overload inherited an exception; and the reverse census excluded all four kernel owners, so a narrow owner could hold arbitrary objects in `public` or a rogue schema | Functions are keyed by exact identity signature. A whole-database census permits a narrow owner only its declared entries, with partition descendants resolved through `pg_inherits` and extension members through `pg_depend`. Every name column is cast to `text`, which was silently truncating signatures at 63 bytes |
+| B7 | The projection called foreign keys, checks, indexes and generated columns non-expressible; Drizzle 0.45.2 expresses all four, and 28 checks, 2 foreign keys and 6 indexes were declared in `schema.ts` not at all | `schema.ts` declares all of them, checks carrying the exact PostgreSQL predicate text. The projection renders them and reads generated state from the declaration. The snapshot header now lists what genuinely remains SQL-only, with the reason for each |
+| B8 | Scope accounting covered the `createTestDatabase` lifecycle, so a suite managing its own `quietPool` recorded errors into a scope nothing read | A setup file registers an unconditional end-of-file assertion over every scope. The harness's bookkeeping moved onto `globalThis`, because the setup file and the test files resolved the module differently and the first version of the hook inspected an empty map |
+| B9 | The validator ignored `step.shell`, so `shell: bash -c 'true' {0}` beside a correct `run:` line passed; and it required only a subset of the blocking commands | `tools/ci-manifest.mjs` is the single contract for all five jobs: exact command, correct job, blocking, default shell, required database, required order. Checks rose from 66 to 164 |
+| B10 | The ledger and the gate-battery block each held their own copy of the counts and had gone stale; several documents still described superseded behaviour | Counts live in one section; the ledger and the battery link to it, and `validate-governance` check 15 fails if either restates them. Check 14 holds the runbook's GATE-SEC catalogue to `gate-sec-config.mjs` — it listed 8 of 18 |
+
+#### Failing-first evidence
+
+Every defect was reproduced before it was fixed. Where the fix changed a module,
+the previous version was restored temporarily and the new cases run against it;
+no temporary mutation was committed.
+
+| Item | Reproduction | Result before the fix |
+| --- | --- | --- |
+| B1 | both runtime loaders handed a valid `MIGRATION_DATABASE_URL` | **accepted**, and returned the credential value |
+| B2 | 6 non-canonical logins, one per contained group, each with an exact closure | 6 accepted |
+| B3 | a non-canonical Worker login finishing a job assigned to itself; the canonical Worker finishing after gaining `pg_read_all_data` | both succeeded |
+| B4 | startup against an occupied port | 1 scheduler backend left connected |
+| B5 | 8 cases: kernel owner, narrow owner, runtime and login, each as database and as `public` owner | 8 accepted |
+| B6 | an extra overload, a `public` function, a relation and a function in a rogue schema, the wrong narrow owner on a declared function | 5 accepted |
+| B7 | 8 declaration mutations, plus removing `.onDelete('restrict')` from `schema.ts` | mutations undetectable; the real `schema.ts` edit left "matches the declaration exactly" **passing** |
+| B8 | a self-managed `quietPool` fixture with no `createTestDatabase` | exited 0 with the error unread |
+| B9 | a custom shell template, and removal of the migration gate, the E2E suite, the production audit and the compose teardown | 5 accepted (30/35 caught) |
+| B10 | — | the stale counts are the defect; corrected and guarded by checks 14 and 15 |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing an explicit push authorisation, and was not attempted.
 
 ---
 

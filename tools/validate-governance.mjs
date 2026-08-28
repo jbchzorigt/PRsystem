@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SUB_GATES } from './gate-sec-config.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = join(ROOT, 'docs');
@@ -500,6 +501,63 @@ if (hasArch) {
     return `${total} P1 items: ${sPending} pending, ${sClosed} closed; NFR values provisional incl. RPO and RTO`;
   });
 }
+
+check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', () => {
+  // A catalogue that listed eight of eighteen sub-gates read as a complete gate
+  // and was not one. The list is derived in one place and compared here, because
+  // prose and configuration drifting apart is exactly how that happened.
+  const runbook = readFileSync(
+    join(ROOT, 'docs', 'implementation', 'database-bootstrap-runbook.md'),
+    'utf8',
+  );
+  const configured = SUB_GATES.map((gate) => gate.id).sort();
+  const listed = [...new Set([...runbook.matchAll(/`(SEC-[A-Z-]+)`/g)].map((m) => m[1]))].sort();
+  const missing = configured.filter((id) => !listed.includes(id));
+  const extra = listed.filter((id) => !configured.includes(id));
+  assert(missing.length === 0, `runbook omits ${missing.join(', ')}`);
+  assert(extra.length === 0, `runbook lists unknown sub-gates ${extra.join(', ')}`);
+  const stated = /aggregates \*\*([a-z]+)\*\* sub-gates/.exec(runbook)?.[1];
+  const words = { eighteen: 18, seventeen: 17, nineteen: 19, twenty: 20 };
+  assert(
+    stated !== undefined && words[stated] === configured.length,
+    `runbook says "${String(stated)}" sub-gates, configuration has ${String(configured.length)}`,
+  );
+  return `${configured.length} sub-gates, runbook and configuration agree`;
+});
+
+check('15', 'The Phase 03 ledger embeds no mutable gate counts', () => {
+  // The ledger carried its own copy of the counts and went stale: it still read
+  // 49 / 439 / 51 / 26 / 3 while the current section read 76 / 458 / 66 / 30 / 9.
+  // Two places holding the same mutable number is one place too many, so the
+  // ledger links to the canonical evidence section instead of restating it.
+  const text = readFileSync(join(ROOT, 'docs', 'implementation', 'phase-status.md'), 'utf8');
+  const firstSection = text.indexOf('\n### ');
+  assert(firstSection > 0, 'phase-status.md has no sections');
+  const ledger = text.slice(0, firstSection);
+
+  const patterns = [
+    /GATE-(?:SEC|MIGR|INTEG|CONC|UNIT|E2E)[^\n|]*\d/,
+    /\b\d+\/\d+\s+sub-gates/,
+    /bypass fixtures\s+\d/,
+    /pool fixture\s+\d/,
+  ];
+  // Only the phase still under change. A completed phase's counts are frozen
+  // with it and are a record, not a second copy of a moving number.
+  const offenders = ledger
+    .split('\n')
+    .filter((line) => /^\| 03 \|/.test(line) || line.includes('SECURITY_REPAIR_REQUIRED'))
+    .filter((line) => patterns.some((pattern) => pattern.test(line)));
+  assert(
+    offenders.length === 0,
+    `ledger embeds counts: ${offenders.map((l) => l.trim().slice(0, 70)).join(' | ')}`,
+  );
+
+  assert(
+    text.includes('## Current Phase 03 evidence'),
+    'phase-status.md has no canonical "Current Phase 03 evidence" section',
+  );
+  return 'ledger links to the canonical evidence section and restates no counts';
+});
 
 // ------------------------------------------------------------------- report
 let failed = 0;

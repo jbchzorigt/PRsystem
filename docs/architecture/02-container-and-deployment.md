@@ -57,8 +57,11 @@ distributed broker.
 
 ### 1.1 Database roles
 
-Per [ADR-0017](adr/ADR-0017-tenant-isolation-rls.md), the deployment uses five distinct database
-roles rather than one application role:
+Per [ADR-0017](adr/ADR-0017-tenant-isolation-rls.md) and D-09, the deployment uses **eleven group
+roles and seven canonical login principals** rather than one application role. The table below lists
+the ones a deployment interacts with directly; the remainder are the two audit reader roles, the
+partition manager and the audit writer. Phase 03 supports exactly one login per group, shared by
+every process of that runtime.
 
 | Role | Used by | Notes |
 | --- | --- | --- |
