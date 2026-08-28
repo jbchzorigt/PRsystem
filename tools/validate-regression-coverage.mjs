@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { load } from 'js-yaml';
 import { SUB_GATES } from './gate-sec-config.mjs';
 import { REGRESSION_DIR, REGRESSION_SUITES } from './regression-manifest.mjs';
 
@@ -84,12 +85,109 @@ for (const suite of listed) {
   );
 }
 
-// 4. CI must run the complete regression suite as its own step.
-const ci = readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+// 4. CI must run the complete regression suite as an executable, blocking step
+//    in the intended job. Searching the file with a regex proves none of that:
+//    a commented-out line matches, a step in a non-blocking job matches, and a
+//    step carrying `continue-on-error: true` matches. The workflow is therefore
+//    parsed and inspected structurally.
+const workflow = load(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+
+/** Every step of one job, or [] when the job does not exist. */
+function stepsOf(jobName) {
+  return workflow?.jobs?.[jobName]?.steps ?? [];
+}
+
+/** The first step in `jobName` whose `run:` executes `command`. */
+function findStep(jobName, command) {
+  return stepsOf(jobName).find(
+    (step) => typeof step?.run === 'string' && step.run.includes(command),
+  );
+}
+
+/** A step is blocking unless it opts out with continue-on-error. */
+function isBlocking(step) {
+  const flag = step?.['continue-on-error'];
+  return flag === undefined || flag === false || flag === 'false';
+}
+
+const REGRESSION_JOB = 'compose';
+const REGRESSION_COMMAND = 'pnpm run test:regression';
+
+const regressionStep = findStep(REGRESSION_JOB, REGRESSION_COMMAND);
 check(
-  'CI runs the complete regression suite',
-  /run: pnpm run test:regression/.test(ci),
-  /run: pnpm run test:regression/.test(ci) ? 'present' : 'no test:regression step in ci.yml',
+  `CI runs the complete regression suite in the '${REGRESSION_JOB}' job`,
+  regressionStep !== undefined,
+  regressionStep === undefined
+    ? `no executable '${REGRESSION_COMMAND}' step in job '${REGRESSION_JOB}'`
+    : `step: ${regressionStep.name ?? '(unnamed)'}`,
+);
+
+// A commented-out command is text inside some other step's `run`, never a step
+// whose own `run` starts with it.
+const regressionIsExecutable =
+  regressionStep !== undefined &&
+  regressionStep.run
+    .split('\n')
+    .map((line) => line.trim())
+    .some((line) => line.startsWith(REGRESSION_COMMAND));
+check(
+  'the regression step is executable, not commented text',
+  regressionIsExecutable,
+  regressionIsExecutable ? 'runs as a command' : 'only appears inside a comment',
+);
+
+check(
+  'the regression step is blocking',
+  regressionStep !== undefined && isBlocking(regressionStep),
+  regressionStep === undefined
+    ? 'no step'
+    : `continue-on-error: ${String(regressionStep['continue-on-error'] ?? '(absent)')}`,
+);
+
+const regressionEnv = regressionStep?.env ?? {};
+check(
+  'the regression step is given a database',
+  typeof regressionEnv.DATABASE_URL === 'string' && regressionEnv.DATABASE_URL.length > 0,
+  typeof regressionEnv.DATABASE_URL === 'string' ? 'DATABASE_URL supplied' : 'no DATABASE_URL',
+);
+
+// `dist/` is ignored and several suites consume generated JavaScript, so the
+// build must come first — in step order, not merely somewhere in the file.
+const composeSteps = stepsOf(REGRESSION_JOB);
+const buildIndex = composeSteps.findIndex(
+  (step) => typeof step?.run === 'string' && step.run.includes('pnpm run build'),
+);
+const regressionIndex = composeSteps.indexOf(regressionStep);
+check(
+  'the workspace is built before the regression suite runs',
+  buildIndex >= 0 && regressionIndex >= 0 && buildIndex < regressionIndex,
+  buildIndex < 0
+    ? 'no build step in the job'
+    : `build at step ${String(buildIndex)}, regression at step ${String(regressionIndex)}`,
+);
+
+// 5. And this validator must itself be on the blocking path.
+const validatorStep =
+  findStep('governance', 'validate:regression-coverage') ??
+  findStep('verify', 'validate:regression-coverage') ??
+  findStep('compose', 'validate:regression-coverage');
+check(
+  'the regression coverage validator runs in CI',
+  validatorStep !== undefined && isBlocking(validatorStep),
+  validatorStep === undefined ? 'not present in any job' : 'present and blocking',
+);
+
+// 6. `pnpm run test:security` must run it before GATE-SEC, so a local run and a
+//    CI run enforce the same thing.
+const rootScripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts ?? {};
+const securityScript = rootScripts['test:security'] ?? '';
+const runsValidatorFirst =
+  securityScript.includes('validate-regression-coverage') &&
+  securityScript.indexOf('validate-regression-coverage') < securityScript.indexOf('gate-sec.mjs');
+check(
+  'pnpm run test:security validates regression coverage before GATE-SEC',
+  runsValidatorFirst,
+  runsValidatorFirst ? securityScript : `test:security = ${securityScript || '(missing)'}`,
 );
 
 const width = Math.max(...checks.map((c) => c.name.length));

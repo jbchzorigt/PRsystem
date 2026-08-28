@@ -17,6 +17,28 @@ export const REALMS: readonly Realm[] = ['hotel', 'guest', 'operation', 'police'
  * scope. It is a real value rather than NULL so every tenant column stays
  * `NOT NULL` and the RLS predicate never has to reason about NULL.
  */
+/**
+ * The platform-wide scope, as distinct from any one hotel.
+ *
+ * **What the tenant-context mechanism protects against, and what it does not.**
+ *
+ * Scope is carried in transaction-local custom GUCs (`app.hotel_id` and
+ * friends) and read by every RLS policy. That makes a *missing tenant predicate*
+ * harmless — a query with no `WHERE hotel_id = …` still returns only the scoped
+ * tenant's rows — and it makes scope leakage between pooled connections
+ * impossible, because the settings are transaction-local and reset on release.
+ *
+ * It is **not** unforgeable. A custom GUC is writable by the session that holds
+ * the connection, so a runtime credential that can execute arbitrary SQL can
+ * call `set_config('app.hotel_id', …)` and choose its own scope. Defending
+ * against that is the job of the layers above — parameterised queries, the
+ * authorization pipeline, and the credential separation in ADR-0017 — not of
+ * this mechanism, and no test here should be read as claiming otherwise.
+ *
+ * Server-derived authorization resolution, where the scope is established from
+ * the authenticated principal rather than supplied by the caller, is Phase 04
+ * work and does not exist yet.
+ */
 export const PLATFORM_SCOPE = '00000000-0000-0000-0000-000000000000';
 
 export interface TenantContext {
@@ -53,6 +75,14 @@ export function assertTenantContext(context: TenantContext): void {
   }
   if (context.correlationId.length === 0 || context.correlationId.length > 128) {
     throw new TenantScopeError('correlation id is missing or implausible');
+  }
+  // The platform sentinel is not a hotel. It is the scope platform-wide
+  // operation work runs in, so it is only meaningful paired with the operation
+  // realm; anything else is a resolver that has widened a tenant request into a
+  // platform one. This is an application-boundary rule, not a database one —
+  // see the note on what custom-GUC RLS does and does not protect against.
+  if (context.hotelId === PLATFORM_SCOPE && context.realm !== 'operation') {
+    throw new TenantScopeError('the platform scope is only valid in the operation realm');
   }
 }
 

@@ -56,6 +56,7 @@ export const TEST_LOGIN_PRINCIPALS = {
   auditReader: 'prsystem_audit_reader_login',
   policeAuditReader: 'prsystem_police_audit_reader_login',
   migrate: 'prsystem_migrate_login',
+  jobScheduler: 'prsystem_job_scheduler_login',
 } as const;
 
 function withDatabase(url: string, database: string): string {

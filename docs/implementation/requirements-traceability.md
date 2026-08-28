@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.7 (Phase 03 fourth security repair — membership options, gate reproducibility and regression coverage)
+**Version:** 1.8 (Phase 03 fifth security repair — D-09 scheduler, partial-login bootstrap, normalized schema dump)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -154,6 +154,12 @@ artefacts below are the traceable output.
 | 03 | Exact PostgreSQL 17 role membership: MEMBER, USAGE, SET and ADMIN modelled separately, every approved edge normalised to `ADMIN FALSE, INHERIT TRUE, SET TRUE`, and a migration refused while any runtime principal can reach an owner role | `packages/db/src/principal-guard.ts`, `packages/db/src/bootstrap.ts` | `GATE-SEC` / `SEC-REGRESSION` (`phase03-repair3.test.ts`), `GATE-SEC` / `SEC-ROLE` |
 | 03 | Job rows are not editable by the principal they authorise: identity columns immutable, terminal states terminal, worker `UPDATE` column-scoped | `platform.job_run_transition_guard`, `packages/db/migrations/0001_kernel.sql` | `GATE-SEC` / `SEC-MAINTENANCE`, `GATE-SEC` / `SEC-ACL-MATRIX` |
 | 03 | Every gate builds the checked-out source before consuming generated JavaScript, and no security regression suite can be omitted from GATE-SEC | `turbo.json`, `package.json`, `tools/gate-sec-config.mjs`, `tools/regression-manifest.mjs` | `pnpm run validate:regression-coverage`, clean-checkout CI-equivalent run |
+| 03 | D-09: a dedicated scheduler issues privileged maintenance jobs through one narrow SECURITY DEFINER function; the worker executes but cannot issue, and holds no `INSERT` on `job_run` | `platform.schedule_maintenance_job`, `platform.begin_worker_job`, `job_run_privileged_has_issuer` | `GATE-SEC` / `SEC-SCHEDULER` |
+| 03 | Group-only, partial and IaC-managed login bootstrap: absent principals are never created, omitted existing ones never re-passworded but validated, unsafe drift fails closed | `packages/db/src/bootstrap.ts`, `packages/db/src/bootstrap-cli.ts` | `GATE-SEC` / `SEC-BOOTSTRAP` |
+| 03 | Containment covers runtime, reader and scheduler principals alike, by MEMBER, USAGE, SET and ADMIN, in both the TypeScript runner and the migration SQL | `packages/db/src/principal-guard.ts`, `packages/db/migrations/0001_kernel.sql` | `GATE-SEC` / `SEC-REGRESSION` (`phase03-repair4.test.ts`) |
+| 03 | Lock contention is observed, not inferred: `pg_locks` and `pg_blocking_pids` identify the holder before it is released | `packages/db/src/concurrency/kernel.test.ts`, `packages/db/src/security/sec-maintenance.test.ts` | `GATE-CONC`, `GATE-SEC` / `SEC-MAINTENANCE` |
+| 03 | Migration determinism by declared Drizzle schema plus byte-identical normalized `pg_dump --schema-only` from the pinned PostgreSQL 17 image | `packages/db/src/schema.ts`, `packages/db/src/test-support/schema-dump.ts` | `pnpm run test:migrations` |
+| 03 | Exact database and schema ACLs cover every grantee, not only PUBLIC and named project roles | `packages/db/src/bootstrap.ts` (`strayGrantees`) | `GATE-SEC` / `SEC-BOOTSTRAP` |
 
 Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions remains `PENDING` after
 them. Phase 04 is the first phase to move a decision to `COVERED`.

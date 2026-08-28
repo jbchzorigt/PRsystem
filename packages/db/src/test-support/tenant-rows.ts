@@ -83,7 +83,10 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.job_run',
-    grants: { api: ['SELECT'], worker: ['SELECT', 'INSERT', 'UPDATE'], police: [] },
+    // D-09: no runtime holds INSERT. Ordinary job rows come from
+    // platform.begin_worker_job, privileged ones from
+    // platform.schedule_maintenance_job, which only the scheduler may execute.
+    grants: { api: ['SELECT'], worker: ['SELECT', 'UPDATE'], police: [] },
     insert: (hotelId, n) => ({
       sql: `INSERT INTO platform.job_run (hotel_id, job_name, job_identity)
             VALUES ($1, $2, 'identity-fixture')`,

@@ -66,7 +66,9 @@ roles rather than one application role:
 | `prsystem_api` | `api` | DML only; subject to RLS; no `BYPASSRLS` |
 | `prsystem_worker` | `worker` | DML plus job tables; subject to RLS; no `BYPASSRLS` |
 | `prsystem_police` | Police module connections | `police` and `police_audit` schemas only; not grantable to the runtimes above |
-| `prsystem_maintenance` | Named retention, rebuild and rewrap jobs | `BYPASSRLS`; audited job identity required |
+| `prsystem_job_scheduler` | scheduler (D-09) | Issues privileged maintenance jobs through one narrow function; no table privilege on `job_run`; cannot execute maintenance |
+| `prsystem_maintenance_fn` | — (function owner) | Owns the cross-tenant maintenance functions; sets tenant scope per tenant; **no `BYPASSRLS`** |
+| `prsystem_maintenance` | — (break-glass only) | `BYPASSRLS`; owns nothing, holds no standing grant, reachable by nobody. Normal maintenance does **not** use it |
 
 Every runtime transaction establishes its tenant context with `SET LOCAL` after the authorization
 pipeline resolves scope. Connection pooling is therefore safe: the context cannot outlive the

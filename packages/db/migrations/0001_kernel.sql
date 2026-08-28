@@ -27,6 +27,19 @@ DECLARE
   r record;
   v_missing text[] := ARRAY[]::text[];
   v_unsafe  text[] := ARRAY[]::text[];
+  -- Principals somebody can connect as, or that a connection can become.
+  c_contained constant text[] := ARRAY[
+    'prsystem_api', 'prsystem_worker', 'prsystem_police',
+    'prsystem_audit_reader', 'prsystem_police_audit_reader', 'prsystem_job_scheduler',
+    'prsystem_api_login', 'prsystem_worker_login', 'prsystem_police_login',
+    'prsystem_audit_reader_login', 'prsystem_police_audit_reader_login',
+    'prsystem_job_scheduler_login'
+  ];
+  -- Roles none of the above may reach by any capability.
+  c_owners constant text[] := ARRAY[
+    'prsystem_maintenance', 'prsystem_maintenance_fn',
+    'prsystem_audit_writer', 'prsystem_partition_mgr', 'prsystem_migrate'
+  ];
 BEGIN
   FOR r IN
     SELECT * FROM (VALUES
@@ -35,6 +48,7 @@ BEGIN
       ('prsystem_police',              false),
       ('prsystem_audit_reader',        false),
       ('prsystem_police_audit_reader', false),
+      ('prsystem_job_scheduler',       false),
       ('prsystem_migrate',             false),
       ('prsystem_audit_writer',        false),
       ('prsystem_partition_mgr',       false),
@@ -68,19 +82,127 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- No runtime group may be able to reach a function-owner or the DDL owner.
+  -- Privileged attributes on any contained principal, login or group. A login
+  -- is expected to have LOGIN, so only the five escalating attributes matter.
   FOR r IN
-    SELECT owner.rolname AS owner_name, runtime.rolname AS runtime_name
-      FROM pg_roles owner, pg_roles runtime
-     WHERE owner.rolname IN ('prsystem_maintenance', 'prsystem_maintenance_fn',
-                             'prsystem_audit_writer', 'prsystem_partition_mgr',
-                             'prsystem_migrate')
-       AND runtime.rolname IN ('prsystem_api', 'prsystem_worker', 'prsystem_police',
-                               'prsystem_audit_reader', 'prsystem_police_audit_reader')
-       AND pg_has_role(runtime.rolname, owner.oid, 'USAGE')
+    SELECT rolname,
+           CASE WHEN rolsuper THEN 'SUPERUSER'
+                WHEN rolcreaterole THEN 'CREATEROLE'
+                WHEN rolcreatedb THEN 'CREATEDB'
+                WHEN rolreplication THEN 'REPLICATION'
+                ELSE 'BYPASSRLS' END AS attribute
+      FROM pg_roles
+     WHERE rolname = ANY(c_contained)
+       AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
   LOOP
-    RAISE EXCEPTION 'role % can reach %, which breaks the privilege separation this schema depends on',
-      r.runtime_name, r.owner_name USING ERRCODE = '42501';
+    RAISE EXCEPTION 'principal % holds %, which no runtime, reader or scheduler may hold',
+      r.rolname, r.attribute USING ERRCODE = '42501';
+  END LOOP;
+
+  -- Reach, by every PostgreSQL 17 capability independently. USAGE alone — which
+  -- this precondition previously checked — is blind to a SET-only membership and
+  -- blind to an ADMIN-only one, and ADMIN is the strongest of the three because
+  -- its holder can grant the role onward, or back to itself with SET.
+  FOR r IN
+    SELECT owner.rolname AS owner_name, contained.rolname AS contained_name,
+           concat_ws(', ',
+             CASE WHEN pg_has_role(contained.oid, owner.oid, 'USAGE') THEN 'INHERIT' END,
+             CASE WHEN pg_has_role(contained.oid, owner.oid, 'SET') THEN 'SET' END,
+             CASE WHEN pg_has_role(contained.oid, owner.oid, 'MEMBER WITH ADMIN OPTION')
+                  THEN 'ADMIN' END,
+             CASE WHEN pg_has_role(contained.oid, owner.oid, 'MEMBER') THEN 'MEMBER' END
+           ) AS capabilities
+      FROM pg_roles owner, pg_roles contained
+     WHERE owner.rolname = ANY(c_owners)
+       AND contained.rolname = ANY(c_contained)
+       AND pg_has_role(contained.oid, owner.oid, 'MEMBER')
+  LOOP
+    RAISE EXCEPTION
+      'role % can reach % (%), which breaks the privilege separation this schema depends on',
+      r.contained_name, r.owner_name, r.capabilities USING ERRCODE = '42501';
+  END LOOP;
+
+  -- ADMIN OPTION held by a contained principal on anything at all.
+  FOR r IN
+    SELECT m.rolname AS member, g.rolname AS role
+      FROM pg_auth_members am
+      JOIN pg_roles m ON m.oid = am.member
+      JOIN pg_roles g ON g.oid = am.roleid
+     WHERE am.admin_option AND m.rolname = ANY(c_contained)
+  LOOP
+    RAISE EXCEPTION 'principal % holds ADMIN OPTION on %, so it can grant itself further reach',
+      r.member, r.role USING ERRCODE = '42501';
+  END LOOP;
+
+  -- Predefined PostgreSQL roles, and any other unexpected reach. The closure of
+  -- a contained principal is exactly its own group and nothing else.
+  FOR r IN
+    SELECT contained.rolname AS contained_name, reached.rolname AS reached_name
+      FROM pg_roles contained
+      JOIN pg_auth_members am ON am.member = contained.oid
+      JOIN pg_roles reached ON reached.oid = am.roleid
+     WHERE contained.rolname = ANY(c_contained)
+       AND reached.rolname IS DISTINCT FROM (
+             CASE contained.rolname
+               WHEN 'prsystem_api_login' THEN 'prsystem_api'
+               WHEN 'prsystem_worker_login' THEN 'prsystem_worker'
+               WHEN 'prsystem_police_login' THEN 'prsystem_police'
+               WHEN 'prsystem_audit_reader_login' THEN 'prsystem_audit_reader'
+               WHEN 'prsystem_police_audit_reader_login' THEN 'prsystem_police_audit_reader'
+               WHEN 'prsystem_job_scheduler_login' THEN 'prsystem_job_scheduler'
+               ELSE NULL
+             END)
+  LOOP
+    RAISE EXCEPTION
+      'principal % has an unexpected membership in %; a contained principal joins exactly one group',
+      r.contained_name, r.reached_name USING ERRCODE = '42501';
+  END LOOP;
+
+  -- The migration graph must be exactly right, not merely free of extras: a
+  -- cluster missing prsystem_migrate -> prsystem_audit_writer has no extra reach
+  -- anywhere, yet cannot own what this migration is about to create.
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('prsystem_migrate', 'prsystem_audit_writer'),
+      ('prsystem_migrate', 'prsystem_partition_mgr'),
+      ('prsystem_migrate', 'prsystem_maintenance_fn')
+    ) AS t(member_name, role_name)
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_auth_members am
+        JOIN pg_roles m ON m.oid = am.member
+        JOIN pg_roles g ON g.oid = am.roleid
+       WHERE m.rolname = r.member_name AND g.rolname = r.role_name
+    ) THEN
+      RAISE EXCEPTION 'the migration graph is missing the edge % -> %',
+        r.member_name, r.role_name USING ERRCODE = '42501';
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_auth_members am
+        JOIN pg_roles m ON m.oid = am.member
+        JOIN pg_roles g ON g.oid = am.roleid
+       WHERE m.rolname = r.member_name AND g.rolname = r.role_name
+         AND am.admin_option = false AND am.inherit_option = true AND am.set_option = true
+    ) THEN
+      RAISE EXCEPTION
+        'the migration edge % -> % does not carry exactly ADMIN FALSE, INHERIT TRUE, SET TRUE',
+        r.member_name, r.role_name USING ERRCODE = '42501';
+    END IF;
+  END LOOP;
+
+  -- And prsystem_migrate reaches those three roles and nothing else.
+  FOR r IN
+    SELECT g.rolname AS role
+      FROM pg_auth_members am
+      JOIN pg_roles m ON m.oid = am.member
+      JOIN pg_roles g ON g.oid = am.roleid
+     WHERE m.rolname = 'prsystem_migrate'
+       AND g.rolname <> ALL (ARRAY['prsystem_audit_writer', 'prsystem_partition_mgr',
+                                   'prsystem_maintenance_fn'])
+  LOOP
+    RAISE EXCEPTION 'prsystem_migrate has an unexpected membership in %', r.role
+      USING ERRCODE = '42501';
   END LOOP;
 END
 $precondition$;
@@ -420,6 +542,10 @@ CREATE TABLE platform.job_run (
   hotel_id    uuid NOT NULL,
   job_name    text NOT NULL,
   job_identity text NOT NULL,
+  -- Who *issued* the job, as distinct from who executes it (D-09). Written
+  -- server-side by the scheduling function and immutable thereafter, so
+  -- execution evidence can tell issuer from executor.
+  issuer_ref  text,
   state       text NOT NULL DEFAULT 'running',
   scope       jsonb NOT NULL DEFAULT '{}'::jsonb,
   as_of       timestamptz,
@@ -429,6 +555,10 @@ CREATE TABLE platform.job_run (
   CONSTRAINT job_run_state_known CHECK (state IN ('running', 'succeeded', 'failed')),
   CONSTRAINT job_run_terminal_has_finish CHECK (
     (state = 'running') = (finished_at IS NULL)
+  ),
+  -- A privileged maintenance job exists only because a scheduler issued it.
+  CONSTRAINT job_run_privileged_has_issuer CHECK (
+    job_name NOT LIKE 'platform.maintenance.%' OR issuer_ref IS NOT NULL
   )
 );
 --> statement-breakpoint
@@ -448,9 +578,10 @@ BEGIN
      OR NEW.hotel_id IS DISTINCT FROM OLD.hotel_id
      OR NEW.job_name IS DISTINCT FROM OLD.job_name
      OR NEW.job_identity IS DISTINCT FROM OLD.job_identity
+     OR NEW.issuer_ref IS DISTINCT FROM OLD.issuer_ref
      OR NEW.started_at IS DISTINCT FROM OLD.started_at THEN
     RAISE EXCEPTION
-      'job_run identity is immutable: job_run_id, hotel_id, job_name, job_identity and started_at cannot change'
+      'job_run identity is immutable: job_run_id, hotel_id, job_name, job_identity, issuer_ref and started_at cannot change'
       USING ERRCODE = '42501';
   END IF;
 
@@ -1022,6 +1153,13 @@ BEGIN
   IF v_job.job_identity IS DISTINCT FROM v_actor THEN
     RAISE EXCEPTION 'job % belongs to another actor', p_job_run_id USING ERRCODE = '42501';
   END IF;
+  -- D-09: only a scheduler-issued job authorises privileged maintenance. A job
+  -- row with no issuer was not issued through platform.schedule_maintenance_job,
+  -- so nothing separate from the executor ever authorised this work.
+  IF v_job.issuer_ref IS NULL THEN
+    RAISE EXCEPTION 'job % was not issued by a scheduler; privileged maintenance requires an issuer',
+      p_job_run_id USING ERRCODE = '42501';
+  END IF;
 
   DELETE FROM platform.idempotency_key
    WHERE hotel_id = v_hotel AND expires_at < pg_catalog.now() AND state <> 'in_progress';
@@ -1175,7 +1313,10 @@ GRANT SELECT, INSERT, UPDATE ON platform.export_artifact TO prsystem_worker;
 -- Column-scoped, not table-wide. The worker records how its own job ended; it
 -- cannot restate which job it was or whose identity it ran under, which is what
 -- platform.maintenance_expire_idempotency_keys authorises on.
-GRANT SELECT, INSERT ON platform.job_run TO prsystem_worker;
+-- No INSERT. Job rows are created only by platform.begin_worker_job (ordinary
+-- jobs) or platform.schedule_maintenance_job (privileged, scheduler-only), so a
+-- worker cannot mint its own maintenance authorisation.
+GRANT SELECT ON platform.job_run TO prsystem_worker;
 --> statement-breakpoint
 GRANT UPDATE (state, finished_at, error_name, as_of) ON platform.job_run TO prsystem_worker;
 --> statement-breakpoint
@@ -1255,6 +1396,139 @@ GRANT EXECUTE ON FUNCTION
   TO prsystem_worker, prsystem_migrate;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION platform.maintenance_expire_idempotency_keys(uuid) TO prsystem_worker;
+--> statement-breakpoint
+
+-- ------------------------------------------------- D-09 scheduler boundary
+-- Issuing a privileged maintenance job and executing one are different powers
+-- held by different credentials. The scheduler can create an authorisation but
+-- cannot act on it; the worker can act on an authorisation but cannot create
+-- one. Neither role holds INSERT on platform.job_run, so the only way a
+-- privileged job row comes into existence is through this function.
+CREATE OR REPLACE FUNCTION platform.schedule_maintenance_job(
+  p_job_name          text,
+  p_hotel_id          uuid,
+  p_executor_identity text
+) RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_realm    text := platform.current_realm();
+  v_issuer   text := platform.current_actor_ref();
+  v_job_id   uuid;
+BEGIN
+  IF v_realm IS NULL OR v_issuer IS NULL THEN
+    RAISE EXCEPTION 'scheduling requires an established transaction context'
+      USING ERRCODE = '42501';
+  END IF;
+  -- The Police realm never issues platform maintenance.
+  IF v_realm = 'police' THEN
+    RAISE EXCEPTION 'the police realm may not schedule platform maintenance'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- An explicit allow-list, not a namespace pattern. Phase 03 has exactly one
+  -- privileged maintenance operation, and a scheduler that could name any job
+  -- would be a general-purpose authorisation issuer.
+  IF p_job_name IS DISTINCT FROM platform.maintenance_job_name() THEN
+    RAISE EXCEPTION 'job type % is not schedulable; allowed: %',
+      coalesce(p_job_name, '(null)'), platform.maintenance_job_name()
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_hotel_id IS NULL OR p_executor_identity IS NULL OR p_executor_identity = '' THEN
+    RAISE EXCEPTION 'a scheduled job needs a hotel scope and an executor identity'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Every authorisation-bearing column is written here, server-side. The caller
+  -- supplies only the scope and the executor it is delegating to.
+  INSERT INTO platform.job_run (hotel_id, job_name, job_identity, issuer_ref, state, started_at)
+  VALUES (p_hotel_id, platform.maintenance_job_name(), p_executor_identity, v_issuer,
+          'running', pg_catalog.now())
+  RETURNING job_run_id INTO v_job_id;
+
+  -- Immutable, same transaction. If the audit write fails the job is not issued.
+  PERFORM audit.append_platform_audit_event(
+    'platform.maintenance.scheduled',
+    'allowed',
+    'job_run',
+    v_job_id::text,
+    NULL,
+    jsonb_build_object(
+      'jobName', platform.maintenance_job_name(),
+      'issuerRef', v_issuer,
+      'executorIdentity', p_executor_identity
+    )
+  );
+
+  RETURN v_job_id;
+END;
+$$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.schedule_maintenance_job(text, uuid, text)
+  OWNER TO prsystem_maintenance_fn;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.schedule_maintenance_job(text, uuid, text) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.schedule_maintenance_job(text, uuid, text)
+  TO prsystem_job_scheduler;
+--> statement-breakpoint
+
+-- The worker still needs ordinary, non-privileged job rows. It gets a separate
+-- constrained path rather than keeping unrestricted INSERT, because unrestricted
+-- INSERT is exactly how a worker would mint its own maintenance authorisation.
+CREATE OR REPLACE FUNCTION platform.begin_worker_job(
+  p_job_name text,
+  p_hotel_id uuid
+) RETURNS uuid
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_realm  text := platform.current_realm();
+  v_actor  text := platform.current_actor_ref();
+  v_job_id uuid;
+BEGIN
+  IF v_realm IS NULL OR v_actor IS NULL THEN
+    RAISE EXCEPTION 'starting a job requires an established transaction context'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_job_name IS NULL OR p_hotel_id IS NULL THEN
+    RAISE EXCEPTION 'a job needs a name and a hotel scope' USING ERRCODE = '22023';
+  END IF;
+
+  -- Categorical: the privileged namespace is refused here whatever it contains,
+  -- so adding a second maintenance operation later cannot accidentally become
+  -- worker-creatable.
+  IF p_job_name LIKE 'platform.maintenance.%' THEN
+    RAISE EXCEPTION
+      'job name % is in the privileged maintenance namespace; use platform.schedule_maintenance_job as a scheduler',
+      p_job_name USING ERRCODE = '42501';
+  END IF;
+
+  INSERT INTO platform.job_run (hotel_id, job_name, job_identity, state, started_at)
+  VALUES (p_hotel_id, p_job_name, v_actor, 'running', pg_catalog.now())
+  RETURNING job_run_id INTO v_job_id;
+
+  RETURN v_job_id;
+END;
+$$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.begin_worker_job(text, uuid) OWNER TO prsystem_maintenance_fn;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.begin_worker_job(text, uuid) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.begin_worker_job(text, uuid) TO prsystem_worker;
+--> statement-breakpoint
+
+-- The scheduler holds no table privilege on job_run at all: it can see nothing
+-- and write nothing directly. Its entire power is the function above.
+GRANT USAGE ON SCHEMA platform TO prsystem_job_scheduler;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION platform.current_realm(), platform.current_actor_ref()
+  TO prsystem_job_scheduler;
+--> statement-breakpoint
+-- The definer needs INSERT to create the row it validates.
+GRANT INSERT ON platform.job_run TO prsystem_maintenance_fn;
 --> statement-breakpoint
 -- The maintenance definer writes its own immutable audit record and reads the
 -- job row it locks, so it needs those two rights and no others.

@@ -4,7 +4,7 @@ import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
 import { TABLE_CLASSIFICATION } from '../classification';
 import { validateClassification } from '../classification-check';
-import { PLATFORM_SCOPE } from '../tenant-context';
+import { PLATFORM_SCOPE, assertTenantContext } from '../tenant-context';
 import { withTenantTransaction } from '../unit-of-work';
 import { appendOutboxEvent } from '../kernel/outbox';
 import { STRUCTURAL_SQLSTATES, TENANT_ROW_SPECS } from '../test-support/tenant-rows';
@@ -341,18 +341,74 @@ describe('tenant isolation across CRUD, per runtime login', () => {
     }
   });
 
-  it('gives an ordinary runtime no way to obtain the platform sentinel scope', async () => {
-    // The sentinel is a value like any other: holding it requires the resolver to
-    // have set it. What must not exist is a way to widen an existing scope.
-    await scoped(env.api, HOTEL_A, async (query) => {
-      const before = await query(`SELECT platform.current_hotel_id()::text AS scope`);
-      expect(before.rows[0]?.['scope']).toBe(HOTEL_A);
+  it('states honestly what the custom-GUC scope does and does not prevent', async () => {
+    // The previous version of this test was titled "gives an ordinary runtime no
+    // way to obtain the platform sentinel scope" and proved nothing of the sort:
+    // it selected rows for the sentinel from an unseeded table and found none.
+    //
+    // A custom GUC is writable by the session that holds the connection. The
+    // mechanism is not unforgeable and this test does not pretend it is; it
+    // records the actual boundary, so nobody later mistakes the absence of a
+    // check for the presence of one.
+    const client = await env.api.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL_A]);
+      const before = await client.query<{ scope: string }>(
+        `SELECT platform.current_hotel_id()::text AS scope`,
+      );
+      expect(before.rows[0]?.scope).toBe(HOTEL_A);
 
-      const platformRows = await query(`SELECT 1 FROM platform.outbox_event WHERE hotel_id = $1`, [
-        PLATFORM_SCOPE,
-      ]);
-      expect(platformRows.rowCount).toBe(0);
+      // A runtime connection *can* rewrite its own scope. Asserting this is the
+      // point: the protection lives above the database, and claiming otherwise
+      // would be claiming a control that is not implemented.
+      await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL_B]);
+      const after = await client.query<{ scope: string }>(
+        `SELECT platform.current_hotel_id()::text AS scope`,
+      );
+      expect(after.rows[0]?.scope).toBe(HOTEL_B);
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it('confines a query that carries no tenant predicate at all', async () => {
+    // This *is* what the mechanism buys: a forgotten `WHERE hotel_id = …` is not
+    // a cross-tenant read, because the policy supplies the predicate.
+    const total = await env.admin.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM platform.outbox_event`,
+    );
+    expect(Number(total.rows[0]?.n)).toBeGreaterThan(0);
+
+    await scoped(env.api, HOTEL_A, async (query) => {
+      const rows = await query(
+        `SELECT DISTINCT hotel_id::text AS hotel_id FROM platform.outbox_event`,
+      );
+      expect(rows.rowCount).toBeGreaterThan(0);
+      expect(rows.rows.map((r) => r['hotel_id'])).toEqual([HOTEL_A]);
     });
+  });
+
+  it('refuses the platform sentinel outside the operation realm', async () => {
+    // The application context boundary, where the pairing rule lives.
+    expect(() =>
+      assertTenantContext({
+        hotelId: PLATFORM_SCOPE,
+        realm: 'hotel',
+        actorRef: 'actor-sec-rls',
+        correlationId: 'corr-sec-rls',
+      }),
+    ).toThrow(/platform scope is only valid in the operation realm/);
+
+    expect(() =>
+      assertTenantContext({
+        hotelId: PLATFORM_SCOPE,
+        realm: 'operation',
+        actorRef: 'actor-sec-rls',
+        correlationId: 'corr-sec-rls',
+      }),
+    ).not.toThrow();
   });
 });
 

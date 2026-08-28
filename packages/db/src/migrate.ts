@@ -38,11 +38,6 @@ export interface MigrationOutcome {
 
 export interface RunMigrationsOptions {
   readonly migrationsFolder?: string;
-  /**
-   * Verify the connection is a restricted migration principal before applying
-   * anything. Default on, and never off in an application or CI run.
-   */
-  readonly verifyPrincipal?: boolean;
 }
 
 /** Anything that can run a query — a Client or a Pool. */
@@ -79,9 +74,11 @@ export async function runMigrations(
 
   let locked = false;
   try {
-    if (resolved.verifyPrincipal ?? true) {
-      await assertMigrationPrincipal(client);
-    }
+    // Unconditional. There is no option to switch this off: an option to skip
+    // the principal check in a test is an option to ship with it skipped, and
+    // the check is the only thing standing between a mis-set connection string
+    // and a migration applied by a superuser.
+    await assertMigrationPrincipal(client);
 
     // Session-level: held across the whole journal, released explicitly below.
     await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);

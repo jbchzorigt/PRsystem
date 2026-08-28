@@ -22,12 +22,18 @@ export {
   FORBIDDEN_FOR_RUNTIME,
   INTENDED_MEMBERSHIP_OPTIONS,
   PrincipalError,
+  assertMigrationGraph,
   assertMigrationPrincipal,
   assertRuntimeContainment,
   assertRuntimePrincipal,
   readPrincipalFacts,
 } from './principal-guard';
-export type { DirectMembership, PrincipalFacts, ReachableRole } from './principal-guard';
+export type {
+  ContainedGroup,
+  DirectMembership,
+  PrincipalFacts,
+  ReachableRole,
+} from './principal-guard';
 export { DATABASE_ROLES, ROLES_WITHOUT_BYPASSRLS } from './roles';
 export type { DatabaseRole } from './roles';
 export {

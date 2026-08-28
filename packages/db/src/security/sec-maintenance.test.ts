@@ -14,6 +14,7 @@ import { provisionKernelDatabase } from '../test-support/provision';
 const HOTEL = '3c3c3c3c-3c3c-4c3c-8c3c-3c3c3c3c3c3c';
 const ACTOR = 'actor-maintenance';
 const JOB_NAME = 'platform.maintenance.expire_idempotency_keys';
+const SCHEDULER = 'actor-scheduler';
 
 let env: ProvisionedDatabase;
 
@@ -83,15 +84,54 @@ async function attempted<T>(ctx: Ctx, work: Parameters<typeof committed<T>>[1]):
 }
 
 /** Commits a running job of the given kind and identity, returning its id. */
-async function seedJob(jobName = JOB_NAME, identity = ACTOR): Promise<string> {
-  return committed({}, async (q) => {
-    const job = await q(
+/**
+ * Issues a job the way a deployment does: through the scheduler credential.
+ *
+ * The worker no longer holds INSERT on `platform.job_run` (D-09), so a test that
+ * seeded its own job row would be exercising a privilege the worker does not
+ * have — and would keep passing if the scheduler boundary were removed.
+ */
+async function seedJob(jobName = JOB_NAME, identity = ACTOR, hotel = HOTEL): Promise<string> {
+  const client = await env.jobScheduler.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', hotel]);
+    await client.query('SELECT set_config($1, $2, true)', ['app.realm', 'operation']);
+    await client.query('SELECT set_config($1, $2, true)', ['app.actor_ref', SCHEDULER]);
+    await client.query('SELECT set_config($1, $2, true)', ['app.correlation_id', 'corr-schedule']);
+    const job = await client.query<{ id: string }>(
+      'SELECT platform.schedule_maintenance_job($1, $2, $3)::text AS id',
+      [jobName, hotel, identity],
+    );
+    await client.query('COMMIT');
+    return String(job.rows[0]?.id);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * A job row that did not come from the scheduler, created with the superuser
+ * connection. Used only to prove the execution function refuses it.
+ */
+async function seedUnissuedJob(jobName = JOB_NAME, identity = ACTOR): Promise<string> {
+  const client = await env.admin.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL]);
+    const job = await client.query<{ id: string }>(
       `INSERT INTO platform.job_run (hotel_id, job_name, job_identity)
        VALUES ($1, $2, $3) RETURNING job_run_id::text AS id`,
       [HOTEL, jobName, identity],
     );
-    return String(job.rows[0]?.['id']);
-  });
+    await client.query('COMMIT');
+    return String(job.rows[0]?.id);
+  } finally {
+    client.release();
+  }
 }
 
 /** Commits one expired idempotency row and returns its key. */
@@ -179,14 +219,7 @@ describe('authorisation', () => {
     // matters is a job that genuinely exists, is genuinely valid, and belongs to
     // somebody else: the refusal must come from tenant scope, not from absence.
     const otherHotel = '4d4d4d4d-4d4d-4d4d-8d4d-4d4d4d4d4d4d';
-    const foreignJob = await committed({ hotel: otherHotel }, async (q) => {
-      const job = await q(
-        `INSERT INTO platform.job_run (hotel_id, job_name, job_identity)
-         VALUES ($1, $2, $3) RETURNING job_run_id::text AS id`,
-        [otherHotel, JOB_NAME, ACTOR],
-      );
-      return String(job.rows[0]?.['id']);
-    });
+    const foreignJob = await seedJob(JOB_NAME, ACTOR, otherHotel);
     // Tenant B also has an expired key, so a leak would have something to delete.
     await committed({ hotel: otherHotel }, (q) =>
       q(
@@ -221,16 +254,31 @@ describe('authorisation', () => {
     );
     expect(Number(key.rows[0]?.['n'])).toBe(1);
 
-    // And no audit event claims the sweep happened.
-    const audit = await env.auditReader.query(
-      `SELECT count(*)::int AS n FROM audit.platform_event WHERE target_ref = $1`,
+    // No *execution* audit event claims the sweep happened. The scheduling event
+    // for this job legitimately exists — it is what issuing the job recorded —
+    // so counting every event against this target would assert the wrong thing.
+    const executed = await env.auditReader.query(
+      `SELECT count(*)::int AS n FROM audit.platform_event
+        WHERE target_ref = $1 AND action = $2`,
+      [foreignJob, JOB_NAME],
+    );
+    expect(Number(executed.rows[0]?.['n'])).toBe(0);
+
+    // The scheduling event is there, which is what makes the assertion above
+    // meaningful rather than a statement about an empty audit stream.
+    const scheduled = await env.auditReader.query(
+      `SELECT count(*)::int AS n FROM audit.platform_event
+        WHERE target_ref = $1 AND action = 'platform.maintenance.scheduled'`,
       [foreignJob],
     );
-    expect(Number(audit.rows[0]?.['n'])).toBe(0);
+    expect(Number(scheduled.rows[0]?.['n'])).toBe(1);
   });
 
   it('refuses a job of the wrong type', async () => {
-    const job = await seedJob('platform.some.other.job');
+    // The scheduler cannot create this: its allow-list has one entry. The row is
+    // therefore seeded out-of-band, so the execution function's own job-type
+    // check is what is being exercised.
+    const job = await seedUnissuedJob('platform.some.other.job');
     await attempted({}, async (q) => {
       await expect(
         q('SELECT platform.maintenance_expire_idempotency_keys($1)', [job]),
@@ -297,90 +345,121 @@ describe('a successful run is accountable and atomic', () => {
     });
   });
 
-  it('lets only one of two concurrent invocations use a single job', async () => {
+  it('makes a second invocation wait on the job row lock, then lose', async () => {
+    // A barrier proves both callers were inside the critical section. It does
+    // not prove PostgreSQL made either of them *wait*, which is what the
+    // FOR UPDATE on the job row provides. This observes the wait itself:
+    // pg_blocking_pids names the holder while the second caller is queued.
     const job = await seedJob();
-    await seedExpired('idem-expired-concurrent');
+    await seedExpired('idem-expired-lockwait');
 
-    const poolA = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
-    const poolB = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
+    const holder = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
+    const waiterPool = new Pool({
+      connectionString: env.db.loginUrl('prsystem_worker_login'),
+      max: 1,
+    });
+    const observer = new Pool({ connectionString: env.db.url, max: 1 });
+
+    const a = await holder.connect();
+    const b = await waiterPool.connect();
     try {
-      // Released only once both callers are inside their transaction with the
-      // tenant context applied, so neither can finish before the other starts.
-      let arrived = 0;
-      let release!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const barrier = (): Promise<void> => {
-        arrived += 1;
-        if (arrived >= 2) release();
-        return gate;
-      };
-
-      interface Attempt {
-        pid: number;
-        ok: boolean;
-        code?: string;
-        message?: string;
-        enteredAt: number;
-        leftAt: number;
-      }
-
-      const invoke = async (pool: Pool): Promise<Attempt> => {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          for (const [k, v] of [
-            ['app.hotel_id', HOTEL],
-            ['app.realm', 'hotel'],
-            ['app.actor_ref', ACTOR],
-            ['app.correlation_id', 'corr-concurrent'],
-          ]) {
-            await client.query('SELECT set_config($1, $2, true)', [k, v]);
-          }
-          const pid = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-          await barrier();
-          const enteredAt = Date.now();
-          try {
-            await client.query('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [
-              job,
-            ]);
-            await client.query('COMMIT');
-            return { pid: pid.rows[0]!.pid, ok: true, enteredAt, leftAt: Date.now() };
-          } catch (error) {
-            await client.query('ROLLBACK');
-            return {
-              pid: pid.rows[0]!.pid,
-              ok: false,
-              code: (error as { code?: string }).code,
-              message: (error as Error).message,
-              enteredAt,
-              leftAt: Date.now(),
-            };
-          }
-        } finally {
-          client.release();
+      const context = async (client: typeof a): Promise<void> => {
+        await client.query('BEGIN');
+        for (const [k, v] of [
+          ['app.hotel_id', HOTEL],
+          ['app.realm', 'hotel'],
+          ['app.actor_ref', ACTOR],
+          ['app.correlation_id', 'corr-lockwait'],
+        ]) {
+          await client.query('SELECT set_config($1, $2, true)', [k, v]);
         }
       };
 
-      const [a, b] = await Promise.all([invoke(poolA), invoke(poolB)]);
-      expect(a.pid).not.toBe(b.pid);
-      // Observable overlap: both were inside the critical section together.
-      const [first, second] = [a, b].sort((x, y) => x.enteredAt - y.enteredAt);
-      expect(second!.enteredAt).toBeLessThanOrEqual(first!.leftAt);
-      // The FOR UPDATE lock serialises them; the loser finds the job closed.
-      expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
-      // And it lost for the intended reason. An unrelated failure — a deadlock,
-      // a permission error, a serialisation abort — is not a valid loser, so the
-      // SQLSTATE and message are asserted rather than any error being accepted.
-      const loser = a.ok ? b : a;
-      expect(loser.code).toBe('22023');
-      expect(loser.message).toMatch(/already succeeded|cannot be replayed/i);
+      await context(a);
+      await context(b);
+
+      const pidA = (await a.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      const pidB = (await b.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+      expect(pidA).not.toBe(pidB);
+
+      // A locks the real, committed job row.
+      await a.query('SELECT job_run_id FROM platform.job_run WHERE job_run_id = $1 FOR UPDATE', [
+        job,
+      ]);
+
+      // B submits the maintenance function and blocks inside it.
+      const bResult = b
+        .query('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [job])
+        .then(
+          () => ({ ok: true }) as const,
+          (error: unknown) => ({
+            ok: false as const,
+            code: (error as { code?: string }).code,
+            message: (error as Error).message,
+          }),
+        );
+
+      // PostgreSQL itself reports B blocked by A. Remove the FOR UPDATE from the
+      // function and this never becomes true, so the test fails.
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const blocked = await observer.query<{ blockers: number[] }>(
+          'SELECT pg_blocking_pids($1) AS blockers',
+          [pidB],
+        );
+        if ((blocked.rows[0]?.blockers ?? []).includes(pidA)) break;
+        if (Date.now() > deadline) {
+          throw new Error(`expected backend ${String(pidB)} to be blocked by ${String(pidA)}`);
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+
+      // Only now does A do the work and commit.
+      const applied = await a.query(
+        'SELECT * FROM platform.maintenance_expire_idempotency_keys($1)',
+        [job],
+      );
+      expect(Number(applied.rows[0]?.['deleted'])).toBeGreaterThan(0);
+      await a.query('COMMIT');
+
+      // B resumes, and loses for exactly the expected reason.
+      const loser = await bResult;
+      expect(loser.ok).toBe(false);
+      expect(loser.ok === false && loser.code).toBe('22023');
+      expect(loser.ok === false && loser.message).toMatch(/already succeeded|cannot be replayed/i);
+      await b.query('ROLLBACK');
+
+      // One effect, one execution audit record, one coherent final state.
+      const remaining = await env.admin.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM platform.idempotency_key
+          WHERE hotel_id = $1 AND idempotency_key = 'idem-expired-lockwait'`,
+        [HOTEL],
+      );
+      expect(Number(remaining.rows[0]?.n)).toBe(0);
+
+      const audits = await env.auditReader.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM audit.platform_event
+          WHERE target_ref = $1 AND action = $2`,
+        [job, JOB_NAME],
+      );
+      expect(Number(audits.rows[0]?.n)).toBe(1);
+
+      const state = await env.admin.query<Record<string, unknown>>(
+        `SELECT state, finished_at FROM platform.job_run WHERE job_run_id = $1`,
+        [job],
+      );
+      expect(state.rows[0]?.['state']).toBe('succeeded');
+      expect(state.rows[0]?.['finished_at']).not.toBeNull();
     } finally {
-      await poolA.end();
-      await poolB.end();
+      await a.query('ROLLBACK').catch(() => undefined);
+      await b.query('ROLLBACK').catch(() => undefined);
+      a.release();
+      b.release();
+      await holder.end();
+      await waiterPool.end();
+      await observer.end();
     }
-  }, 60000);
+  }, 120000);
 });
 
 describe('an audit failure rolls the whole operation back', () => {
@@ -493,7 +572,7 @@ describe('job_run state integrity', () => {
   it('refuses to let the worker rename the job it is running', async () => {
     // job_name is what maintenance_expire_idempotency_keys authorises on, so a
     // worker that could rewrite it could authorise itself for any job type.
-    const id = await seedJob('platform.maintenance.something_else');
+    const id = await seedUnissuedJob('platform.other.something_else');
 
     await expect(
       attempted({}, (q) =>
@@ -501,7 +580,7 @@ describe('job_run state integrity', () => {
       ),
     ).rejects.toMatchObject({ code: '42501' });
 
-    expect((await readJob(id))['job_name']).toBe('platform.maintenance.something_else');
+    expect((await readJob(id))['job_name']).toBe('platform.other.something_else');
   });
 
   it('refuses to let the worker reassign the job identity', async () => {

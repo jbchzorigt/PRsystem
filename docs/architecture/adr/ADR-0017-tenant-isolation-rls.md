@@ -47,8 +47,9 @@ existing controls; it never replaces them.
    | `prsystem_partition_mgr` | function owner | owns the audit streams and their partitions | reachable only by `prsystem_migrate` |
    | `prsystem_maintenance_fn` | function owner | owns cross-tenant maintenance functions; sets scope per tenant | reachable only by `prsystem_migrate` |
    | `prsystem_maintenance` | **break-glass** | **owns nothing, grants nothing** | `BYPASSRLS`; **reachable by nobody, including the migration principal** |
+   | `prsystem_job_scheduler` | scheduler (D-09) | issues privileged maintenance jobs through one narrow SECURITY DEFINER function | holds **no** table privilege on `job_run`, and cannot execute the maintenance function it authorises |
 
-   Ten group roles in total, created by the cluster bootstrap under a
+   Eleven group roles in total (D-09 added `prsystem_job_scheduler`), created by the cluster bootstrap under a
    session-level coordination lock. Objects are owned by the *group*, never by a
    login: the migration runner `SET ROLE`s before applying the journal.
 

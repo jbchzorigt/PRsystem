@@ -44,6 +44,22 @@ export const SUB_GATES = [
     ],
   },
   {
+    id: 'SEC-BOOTSTRAP',
+    what: 'group-only, partial and IaC-managed login bootstrap behave as documented',
+    filter: '@prsystem/db',
+    suite: 'src/security/sec-bootstrap.test.ts',
+    needsDatabase: true,
+    artefacts: ['packages/db/src/security/sec-bootstrap.test.ts', 'packages/db/src/bootstrap.ts'],
+  },
+  {
+    id: 'SEC-SCHEDULER',
+    what: 'D-09: the scheduler issues privileged jobs and the worker cannot mint its own',
+    filter: '@prsystem/db',
+    suite: 'src/security/sec-scheduler.test.ts',
+    needsDatabase: true,
+    artefacts: ['packages/db/src/security/sec-scheduler.test.ts'],
+  },
+  {
     id: 'SEC-MAINTENANCE',
     what: 'maintenance is accountable: generated audit id, no invented reference',
     filter: '@prsystem/db',

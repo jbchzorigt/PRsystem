@@ -24,6 +24,8 @@ export interface ProvisionedDatabase {
   readonly police: Pool;
   readonly auditReader: Pool;
   readonly policeAuditReader: Pool;
+  /** D-09: issues privileged maintenance jobs and can do nothing else. */
+  readonly jobScheduler: Pool;
   readonly migrateUrl: string;
   close(): Promise<void>;
 }
@@ -53,6 +55,7 @@ export async function provisionKernelDatabase(suite: string): Promise<Provisione
     police: loginPool(db, TEST_LOGIN_PRINCIPALS.police),
     auditReader: loginPool(db, TEST_LOGIN_PRINCIPALS.auditReader),
     policeAuditReader: loginPool(db, TEST_LOGIN_PRINCIPALS.policeAuditReader),
+    jobScheduler: loginPool(db, TEST_LOGIN_PRINCIPALS.jobScheduler),
   };
 
   return {

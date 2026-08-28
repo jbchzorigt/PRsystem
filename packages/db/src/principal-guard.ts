@@ -121,10 +121,10 @@ export async function readPrincipalFacts(pool: Queryable): Promise<PrincipalFact
   // false, so a closure filtered on those two options — as this guard once was —
   // cannot see it at all, even though ADMIN OPTION is the strongest of the three.
   //
-  // USAGE and SET come from the server rather than from a hand-rolled recursion,
-  // so the answer is the one the server will actually enforce. ADMIN has no
-  // `pg_has_role` privilege type, so it is derived: some role this principal can
-  // already reach holds ADMIN OPTION on the target.
+  // Every capability comes from the server rather than from a hand-rolled
+  // recursion, so the answer is the one the server will actually enforce —
+  // including ADMIN, which `pg_has_role` does support, as
+  // `MEMBER WITH ADMIN OPTION` (PostgreSQL 17, functions-info §9.26).
   const roles = await pool.query<{
     rolname: string;
     is_member: boolean;
@@ -141,14 +141,7 @@ export async function readPrincipalFacts(pool: Queryable): Promise<PrincipalFact
             pg_has_role(session_user, g.oid, 'MEMBER') AS is_member,
             pg_has_role(session_user, g.oid, 'USAGE')  AS has_usage,
             pg_has_role(session_user, g.oid, 'SET')    AS has_set,
-            EXISTS (
-              SELECT 1
-                FROM pg_auth_members am
-               WHERE am.roleid = g.oid
-                 AND am.admin_option
-                 AND (am.member = (SELECT s.oid FROM pg_roles s WHERE s.rolname = session_user)
-                      OR pg_has_role(session_user, am.member, 'MEMBER'))
-            ) AS has_admin,
+            pg_has_role(session_user, g.oid, 'MEMBER WITH ADMIN OPTION') AS has_admin,
             g.rolsuper, g.rolcreaterole, g.rolcreatedb, g.rolreplication, g.rolbypassrls
        FROM pg_roles g
       WHERE g.rolname <> session_user
@@ -338,7 +331,30 @@ const ALLOWED_RUNTIME_CLOSURE: Readonly<Record<string, readonly string[]>> = {
   prsystem_api: ['prsystem_api'],
   prsystem_worker: ['prsystem_worker'],
   prsystem_police: ['prsystem_police'],
+  // Readers and the scheduler get the same containment guarantee as the
+  // request-handling runtimes. A reader that could reach the migration role is
+  // exactly as dangerous as an API that could, and was previously unchecked.
+  prsystem_audit_reader: ['prsystem_audit_reader'],
+  prsystem_police_audit_reader: ['prsystem_police_audit_reader'],
+  prsystem_job_scheduler: ['prsystem_job_scheduler'],
 };
+
+/** Every group a non-migration principal may be verified against. */
+export type ContainedGroup = keyof typeof ALLOWED_RUNTIME_CLOSURE & string;
+
+/**
+ * The complete migration membership graph, as edges.
+ *
+ * Checking only for *unexpected* reach is half a check: a cluster missing
+ * `prsystem_migrate -> prsystem_audit_writer` has no extra roles anywhere, and
+ * would have passed, while the migration cannot own what it is about to create.
+ */
+export const EXPECTED_MIGRATION_EDGES: readonly (readonly [string, string])[] = [
+  ['prsystem_migrate_login', 'prsystem_migrate'],
+  ['prsystem_migrate', 'prsystem_audit_writer'],
+  ['prsystem_migrate', 'prsystem_partition_mgr'],
+  ['prsystem_migrate', 'prsystem_maintenance_fn'],
+];
 
 /** The migration principal owns objects, so it reaches the three narrow owners. */
 export const ALLOWED_MIGRATION_CLOSURE: readonly string[] = [
@@ -348,15 +364,102 @@ export const ALLOWED_MIGRATION_CLOSURE: readonly string[] = [
   'prsystem_maintenance_fn',
 ];
 
-/** Every principal a request can arrive on, login and group alike. */
+/**
+ * Every principal a session can arrive on, login and group alike.
+ *
+ * Readers and the scheduler are here for the same reason the runtimes are: they
+ * hold credentials somebody can connect with. Leaving them out meant an audit
+ * reader could reach the migration role and no gate would have said so.
+ */
 const RUNTIME_PRINCIPALS = [
   'prsystem_api',
   'prsystem_worker',
   'prsystem_police',
+  'prsystem_audit_reader',
+  'prsystem_police_audit_reader',
+  'prsystem_job_scheduler',
   'prsystem_api_login',
   'prsystem_worker_login',
   'prsystem_police_login',
+  'prsystem_audit_reader_login',
+  'prsystem_police_audit_reader_login',
+  'prsystem_job_scheduler_login',
 ] as const;
+
+/**
+ * The one group each contained principal may join. A group role itself joins
+ * nothing, so it maps to `null` and any membership at all is unexpected.
+ */
+const EXPECTED_PRINCIPAL_GROUP: Readonly<Record<string, string | null>> = {
+  prsystem_api: null,
+  prsystem_worker: null,
+  prsystem_police: null,
+  prsystem_audit_reader: null,
+  prsystem_police_audit_reader: null,
+  prsystem_job_scheduler: null,
+  prsystem_api_login: 'prsystem_api',
+  prsystem_worker_login: 'prsystem_worker',
+  prsystem_police_login: 'prsystem_police',
+  prsystem_audit_reader_login: 'prsystem_audit_reader',
+  prsystem_police_audit_reader_login: 'prsystem_police_audit_reader',
+  prsystem_job_scheduler_login: 'prsystem_job_scheduler',
+};
+
+/**
+ * The migration graph must be exactly right, not merely free of extras.
+ *
+ * Every expected edge must exist with exactly `ADMIN FALSE, INHERIT TRUE,
+ * SET TRUE`, and `prsystem_migrate` must reach the three approved owner roles
+ * and nothing else.
+ */
+export async function assertMigrationGraph(pool: Queryable): Promise<void> {
+  const edges = await pool.query<{
+    member: string;
+    role: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT m.rolname AS member, g.rolname AS role,
+            am.admin_option, am.inherit_option, am.set_option
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE m.rolname = ANY($1)
+      ORDER BY 1, 2`,
+    [['prsystem_migrate_login', 'prsystem_migrate']],
+  );
+
+  for (const [member, role] of EXPECTED_MIGRATION_EDGES) {
+    const found = edges.rows.find((e) => e.member === member && e.role === role);
+    if (found === undefined) {
+      throw new PrincipalError(
+        `the migration graph is missing the edge ${member} -> ${role}`,
+        'missing_membership',
+      );
+    }
+    if (
+      found.admin_option !== INTENDED_MEMBERSHIP_OPTIONS.admin ||
+      found.inherit_option !== INTENDED_MEMBERSHIP_OPTIONS.inherit ||
+      found.set_option !== INTENDED_MEMBERSHIP_OPTIONS.set
+    ) {
+      throw new PrincipalError(
+        `the migration edge ${member} -> ${role} carries ADMIN ${String(found.admin_option)}, ` +
+          `INHERIT ${String(found.inherit_option)}, SET ${String(found.set_option)}`,
+        'membership_options',
+      );
+    }
+  }
+
+  const expected = new Set(EXPECTED_MIGRATION_EDGES.map(([m, r]) => `${m}->${r}`));
+  const extra = edges.rows.map((e) => `${e.member}->${e.role}`).filter((key) => !expected.has(key));
+  if (extra.length > 0) {
+    throw new PrincipalError(
+      `the migration graph has unexpected edge(s): ${extra.join(', ')}`,
+      'unexpected_membership',
+    );
+  }
+}
 
 /**
  * A cluster-wide precondition, not a statement about this connection.
@@ -406,6 +509,51 @@ export async function assertRuntimeContainment(pool: Queryable): Promise<void> {
       'admin_option',
     );
   }
+
+  // Privileged attributes on any contained principal. LOGIN is expected on a
+  // login role, so only the five escalating attributes are checked.
+  const privileged = await pool.query<{ rolname: string; attribute: string }>(
+    `SELECT rolname,
+            CASE WHEN rolsuper THEN 'SUPERUSER'
+                 WHEN rolcreaterole THEN 'CREATEROLE'
+                 WHEN rolcreatedb THEN 'CREATEDB'
+                 WHEN rolreplication THEN 'REPLICATION'
+                 ELSE 'BYPASSRLS' END AS attribute
+       FROM pg_roles
+      WHERE rolname = ANY($1)
+        AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
+      ORDER BY 1`,
+    [[...RUNTIME_PRINCIPALS]],
+  );
+  const attributeHolder = privileged.rows[0];
+  if (attributeHolder !== undefined) {
+    throw new PrincipalError(
+      `${attributeHolder.rolname} holds ${attributeHolder.attribute}, which no runtime, reader or scheduler may hold`,
+      'privileged_attribute',
+    );
+  }
+
+  // And the closure of every contained principal is exactly its own group.
+  // Reaching a *predefined* role such as `pg_read_all_data` grants cluster-wide
+  // data access without ever touching a project role, so a check that only
+  // looked at project owners would not see it.
+  const unexpected = await pool.query<{ member: string; role: string }>(
+    `SELECT m.rolname AS member, g.rolname AS role
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE m.rolname = ANY($1)
+        AND g.rolname IS DISTINCT FROM $2::jsonb ->> m.rolname
+      ORDER BY 1, 2`,
+    [[...RUNTIME_PRINCIPALS], JSON.stringify(EXPECTED_PRINCIPAL_GROUP)],
+  );
+  const stray = unexpected.rows[0];
+  if (stray !== undefined) {
+    throw new PrincipalError(
+      `${stray.member} has an unexpected membership in ${stray.role}; a contained principal joins exactly one group`,
+      'unexpected_membership',
+    );
+  }
 }
 
 /**
@@ -428,6 +576,7 @@ export async function assertMigrationPrincipal(pool: Queryable): Promise<Princip
   assertClosureUnprivileged(facts);
   assertNoAdminCapability(facts);
   assertMembershipOptions(facts);
+  await assertMigrationGraph(pool);
   await assertRuntimeContainment(pool);
 
   const allowed = new Set(ALLOWED_MIGRATION_CLOSURE);
@@ -447,7 +596,7 @@ export async function assertMigrationPrincipal(pool: Queryable): Promise<Princip
  */
 export async function assertRuntimePrincipal(
   pool: Queryable,
-  expectedGroup: 'prsystem_api' | 'prsystem_worker' | 'prsystem_police',
+  expectedGroup: ContainedGroup,
 ): Promise<PrincipalFacts> {
   const facts = await readPrincipalFacts(pool);
   assertNoPrivilegedAttribute(facts);
@@ -480,6 +629,14 @@ export async function assertRuntimePrincipal(
     throw new PrincipalError(
       `${facts.sessionUser} additionally reaches ${unexpected.join(', ')}`,
       'unexpected_membership',
+    );
+  }
+  // The closure must be exactly the allowed set, not a subset of it.
+  const missing = [...allowed].filter((role) => !facts.memberOf.includes(role));
+  if (missing.length > 0) {
+    throw new PrincipalError(
+      `${facts.sessionUser} is missing expected membership in ${missing.join(', ')}`,
+      'missing_membership',
     );
   }
 

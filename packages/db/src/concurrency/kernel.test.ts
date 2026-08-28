@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
 import type { TenantContext } from '../tenant-context';
@@ -8,9 +8,7 @@ import { claimIdempotencyKey, completeIdempotencyKey } from '../kernel/idempoten
 import { appendOutboxEvent, claimOutboxBatch, markOutboxPublished } from '../kernel/outbox';
 import { claimConsumption, registerProviderEvent } from '../kernel/inbox';
 import { recordPlatformAudit } from '../kernel/audit';
-import { resolve } from 'node:path';
-import { runMigrations } from '../migrate';
-import { inStartOrder, runChildRace } from '../test-support/child-race';
+import { MIGRATION_LOCK_KEY, runMigrations } from '../migrate';
 import { schemaFingerprint } from '../test-support/schema-fingerprint';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
 import type { LoginPrincipal } from '../bootstrap';
@@ -655,25 +653,13 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
     expect(again?.claimRevision).toBeGreaterThan(target!.claimRevision);
   });
 
-  it('serialises two migration runners after one role bootstrap', async () => {
-    // Bootstrap has already run once for this database. Two concurrent journal
-    // runs must both succeed, applying nothing, without contending on a
-    // cluster-wide catalogue tuple.
-    const [first, second] = await Promise.all([
-      runMigrations(env.migrateUrl),
-      runMigrations(env.migrateUrl),
-    ]);
-
-    expect(first.appliedBefore).toBe(first.appliedAfter);
-    expect(second.appliedBefore).toBe(second.appliedAfter);
-  }, 60000);
-
-  it('lets exactly one of two concurrent runners populate an empty database', async () => {
-    // Two independent OS processes, released together by the parent. Awaiting
-    // two `runMigrations` calls in one event loop cannot show that either runner
-    // ever waited on the advisory lock; the overlap assertion below fails if the
-    // two runs are sequential, which is what makes this evidence rather than a
-    // description.
+  it('makes one runner wait on the migration advisory lock while the other applies', async () => {
+    // Wall-clock overlap between two processes shows they ran at the same time.
+    // It does not show that PostgreSQL made either of them *wait*, which is the
+    // property the advisory lock exists to provide. This observes the lock
+    // itself: a third session takes it, both runners queue behind that exact
+    // lock, and pg_blocking_pids names the holder. Remove the lock from
+    // runMigrations and the wait never appears, so this test fails.
     const fresh = await createTestDatabase('kernel_conc_empty');
     try {
       await bootstrapCluster({
@@ -685,34 +671,82 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
         })),
       });
       const url = fresh.loginUrl(TEST_LOGIN_PRINCIPALS.migrate);
-      const cwd = resolve(__dirname, '..', '..');
 
-      const reports = await runChildRace({
-        script: resolve(cwd, 'test-support', 'migrate-once.cjs'),
-        cwd,
-        envs: [
-          { MIGRATE_DATABASE_URL: url, MIGRATE_WAIT_FOR_START: '1' },
-          { MIGRATE_DATABASE_URL: url, MIGRATE_WAIT_FOR_START: '1' },
-        ],
-        exitTimeoutMs: 120_000,
-      });
+      // The holder. An ordinary session on the same database, holding the same
+      // advisory key a migration runner takes.
+      const holder = new Client({ connectionString: fresh.url });
+      await holder.connect();
+      let released = false;
+      try {
+        const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid'))
+          .rows[0]!.pid;
+        await holder.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
 
-      // Two genuinely distinct OS processes, hence two distinct backends.
-      expect(reports[0]!.pid).not.toBe(reports[1]!.pid);
+        // Both runners start and immediately block. Each opens its own Client,
+        // so each is a distinct backend.
+        const runners = [runMigrations(url), runMigrations(url)];
 
-      // Observable overlap: the second runner entered before the first left, so
-      // it really did contend for the lock. Sequential execution fails here.
-      const [first, second] = inStartOrder(reports);
-      expect(second!.enteredAt).toBeLessThanOrEqual(first!.leftAt);
+        // Wait until PostgreSQL reports both of them queued on this exact lock.
+        const observer = new Client({ connectionString: fresh.url });
+        await observer.connect();
+        let waiters: { pid: number; blockers: number[] }[] = [];
+        try {
+          const deadline = Date.now() + 30_000;
+          for (;;) {
+            const found = await observer.query<{ pid: number; blockers: number[] }>(
+              `SELECT l.pid, pg_blocking_pids(l.pid) AS blockers
+                 FROM pg_locks l
+                WHERE l.locktype = 'advisory'
+                  AND l.objid = $1
+                  AND NOT l.granted
+                ORDER BY l.pid`,
+              [MIGRATION_LOCK_KEY],
+            );
+            waiters = found.rows;
+            if (waiters.length === 2) break;
+            if (Date.now() > deadline) {
+              throw new Error(
+                `expected two runners waiting on the migration lock, saw ${String(waiters.length)}`,
+              );
+            }
+            await new Promise((r) => setTimeout(r, 25));
+          }
 
-      // Exactly one application and one safe no-op.
-      const applied = reports.map((r) => Number(r['appliedAfter']) - Number(r['appliedBefore']));
-      expect(applied.filter((n) => n > 0)).toHaveLength(1);
-      expect(applied.filter((n) => n === 0)).toHaveLength(1);
-      expect(Number(reports[0]!['appliedAfter'])).toBe(Number(reports[1]!['appliedAfter']));
-      expect(Number(reports[0]!['appliedAfter'])).toBeGreaterThan(0);
+          // Two distinct backends, neither of which is the holder.
+          expect(new Set(waiters.map((w) => w.pid)).size).toBe(2);
+          expect(waiters.map((w) => w.pid)).not.toContain(holderPid);
 
-      // And the database the racers produced is the one a single run produces.
+          // And PostgreSQL itself names the holder as what blocks each of them.
+          for (const waiter of waiters) {
+            expect(waiter.blockers).toContain(holderPid);
+          }
+
+          // Only now is the lock released. Until this line nothing could have
+          // applied a migration, because the lock was held throughout.
+          await holder.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
+          released = true;
+        } finally {
+          await observer.end();
+        }
+
+        const outcomes = await Promise.all(runners);
+
+        // Exactly one application and one safe no-op.
+        const applied = outcomes.map((o) => o.appliedAfter - o.appliedBefore);
+        expect(applied.filter((n) => n > 0)).toHaveLength(1);
+        expect(applied.filter((n) => n === 0)).toHaveLength(1);
+        expect(outcomes[0]!.appliedAfter).toBe(outcomes[1]!.appliedAfter);
+        expect(outcomes[0]!.appliedAfter).toBeGreaterThan(0);
+      } finally {
+        if (!released) {
+          await holder.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {
+            /* the session is ending; the lock dies with it */
+          });
+        }
+        await holder.end();
+      }
+
+      // The raced database is the one a single run produces.
       const solo = await createTestDatabase('kernel_conc_solo');
       try {
         await bootstrapCluster({

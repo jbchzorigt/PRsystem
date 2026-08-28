@@ -1,6 +1,6 @@
 # PRsystem — Database Bootstrap and Forward-Fix Runbook
 
-**Version:** 1.1 (Phase 03 repair — coordination lock, exact grants, ten group roles)
+**Version:** 1.2 (Phase 03 repair — D-09 scheduler, partial/IaC logins, exact ACL grantees)
 
 Cluster bootstrap and application migration are **separate operations with
 separate privileges**. This document is the operator's procedure for both, and
@@ -35,13 +35,14 @@ and refuses to run when it is missing or unsafe. It never creates it.
 | `prsystem_police` | runtime group | NOLOGIN, none | nothing | `prsystem_police_login` |
 | `prsystem_audit_reader` | reader group | NOLOGIN, none | nothing | `prsystem_audit_reader_login` |
 | `prsystem_police_audit_reader` | reader group | NOLOGIN, none | nothing | `prsystem_police_audit_reader_login` |
+| `prsystem_job_scheduler` | scheduler group (D-09) | NOLOGIN, none | nothing; **no table privilege on `job_run` at all** | `prsystem_job_scheduler_login` |
 | `prsystem_migrate` | DDL group | NOLOGIN, none | schemas, platform tables | `prsystem_migrate_login` |
 | `prsystem_audit_writer` | function owner | NOLOGIN, none | the two audit append functions | `prsystem_migrate` only |
 | `prsystem_partition_mgr` | function owner | NOLOGIN, none | the two audit streams, their partitions, the partition functions | `prsystem_migrate` only |
 | `prsystem_maintenance_fn` | function owner | NOLOGIN, none | cross-tenant maintenance functions | `prsystem_migrate` only |
 | `prsystem_maintenance` | **break-glass** | NOLOGIN, **BYPASSRLS** | **nothing** | **nobody, including the migration principal** |
 
-Ten group roles in total.
+Eleven group roles in total, and seven canonical login principals.
 
 Every LOGIN principal is `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
 NOBYPASSRLS` and is a member of **exactly one** group, with exactly the options
@@ -54,6 +55,55 @@ bootstrap states all three explicitly and then re-reads `pg_auth_members` to
 prove the result rather than assuming it. `ADMIN TRUE, INHERIT FALSE, SET FALSE`
 is the case that matters most: it confers no privilege and permits no `SET ROLE`,
 yet lets its holder grant the role to anybody, itself included.
+
+### Scheduler versus Worker (D-09)
+
+Issuing a privileged maintenance job and executing one are separate powers with
+separate credentials, separate sessions and separate deployment responsibilities.
+
+| | Scheduler | Worker |
+| --- | --- | --- |
+| Creates a privileged maintenance job | **yes**, through `platform.schedule_maintenance_job` only | no — holds no `INSERT` on `job_run` at all |
+| Executes a privileged maintenance job | no — cannot execute `platform.maintenance_expire_idempotency_keys` | **yes**, and only a job whose executor identity is its own transaction actor |
+| Direct table privilege on `platform.job_run` | **none** | `SELECT`, and `UPDATE` scoped to `(state, finished_at, error_name, as_of)` |
+| Creates ordinary, non-privileged jobs | no | **yes**, through `platform.begin_worker_job`, which rejects the `platform.maintenance.%` namespace categorically |
+
+The scheduling function is `SECURITY DEFINER` with a fixed `search_path`, owned
+by `prsystem_maintenance_fn`, `REVOKE ALL ... FROM PUBLIC`, and executable only
+by `prsystem_job_scheduler`. It writes the job type, hotel scope, issuer,
+executor identity, initial state and start time server-side, records an
+immutable scheduling audit event in the same transaction, and issues only
+allow-listed job types — one, in Phase 03. A privileged job row with no issuer
+cannot exist: the `job_run_privileged_has_issuer` check constraint refuses it,
+and the execution function refuses it again behind that.
+
+### Login policy: all, some, or none
+
+Supplying credentials is optional and partial supply is a supported mode.
+
+| Situation | Behaviour |
+| --- | --- |
+| No credentials, no login roles present | Group-role bootstrap succeeds. Nothing is created. |
+| Some credentials supplied | Only those principals are created or re-passworded, and normalised to exact attributes and exact membership options. |
+| A canonical principal omitted and absent | Not an error, and not created. `GRANT ... TO` is never issued against a role that does not exist. |
+| A canonical principal omitted but existing (IaC-managed) | Never re-passworded. Validated: safe attributes, and exactly one membership in its own group with `ADMIN FALSE, INHERIT TRUE, SET TRUE`. |
+| An omitted existing principal with unsafe drift | The bootstrap **fails closed** naming the principal and the drift. |
+
+Group-to-group ownership edges are reconciled on every run, whatever the login
+policy. The deterministic policy for unexpected membership involving a project
+owner or runtime role is **revoke**: reconciliation removes it, then re-reads
+`pg_auth_members` and fails if anything unapproved survived.
+
+### Exact database and schema ACLs
+
+The claim of exact final grants covers **every grantee**, not only `PUBLIC` and
+the roles this runbook names. Bootstrap enumerates the actual grantees of the
+target database and of schema `public`, revokes any outside the allow-list, and
+then asserts the surviving set exactly. The allow-list is: the database owner,
+the owner of schema `public` (`pg_database_owner` on PostgreSQL 15+), the DDL
+owner `prsystem_migrate`, and the runtime, reader and scheduler roles. Those two
+owner entries are the documented operator exceptions — revoking from them would
+leave a database or schema nobody can administer.
 
 `prsystem_maintenance` is the only role holding `BYPASSRLS`. It owns no object,
 holds **no standing grant of any kind** — not even `USAGE` on a schema — no
@@ -105,7 +155,7 @@ because nobody remembered to take it away.
 
 The bootstrap is idempotent and asserts, on every run:
 
-- exact safe attributes on all ten group roles;
+- exact safe attributes on all eleven group roles;
 - every reachable role checked for `SUPERUSER`, `CREATEROLE`, `CREATEDB`,
   `REPLICATION` and `BYPASSRLS`;
 - each runtime login holding exactly its approved membership closure;

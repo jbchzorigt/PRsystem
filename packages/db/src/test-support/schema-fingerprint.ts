@@ -212,6 +212,11 @@ export async function schemaFingerprint(pool: Pool): Promise<string> {
   // emits, `reloptions` changes autovacuum and fillfactor behaviour, and the
   // access method changes the on-disk representation; none show up in a column
   // or constraint listing.
+  //
+  // Views are included deliberately: `security_invoker`, `security_barrier` and
+  // `check_option` all live in `reloptions`, and they decide whose privileges
+  // and whose RLS policies a view runs under. Excluding views — as this
+  // projection first did — made a change of view security mode invisible.
   const storage = await q(
     `SELECT n.nspname, c.relname, c.relreplident::text AS replica_identity,
             coalesce(am.amname, '') AS access_method,
@@ -225,7 +230,7 @@ export async function schemaFingerprint(pool: Pool): Promise<string> {
        JOIN pg_namespace n ON n.oid = c.relnamespace
        LEFT JOIN pg_am am ON am.oid = c.relam
        LEFT JOIN pg_tablespace ts ON ts.oid = c.reltablespace
-      WHERE n.nspname = ANY($1) AND c.relkind IN ('r', 'p', 'm', 'i', 'S')
+      WHERE n.nspname = ANY($1) AND c.relkind IN ('r', 'p', 'v', 'm', 'i', 'S')
       ORDER BY 1, 2`,
   );
 

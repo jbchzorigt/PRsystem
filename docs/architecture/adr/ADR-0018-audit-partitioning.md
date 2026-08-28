@@ -53,7 +53,7 @@ platform operators. `04-logical-data-model.md` left partitioning open as **DM-02
    configuration keyed by data class, with legal hold suspending removal. **No Police retention
    duration is invented here.** Absent an approved ЦЕГ value (EXT-09), Police audit is retained and
    not purged, and the dependent historical-search feature stays disabled in production.
-7. **Removal is privileged.** Partition detach and drop run as `prsystem_maintenance` under a named,
+7. **Removal is privileged.** Partition detach and drop run through functions owned by `prsystem_partition_mgr` under a named,
    audited job that checks legal hold first. It is never an application delete.
 
 ## Alternatives rejected

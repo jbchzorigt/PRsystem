@@ -15,6 +15,7 @@ const PASSWORD_VARIABLE: Readonly<Record<LoginPrincipal, string>> = {
   prsystem_audit_reader_login: 'PRSYSTEM_LOGIN_AUDIT_READER_PASSWORD',
   prsystem_police_audit_reader_login: 'PRSYSTEM_LOGIN_POLICE_AUDIT_READER_PASSWORD',
   prsystem_migrate_login: 'PRSYSTEM_LOGIN_MIGRATE_PASSWORD',
+  prsystem_job_scheduler_login: 'PRSYSTEM_LOGIN_JOB_SCHEDULER_PASSWORD',
 };
 
 async function main(): Promise<void> {
@@ -42,7 +43,15 @@ async function main(): Promise<void> {
       `${String(result.loginsConfigured)} login principal(s) configured\n`,
   );
   if (result.loginsConfigured === 0) {
-    process.stdout.write('no login password supplied; logins are managed elsewhere\n');
+    process.stdout.write(
+      'no login password supplied; group roles are bootstrapped and logins are managed elsewhere\n',
+    );
+  } else if (result.loginsConfigured < Object.keys(LOGIN_PRINCIPALS).length) {
+    // Partial is a supported mode, not a warning: a deployment may manage some
+    // principals through IaC and some through this CLI.
+    process.stdout.write(
+      `${String(result.loginsValidated)} existing principal(s) left unmodified and validated\n`,
+    );
   }
 }
 

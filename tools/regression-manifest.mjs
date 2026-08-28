@@ -15,4 +15,7 @@ export const REGRESSION_SUITES = [
   'phase03-repair2.test.ts',
   // Fourth review: PostgreSQL 17 membership options — MEMBER, USAGE, SET, ADMIN.
   'phase03-repair3.test.ts',
+  // Fifth review: reader/scheduler containment, the SQL precondition, and the
+  // zero/partial-login bootstrap.
+  'phase03-repair4.test.ts',
 ];

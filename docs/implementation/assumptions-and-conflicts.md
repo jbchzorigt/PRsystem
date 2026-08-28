@@ -92,6 +92,31 @@ document. Each is resolved by precedence, not by choice.
   `sec-ownership.test.ts` ("the break-glass role holds no schema privilege at all") and by the
   bootstrap final invariants.
 
+### D-09 — Dedicated maintenance-job scheduler principal (customer-approved)
+
+- **Approved decision.** Introduce a dedicated scheduling principal: group role
+  `prsystem_job_scheduler`, login `prsystem_job_scheduler_login`, and one narrow
+  `SECURITY DEFINER` function for issuing privileged maintenance jobs. The role model becomes
+  **11 group roles and 7 canonical login principals**.
+- **Problem it resolves.** The worker previously held unrestricted `INSERT` on `platform.job_run`,
+  and the maintenance function authorises on `job_name`, `job_identity` and `state` — columns in that
+  same table. A worker could therefore mint its own maintenance authorisation, so "only an authorised
+  job may run privileged maintenance" was a statement about a row the executor itself could write.
+- **Boundary.** The scheduler may issue a privileged job through the narrow function and can do
+  nothing else: no `INSERT`, no `UPDATE`, no ownership on `job_run`, and it cannot execute the
+  maintenance function it authorises. The worker may execute an issued job whose executor identity
+  matches its transaction actor, and cannot create one: it holds no `INSERT`, and its separate
+  `platform.begin_worker_job` path rejects the `platform.maintenance.%` namespace categorically.
+  Credentials, sessions and deployment responsibilities are separate.
+- **Enforcement.** `platform.schedule_maintenance_job` (fixed `search_path`, owned by
+  `prsystem_maintenance_fn`, no `PUBLIC` execute, `prsystem_job_scheduler` only, allow-listed job
+  types, server-side authorisation columns, immutable scheduling audit in the same transaction);
+  the `job_run_privileged_has_issuer` check constraint; `platform.job_run_transition_guard`
+  (identity and `issuer_ref` immutable, terminal states terminal); column-scoped worker `UPDATE`.
+  Covered by `GATE-SEC` / `SEC-SCHEDULER`.
+- **Status.** Approved by the customer as a design decision, not a discovered conflict. Recorded here
+  because it changes the canonical role model that [[D-08]] and the runbook describe.
+
 ## 3. Recorded implementation assumptions
 
 Assumptions made where the requirements specify behaviour but not a mechanism. Each is reversible and
@@ -122,7 +147,7 @@ The four architecture design questions raised in Phase 01 are **closed**. None r
 
 | ID | Decision | ADR | Implemented in |
 | --- | --- | --- | --- |
-| DM-01 | PostgreSQL Row Level Security as defence in depth: `FORCE ROW LEVEL SECURITY` on hotel- and restaurant-scoped tables, transaction-scoped `SET LOCAL` server-derived context, five database roles with no `BYPASSRLS` for API or worker, migrations under a separate owner role, Police in a separate schema and role, explicit rules for public projections and cross-tenant jobs | [ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) | Phase 03, extended per table in 04–19 |
+| DM-01 | PostgreSQL Row Level Security as defence in depth: `FORCE ROW LEVEL SECURITY` on hotel- and restaurant-scoped tables, transaction-scoped `SET LOCAL` server-derived context, five database roles with no `BYPASSRLS` for API or worker *(as decided in Phase 01; the role model is now 11 group roles and 7 login principals — see D-09)*, migrations under a separate owner role, Police in a separate schema and role, explicit rules for public projections and cross-tenant jobs | [ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) | Phase 03, extended per table in 04–19 |
 | DM-02 | Append-only audit partitioned monthly by server timestamp, in two separately granted streams; partitions pre-created with a horizon alert; high-risk actions fail closed when audit cannot be recorded; retention configurable by data class with legal hold; no invented Police retention duration | [ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md) | Phase 03 |
 | DM-03 | Own read model in the same transaction; cross-module projections eventually consistent via outbox and idempotent inbox, with observable `as_of`/lag; critical commands never read a projection; all projections rebuildable | [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md) | Phase 03, applied in 13, 17, 19 |
 | DM-04 | Envelope encryption with versioned DEKs behind a provider-neutral `KeyManagementPort`; separate Hotel/Guest and Police key scopes; versioned keyed-HMAC lookup, never an unkeyed hash; key version stored with ciphertext; rotation and rewrapping; deterministic development simulator; production fails closed | [ADR-0020](../architecture/adr/ADR-0020-key-management.md) | Phase 03, adapter in Phase 20 |

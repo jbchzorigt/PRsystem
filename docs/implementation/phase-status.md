@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 22, `GATE-INTEG` 51, `GATE-CONC` 17, `GATE-SEC` 14/14 (326 tests), regression 23, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 9/9 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb` |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 31, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 16/16 (372 tests), regression 36, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 16/16 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb`, _fifth repair pending commit_ |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -103,13 +103,32 @@ tabulated in [requirements-traceability.md](requirements-traceability.md) §2.
 
 ### Test gates
 
-Phase 00 is a documentation phase; no application gate exists yet, and none is claimed as passing.
-The governance gate was executed:
+Counts below are the current ones, measured on the tree the fifth repair
+describes. Earlier sections quote the counts current when they were written and
+are labelled as historical snapshots.
 
 ```bash
-node tools/validate-governance.mjs
-git diff --check
-git status --porcelain
+node tools/validate-governance.mjs           # GATE-GOV 13/13
+node tools/validate-workspace.mjs            # 15/15
+node tools/validate-regression-coverage.mjs  # 16/16 — structural CI checks
+node tools/scan-secrets.mjs                  # 0 findings
+pnpm run format:check                        # clean
+pnpm run lint                                # GATE-LINT — 16 projects + e2e sources
+pnpm run typecheck                           # GATE-TYPES — 25 project graphs
+pnpm run test:unit                           # GATE-UNIT — 175 passed
+pnpm run test:migrations                     # GATE-MIGR — 31 passed (fresh, frozen-baseline
+                                             #   upgrade, byte-identical normalized pg_dump,
+                                             #   Drizzle drift check, 20 sensitivity cases)
+pnpm run test:integration                    # GATE-INTEG — 51 passed
+pnpm run test:concurrency                    # GATE-CONC — 16 passed
+pnpm run test:regression                     # 36 passed — every reproduced review defect
+pnpm run test:security                       # GATE-SEC — 16/16 sub-gates, 372 tests
+pnpm run test:e2e                            # GATE-E2E — 15 passed
+pnpm run audit:prod                          # no known vulnerabilities
+pnpm run audit:tree                          # 1 moderate (DSR-01)
+pnpm run build                               # 16 projects
+pnpm run openapi                             # /api/v1 document
+git diff --check                             # clean
 ```
 
 Results are recorded in the repair commit message and reported to the customer.
@@ -175,7 +194,7 @@ resolved; **none remains open**.
 
 | ID | Decision | ADR |
 | --- | --- | --- |
-| DM-01 | PostgreSQL Row Level Security as defence in depth — forced RLS, transaction-scoped server-derived context, five database roles, separate migration owner, Police schema and role, explicit public/global/cross-tenant handling, required RLS tests in owning phases | [ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) |
+| DM-01 | PostgreSQL Row Level Security as defence in depth — forced RLS, transaction-scoped server-derived context, five database roles, separate migration owner *(as decided in Phase 01; the role model is now 11 group roles and 7 login principals — see D-09)*, Police schema and role, explicit public/global/cross-tenant handling, required RLS tests in owning phases | [ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) |
 | DM-02 | Monthly-partitioned append-only audit in two separately granted streams, pre-created partitions with a horizon alert, fail-closed high-risk audit, retention by data class with legal hold and no invented Police duration, no `UPDATE`/`DELETE` for runtime roles | [ADR-0018](../architecture/adr/ADR-0018-audit-partitioning.md) |
 | DM-03 | Same-transaction read models within a module; cross-module projections eventually consistent via outbox and idempotent inbox with observable freshness; critical commands never read a projection; all projections rebuildable | [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md) |
 | DM-04 | Provider-neutral `KeyManagementPort`, envelope encryption with versioned DEKs, separate Hotel/Guest and Police key scopes, versioned keyed-HMAC lookup, key version stored with ciphertext, rotation and rewrapping, development simulator, production fails closed, no plaintext key anywhere | [ADR-0020](../architecture/adr/ADR-0020-key-management.md) |
@@ -508,6 +527,8 @@ nor "partially exercised": it is complete for what Phase 03 owns.
 
 ### Security repair after customer review (Phase 03)
 
+> **Historical snapshot.** Records the first repair as it stood. Role counts, gate counts and test counts here are those of that pass, not the current ones; the current model is 11 group roles and 7 login principals, and the current gate table is in *Fifth security repair* below.
+
 The first Phase 03 submission was rejected. Eight defects were found in the database bootstrap and
 privilege model; all are repaired, and the repair is gated rather than asserted.
 
@@ -533,6 +554,8 @@ editing: the remote has exactly one ref, `refs/heads/main` at `c1c2abc`, and zer
 The migration has never been pushed, tagged or released.
 
 ### Second repair after review (Phase 03)
+
+> **Historical snapshot.** Counts and role descriptions are those of the second pass.
 
 The first repair was also rejected. Nine further defects, each reproduced by a failing test before
 being fixed — the reproductions are kept in `packages/db/src/regression/phase03-repair.test.ts`.
@@ -571,6 +594,8 @@ blocker. One documentation conflict was found and resolved as **D-05**; three sc
 to the customer and approved before any edit.
 
 ### Third security repair (customer review 3) — `SECURITY_REPAIR_REQUIRED`
+
+> **Historical snapshot.** Counts here (302 GATE-SEC tests, 14 sub-gates, 10 group roles) are those of the third pass and are superseded.
 
 The second repair was **not accepted**. Nine further defects were raised. All nine are now closed in
 code and tests. Phase 03 stays `SECURITY_REPAIR_REQUIRED` until customer acceptance; no acceptance is
@@ -651,6 +676,8 @@ amended, rebased, force-pushed, pushed, merged or deployed.
 - Eleven EXT gates remain seeded closed; seventeen P1 items remain open, including P1-10.
 
 ### Fourth security repair (customer review 4) — `SECURITY_REPAIR_REQUIRED`
+
+> **Historical snapshot.** Counts here (326 GATE-SEC tests, 14 sub-gates) are those of the fourth pass and are superseded.
 
 The third repair was **not accepted**. Eight further defects were raised; all eight are closed. Phase
 03 stays `SECURITY_REPAIR_REQUIRED` and no approval is claimed.
@@ -767,6 +794,76 @@ uses `actions/checkout`, which provides a real working tree, so the proof was re
   GitHub at least once before it can be selected, and nothing has been pushed.
 - `DSR-01` remains **OPEN — contained**.
 - Eleven EXT gates remain seeded closed; seventeen P1 items remain open, including P1-10.
+
+### Fifth security repair (customer review 5) — `SECURITY_REPAIR_REQUIRED`
+
+The fourth repair was **not accepted**. One approved architecture decision (D-09) and nine further
+defects were raised; all are closed. Phase 03 stays `SECURITY_REPAIR_REQUIRED` and no approval is
+claimed. **This section holds the current counts and role model.**
+
+#### D-09 — the scheduler boundary
+
+The role model is now **11 group roles and 7 canonical login principals**. Issuing a privileged
+maintenance job and executing one are separate powers with separate credentials.
+
+| | Scheduler | Worker |
+| --- | --- | --- |
+| Issues a privileged maintenance job | **yes**, via `platform.schedule_maintenance_job` only | no — holds no `INSERT` on `job_run` |
+| Executes one | no | **yes**, only when its transaction actor is the named executor |
+| Direct privilege on `platform.job_run` | **none** | `SELECT`, `UPDATE (state, finished_at, error_name, as_of)` |
+| Ordinary non-privileged jobs | no | **yes**, via `platform.begin_worker_job`, which refuses the `platform.maintenance.%` namespace categorically |
+
+The previous arrangement let the worker mint its own authorisation: it held unrestricted `INSERT` on
+`platform.job_run`, and the maintenance function authorises on `job_name`, `job_identity` and
+`state` — columns of that same table. Three layers now prevent it: the missing `INSERT` grant, the
+`job_run_privileged_has_issuer` check constraint, and the function's own issuer check behind it.
+
+#### Production defects fixed
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 2 | Reconciliation granted every canonical login unconditionally, so the documented group-only/IaC workflow issued `GRANT ... TO <missing-role>` and failed | Login edges are reconciled only for principals that exist; group-to-group owner edges always. Omitted-but-existing principals are validated (safe attributes, exactly one membership with exact options) and **never re-passworded**; unsafe drift fails closed naming the principal. Unexpected membership policy is documented and deterministic: revoke, then re-read and fail if anything unapproved survived. |
+| 3 | Containment covered API, Worker and Police only; ADMIN capability was derived by hand | Readers and the scheduler are contained identically. `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')` is used directly — the earlier claim that `pg_has_role` cannot test ADMIN was wrong and is removed. Expected edges are now *required*, not merely un-forbidden, and the whole migration graph (login → `prsystem_migrate` → three owner roles, all `ADMIN FALSE, INHERIT TRUE, SET TRUE`, nothing missing or extra) is validated. |
+| 4 | The SQL precondition checked `USAGE` alone, and `verifyPrincipal: false` could switch verification off | The precondition independently rejects MEMBER, SET-only and ADMIN-only reach, privileged attributes on any runtime/reader/scheduler principal, predefined roles, unexpected closure, and missing or malformed migration-owner edges. `verifyPrincipal` is deleted: no option, public or private, disables the check. |
+| 5 | Wall-clock overlap between processes is not proof that PostgreSQL made anything wait | Both races now observe the lock. The migration race has a third session hold the advisory key while two runners queue on it, asserting `pg_blocking_pids` names the holder before releasing it. The maintenance race has backend A lock the committed `job_run` row while B blocks inside the function, asserting the same. Both were negative-proved: removing the advisory lock fails the first ("saw 0" waiters), removing `FOR UPDATE` fails the second (`40P01` instead of `22023`). |
+| 6 | A test titled "gives an ordinary runtime no way to obtain the platform sentinel scope" proved nothing of the sort — it selected sentinel rows from an unseeded table | Replaced. A custom GUC is writable by the session holding the connection, and the replacement test *demonstrates* that rather than denying it. What the mechanism does buy — a query with no tenant predicate still confined, transaction-local scope, pool cleanup, FORCE RLS — is tested accurately. `PLATFORM_SCOPE` must now be paired with the operation realm at the application context boundary. Server-derived authorization resolution is Phase 04 and is not claimed to exist. |
+| 7 | A selected-catalogue JSON fingerprint is not the normalized schema dump the architecture requires | `schema.ts` declares the kernel in Drizzle, with a blocking column-and-nullability drift check against the migrated database. Fresh and upgrade are compared by **byte-identical normalized `pg_dump --schema-only`** from the pinned PostgreSQL 17 container, normalizing only the version header, the random `\restrict` token, the database name and blank runs — owners, grants, policies, functions, triggers and `reloptions` are all compared. The catalogue fingerprint is retained as a supplementary check, and now covers views, so `security_invoker` / `security_barrier` / `check_option` are visible; it previously excluded them. |
+| 8 | The CI validator searched the workflow with a context-free regex | The workflow is parsed structurally: the regression step must be in the blocking `compose` job, executable rather than commented, without `continue-on-error`, given `DATABASE_URL`, and preceded in step order by the build; the coverage validator must itself be on the blocking path; and `pnpm run test:security` must run it before GATE-SEC. |
+| 9 | The runbook claimed exact final grants while only `PUBLIC` and named project roles were inspected | Bootstrap enumerates every grantee of the target database and of schema `public`, revokes anything outside the allow-list, and asserts the surviving set exactly. The allow-list is the database owner, the owner of schema `public` (`pg_database_owner`), `prsystem_migrate`, and the runtime/reader/scheduler roles — the two owner entries being the documented operator exceptions. |
+| 10 | Documentation described a superseded role model | Corrected across the runbook, ADR-0017, ADR-0018, architecture 02 and 06, and this file. Earlier repair sections are labelled historical snapshots. |
+
+#### Defects the strengthened tests exposed
+
+- The catalogue fingerprint's storage projection **excluded views**, so a change of view security mode
+  was invisible to it. Found by the new view-security sensitivity case.
+- `assertRuntimeContainment` checked reach to owner roles but not privileged attributes or
+  predefined-role membership, so the TypeScript runner passed three cases the SQL caught. Found by
+  the E1/E2 regressions, which assert both layers.
+- Adding `js-yaml@4.1.0` for the structural CI parse introduced two **high** advisories
+  (GHSA-52cp-r559-cp3m, GHSA-5p4m-2wfm-xmqj). Caught by `audit:tree` in this repair's own validation
+  run and fixed by pinning `js-yaml@4.3.2`; `audit:tree` is clean at high and above.
+
+#### Negative proofs executed
+
+| Claim | How it was disproved-if-false | Result |
+| --- | --- | --- |
+| The migration advisory lock is real | removed `pg_advisory_lock` from the runner | test failed: "expected two runners waiting on the migration lock, saw 0" |
+| The `job_run` row lock is real | removed `FOR UPDATE` from the maintenance function | test failed: `40P01` instead of `22023` |
+| The CI regression step is blocking | commented it out | validator exit 1 |
+| … | `continue-on-error: true` | validator exit 1 |
+| … | moved it to another job | validator exit 1 |
+| … | removed `DATABASE_URL` | validator exit 1 |
+| … | removed the build step | validator exit 1 |
+| No regression suite is omitted | added an unlisted regression file | validator exit 1 |
+
+Every mutation was reverted and the source restored; `ci.yml` was verified byte-identical afterwards.
+
+#### GATE-SEC — 16 sub-gates
+
+SEC-ROLE 12, SEC-RLS 33, SEC-ACL-MATRIX 112, SEC-OWNERSHIP 10, **SEC-BOOTSTRAP 10 (new)**,
+**SEC-SCHEDULER 22 (new)**, SEC-MAINTENANCE 24, SEC-STARTUP 13, SEC-STARTUP-WORKER 4,
+SEC-REGRESSION 36, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7, SEC-KMS 17,
+SEC-PII-LEAK 10, SEC-SECRETS 6. **372 tests**, identical across three consecutive runs.
 
 ---
 

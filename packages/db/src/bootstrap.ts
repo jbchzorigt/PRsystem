@@ -30,6 +30,8 @@ export const GROUP_ROLES = [
   'prsystem_partition_mgr',
   'prsystem_maintenance_fn',
   'prsystem_maintenance',
+  // D-09: issues privileged maintenance jobs; cannot execute them.
+  'prsystem_job_scheduler',
 ] as const;
 
 /**
@@ -44,6 +46,7 @@ export const RUNTIME_AND_READER_ROLES = [
   'prsystem_police',
   'prsystem_audit_reader',
   'prsystem_police_audit_reader',
+  'prsystem_job_scheduler',
 ] as const;
 
 export const UNREACHABLE_ROLES = [
@@ -62,6 +65,7 @@ export const LOGIN_PRINCIPALS = {
   prsystem_audit_reader_login: 'prsystem_audit_reader',
   prsystem_police_audit_reader_login: 'prsystem_police_audit_reader',
   prsystem_migrate_login: 'prsystem_migrate',
+  prsystem_job_scheduler_login: 'prsystem_job_scheduler',
 } as const;
 
 export type LoginPrincipal = keyof typeof LOGIN_PRINCIPALS;
@@ -106,7 +110,16 @@ export interface BootstrapOptions {
 
 export interface BootstrapResult {
   readonly groupRoles: number;
+  /** Principals whose password this run set. Only the ones supplied. */
   readonly loginsConfigured: number;
+  /**
+   * Canonical principals that already existed, were **not** supplied, and were
+   * therefore left untouched — their attributes and membership validated, their
+   * password never modified. This is the IaC-managed case.
+   */
+  readonly loginsValidated: number;
+  /** Canonical principals that do not exist and were not asked for. */
+  readonly loginsAbsent: number;
 }
 
 /**
@@ -177,14 +190,27 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
       await assertConnectedTo(targetPool, options.database);
 
       await applyGroupRoles(clusterPool);
-      await applyLogins(clusterPool, options.logins ?? []).then(() => undefined);
-      const loginsConfigured = (options.logins ?? []).length;
+
+      const supplied = options.logins ?? [];
+      const loginsConfigured = await applyLogins(clusterPool, supplied);
+      // Everything the run was not asked to touch is inspected rather than
+      // assumed safe: an IaC-managed principal that has drifted into an unsafe
+      // shape must fail the bootstrap, not pass through it unnoticed.
+      const census = await validateOmittedLogins(
+        clusterPool,
+        new Set(supplied.map((c) => c.principal)),
+      );
 
       await applyDatabaseGrants(targetPool, options.database);
       await reconcileMemberships(clusterPool);
       await assertInvariants(clusterPool, targetPool, options.database);
 
-      return { groupRoles: GROUP_ROLES.length, loginsConfigured };
+      return {
+        groupRoles: GROUP_ROLES.length,
+        loginsConfigured,
+        loginsValidated: census.validated,
+        loginsAbsent: census.absent,
+      };
     } finally {
       await targetPool.end();
       await clusterPool.end();
@@ -270,16 +296,29 @@ async function reconcileMemberships(pool: Pool): Promise<void> {
   // A bare `GRANT r TO m` does **not** reset the options an earlier grant set:
   // PostgreSQL keeps whatever it is not told to change, so an edge once granted
   // WITH ADMIN TRUE stays ADMIN TRUE through any number of plain re-grants. The
-  // options below are therefore spelled out, `ADMIN FALSE` included.
-  const options = `WITH ADMIN ${INTENDED_MEMBERSHIP_OPTIONS.admin ? 'TRUE' : 'FALSE'}, INHERIT ${
-    INTENDED_MEMBERSHIP_OPTIONS.inherit ? 'TRUE' : 'FALSE'
-  }, SET ${INTENDED_MEMBERSHIP_OPTIONS.set ? 'TRUE' : 'FALSE'}`;
+  // options are therefore spelled out, `ADMIN FALSE` included.
+  const options = MEMBERSHIP_OPTION_CLAUSE;
 
-  for (const [login, group] of approved) {
-    await executeFormatted(pool, `GRANT %I TO %I ${options}`, [group, login]);
-  }
+  // Group-to-group ownership edges are structural: they exist in every cluster,
+  // whatever login policy a deployment uses, so they are always reconciled.
   for (const owner of ownerRoles) {
     await executeFormatted(pool, `GRANT %I TO %I ${options}`, [owner, 'prsystem_migrate']);
+  }
+
+  // Login-to-group edges are reconciled only for principals that actually exist.
+  //
+  // A deployment may manage some or all logins through IaC and never hand this
+  // bootstrap a credential for them. Granting to every canonical name regardless
+  // issued `GRANT prsystem_api TO prsystem_api_login` against a role that was
+  // never created, which fails and takes the whole group-role bootstrap with it.
+  const present = await pool.query<{ rolname: string }>(
+    `SELECT rolname FROM pg_roles WHERE rolname = ANY($1)`,
+    [[...approved.keys()]],
+  );
+  const existing = new Set(present.rows.map((r) => r.rolname));
+  for (const [login, group] of approved) {
+    if (!existing.has(login)) continue;
+    await executeFormatted(pool, `GRANT %I TO %I ${options}`, [group, login]);
   }
 
   // Re-read and prove the intent, rather than assuming the statements above had
@@ -349,6 +388,55 @@ async function applyDatabaseGrants(pool: Pool, database: string): Promise<void> 
     'prsystem_migrate',
   ]);
   await executeFormatted(pool, 'GRANT CREATE, USAGE ON SCHEMA public TO %I', ['prsystem_migrate']);
+
+  // "Exact final grants" has to mean every grantee, not only the ones this file
+  // happens to name. A grant handed to some unrelated role by an operator, or
+  // left behind by an earlier tool, is exactly the grant nobody is looking at.
+  for (const grantee of await strayGrantees(pool, database)) {
+    await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM %I', [database, grantee]);
+    await executeFormatted(pool, 'REVOKE ALL ON SCHEMA public FROM %I', [grantee]);
+  }
+}
+
+/**
+ * Every role holding a grant on the target database or on `public` that the
+ * design does not account for.
+ *
+ * The allow-list is the database owner (an operator identity a deployment
+ * legitimately owns), the DDL owner, and the runtime, reader and scheduler
+ * roles. Anything else is stale or unexpected and is revoked.
+ */
+async function strayGrantees(pool: Pool, database: string): Promise<string[]> {
+  const allowed = new Set<string>(['prsystem_migrate', ...RUNTIME_AND_READER_ROLES]);
+
+  const owner = await pool.query<{ owner: string }>(
+    `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1`,
+    [database],
+  );
+  // The database owner keeps its implicit rights; revoking from it would leave
+  // a database nobody can administer.
+  if (owner.rows[0] !== undefined) allowed.add(owner.rows[0].owner);
+
+  const schemaOwner = await pool.query<{ owner: string }>(
+    `SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'public'`,
+  );
+  if (schemaOwner.rows[0] !== undefined) allowed.add(schemaOwner.rows[0].owner);
+
+  const grantees = await pool.query<{ grantee: string }>(
+    `SELECT DISTINCT grantee FROM (
+       SELECT (aclexplode(d.datacl)).grantee AS oid
+         FROM pg_database d WHERE d.datname = $1
+       UNION ALL
+       SELECT (aclexplode(n.nspacl)).grantee AS oid
+         FROM pg_namespace n WHERE n.nspname = 'public'
+     ) AS acl
+     JOIN pg_roles r ON r.oid = acl.oid
+     CROSS JOIN LATERAL (SELECT r.rolname AS grantee) AS named
+     WHERE acl.oid <> 0`,
+    [database],
+  );
+
+  return grantees.rows.map((r) => r.grantee).filter((name) => !allowed.has(name));
 }
 
 async function applyLogins(pool: Pool, logins: readonly LoginCredential[]): Promise<number> {
@@ -374,11 +462,122 @@ async function applyLogins(pool: Pool, logins: readonly LoginCredential[]): Prom
         await executeFormatted(pool, 'REVOKE %I FROM %I', [other, credential.principal]);
       }
     }
-    await executeFormatted(pool, 'GRANT %I TO %I', [group, credential.principal]);
+    await executeFormatted(pool, `GRANT %I TO %I ${MEMBERSHIP_OPTION_CLAUSE}`, [
+      group,
+      credential.principal,
+    ]);
     configured += 1;
   }
 
   return configured;
+}
+
+/** The membership options every approved edge must carry, as a SQL clause. */
+const MEMBERSHIP_OPTION_CLAUSE = `WITH ADMIN ${
+  INTENDED_MEMBERSHIP_OPTIONS.admin ? 'TRUE' : 'FALSE'
+}, INHERIT ${INTENDED_MEMBERSHIP_OPTIONS.inherit ? 'TRUE' : 'FALSE'}, SET ${
+  INTENDED_MEMBERSHIP_OPTIONS.set ? 'TRUE' : 'FALSE'
+}`;
+
+/**
+ * Inspects the canonical principals this run was **not** asked to configure.
+ *
+ * A deployment may manage some or all logins through IaC and hand this bootstrap
+ * only the group roles. That is a supported mode, so an absent principal is not
+ * an error and is never created. An *existing* one is a different matter: it can
+ * connect, so its attributes and its membership are part of the cluster's
+ * security posture whether this run created it or not. It is validated and left
+ * alone — never re-passworded — and unsafe drift fails the bootstrap closed.
+ */
+async function validateOmittedLogins(
+  pool: Pool,
+  supplied: ReadonlySet<string>,
+): Promise<{ validated: number; absent: number }> {
+  let validated = 0;
+  let absent = 0;
+
+  for (const [login, group] of Object.entries(LOGIN_PRINCIPALS)) {
+    if (supplied.has(login)) continue;
+
+    const row = await pool.query<{
+      rolsuper: boolean;
+      rolcreatedb: boolean;
+      rolcreaterole: boolean;
+      rolreplication: boolean;
+      rolbypassrls: boolean;
+      rolcanlogin: boolean;
+    }>(
+      `SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolcanlogin
+         FROM pg_roles WHERE rolname = $1`,
+      [login],
+    );
+
+    const attributes = row.rows[0];
+    if (attributes === undefined) {
+      absent += 1;
+      continue;
+    }
+
+    const unsafe = (
+      [
+        ['SUPERUSER', attributes.rolsuper],
+        ['CREATEDB', attributes.rolcreatedb],
+        ['CREATEROLE', attributes.rolcreaterole],
+        ['REPLICATION', attributes.rolreplication],
+        ['BYPASSRLS', attributes.rolbypassrls],
+      ] as const
+    )
+      .filter(([, held]) => held)
+      .map(([name]) => name);
+
+    if (unsafe.length > 0) {
+      throw new BootstrapError(
+        `existing login ${login} is not managed by this run but holds ${unsafe.join(', ')}; ` +
+          `refusing to bootstrap a cluster in which an omitted principal is privileged`,
+      );
+    }
+
+    // Exact membership, with exact options. An IaC-managed principal that has
+    // acquired a second group, or the same group with ADMIN OPTION, is drift.
+    const edges = await pool.query<{
+      role: string;
+      admin_option: boolean;
+      inherit_option: boolean;
+      set_option: boolean;
+    }>(
+      `SELECT g.rolname AS role, am.admin_option, am.inherit_option, am.set_option
+         FROM pg_auth_members am
+         JOIN pg_roles m ON m.oid = am.member
+         JOIN pg_roles g ON g.oid = am.roleid
+        WHERE m.rolname = $1
+        ORDER BY 1`,
+      [login],
+    );
+
+    const names = edges.rows.map((e) => e.role);
+    if (names.length !== 1 || names[0] !== group) {
+      throw new BootstrapError(
+        `existing login ${login} is not managed by this run and its membership has drifted: ` +
+          `expected exactly [${group}], found [${names.join(', ') || 'none'}]`,
+      );
+    }
+    const edge = edges.rows[0]!;
+    if (
+      edge.admin_option !== INTENDED_MEMBERSHIP_OPTIONS.admin ||
+      edge.inherit_option !== INTENDED_MEMBERSHIP_OPTIONS.inherit ||
+      edge.set_option !== INTENDED_MEMBERSHIP_OPTIONS.set
+    ) {
+      throw new BootstrapError(
+        `existing login ${login} is not managed by this run and its membership in ${group} carries ` +
+          `ADMIN ${String(edge.admin_option)}, INHERIT ${String(edge.inherit_option)}, ` +
+          `SET ${String(edge.set_option)}`,
+      );
+    }
+
+    validated += 1;
+  }
+
+  return { validated, absent };
 }
 
 /**
@@ -470,5 +669,15 @@ async function assertInvariants(pool: Pool, target: Pool, database: string): Pro
     if (!dbAcl.includes(`${role}=c/`)) {
       throw new BootstrapError(`${role} lacks CONNECT on the target database`);
     }
+  }
+
+  // And the grantee set is exactly what the design accounts for. Checking only
+  // PUBLIC and the roles this file names would leave any other grantee — the
+  // one nobody is looking at — unexamined, while the runbook claimed exactness.
+  const stray = await strayGrantees(target, database);
+  if (stray.length > 0) {
+    throw new BootstrapError(
+      `unexpected grantee(s) on the target database or schema public: ${stray.join(', ')}`,
+    );
   }
 }

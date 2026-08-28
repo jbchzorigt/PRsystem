@@ -35,6 +35,9 @@ BEGIN
       ('prsystem_police',              false),
       ('prsystem_audit_reader',        false),
       ('prsystem_police_audit_reader', false),
+      -- D-09. Issues privileged maintenance jobs through one narrow
+      -- SECURITY DEFINER function and holds no table privilege on job_run.
+      ('prsystem_job_scheduler',        false),
       -- DDL owner group; the migration login is a member of this and nothing else
       ('prsystem_migrate',             false),
       -- narrow SECURITY DEFINER function owners. None holds BYPASSRLS: a
@@ -96,7 +99,8 @@ BEGIN
   ] LOOP
     FOREACH v_runtime IN ARRAY ARRAY[
       'prsystem_api', 'prsystem_worker', 'prsystem_police',
-      'prsystem_audit_reader', 'prsystem_police_audit_reader'
+      'prsystem_audit_reader', 'prsystem_police_audit_reader',
+      'prsystem_job_scheduler'
     ] LOOP
       EXECUTE format('REVOKE %I FROM %I', v_owner, v_runtime);
     END LOOP;

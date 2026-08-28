@@ -105,7 +105,9 @@ everything".
 | `prsystem_api` | Runtime API DML | subject; **no `BYPASSRLS`** |
 | `prsystem_worker` | Worker DML and job tables | subject; **no `BYPASSRLS`** |
 | `prsystem_police` | `police` and `police_audit` schemas only | subject; not grantable to the runtimes above |
-| `prsystem_maintenance` | Retention, rebuild, rewrap, break-glass | `BYPASSRLS`, named audited jobs only |
+| `prsystem_job_scheduler` | Issues privileged maintenance jobs (D-09) | subject; **no `BYPASSRLS`**; no table privilege on `job_run` |
+| `prsystem_maintenance_fn` | Owns cross-tenant maintenance functions | subject; **no `BYPASSRLS`**; sets scope one tenant at a time |
+| `prsystem_maintenance` | Break-glass only | `BYPASSRLS`; owns nothing, grants nothing, reachable by nobody |
 
 **Police separation is a database boundary**, not only a module-graph boundary: Police data lives in
 its own schema behind its own repository and its own role, unavailable to Hotel, Restaurant, Guest and
@@ -117,7 +119,7 @@ per tenant. There is no ambient or inherited scope; a job without scope fails ra
 unscoped.
 
 **Exempt categories** are enumerated in [04](04-logical-data-model.md) §11.2: public projections,
-global reference data, and named cross-tenant system jobs running as `prsystem_maintenance`.
+global reference data, and named cross-tenant system jobs running through `SECURITY DEFINER` functions owned by `prsystem_maintenance_fn` — not as `prsystem_maintenance`, which is break-glass only.
 
 ### 3.3 Required RLS tests
 

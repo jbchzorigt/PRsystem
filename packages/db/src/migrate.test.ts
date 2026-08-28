@@ -9,6 +9,9 @@ import { LOGIN_PRINCIPALS, bootstrapCluster } from './bootstrap';
 import type { LoginPrincipal } from './bootstrap';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate';
 import { schemaFingerprint } from './test-support/schema-fingerprint';
+import { pinnedContainer, schemaDump } from './test-support/schema-dump';
+import { DECLARED_TABLES } from './schema';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 
 /**
  * GATE-MIGR against real PostgreSQL, never a mock or SQLite (CLAUDE.md §10).
@@ -154,7 +157,24 @@ describe('migration runner', () => {
     expect(upgradeOutcome.appliedAfter).toBe(2);
   }, 60000);
 
-  it('reaches the same schema by upgrade as by fresh install', async () => {
+  it('produces a byte-identical normalized schema dump by upgrade and by fresh install', async () => {
+    // The contract is a normalized schema *dump*, not a selection of catalogue
+    // columns. pg_dump emits everything PostgreSQL would need to recreate the
+    // database — owners, grants, policies, function bodies, triggers,
+    // reloptions — so a property nobody thought to project is still compared.
+    const container = pinnedContainer();
+    const fresh = schemaDump({ container, user: 'prsystem', database: FRESH_DATABASE });
+    const upgraded = schemaDump({ container, user: 'prsystem', database: UPGRADE_DATABASE });
+
+    expect(upgraded).toBe(fresh);
+    // A dump that normalized itself down to nothing would compare equal too.
+    expect(fresh.length).toBeGreaterThan(10_000);
+    expect(fresh).toMatch(/CREATE POLICY/);
+    expect(fresh).toMatch(/OWNER TO prsystem_migrate/);
+    expect(fresh).toMatch(/GRANT /);
+  }, 120000);
+
+  it('keeps the catalogue fingerprint as a supplementary check', async () => {
     const fresh = new Pool({ connectionString: freshUrl, max: 1 });
     const upgraded = new Pool({ connectionString: upgradeUrl, max: 1 });
     try {
@@ -162,6 +182,41 @@ describe('migration runner', () => {
     } finally {
       await fresh.end();
       await upgraded.end();
+    }
+  }, 60000);
+
+  it('matches the declared Drizzle schema, column for column', async () => {
+    // A blocking drift check. The migration SQL is authoritative, so this fails
+    // when the declaration falls behind it — which is the direction drift
+    // actually travels.
+    const pool = new Pool({ connectionString: freshUrl, max: 1 });
+    try {
+      const declared = DECLARED_TABLES.flatMap((table) => {
+        const config = getTableConfig(table);
+        return config.columns.map((column) => ({
+          table: `${config.schema ?? 'public'}.${config.name}`,
+          column: column.name,
+          notNull: column.notNull,
+        }));
+      }).sort((a, b) => (a.table + a.column).localeCompare(b.table + b.column));
+
+      const tables = [...new Set(declared.map((d) => d.table))];
+      const live = await pool.query<{ table: string; column: string; not_null: boolean }>(
+        `SELECT c.table_schema || '.' || c.table_name AS table, c.column_name AS column,
+                (c.is_nullable = 'NO') AS not_null
+           FROM information_schema.columns c
+          WHERE c.table_schema || '.' || c.table_name = ANY($1)
+          ORDER BY 1, 2`,
+        [tables],
+      );
+      const actual = live.rows
+        .map((r) => ({ table: r.table, column: r.column, notNull: r.not_null }))
+        .sort((a, b) => (a.table + a.column).localeCompare(b.table + b.column));
+
+      expect(declared.length).toBeGreaterThan(0);
+      expect(actual).toEqual(declared);
+    } finally {
+      await pool.end();
     }
   }, 60000);
 
@@ -233,6 +288,14 @@ describe('schema fingerprint sensitivity', () => {
   afterAll(async () => {
     await pool?.end();
   });
+
+  /** The normalized dump of the throwaway sensitivity database. */
+  const dumpSensitivity = (): string =>
+    schemaDump({
+      container: pinnedContainer(),
+      user: 'prsystem',
+      database: SENSITIVITY_DATABASE,
+    });
 
   it('changes when a function body changes', async () => {
     const before = await schemaFingerprint(pool);
@@ -356,6 +419,95 @@ describe('schema fingerprint sensitivity', () => {
     await pool.query(`DROP INDEX platform.job_run_name_idx`);
 
     expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a view security option changes', async () => {
+    // `security_invoker` decides whose privileges and whose RLS policies a view
+    // runs under. Two databases differing only in this are not equivalent, and
+    // the difference appears in `reloptions` rather than in the definition.
+    await pool.query(
+      `CREATE VIEW platform.security_option_probe WITH (security_invoker = true)
+         AS SELECT hotel_id FROM platform.outbox_event`,
+    );
+    const before = await schemaFingerprint(pool);
+    const beforeDump = dumpSensitivity();
+
+    await pool.query(`ALTER VIEW platform.security_option_probe SET (security_invoker = false)`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+    expect(dumpSensitivity()).not.toBe(beforeDump);
+  }, 60000);
+
+  it('changes when a view security_barrier changes', async () => {
+    const before = await schemaFingerprint(pool);
+    await pool.query(`ALTER VIEW platform.security_option_probe SET (security_barrier = true)`);
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a view check option changes', async () => {
+    await pool.query(
+      `CREATE VIEW platform.check_option_probe AS
+         SELECT hotel_id FROM platform.outbox_event WHERE hotel_id IS NOT NULL`,
+    );
+    const before = dumpSensitivity();
+
+    await pool.query(`ALTER VIEW platform.check_option_probe SET (check_option = 'cascaded')`);
+
+    expect(dumpSensitivity()).not.toBe(before);
+  }, 60000);
+
+  it('changes when a sequence loses its ownership link', async () => {
+    // A sequence detached from its column survives a DROP COLUMN it should not.
+    // The kernel's own sequence is an identity sequence, whose ownership
+    // PostgreSQL will not let go, so this uses an ordinary owned sequence.
+    await pool.query(`CREATE TABLE platform.sequence_probe (n integer)`);
+    await pool.query(`CREATE SEQUENCE platform.sequence_probe_seq
+                        OWNED BY platform.sequence_probe.n`);
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`ALTER SEQUENCE platform.sequence_probe_seq OWNED BY NONE`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when an index access method changes', async () => {
+    const before = await schemaFingerprint(pool);
+
+    // btree -> hash on the same column: same index name, different structure.
+    await pool.query(`DROP INDEX platform.outbox_delivery_claimable_idx`);
+    await pool.query(
+      `CREATE INDEX outbox_delivery_claimable_idx
+         ON platform.outbox_delivery USING hash (event_id)`,
+    );
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('records the tablespace of every relation, though only pg_default exists here', async () => {
+    // Tablespaces need a filesystem location the pinned container does not
+    // provide, so this asserts the projection is present and correct rather than
+    // claiming to have exercised a non-default tablespace.
+    const spaces = await pool.query<{ spcname: string }>(`SELECT spcname FROM pg_tablespace`);
+    expect(spaces.rows.map((r) => r.spcname).sort()).toEqual(['pg_default', 'pg_global']);
+
+    const fingerprint = JSON.parse(await schemaFingerprint(pool)) as {
+      storage: { tablespace: string }[];
+    };
+    expect(fingerprint.storage.length).toBeGreaterThan(0);
+    expect(new Set(fingerprint.storage.map((s) => s.tablespace))).toEqual(new Set(['(default)']));
+  }, 60000);
+
+  it('fails the determinism gate on a one-line security-relevant change', async () => {
+    // The gate itself, not a proxy for it: two dumps that differ by one REVOKE
+    // must not compare equal.
+    const before = dumpSensitivity();
+
+    await pool.query(`REVOKE SELECT ON platform.job_run FROM prsystem_api`);
+
+    const after = dumpSensitivity();
+    expect(after).not.toBe(before);
+    expect(before).toMatch(/GRANT SELECT ON TABLE platform\.job_run TO prsystem_api/);
+    expect(after).not.toMatch(/GRANT SELECT ON TABLE platform\.job_run TO prsystem_api/);
   }, 60000);
 });
 
