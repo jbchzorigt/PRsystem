@@ -54,53 +54,62 @@ export async function createApp(
     { logger: false },
   );
 
-  // D-09. The scheduler pool the *application* owns is the one validated here —
-  // not a throwaway opened and closed during startup, which would verify a
-  // credential and then leave nothing holding it. Still before `listen`, so a
-  // wrong credential means no port is ever bound.
-  if (config.scheduler.enabled) {
-    const schedulerPool = app.get<Pool | undefined>(SCHEDULER_POOL, { strict: false });
-    try {
+  // Everything from here on happens with the application — and therefore the
+  // privileged scheduler pool — already alive. A failure in any of it used to
+  // propagate with nothing closing either: correlation setup, the OpenAPI
+  // document and `app.listen()` all ran outside any cleanup, so an ordinary
+  // `EADDRINUSE` on a deploy left a process that had not started still holding a
+  // scheduler connection.
+  try {
+    // D-09. The scheduler pool the *application* owns is the one validated here
+    // — not a throwaway opened and closed during startup, which would verify a
+    // credential and then leave nothing holding it. Still before `listen`, so a
+    // wrong credential means no port is ever bound.
+    if (config.scheduler.enabled) {
+      const schedulerPool = app.get<Pool | undefined>(SCHEDULER_POOL, { strict: false });
       if (schedulerPool === undefined) {
         throw new Error('the scheduler capability is enabled but no pool was registered');
       }
       await assertSchedulerConnectionPrincipal(schedulerPool, logger);
-    } catch (error) {
-      // Nest owns the pool now, so shutting the application down is what closes
-      // it. Doing that here keeps a refused startup from leaking connections.
-      await app.close();
-      throw error;
     }
-  }
 
-  registerCorrelation(app.getHttpAdapter().getInstance());
+    registerCorrelation(app.getHttpAdapter().getInstance());
 
-  // Every API route is versioned. Health and the OpenAPI document are operational
-  // surfaces rather than API contract, so they stay unversioned and stable.
-  app.setGlobalPrefix(API_PREFIX, {
-    exclude: UNVERSIONED_PATHS.map((path) => ({ path, method: RequestMethod.ALL })),
-  });
-  app.useGlobalFilters(new ApiErrorFilter());
-
-  if (options.serveDocs ?? true) {
-    // Only the machine-readable document is served. The Swagger UI bundle would
-    // pull @fastify/static and expose a browsable console on the API deployment;
-    // neither is required by Phase 02.
-    SwaggerModule.setup(OPENAPI_PATH, app, buildOpenApiDocument(app), {
-      swaggerUiEnabled: false,
-      jsonDocumentUrl: `${OPENAPI_PATH}-json`,
+    // Every API route is versioned. Health and the OpenAPI document are
+    // operational surfaces rather than API contract, so they stay unversioned
+    // and stable.
+    app.setGlobalPrefix(API_PREFIX, {
+      exclude: UNVERSIONED_PATHS.map((path) => ({ path, method: RequestMethod.ALL })),
     });
+    app.useGlobalFilters(new ApiErrorFilter());
+
+    if (options.serveDocs ?? true) {
+      // Only the machine-readable document is served. The Swagger UI bundle
+      // would pull @fastify/static and expose a browsable console on the API
+      // deployment; neither is required by Phase 02.
+      SwaggerModule.setup(OPENAPI_PATH, app, buildOpenApiDocument(app), {
+        swaggerUiEnabled: false,
+        jsonDocumentUrl: `${OPENAPI_PATH}-json`,
+      });
+    }
+
+    app.enableShutdownHooks();
+
+    const port = options.port ?? config.API_PORT;
+    await app.listen({ port, host: config.API_HOST });
+
+    const address = app.getHttpServer().address();
+    const boundPort = typeof address === 'object' && address !== null ? address.port : port;
+
+    logger.info({ port: boundPort, env: config.APP_ENV }, 'api started');
+
+    return { app, port: boundPort };
+  } catch (error) {
+    // Nest owns the scheduler pool, so closing the application is what closes
+    // it. A failure here is reported as itself: swallowing the original error in
+    // favour of a shutdown error would send an operator looking in the wrong
+    // place, so a cleanup failure is deliberately discarded.
+    await app.close().catch(() => undefined);
+    throw error;
   }
-
-  app.enableShutdownHooks();
-
-  const port = options.port ?? config.API_PORT;
-  await app.listen({ port, host: config.API_HOST });
-
-  const address = app.getHttpServer().address();
-  const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-
-  logger.info({ port: boundPort, env: config.APP_ENV }, 'api started');
-
-  return { app, port: boundPort };
 }

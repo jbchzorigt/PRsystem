@@ -9,6 +9,15 @@ import { MaintenanceSchedulerService } from './scheduler.service';
 export const SCHEDULER_POOL = Symbol('SCHEDULER_POOL');
 
 /**
+ * `application_name` of the scheduler pool's backends.
+ *
+ * Set so the privileged connection is identifiable in `pg_stat_activity` —
+ * which makes it visible during an incident, and lets a test assert that a
+ * refused startup left none of them behind.
+ */
+export const SCHEDULER_APPLICATION_NAME = 'prsystem_api_scheduler';
+
+/**
  * Owns the scheduler connection pool for the life of the application.
  *
  * The startup guard used to create a pool, verify it, and immediately close it,
@@ -52,7 +61,12 @@ export class MaintenanceModule {
       providers: [
         {
           provide: SCHEDULER_POOL,
-          useFactory: (): Pool => new Pool({ connectionString: databaseUrl, max: 4 }),
+          useFactory: (): Pool =>
+            new Pool({
+              connectionString: databaseUrl,
+              max: 4,
+              application_name: SCHEDULER_APPLICATION_NAME,
+            }),
         },
         SchedulerPoolLifecycle,
         {
