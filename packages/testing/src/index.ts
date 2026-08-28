@@ -7,8 +7,13 @@ export {
   TEST_LOGIN_PRINCIPALS,
   adminUrl,
   createRolePool,
+  assertNoUnexpectedPoolErrors,
+  closeTrackedPools,
   createTestDatabase,
+  expectPoolTeardown,
   quietPool,
+  resetPoolErrorReport,
   testDatabaseName,
+  unexpectedPoolErrorReport,
 } from './pg-harness';
-export type { TestDatabase } from './pg-harness';
+export type { PoolErrorEntry, TestDatabase } from './pg-harness';

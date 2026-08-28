@@ -302,10 +302,7 @@ describe('a successful run is accountable and atomic', () => {
     await seedExpired('idem-expired-success');
 
     const result = await committed({}, (q) =>
-      q<{ deleted: number; audit_event_id: string }>(
-        'SELECT * FROM platform.maintenance_expire_idempotency_keys($1)',
-        [job],
-      ),
+      q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [job]),
     );
     const auditEventId = result.rows[0]?.['audit_event_id'];
     expect(Number(result.rows[0]?.['deleted'])).toBeGreaterThanOrEqual(1);

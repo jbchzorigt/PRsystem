@@ -21,9 +21,6 @@ const B = '2b2b2b2b-2b2b-4b2b-8b2b-2b2b2b2b2b2b';
 /** 42501 insufficient_privilege — the grant is absent. */
 const INSUFFICIENT_PRIVILEGE = '42501';
 
-type Verb = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
-type Runtime = 'api' | 'worker' | 'police';
-
 /**
  * One source of truth for the row shapes and the grants.
  *

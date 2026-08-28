@@ -1,7 +1,9 @@
+import type { Pool } from 'pg';
 import type { TestDatabase } from '@prsystem/testing';
 import {
   TEST_LOGIN_PASSWORD,
   TEST_LOGIN_PRINCIPALS,
+  assertNoUnexpectedPoolErrors,
   createTestDatabase,
   quietPool,
 } from '@prsystem/testing';
@@ -70,6 +72,9 @@ export async function provisionKernelDatabase(suite: string): Promise<Provisione
     async close(): Promise<void> {
       await Promise.all(Object.values(pools).map((pool) => pool.end()));
       await db.drop();
+      // An idle-client error that was not an expected teardown is an
+      // infrastructure fault, and a suite that saw one has not really passed.
+      assertNoUnexpectedPoolErrors();
     },
   };
 }

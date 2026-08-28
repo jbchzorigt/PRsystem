@@ -1,0 +1,17 @@
+// Typecheck configuration that INCLUDES test and test-support sources.
+//
+// The build config excludes them so they are not emitted to `dist`. Excluding
+// them from the *typecheck* as well is what let eight TS2304 errors sit in
+// `test-support/provision.ts` unnoticed: the code compiled for publication and
+// nobody ever type-checked the helpers the security gates depend on.
+//
+// The package's `typecheck` script runs both configs, so this cannot be skipped.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist"]
+}

@@ -51,25 +51,152 @@ export const TEST_LOGIN_PASSWORD =
   process.env['PRSYSTEM_TEST_LOGIN_PASSWORD'] ?? 'prsystem_local_dev_login_only';
 
 /**
- * A `pg.Pool` that will not take the process down when its database disappears.
+ * Pool bookkeeping for tests.
  *
  * `DROP DATABASE ... WITH (FORCE)` terminates the backends a pool is still
  * holding idle, and `pg.Pool` reports that as an `error` event. An `error` event
- * with no listener is a process-level exception, so the symptom is a test runner
- * that exits non-zero *after* every test has passed — an intermittent failure
- * with nothing in the report to explain it. Every pool a test opens against a
- * throwaway database should be created here.
+ * with no listener is a process-level exception, so the symptom was a runner
+ * that exits non-zero *after* every test passed.
  *
- * Only idle-client errors are swallowed. A query that fails still rejects, so no
- * assertion can pass because an error went missing.
+ * The first fix attached an empty handler to every pool. That removed the crash
+ * and, with it, every idle-client error the suite might genuinely need to see —
+ * a connection reset by an overloaded server, a backend killed by the OOM
+ * killer, a certificate failure. A gate that cannot fail on infrastructure
+ * trouble is not a gate.
+ *
+ * So: pools are tracked, closed before the database is dropped, and only an
+ * error that arrives on a pool explicitly marked as being torn down, and that
+ * looks like a termination, is suppressed. Everything else is recorded, and
+ * `assertNoUnexpectedPoolErrors()` fails the suite on it.
  */
-export function quietPool(config: PoolConfig): Pool {
+interface TrackedPool {
+  readonly pool: Pool;
+  readonly label: string;
+  /** The database this pool connects to, so a drop closes only its own pools. */
+  readonly database: string | undefined;
+  /** Set once the pool is knowingly about to lose its server. */
+  tearingDown: boolean;
+  readonly suppressed: string[];
+  readonly unexpected: PoolErrorEntry[];
+}
+
+export interface PoolErrorEntry {
+  readonly label: string;
+  readonly message: string;
+  readonly code: string | undefined;
+}
+
+const tracked = new Map<Pool, TrackedPool>();
+const unexpectedPoolErrors: PoolErrorEntry[] = [];
+
+/**
+ * SQLSTATEs and messages PostgreSQL produces when it terminates a connection
+ * because the database is going away. Anything outside this set is a real fault.
+ */
+function isTeardownTermination(error: Error & { code?: string }): boolean {
+  const code = error.code ?? '';
+  if (code === '57P01' || code === '57P02' || code === '57P03' || code === '08006') return true;
+  return /terminating connection|Connection terminated|server closed the connection/i.test(
+    error.message,
+  );
+}
+
+/**
+ * A tracked `pg.Pool`.
+ *
+ * Query failures still reject exactly as before: this only governs the pool's
+ * out-of-band `error` event, so no assertion can pass because an error went
+ * missing.
+ */
+export function quietPool(config: PoolConfig, label = 'pool'): Pool {
   const pool = new Pool(config);
-  pool.on('error', () => {
-    // Deliberately empty: the connection is already gone, and the test that
-    // owned it has finished.
+  const record: TrackedPool = {
+    pool,
+    label,
+    database: databaseOf(config),
+    tearingDown: false,
+    suppressed: [],
+    unexpected: [],
+  };
+  tracked.set(pool, record);
+
+  pool.on('error', (error: Error & { code?: string }) => {
+    if (record.tearingDown && isTeardownTermination(error)) {
+      record.suppressed.push(error.message);
+      return;
+    }
+    const entry = { label, message: error.message, code: error.code };
+    record.unexpected.push(entry);
+    unexpectedPoolErrors.push(entry);
   });
+
   return pool;
+}
+
+/** The database a pool config names, for scoping a teardown to one database. */
+function databaseOf(config: PoolConfig): string | undefined {
+  if (typeof config.database === 'string') return config.database;
+  if (typeof config.connectionString !== 'string') return undefined;
+  try {
+    return new URL(config.connectionString).pathname.replace(/^\//, '') || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Marks `pool` as knowingly about to lose its server. */
+export function expectPoolTeardown(pool: Pool): void {
+  const record = tracked.get(pool);
+  if (record !== undefined) record.tearingDown = true;
+}
+
+/**
+ * Ends tracked pools, marking them as tearing down first.
+ *
+ * Called before a database is dropped, so in the ordinary case there is no idle
+ * connection left for the server to terminate at all. Scoped to one database
+ * when a name is given: dropping one scratch database must not close the pools
+ * another suite is still using.
+ */
+export async function closeTrackedPools(database?: string): Promise<void> {
+  const records = [...tracked.values()].filter(
+    (record) => database === undefined || record.database === database,
+  );
+  for (const record of records) record.tearingDown = true;
+  await Promise.all(
+    records.map(async (record) => {
+      try {
+        await record.pool.end();
+      } catch {
+        // Already ended, or already gone. Either way there is nothing to close.
+      }
+      tracked.delete(record.pool);
+    }),
+  );
+}
+
+/** Every idle-client error that was *not* an expected teardown termination. */
+export function unexpectedPoolErrorReport(): readonly PoolErrorEntry[] {
+  return [...unexpectedPoolErrors];
+}
+
+/** Clears the recorded errors. For the tests that assert on this machinery. */
+export function resetPoolErrorReport(): void {
+  unexpectedPoolErrors.length = 0;
+}
+
+/**
+ * Fails when any pool reported an error that was not an expected teardown.
+ *
+ * Suites that open pools call this in `afterAll`, so an infrastructure fault
+ * during a run is a failure rather than a silence.
+ */
+export function assertNoUnexpectedPoolErrors(): void {
+  if (unexpectedPoolErrors.length === 0) return;
+  const detail = unexpectedPoolErrors
+    .map((e) => `${e.label}: ${e.code ?? '(no code)'} ${e.message}`)
+    .join('; ');
+  throw new Error(`unexpected pool error(s) outside teardown: ${detail}`);
 }
 
 export const TEST_LOGIN_PRINCIPALS = {
@@ -152,7 +279,12 @@ export async function createTestDatabase(suite: string): Promise<TestDatabase> {
       return parsed.toString();
     },
     async drop(): Promise<void> {
-      await pool.end();
+      // Every tracked pool is closed *before* the database is dropped, so the
+      // FORCE below normally has no idle connection left to terminate. The
+      // teardown marking covers the connections a test opened and did not end.
+      expectPoolTeardown(pool);
+      await closeTrackedPools(name);
+      await pool.end().catch(() => undefined);
       await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
       await admin.end();
     },

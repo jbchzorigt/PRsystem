@@ -44,6 +44,17 @@ export const SUB_GATES = [
     ],
   },
   {
+    id: 'SEC-POOL-ERRORS',
+    what: 'the harness suppresses only expected teardown terminations and fails on any other',
+    filter: '@prsystem/db',
+    suite: 'src/security/sec-pool-errors.test.ts',
+    needsDatabase: true,
+    artefacts: [
+      'packages/db/src/security/sec-pool-errors.test.ts',
+      'packages/testing/src/pg-harness.ts',
+    ],
+  },
+  {
     id: 'SEC-BOOTSTRAP',
     what: 'group-only, partial and IaC-managed login bootstrap behave as documented',
     filter: '@prsystem/db',
