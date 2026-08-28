@@ -85,109 +85,146 @@ for (const suite of listed) {
   );
 }
 
-// 4. CI must run the complete regression suite as an executable, blocking step
-//    in the intended job. Searching the file with a regex proves none of that:
-//    a commented-out line matches, a step in a non-blocking job matches, and a
-//    step carrying `continue-on-error: true` matches. The workflow is therefore
-//    parsed and inspected structurally.
-const workflow = load(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+// 4. CI must run each required command as an *exact* executable line in the
+//    intended blocking job.
+//
+//    `run.includes('pnpm run test:regression')` accepts a great deal that is not
+//    the command: `pnpm run test:regression || true`, `echo pnpm run
+//    test:regression`, `pnpm run test:regression &`, a pipe into something that
+//    swallows the status, or a comment. Each of those leaves a workflow that
+//    reports success whatever the suite did, so the line is matched exactly.
+// The workflow under inspection. Overridable so the negative-fixture harness
+// can point this validator at a mutated *copy* without touching the real file.
+const WORKFLOW_PATH =
+  process.env['PRSYSTEM_CI_WORKFLOW'] ?? join(ROOT, '.github', 'workflows', 'ci.yml');
+const workflow = load(readFileSync(WORKFLOW_PATH, 'utf8'));
 
-/** Every step of one job, or [] when the job does not exist. */
 function stepsOf(jobName) {
   return workflow?.jobs?.[jobName]?.steps ?? [];
 }
 
-/** The first step in `jobName` whose `run:` executes `command`. */
-function findStep(jobName, command) {
-  return stepsOf(jobName).find(
-    (step) => typeof step?.run === 'string' && step.run.includes(command),
-  );
+/** Non-empty, non-comment lines of a step's `run` block. */
+function commandLines(step) {
+  if (typeof step?.run !== 'string') return [];
+  return step.run
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
 }
 
-/** A step is blocking unless it opts out with continue-on-error. */
+/** Constructs that let a failing command report success anyway. */
+const BYPASS_PATTERNS = [
+  { re: /\|\|\s*true\b/, why: '|| true' },
+  { re: /;\s*true\b/, why: '; true' },
+  { re: /\|\|\s*:/, why: '|| :' },
+  { re: /\|/, why: 'a pipe, which reports the last command status' },
+  { re: /&\s*$/, why: 'backgrounding' },
+  { re: /^\s*(echo|printf|true|:)\b/, why: 'an echoed or no-op command' },
+  { re: /^\s*set\s+\+e\b/, why: 'set +e' },
+];
+
+/**
+ * True when some line of the step *is* `command`, alone, with nothing appended
+ * that could discard its exit status.
+ */
+function runsExactly(step, command) {
+  return commandLines(step).some((line) => {
+    if (line !== command) return false;
+    return !BYPASS_PATTERNS.some((pattern) => pattern.re.test(line));
+  });
+}
+
+/** Any bypass construct anywhere in the step, even on another line. */
+function bypassIn(step) {
+  for (const line of commandLines(step)) {
+    for (const pattern of BYPASS_PATTERNS) {
+      if (pattern.re.test(line)) return `${pattern.why} in "${line}"`;
+    }
+  }
+  return undefined;
+}
+
 function isBlocking(step) {
   const flag = step?.['continue-on-error'];
   return flag === undefined || flag === false || flag === 'false';
 }
 
-const REGRESSION_JOB = 'compose';
-const REGRESSION_COMMAND = 'pnpm run test:regression';
+/** Steps that must exist, exactly, in a named blocking job. */
+const REQUIRED_STEPS = [
+  { job: 'compose', command: 'pnpm run test:regression', needsDatabase: true },
+  { job: 'compose', command: 'pnpm run build', needsDatabase: false },
+  { job: 'gate-sec', command: 'pnpm run test:security', needsDatabase: true },
+  { job: 'gate-sec', command: 'pnpm run build', needsDatabase: false },
+  { job: 'governance', command: 'pnpm run validate:regression-coverage', needsDatabase: false },
+  { job: 'governance', command: 'pnpm run validate:ci-bypass-fixtures', needsDatabase: false },
+];
 
-const regressionStep = findStep(REGRESSION_JOB, REGRESSION_COMMAND);
-check(
-  `CI runs the complete regression suite in the '${REGRESSION_JOB}' job`,
-  regressionStep !== undefined,
-  regressionStep === undefined
-    ? `no executable '${REGRESSION_COMMAND}' step in job '${REGRESSION_JOB}'`
-    : `step: ${regressionStep.name ?? '(unnamed)'}`,
-);
+for (const required of REQUIRED_STEPS) {
+  const step = stepsOf(required.job).find((candidate) => runsExactly(candidate, required.command));
+  const label = `CI runs '${required.command}' exactly, in the '${required.job}' job`;
 
-// A commented-out command is text inside some other step's `run`, never a step
-// whose own `run` starts with it.
-const regressionIsExecutable =
-  regressionStep !== undefined &&
-  regressionStep.run
-    .split('\n')
-    .map((line) => line.trim())
-    .some((line) => line.startsWith(REGRESSION_COMMAND));
-check(
-  'the regression step is executable, not commented text',
-  regressionIsExecutable,
-  regressionIsExecutable ? 'runs as a command' : 'only appears inside a comment',
-);
+  check(
+    label,
+    step !== undefined,
+    step === undefined
+      ? `no step whose run line is exactly '${required.command}'`
+      : `step: ${step.name ?? '(unnamed)'}`,
+  );
+  if (step === undefined) continue;
 
-check(
-  'the regression step is blocking',
-  regressionStep !== undefined && isBlocking(regressionStep),
-  regressionStep === undefined
-    ? 'no step'
-    : `continue-on-error: ${String(regressionStep['continue-on-error'] ?? '(absent)')}`,
-);
+  const bypass = bypassIn(step);
+  check(
+    `'${required.command}' cannot discard its exit status`,
+    bypass === undefined,
+    bypass ?? 'no bypass construct',
+  );
 
-const regressionEnv = regressionStep?.env ?? {};
-check(
-  'the regression step is given a database',
-  typeof regressionEnv.DATABASE_URL === 'string' && regressionEnv.DATABASE_URL.length > 0,
-  typeof regressionEnv.DATABASE_URL === 'string' ? 'DATABASE_URL supplied' : 'no DATABASE_URL',
-);
+  check(
+    `'${required.command}' is blocking`,
+    isBlocking(step),
+    `continue-on-error: ${String(step['continue-on-error'] ?? '(absent)')}`,
+  );
 
-// `dist/` is ignored and several suites consume generated JavaScript, so the
-// build must come first — in step order, not merely somewhere in the file.
-const composeSteps = stepsOf(REGRESSION_JOB);
-const buildIndex = composeSteps.findIndex(
-  (step) => typeof step?.run === 'string' && step.run.includes('pnpm run build'),
-);
-const regressionIndex = composeSteps.indexOf(regressionStep);
-check(
-  'the workspace is built before the regression suite runs',
-  buildIndex >= 0 && regressionIndex >= 0 && buildIndex < regressionIndex,
-  buildIndex < 0
-    ? 'no build step in the job'
-    : `build at step ${String(buildIndex)}, regression at step ${String(regressionIndex)}`,
-);
+  if (required.needsDatabase) {
+    const url = step.env?.DATABASE_URL;
+    check(
+      `'${required.command}' is given a database`,
+      typeof url === 'string' && url.length > 0,
+      typeof url === 'string' ? 'DATABASE_URL supplied' : 'no DATABASE_URL',
+    );
+  }
+}
 
-// 5. And this validator must itself be on the blocking path.
-const validatorStep =
-  findStep('governance', 'validate:regression-coverage') ??
-  findStep('verify', 'validate:regression-coverage') ??
-  findStep('compose', 'validate:regression-coverage');
-check(
-  'the regression coverage validator runs in CI',
-  validatorStep !== undefined && isBlocking(validatorStep),
-  validatorStep === undefined ? 'not present in any job' : 'present and blocking',
-);
+// 5. Build ordering, by step position rather than by appearance in the file.
+for (const job of ['compose', 'gate-sec']) {
+  const steps = stepsOf(job);
+  const buildIndex = steps.findIndex((step) => runsExactly(step, 'pnpm run build'));
+  const consumer = job === 'compose' ? 'pnpm run test:regression' : 'pnpm run test:security';
+  const consumerIndex = steps.findIndex((step) => runsExactly(step, consumer));
+  check(
+    `the workspace is built before '${consumer}' in '${job}'`,
+    buildIndex >= 0 && consumerIndex >= 0 && buildIndex < consumerIndex,
+    buildIndex < 0
+      ? 'no exact build step in the job'
+      : `build at step ${String(buildIndex)}, consumer at step ${String(consumerIndex)}`,
+  );
+}
 
-// 6. `pnpm run test:security` must run it before GATE-SEC, so a local run and a
-//    CI run enforce the same thing.
+// 6. And the root script must run the validator before GATE-SEC, with no
+//    bypass of its own.
 const rootScripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts ?? {};
 const securityScript = rootScripts['test:security'] ?? '';
+const scriptBypass = BYPASS_PATTERNS.filter(
+  (p) => p.why !== 'a pipe, which reports the last command status',
+).find((pattern) => pattern.re.test(securityScript));
 const runsValidatorFirst =
   securityScript.includes('validate-regression-coverage') &&
-  securityScript.indexOf('validate-regression-coverage') < securityScript.indexOf('gate-sec.mjs');
+  securityScript.indexOf('validate-regression-coverage') < securityScript.indexOf('gate-sec.mjs') &&
+  scriptBypass === undefined;
 check(
-  'pnpm run test:security validates regression coverage before GATE-SEC',
+  'pnpm run test:security validates regression coverage before GATE-SEC, without a bypass',
   runsValidatorFirst,
-  runsValidatorFirst ? securityScript : `test:security = ${securityScript || '(missing)'}`,
+  scriptBypass ? `bypass: ${scriptBypass.why}` : securityScript || '(missing)',
 );
 
 const width = Math.max(...checks.map((c) => c.name.length));

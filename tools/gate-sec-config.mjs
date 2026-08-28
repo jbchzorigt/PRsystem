@@ -44,6 +44,14 @@ export const SUB_GATES = [
     ],
   },
   {
+    id: 'SEC-LOCK-EVIDENCE',
+    what: 'lock contention is observed through pg_locks/pg_blocking_pids, not inferred',
+    filter: '@prsystem/db',
+    suite: 'src/concurrency/kernel.test.ts',
+    needsDatabase: true,
+    artefacts: ['packages/db/src/concurrency/kernel.test.ts'],
+  },
+  {
     id: 'SEC-POOL-ERRORS',
     what: 'the harness suppresses only expected teardown terminations and fails on any other',
     filter: '@prsystem/db',
