@@ -7,6 +7,7 @@ import { validateClassification } from '../classification-check';
 import { PLATFORM_SCOPE } from '../tenant-context';
 import { withTenantTransaction } from '../unit-of-work';
 import { appendOutboxEvent } from '../kernel/outbox';
+import { STRUCTURAL_SQLSTATES, TENANT_ROW_SPECS } from '../test-support/tenant-rows';
 
 /**
  * SEC-RLS — tenant isolation as the runtimes actually experience it.
@@ -21,6 +22,9 @@ const HOTEL_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 let env: ProvisionedDatabase;
 
 const TENANT_TABLES = TABLE_CLASSIFICATION.filter((t) => t.classification === 'TENANT_RLS');
+
+/** Keeps unscoped-INSERT probes from colliding with each other. */
+let unscopedSeq = 9000;
 
 function ctx(hotelId: string, realm: 'hotel' | 'police' | 'operation' = 'hotel') {
   return { hotelId, realm, actorRef: 'actor-sec-rls', correlationId: 'corr-sec-rls' } as const;
@@ -59,6 +63,34 @@ beforeAll(async () => {
         payload: { hotelId },
       }),
     );
+  }
+
+  // Every TENANT_RLS table gets real rows for both tenants.
+  //
+  // Without this, "tenant A affected zero of tenant B's rows" was true because
+  // tenant B had no rows: the assertion passed on an empty table and would have
+  // passed just as happily with no policy at all.
+  let seq = 0;
+  for (const hotelId of [HOTEL_A, HOTEL_B]) {
+    const client = await env.admin.connect();
+    try {
+      await client.query('BEGIN');
+      // The definer trigger on outbox_event is RLS-subject, so the seeding
+      // connection needs a tenant scope of its own.
+      await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', hotelId]);
+      for (const spec of TENANT_ROW_SPECS) {
+        if (spec.insertableByRuntime === false) continue;
+        seq += 1;
+        const { sql, values } = spec.insert(hotelId, seq);
+        await client.query(sql, values);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }, 90000);
 
@@ -106,16 +138,38 @@ describe('tenant isolation across CRUD, per runtime login', () => {
       }
     });
 
-    it(`${qualified}: unscoped INSERT is refused`, async () => {
-      await scoped(env.api, PLATFORM_SCOPE, async () => undefined);
+    const spec = TENANT_ROW_SPECS.find((t) => t.name === qualified);
+    if (spec === undefined) throw new Error(`no row fixture for ${qualified}`);
+
+    it(`${qualified}: unscoped INSERT is refused for the policy's own reason`, async () => {
+      // A **complete** row. The previous shape inserted only `hotel_id` and
+      // accepted `null value violates not-null constraint` as evidence of tenant
+      // isolation, which is a statement about the column definitions and not
+      // about RLS at all.
       const client = await env.api.connect();
       try {
         await client.query('BEGIN');
-        await expect(
-          client.query(`INSERT INTO ${qualified} (hotel_id) VALUES ($1)`, [HOTEL_A]),
-          // A permission denial is also a refusal — and a stronger one: the role
-          // holds no INSERT on that table at all.
-        ).rejects.toThrow(/row-level security|permission denied|null value|violates/i);
+
+        if (spec.insertableByRuntime === false) {
+          // No runtime holds INSERT here; the refusal is the grant, exactly.
+          await expect(
+            client.query(`INSERT INTO ${qualified} (event_id, hotel_id) VALUES (1, $1)`, [HOTEL_A]),
+          ).rejects.toMatchObject({ code: '42501' });
+          return;
+        }
+
+        const { sql, values } = spec.insert(HOTEL_A, unscopedSeq++);
+        // No app.hotel_id is set, so the WITH CHECK predicate cannot be satisfied.
+        const error = await client.query(sql, values).then(
+          () => undefined,
+          (e: unknown) => e as { code?: string; message?: string },
+        );
+
+        expect(error, 'a complete row must still be refused without tenant scope').toBeDefined();
+        // The exact SQLSTATE, and never a structural one: a malformed row would
+        // be refused by any database, policy or not.
+        expect(STRUCTURAL_SQLSTATES).not.toContain(error?.code);
+        expect(error?.code).toBe('42501');
       } finally {
         await client.query('ROLLBACK').catch(() => undefined);
         client.release();
@@ -123,18 +177,51 @@ describe('tenant isolation across CRUD, per runtime login', () => {
     });
 
     it(`${qualified}: tenant A cannot UPDATE or DELETE tenant B rows`, async () => {
-      await scoped(env.api, HOTEL_A, async (query) => {
-        const updated = await query(
-          `UPDATE ${qualified} SET hotel_id = hotel_id WHERE hotel_id = $1`,
-          [HOTEL_B],
-        ).catch(() => ({ rows: [], rowCount: 0 }));
-        expect(updated.rowCount).toBe(0);
+      // Tenant B's rows must genuinely exist, or "zero rows affected" is a
+      // statement about an empty table.
+      const present = await env.admin.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ${qualified} WHERE hotel_id = $1`,
+        [HOTEL_B],
+      );
+      expect(Number(present.rows[0]?.n)).toBeGreaterThan(0);
 
-        const deleted = await query(`DELETE FROM ${qualified} WHERE hotel_id = $1`, [
-          HOTEL_B,
-        ]).catch(() => ({ rows: [], rowCount: 0 }));
-        expect(deleted.rowCount).toBe(0);
+      const column = spec.updateColumn ?? 'hotel_id';
+      await scoped(env.api, HOTEL_A, async (query) => {
+        // No catch, and no single expectation for both cases. Where the API
+        // holds the verb, the policy must make the rows invisible and the exact
+        // affected count must be zero. Where it does not, the refusal is the
+        // grant and the exact SQLSTATE is 42501. Collapsing the two — which is
+        // what `.catch(() => rowCount: 0)` did — lets a broken policy pass as a
+        // missing privilege.
+        for (const [verb, sql] of [
+          ['UPDATE', `UPDATE ${qualified} SET ${column} = ${column} WHERE hotel_id = $1`],
+          ['DELETE', `DELETE FROM ${qualified} WHERE hotel_id = $1`],
+        ] as const) {
+          if (spec.grants.api.includes(verb)) {
+            const affected = await query(sql, [HOTEL_B]);
+            expect(affected.rowCount).toBe(0);
+          } else {
+            const error = await query(sql, [HOTEL_B]).then(
+              () => undefined,
+              (e: unknown) => e as { code?: string },
+            );
+            expect(error, `${verb} on ${qualified} must be refused`).toBeDefined();
+            expect(STRUCTURAL_SQLSTATES).not.toContain(error?.code);
+            expect(error?.code).toBe('42501');
+          }
+          // A failed statement aborts the transaction; reopen for the next verb.
+          await query('ROLLBACK');
+          await query('BEGIN');
+          await query(`SELECT set_config('app.hotel_id', $1, true)`, [HOTEL_A]);
+        }
       });
+
+      // And tenant B still has every row it had.
+      const after = await env.admin.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ${qualified} WHERE hotel_id = $1`,
+        [HOTEL_B],
+      );
+      expect(after.rows[0]?.n).toBe(present.rows[0]?.n);
     });
   }
 

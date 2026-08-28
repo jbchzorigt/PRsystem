@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Client, Pool } from 'pg';
+import { INTENDED_MEMBERSHIP_OPTIONS } from './principal-guard';
 
 /**
  * Cluster bootstrap runner.
@@ -234,27 +235,85 @@ async function reconcileMemberships(pool: Pool): Promise<void> {
     'prsystem_maintenance_fn',
   ]);
 
-  const edges = await pool.query<{ member: string; role: string }>(
-    `SELECT m.rolname AS member, g.rolname AS role
+  const permitted = (member: string, role: string): boolean =>
+    approved.get(member) === role || (member === 'prsystem_migrate' && ownerRoles.has(role));
+
+  // Options, not just role names. A membership carrying ADMIN OPTION grants no
+  // privilege by itself, so a reconciliation that only compared name pairs would
+  // leave it in place — and ADMIN is exactly what lets its holder grant the role
+  // onward, or back to itself with SET.
+  const edges = await pool.query<{
+    member: string;
+    role: string;
+    grantor: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT m.rolname AS member, g.rolname AS role, gr.rolname AS grantor,
+            am.admin_option, am.inherit_option, am.set_option
        FROM pg_auth_members am
-       JOIN pg_roles m ON m.oid = am.member
-       JOIN pg_roles g ON g.oid = am.roleid
+       JOIN pg_roles m  ON m.oid  = am.member
+       JOIN pg_roles g  ON g.oid  = am.roleid
+       JOIN pg_roles gr ON gr.oid = am.grantor
       WHERE m.rolname LIKE 'prsystem\\_%' OR g.rolname LIKE 'prsystem\\_%'`,
   );
 
   for (const edge of edges.rows) {
-    const permitted =
-      approved.get(edge.member) === edge.role ||
-      (edge.member === 'prsystem_migrate' && ownerRoles.has(edge.role));
-
-    if (!permitted) {
+    if (!permitted(edge.member, edge.role)) {
       await executeFormatted(pool, 'REVOKE %I FROM %I', [edge.role, edge.member]);
     }
   }
 
-  // Re-assert the approved edges the reconciliation may just have removed.
+  // Normalise every approved edge by stating all three options explicitly.
+  //
+  // A bare `GRANT r TO m` does **not** reset the options an earlier grant set:
+  // PostgreSQL keeps whatever it is not told to change, so an edge once granted
+  // WITH ADMIN TRUE stays ADMIN TRUE through any number of plain re-grants. The
+  // options below are therefore spelled out, `ADMIN FALSE` included.
+  const options = `WITH ADMIN ${INTENDED_MEMBERSHIP_OPTIONS.admin ? 'TRUE' : 'FALSE'}, INHERIT ${
+    INTENDED_MEMBERSHIP_OPTIONS.inherit ? 'TRUE' : 'FALSE'
+  }, SET ${INTENDED_MEMBERSHIP_OPTIONS.set ? 'TRUE' : 'FALSE'}`;
+
+  for (const [login, group] of approved) {
+    await executeFormatted(pool, `GRANT %I TO %I ${options}`, [group, login]);
+  }
   for (const owner of ownerRoles) {
-    await executeFormatted(pool, 'GRANT %I TO %I', [owner, 'prsystem_migrate']);
+    await executeFormatted(pool, `GRANT %I TO %I ${options}`, [owner, 'prsystem_migrate']);
+  }
+
+  // Re-read and prove the intent, rather than assuming the statements above had
+  // the effect they were meant to have.
+  const after = await pool.query<{
+    member: string;
+    role: string;
+    admin_option: boolean;
+    inherit_option: boolean;
+    set_option: boolean;
+  }>(
+    `SELECT m.rolname AS member, g.rolname AS role,
+            am.admin_option, am.inherit_option, am.set_option
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE m.rolname LIKE 'prsystem\\_%' OR g.rolname LIKE 'prsystem\\_%'
+      ORDER BY 1, 2`,
+  );
+
+  for (const edge of after.rows) {
+    if (!permitted(edge.member, edge.role)) {
+      throw new BootstrapError(`membership ${edge.member} -> ${edge.role} survived reconciliation`);
+    }
+    if (
+      edge.admin_option !== INTENDED_MEMBERSHIP_OPTIONS.admin ||
+      edge.inherit_option !== INTENDED_MEMBERSHIP_OPTIONS.inherit ||
+      edge.set_option !== INTENDED_MEMBERSHIP_OPTIONS.set
+    ) {
+      throw new BootstrapError(
+        `membership ${edge.member} -> ${edge.role} carries ADMIN ${String(edge.admin_option)}, ` +
+          `INHERIT ${String(edge.inherit_option)}, SET ${String(edge.set_option)}`,
+      );
+    }
   }
 }
 

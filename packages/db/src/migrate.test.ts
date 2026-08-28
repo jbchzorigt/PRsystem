@@ -8,6 +8,7 @@ import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from './bootstrap';
 import type { LoginPrincipal } from './bootstrap';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate';
+import { schemaFingerprint } from './test-support/schema-fingerprint';
 
 /**
  * GATE-MIGR against real PostgreSQL, never a mock or SQLite (CLAUDE.md §10).
@@ -55,195 +56,6 @@ async function ledgerRows(pool: Pool): Promise<LedgerRow[]> {
  * flag and policy. Comparing two of these is how "upgrade produces the same
  * schema as fresh" is asserted without shelling out to pg_dump.
  */
-/**
- * Every schema the kernel owns, plus the migration ledger's own schema. A
- * fingerprint that skipped the ledger schema could not detect drift in the thing
- * that records which migrations ran.
- */
-const FINGERPRINT_SCHEMAS = ['platform', 'audit', 'police_audit', 'police', 'drizzle'];
-
-async function schemaFingerprint(pool: Pool): Promise<string> {
-  const schemas = FINGERPRINT_SCHEMAS;
-
-  /** Runs one catalogue projection. Every query orders fully, so the result is stable. */
-  const q = async (sql: string): Promise<Record<string, unknown>[]> =>
-    (await pool.query<Record<string, unknown>>(sql, [schemas])).rows;
-
-  // Schema identity, ownership and ACLs — the security posture, not only shape.
-  const namespaces = await q(
-    `SELECT n.nspname, pg_get_userbyid(n.nspowner) AS owner,
-            coalesce(array_to_string(n.nspacl, ' '), '(default)') AS acl
-       FROM pg_namespace n WHERE n.nspname = ANY($1) ORDER BY 1`,
-  );
-
-  // Default privileges decide what *future* objects inherit; drift here is
-  // invisible in today's ACLs and shows up as a privilege bug much later.
-  const defaultAcl = await q(
-    `SELECT n.nspname, pg_get_userbyid(d.defaclrole) AS role, d.defaclobjtype::text AS objtype,
-            coalesce(array_to_string(d.defaclacl, ' '), '') AS acl
-       FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace
-      WHERE n.nspname = ANY($1) ORDER BY 1, 2, 3`,
-  );
-
-  // Relations of every kind, with ownership, ACLs, RLS flags, partitioning
-  // strategy and partition bound.
-  const relations = await q(
-    `SELECT n.nspname, c.relname, c.relkind::text, c.relpersistence::text,
-            pg_get_userbyid(c.relowner) AS owner,
-            coalesce(array_to_string(c.relacl, ' '), '(default)') AS acl,
-            c.relrowsecurity::text AS rls, c.relforcerowsecurity::text AS force_rls,
-            coalesce(pg_get_partkeydef(c.oid), '') AS partition_key,
-            coalesce(pg_get_expr(c.relpartbound, c.oid), '') AS partition_bound
-       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = ANY($1) AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-      ORDER BY 1, 2`,
-  );
-
-  const columns = await q(
-    `SELECT c.table_schema, c.table_name, c.ordinal_position::text, c.column_name,
-            c.data_type, c.udt_name, c.is_nullable,
-            coalesce(c.column_default, '') AS column_default,
-            coalesce(c.character_maximum_length::text, '') AS max_length,
-            coalesce(c.numeric_precision::text, '') AS numeric_precision,
-            coalesce(c.numeric_scale::text, '') AS numeric_scale,
-            coalesce(c.collation_name, '') AS collation_name,
-            c.is_identity, c.is_generated, coalesce(c.generation_expression, '') AS generation
-       FROM information_schema.columns c
-      WHERE c.table_schema = ANY($1) ORDER BY 1, 2, 3`,
-  );
-
-  const constraints = await q(
-    `SELECT n.nspname, rel.relname, con.conname, con.contype::text,
-            pg_get_constraintdef(con.oid) AS def, con.condeferrable::text, con.convalidated::text
-       FROM pg_constraint con
-       JOIN pg_class rel ON rel.oid = con.conrelid
-       JOIN pg_namespace n ON n.oid = rel.relnamespace
-      WHERE n.nspname = ANY($1) ORDER BY 1, 2, 3`,
-  );
-
-  const indexes = await q(
-    `SELECT schemaname, tablename, indexname, indexdef
-       FROM pg_indexes WHERE schemaname = ANY($1) ORDER BY 1, 2, 3`,
-  );
-
-  const policies = await q(
-    `SELECT schemaname, tablename, policyname, permissive, cmd,
-            coalesce(array_to_string(roles, ' '), '') AS roles,
-            coalesce(qual, '') AS qual, coalesce(with_check, '') AS with_check
-       FROM pg_policies WHERE schemaname = ANY($1) ORDER BY 1, 2, 3`,
-  );
-
-  // Sequence definitions only. `last_value` is state, not schema, and including
-  // it would make the comparison depend on how many rows a test happened to write.
-  const sequences = await q(
-    `SELECT s.schemaname, s.sequencename, s.data_type::text, s.start_value::text,
-            s.min_value::text, s.max_value::text, s.increment_by::text,
-            s.cycle::text, s.cache_size::text,
-            pg_get_userbyid(c.relowner) AS owner,
-            coalesce(array_to_string(c.relacl, ' '), '(default)') AS acl
-       FROM pg_sequences s
-       JOIN pg_class c ON c.relname = s.sequencename
-       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = s.schemaname
-      WHERE s.schemaname = ANY($1) ORDER BY 1, 2`,
-  );
-
-  // Types, enums and domains, including every enum label in order and every
-  // domain constraint: a reordered enum is a different type.
-  const types = await q(
-    `SELECT n.nspname, t.typname, t.typtype::text, pg_get_userbyid(t.typowner) AS owner,
-            coalesce(array_to_string(t.typacl, ' '), '(default)') AS acl,
-            coalesce(
-              (SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder)
-                 FROM pg_enum e WHERE e.enumtypid = t.oid), '') AS enum_labels,
-            coalesce(format_type(t.typbasetype, t.typtypmod), '') AS domain_base,
-            t.typnotnull::text AS domain_not_null,
-            coalesce(
-              (SELECT string_agg(pg_get_constraintdef(dc.oid), ',' ORDER BY dc.conname)
-                 FROM pg_constraint dc WHERE dc.contypid = t.oid), '') AS domain_constraints
-       FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-      WHERE n.nspname = ANY($1) AND t.typtype IN ('e', 'd', 'c', 'r')
-        AND NOT EXISTS (
-          SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind <> 'c')
-      ORDER BY 1, 2`,
-  );
-
-  // Views and materialised views by definition, not merely by name.
-  const views = await q(
-    `SELECT n.nspname, c.relname, c.relkind::text, pg_get_viewdef(c.oid, true) AS def
-       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = ANY($1) AND c.relkind IN ('v', 'm') ORDER BY 1, 2`,
-  );
-
-  // Functions by *complete* definition. Name, owner and security mode alone
-  // would let a rewritten body pass as an identical schema, which is precisely
-  // the drift a migration-equivalence check exists to catch.
-  const functions = await q(
-    `SELECT n.nspname, p.proname,
-            pg_get_function_identity_arguments(p.oid) AS identity_args,
-            pg_get_function_result(p.oid) AS returns,
-            pg_get_functiondef(p.oid) AS def,
-            p.prosecdef::text, p.provolatile::text, p.proleakproof::text, p.prokind::text,
-            coalesce(array_to_string(p.proconfig, ' '), '') AS config,
-            pg_get_userbyid(p.proowner) AS owner,
-            coalesce(array_to_string(p.proacl, ' '), '(default)') AS acl
-       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = ANY($1) AND p.prokind IN ('f', 'p')
-      ORDER BY 1, 2, 3`,
-  );
-
-  const triggers = await q(
-    `SELECT n.nspname, c.relname, t.tgname, pg_get_triggerdef(t.oid) AS def, t.tgenabled::text
-       FROM pg_trigger t
-       JOIN pg_class c ON c.oid = t.tgrelid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE NOT t.tgisinternal AND n.nspname = ANY($1) ORDER BY 1, 2, 3`,
-  );
-
-  const inheritance = await q(
-    `SELECT pn.nspname AS parent_schema, pc.relname AS parent,
-            cn.nspname AS child_schema, cc.relname AS child,
-            coalesce(pg_get_expr(cc.relpartbound, cc.oid), '') AS bound
-       FROM pg_inherits i
-       JOIN pg_class cc ON cc.oid = i.inhrelid
-       JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-       JOIN pg_class pc ON pc.oid = i.inhparent
-       JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-      WHERE cn.nspname = ANY($1) OR pn.nspname = ANY($1)
-      ORDER BY 1, 2, 3, 4`,
-  );
-
-  // Extensions are schema too: a database missing one, or carrying a different
-  // version, is not equivalent even when every table matches.
-  const extensions = (
-    await pool.query<Record<string, unknown>>(
-      `SELECT e.extname, e.extversion, n.nspname AS schema
-         FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
-        WHERE e.extname <> 'plpgsql' ORDER BY 1`,
-    )
-  ).rows;
-
-  return JSON.stringify(
-    {
-      namespaces,
-      defaultAcl,
-      relations,
-      columns,
-      constraints,
-      indexes,
-      policies,
-      sequences,
-      types,
-      views,
-      functions,
-      triggers,
-      inheritance,
-      extensions,
-    },
-    null,
-    0,
-  );
-}
-
 /**
  * The frozen Phase 02 baseline, committed as a fixture.
  *
@@ -450,6 +262,98 @@ describe('schema fingerprint sensitivity', () => {
     const before = await schemaFingerprint(pool);
 
     await pool.query(`REVOKE SELECT ON platform.outbox_event FROM prsystem_worker`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a column-level grant is revoked', async () => {
+    // The table-level ACL is unchanged here: only the column list narrows.
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`REVOKE UPDATE (as_of) ON platform.job_run FROM prsystem_worker`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a global default privilege is added', async () => {
+    // `defaclnamespace = 0`: applies to every schema, including ones that do not
+    // exist yet, and appears in no object's current ACL.
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE prsystem_migrate GRANT SELECT ON TABLES TO prsystem_api`,
+    );
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a schema-local default privilege is added', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(
+      `ALTER DEFAULT PRIVILEGES FOR ROLE prsystem_migrate IN SCHEMA platform
+         GRANT SELECT ON SEQUENCES TO prsystem_worker`,
+    );
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when replica identity changes', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`ALTER TABLE platform.outbox_event REPLICA IDENTITY FULL`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a relation option changes', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`ALTER TABLE platform.outbox_event SET (fillfactor = 70)`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when an RLS policy predicate changes', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`ALTER POLICY tenant_isolation ON platform.outbox_event USING (true)`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a trigger is dropped', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`DROP TRIGGER job_run_transition_guard ON platform.job_run`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a function security mode or search path changes', async () => {
+    const before = await schemaFingerprint(pool);
+
+    // Body identical; only the search_path setting differs. A fingerprint that
+    // hashed the body alone would report these two databases as equivalent.
+    await pool.query(
+      `ALTER FUNCTION platform.maintenance_job_name() SET search_path = pg_catalog, pg_temp`,
+    );
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when a constraint is dropped', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`ALTER TABLE platform.job_run DROP CONSTRAINT job_run_terminal_has_finish`);
+
+    expect(await schemaFingerprint(pool)).not.toBe(before);
+  }, 60000);
+
+  it('changes when an index is dropped', async () => {
+    const before = await schemaFingerprint(pool);
+
+    await pool.query(`DROP INDEX platform.job_run_name_idx`);
 
     expect(await schemaFingerprint(pool)).not.toBe(before);
   }, 60000);

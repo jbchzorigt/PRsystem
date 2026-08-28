@@ -14,10 +14,10 @@
     "lint": "turbo run lint && eslint e2e playwright.config.ts",
     "typecheck": "turbo run typecheck && tsc -p tsconfig.e2e.json --noEmit",
     "test:unit": "turbo run test:unit",
-    "test:migrations": "pnpm --filter @prsystem/db run test:migrations",
+    "test:migrations": "turbo run test:migrations",
     "test:integration": "turbo run test:integration",
     "test:concurrency": "turbo run test:concurrency",
-    "test:security": "node tools/gate-sec.mjs",
+    "test:security": "turbo run build && node tools/gate-sec.mjs",
     "test:e2e": "turbo run build --filter=@prsystem/web-* && playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -32,8 +32,9 @@
     "compose:config": "docker compose config --quiet",
     "compose:up": "docker compose up -d --wait",
     "compose:down": "docker compose down -v",
-    "verify": "pnpm run validate:workspace && pnpm run validate:governance && pnpm run scan:secrets && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build && pnpm run openapi && pnpm run compose:up && pnpm run test:migrations && pnpm run test:integration && pnpm run test:concurrency && pnpm run test:regression && pnpm run test:security && pnpm run test:e2e && pnpm run audit:prod && pnpm run audit:tree",
-    "test:regression": "turbo run test:regression"
+    "verify": "pnpm run validate:workspace && pnpm run validate:governance && pnpm run validate:regression-coverage && pnpm run scan:secrets && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build && pnpm run openapi && pnpm run compose:up && pnpm run test:migrations && pnpm run test:integration && pnpm run test:concurrency && pnpm run test:regression && pnpm run test:security && pnpm run test:e2e && pnpm run audit:prod && pnpm run audit:tree",
+    "test:regression": "turbo run test:regression",
+    "validate:regression-coverage": "node tools/validate-regression-coverage.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

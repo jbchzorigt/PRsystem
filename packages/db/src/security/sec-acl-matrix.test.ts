@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
+import { TENANT_ROW_SPECS } from '../test-support/tenant-rows';
+import type { Runtime, TenantRowSpec, Verb } from '../test-support/tenant-rows';
 
 /**
  * SEC-ACL-MATRIX — the complete grant matrix for every tenant table across every
@@ -22,92 +24,15 @@ const INSUFFICIENT_PRIVILEGE = '42501';
 type Verb = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
 type Runtime = 'api' | 'worker' | 'police';
 
-interface TenantTable {
-  readonly name: string;
-  /** A complete, valid row for tenant `hotelId`, keyed for uniqueness by `n`. */
-  insert(hotelId: string, n: number): { sql: string; values: unknown[] };
-  /** Grants per runtime, from the migration. */
-  readonly grants: Readonly<Record<Runtime, readonly Verb[]>>;
-}
+/**
+ * One source of truth for the row shapes and the grants.
+ *
+ * The RLS suite asserts the same grants from the other direction, and the two
+ * drifting apart is exactly how a cell becomes vacuous without anybody noticing.
+ */
+type TenantTable = TenantRowSpec;
 
-const TENANT_TABLES: readonly TenantTable[] = [
-  {
-    name: 'platform.idempotency_key',
-    insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.idempotency_key
-              (hotel_id, realm, actor_ref, client_ref, operation, idempotency_key,
-               request_hash, expires_at)
-            VALUES ($1,'hotel','actor-acl','client-acl','acl.probe',$2,
-                    repeat('a', 64), now() + interval '1 day')`,
-      values: [hotelId, `idem-acl-${String(n).padStart(8, '0')}`],
-    }),
-    grants: {
-      api: ['SELECT', 'INSERT', 'UPDATE'],
-      worker: ['SELECT', 'INSERT', 'UPDATE'],
-      police: [],
-    },
-  },
-  {
-    name: 'platform.outbox_event',
-    insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.outbox_event
-              (hotel_id, aggregate_type, aggregate_id, event_type, payload)
-            VALUES ($1,'acl_probe',$2,'acl.probe.created','{"ok":true}'::jsonb)`,
-      values: [hotelId, `acl-${String(n)}`],
-    }),
-    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
-  },
-  {
-    // Delivery rows are created only by the SECURITY DEFINER trigger on
-    // outbox_event. No runtime holds INSERT, so the INSERT cell is a real
-    // forbidden case asserting 42501 rather than one that had to be skipped.
-    name: 'platform.outbox_delivery',
-    insert: () => ({ sql: '', values: [] }),
-    grants: {
-      api: ['SELECT', 'UPDATE'],
-      worker: ['SELECT', 'UPDATE'],
-      police: [],
-    },
-  },
-  {
-    name: 'platform.inbox_consumption',
-    insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.inbox_consumption (hotel_id, consumer, dedup_key, source)
-            VALUES ($1,'acl.consumer',$2,'outbox')`,
-      values: [hotelId, `dedup-acl-${String(n)}`],
-    }),
-    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
-  },
-  {
-    name: 'platform.provider_event',
-    insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.provider_event
-              (hotel_id, provider, provider_event_id, event_kind, payload_hash)
-            VALUES ($1,'qpay',$2,'payment.succeeded', repeat('b', 64))`,
-      values: [hotelId, `evt-acl-${String(n)}`],
-    }),
-    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
-  },
-  {
-    name: 'platform.job_run',
-    insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.job_run (hotel_id, job_name, job_identity)
-            VALUES ($1, $2, 'identity-acl')`,
-      values: [hotelId, `job-acl-${String(n)}`],
-    }),
-    grants: { api: ['SELECT'], worker: ['SELECT', 'INSERT', 'UPDATE'], police: [] },
-  },
-  {
-    name: 'platform.export_artifact',
-    insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.export_artifact
-              (hotel_id, export_kind, storage_key, content_hash, as_of)
-            VALUES ($1,'acl',$2, repeat('c', 64), now())`,
-      values: [hotelId, `key-acl-${String(n)}`],
-    }),
-    grants: { api: ['SELECT'], worker: ['SELECT', 'INSERT', 'UPDATE'], police: [] },
-  },
-];
+const TENANT_TABLES: readonly TenantTable[] = TENANT_ROW_SPECS;
 
 const VERBS: readonly Verb[] = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 
@@ -229,7 +154,7 @@ describe.each(TENANT_TABLES)('$name', (table) => {
 
             const verbSql =
               verb === 'UPDATE'
-                ? `UPDATE ${table.name} SET hotel_id = hotel_id`
+                ? `UPDATE ${table.name} SET ${table.updateColumn ?? 'hotel_id'} = ${table.updateColumn ?? 'hotel_id'}`
                 : `DELETE FROM ${table.name}`;
             const affected = await query(verbSql);
             expect(affected.rowCount).toBe(expected);
@@ -258,7 +183,7 @@ describe.each(TENANT_TABLES)('$name', (table) => {
             }
             const verbSql =
               verb === 'UPDATE'
-                ? `UPDATE ${table.name} SET hotel_id = hotel_id WHERE hotel_id = $1`
+                ? `UPDATE ${table.name} SET ${table.updateColumn ?? 'hotel_id'} = ${table.updateColumn ?? 'hotel_id'} WHERE hotel_id = $1`
                 : `DELETE FROM ${table.name} WHERE hotel_id = $1`;
             const result = await query(verbSql, [B]);
             // Invisible, so nothing matches. Not an error — simply no such row.
@@ -274,7 +199,7 @@ describe.each(TENANT_TABLES)('$name', (table) => {
                 : verb === 'INSERT'
                   ? `INSERT INTO ${table.name} (hotel_id) VALUES ($1)`
                   : verb === 'UPDATE'
-                    ? `UPDATE ${table.name} SET hotel_id = hotel_id`
+                    ? `UPDATE ${table.name} SET ${table.updateColumn ?? 'hotel_id'} = ${table.updateColumn ?? 'hotel_id'}`
                     : `DELETE FROM ${table.name}`;
             await expectSqlState(
               query(sql, verb === 'INSERT' ? [A] : []),

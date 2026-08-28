@@ -99,10 +99,18 @@ jobs:
           cache: pnpm
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
+      - name: Validate regression coverage
+        run: pnpm run validate:regression-coverage
       - name: Validate compose configuration
         run: docker compose config --quiet
       - name: Start backing services
         run: docker compose up -d --wait
+      # `dist/` is ignored, and several suites consume generated JavaScript —
+      # the migration and bootstrap child processes require it by path. Building
+      # here means every gate below runs against this checkout's source and not
+      # against whatever happened to be left in a cache.
+      - name: Build workspace packages from this checkout
+        run: pnpm run build
       # GATE-MIGR, GATE-INTEG and GATE-CONC all need a real server. They run in
       # this job because it is the one that has one (CLAUDE.md §10).
       - name: Migration gate against real PostgreSQL
@@ -115,6 +123,10 @@ jobs:
           DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
       - name: Concurrency gate against real PostgreSQL
         run: pnpm run test:concurrency
+        env:
+          DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
+      - name: Complete regression suite against real PostgreSQL
+        run: pnpm run test:regression
         env:
           DATABASE_URL: postgresql://prsystem:prsystem_local_dev@127.0.0.1:55442/prsystem
       - name: Report service state
@@ -144,6 +156,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Start backing services
         run: docker compose up -d --wait
+      # `pnpm run test:security` builds first for the same reason, but building
+      # explicitly keeps the failure legible when it is a compile error.
+      - name: Build workspace packages from this checkout
+        run: pnpm run build
       # Fails closed: unavailable database, skipped suite, zero-test sub-gate or
       # missing artefact each fail the job rather than passing quietly.
       - name: Run the fail-closed security aggregator

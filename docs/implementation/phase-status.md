@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 12, `GATE-INTEG` 46, `GATE-CONC` 17, `GATE-SEC` 14/14 (302 tests), `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445` |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 22, `GATE-INTEG` 51, `GATE-CONC` 17, `GATE-SEC` 14/14 (326 tests), regression 23, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 9/9 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, _fourth repair pending commit_ |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -395,18 +395,33 @@ tables; append-only triggers; partition and horizon functions; all 11 EXT gates 
 
 ### Database roles
 
-| Role | Grants | `BYPASSRLS` |
-| --- | --- | --- |
-| `prsystem_migrate` | DDL owner, migrations only | no |
-| `prsystem_api` | DML on `platform`; `INSERT` only on audit; no `police_audit` | no |
-| `prsystem_worker` | as API plus job, export and projection tables | no |
-| `prsystem_police` | `police` / `police_audit` only | no |
-| `prsystem_maintenance` | retention, rebuild, break-glass | **yes** — the only one |
-| `prsystem_audit_reader` | scoped `SELECT` on `audit.platform_event` only | no |
-| `prsystem_police_audit_reader` | scoped `SELECT` on `police_audit.security_event` only | no |
+Ten `NOLOGIN` group roles. A deployment creates one login user per runtime and grants it exactly one
+group, so no credential is invented in a migration. `database-bootstrap-runbook.md` §2 is the
+authoritative table; this is the same content stated in terms of duties.
 
-Roles are `NOLOGIN` group roles; a deployment creates one login user per runtime and grants it the
-role, so no credential is invented in a migration.
+| Role | Duty | Grants | `BYPASSRLS` |
+| --- | --- | --- | --- |
+| `prsystem_migrate` | DDL owner; migrations only | owns the schemas and platform tables | no |
+| `prsystem_api` | request handling | DML on `platform`; audit only through the definer wrapper; no `police_audit`; **`SELECT` only** on `outbox_delivery` | no |
+| `prsystem_worker` | jobs and the outbox relay | as API, plus `outbox_delivery` `UPDATE`, export and projection tables, and **column-scoped** `UPDATE (state, finished_at, error_name, as_of)` on `job_run` | no |
+| `prsystem_police` | Police realm | `police` / `police_audit` only | no |
+| `prsystem_audit_writer` | function owner | owns both audit append functions (approved shared owner, ADR-0018) | no |
+| `prsystem_partition_mgr` | function owner | owns the audit streams, their partitions and the partition functions | no |
+| `prsystem_maintenance_fn` | function owner | owns the cross-tenant maintenance functions; sets tenant scope one tenant at a time | no |
+| `prsystem_maintenance` | **break-glass only** | **owns nothing and holds no standing grant, not even schema `USAGE`**; zero members | **yes** — the only one |
+| `prsystem_audit_reader` | read-only | scoped `SELECT` on `audit.platform_event` only | no |
+| `prsystem_police_audit_reader` | read-only | scoped `SELECT` on `police_audit.security_event` only | no |
+
+**Maintenance is not the worker, and the worker is not break-glass.** Normal cross-tenant maintenance
+runs as a `SECURITY DEFINER` function owned by `prsystem_maintenance_fn`, invoked by the worker under
+a named job identity, with tenant scope established per tenant. `prsystem_maintenance` is reachable by
+nobody — including the migration principal — and exists only as a documented break-glass identity for
+a DBA acting under an incident. ADR-0017 §§4–5 and §7 now say the same thing; the earlier §7 wording
+is recorded as drift resolution **D-08**.
+
+Every approved membership carries exactly `ADMIN FALSE, INHERIT TRUE, SET TRUE`. PostgreSQL retains
+membership options that a later `GRANT` omits, so bootstrap states all three explicitly rather than
+re-granting and assuming the options reset.
 
 ### Invariant evidence
 
@@ -433,20 +448,26 @@ Phase 03 owns **0 decisions**; all 279 remain `PENDING`. Obligations and gates a
 
 ### Test gates
 
+Counts below are the current ones, re-measured on the tree described by the fourth repair. Earlier
+sections of this document quote the counts that were current when they were written and are labelled
+as historical snapshots where they differ.
+
 ```bash
 node tools/validate-governance.mjs    # GATE-GOV 13/13
 node tools/validate-workspace.mjs     # 15/15
+node tools/validate-regression-coverage.mjs  # 9/9 — no security regression suite omitted
 node tools/scan-secrets.mjs           # 270 tracked text files, 0 findings
 pnpm run format:check                 # clean
 pnpm run lint                         # GATE-LINT — 16 projects + e2e sources
 pnpm run typecheck                    # GATE-TYPES — 25 project graphs
 pnpm run test:unit                    # GATE-UNIT — 175 passed
-pnpm run test:migrations              # GATE-MIGR — 9 passed (fresh, frozen-baseline upgrade,
-                                      #   determinism, idempotence, atomic failure, version evidence)
-pnpm run test:integration             # GATE-INTEG — 51 passed (db 41, outbox 5, api 5)
-pnpm run test:concurrency             # GATE-CONC — 16 passed
-pnpm run test:regression              # 9 passed — the reproduced review defects
-pnpm run test:security                # GATE-SEC — 13/13 sub-gates, 290 tests
+pnpm run test:migrations              # GATE-MIGR — 22 passed (fresh, frozen-baseline upgrade,
+                                      #   determinism, idempotence, atomic failure, version
+                                      #   evidence, 11 fingerprint sensitivity cases)
+pnpm run test:integration             # GATE-INTEG — 51 passed
+pnpm run test:concurrency             # GATE-CONC — 17 passed
+pnpm run test:regression              # 23 passed — every reproduced review defect
+pnpm run test:security                # GATE-SEC — 14/14 sub-gates, 326 tests
 pnpm run test:e2e                     # GATE-E2E — 15 passed
 pnpm run audit:prod                   # no known vulnerabilities
 pnpm run audit:tree                   # 1 moderate (DSR-01)
@@ -627,6 +648,86 @@ amended, rebased, force-pushed, pushed, merged or deployed.
   must run on GitHub at least once before it can be selected, and nothing has been pushed. Branch
   protection remains a repository setting deliberately not configured here.
 - `DSR-01` remains **OPEN — contained** (dev-only, no compatible stable upgrade).
+- Eleven EXT gates remain seeded closed; seventeen P1 items remain open, including P1-10.
+
+### Fourth security repair (customer review 4) — `SECURITY_REPAIR_REQUIRED`
+
+The third repair was **not accepted**. Eight further defects were raised; all eight are closed. Phase
+03 stays `SECURITY_REPAIR_REQUIRED` and no approval is claimed.
+
+#### Production defects fixed
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | `dist/` is ignored, several suites consume generated JavaScript, and the standalone gate commands bypassed Turborepo entirely — so a gate could consume stale or pre-existing build output | `test:migrations` and `test:security` now route through Turborepo (`turbo run test:migrations`, `turbo run build && node tools/gate-sec.mjs`), and `test:migrations`, `test:integration`, `test:concurrency`, `test:regression` and `test:security` all declare `dependsOn: ["build", "^build"]`. CI builds explicitly before the compose and GATE-SEC gates. No generated file is committed. |
+| 2 | `tools/gate-sec.mjs` named a single regression file, so `phase03-repair2.test.ts` was **excluded from GATE-SEC** while the gate still reported PASS | `SEC-REGRESSION` runs the whole `src/regression` directory and requires every manifest entry as an artefact. `tools/regression-manifest.mjs` is the exhaustive list; `tools/validate-regression-coverage.mjs` cross-checks disk, manifest, the real sub-gate configuration object and the CI workflow. CI runs the complete regression suite as its own step. |
+| 3 | The principal guard filtered its closure on `inherit_option OR set_option`, so an `ADMIN TRUE, INHERIT FALSE, SET FALSE` membership was **invisible**, and bootstrap reconciled role-name pairs while re-granting with options omitted | Reachability is now `pg_has_role(..., 'MEMBER')` — the only capability true for every membership — with USAGE, SET and ADMIN modelled separately and ADMIN derived from `pg_auth_members`. Every reachable role is attribute-checked; ADMIN OPTION anywhere in the closure is rejected; every direct membership must carry exactly `ADMIN FALSE, INHERIT TRUE, SET TRUE`. Bootstrap states all three options explicitly, because PostgreSQL retains the ones a `GRANT` omits, and then re-reads and proves the result. `assertRuntimeContainment` makes a migration refuse while any runtime principal can reach an owner role. |
+| 4 | The empty-database migration race used `Promise.all`, which cannot show lock contention; the maintenance race had no barrier and a bare `catch` that accepted any error as a valid loser; cross-tenant maintenance was tested with a nonexistent UUID | The migration race runs two OS processes released together by the parent, asserting distinct pids and observable overlap — a sequential run now fails — plus exactly one application, one no-op, and identical fingerprints against a solo install. The maintenance race adds an in-critical-section barrier, overlap, and an exact loser SQLSTATE (`22023`). Cross-tenant maintenance now creates and commits a **real** tenant-B job and proves the refusal, the untouched row, and the absent audit event. |
+| 5 | `sec-rls.test.ts` inserted partial rows and accepted `null value ...` as isolation evidence, and converted arbitrary UPDATE/DELETE errors into `rowCount: 0` | Complete valid rows come from a shared fixture module that the ACL matrix also uses, so the two suites cannot drift. Structural SQLSTATEs are explicitly rejected. Where the API holds the verb the exact affected count must be zero, and where it does not the exact SQLSTATE must be `42501`; the two are no longer collapsed. Both tenants are seeded, so "zero rows affected" is no longer a statement about an empty table. |
+| 6 | The fingerprint omitted global and schema-local default ACLs, column ACLs, relation options, replica identity, access method, tablespace and sequence dependencies | All are covered, and each is sensitivity-tested. |
+| 7 | The API held `UPDATE` on `platform.outbox_delivery` with no code path needing it, and the worker held table-wide `UPDATE` on `platform.job_run` — the very fields the maintenance function authorises on | The API holds `SELECT` only. The worker's `job_run` grant is column-scoped to `(state, finished_at, error_name, as_of)`, and `platform.job_run_transition_guard` makes `job_run_id`, `hotel_id`, `job_name`, `job_identity` and `started_at` immutable and terminal states terminal. |
+| 8 | Governance documents disagreed on roles, counts and maintenance execution | Corrected below; superseded blocks are labelled as historical snapshots. |
+
+#### Defects the strengthened tests exposed
+
+Making the RLS assertions exact immediately failed seven cases, for two reasons that the previous
+shape had been hiding:
+
+- five tables had **no tenant-B rows at all**, so "tenant A affected zero of tenant B's rows" was
+  true of an empty table and would have passed with no policy in place;
+- `outbox_event` and `outbox_delivery` were converting a **permission denial** into `rowCount: 0`.
+
+Both are now fixed rather than accommodated.
+
+#### Validator negative test
+
+`validate:regression-coverage` was proved to fail, not merely to pass. A regression fixture
+(`phase03-omitted-probe.test.ts`) was added without listing it in the manifest:
+
+```
+[FAIL] every regression suite on disk is listed in the manifest  not listed: phase03-omitted-probe.test.ts
+regression coverage: 8/9 checks passed, 1 FAILED   exit 1
+```
+
+The probe was removed and the validator returned to `9/9`, exit 0. The probe is not committed.
+
+#### Gates executed
+
+PostgreSQL **17.6** on aarch64-unknown-linux-musl (Alpine); `btree_gist` and `pgcrypto`.
+
+| Command | Exit | Collected result |
+| --- | --- | --- |
+| `pnpm run validate:governance` | 0 | 13/13 |
+| `pnpm run validate:workspace` | 0 | 15/15 |
+| `pnpm run validate:regression-coverage` | 0 | 9/9 |
+| `pnpm run scan:secrets` | 0 | 270 files, 0 findings |
+| `pnpm run format:check` | 0 | clean |
+| `pnpm run lint` | 0 | 16/16 tasks |
+| `pnpm run typecheck` | 0 | 25/25 tasks |
+| `pnpm run test:unit` | 0 | 175 tests |
+| `pnpm run build` | 0 | 16/16 tasks |
+| `pnpm run openapi` | 0 | document generated |
+| `pnpm run compose:config` | 0 | valid |
+| `pnpm run test:migrations` | 0 | 22 tests |
+| `pnpm run test:integration` | 0 | 51 tests |
+| `pnpm run test:regression` | 0 | 23 tests |
+| `pnpm run test:e2e` | 0 | 15 tests |
+| `pnpm run audit:prod` | 0 | nothing at moderate or above |
+| `pnpm run audit:tree` | 0 | nothing at high or above |
+| `git diff --check` | 0 | clean |
+| `pnpm run test:security` ×3 | 0, 0, 0 | 14/14 sub-gates, **326 tests**, each run |
+| `pnpm run test:concurrency` ×3 | 0, 0, 0 | **17 tests**, each run |
+
+GATE-SEC sub-gates, identical across all three runs: SEC-ROLE 12, SEC-RLS 31, SEC-ACL-MATRIX 113,
+SEC-OWNERSHIP 10, SEC-MAINTENANCE 24, SEC-STARTUP 13, SEC-STARTUP-WORKER 4, **SEC-REGRESSION 23**
+(9 before this repair, because two suites were excluded), SEC-AUDIT 42, SEC-PARTITION 14,
+SEC-POLICE-ISOLATION 7, SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6.
+
+#### External and manual actions still pending
+
+- **Selecting `GATE-SEC` as a required GitHub status check** — still pending; the job must run on
+  GitHub at least once before it can be selected, and nothing has been pushed.
+- `DSR-01` remains **OPEN — contained**.
 - Eleven EXT gates remain seeded closed; seventeen P1 items remain open, including P1-10.
 
 ---

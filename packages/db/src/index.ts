@@ -20,12 +20,14 @@ export type {
 export {
   ALLOWED_MIGRATION_CLOSURE,
   FORBIDDEN_FOR_RUNTIME,
+  INTENDED_MEMBERSHIP_OPTIONS,
   PrincipalError,
   assertMigrationPrincipal,
+  assertRuntimeContainment,
   assertRuntimePrincipal,
   readPrincipalFacts,
 } from './principal-guard';
-export type { PrincipalFacts, ReachableRole } from './principal-guard';
+export type { DirectMembership, PrincipalFacts, ReachableRole } from './principal-guard';
 export { DATABASE_ROLES, ROLES_WITHOUT_BYPASSRLS } from './roles';
 export type { DatabaseRole } from './roles';
 export {

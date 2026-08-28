@@ -20,7 +20,7 @@
       "outputs": []
     },
     "test:migrations": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["build", "^build"],
       "outputs": [],
       "cache": false,
       "env": ["DATABASE_URL"]
@@ -40,13 +40,13 @@
       "env": ["DATABASE_URL"]
     },
     "test:concurrency": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["build", "^build"],
       "outputs": [],
       "cache": false,
       "env": ["DATABASE_URL"]
     },
     "test:regression": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["build", "^build"],
       "outputs": [],
       "cache": false,
       "env": ["DATABASE_URL"]

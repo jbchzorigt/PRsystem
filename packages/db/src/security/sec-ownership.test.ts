@@ -1,10 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TEST_LOGIN_PASSWORD, createTestDatabase } from '@prsystem/testing';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
+import { inStartOrder, runChildRace } from '../test-support/child-race';
 
 /**
  * SEC-OWNERSHIP — who owns every kernel object, and that bootstrap is genuinely
@@ -165,110 +164,32 @@ describe('object ownership', () => {
 describe('concurrent bootstrap across independent processes', () => {
   it('lets two processes bootstrap two databases with observable overlap', async () => {
     const cwd = resolve(__dirname, '..', '..');
-    // Plain node against a plain CommonJS child. No TypeScript loader: every
-    // loader wrapper re-spawns a grandchild, and the handshake below does not
-    // survive that hop.
-    const script = resolve(cwd, 'test-support', 'bootstrap-once.cjs');
-    if (!existsSync(script)) throw new Error(`bootstrap child is missing: ${script}`);
-
     const dbs = await Promise.all([
       createTestDatabase('boot_race_a'),
       createTestDatabase('boot_race_b'),
     ]);
-    let children: ReturnType<typeof spawn>[] = [];
 
     try {
-      // Spawned asynchronously and both started before either is awaited.
-      // `spawnSync` in a `.map()` runs them one after another, which proves
-      // nothing about contention on the cluster-wide role catalog.
-      children = dbs.map((db) =>
-        spawn(process.execPath, [script], {
-          cwd,
-          env: {
-            ...process.env,
-            BOOTSTRAP_DATABASE_URL: db.url,
-            BOOTSTRAP_TARGET_DATABASE: db.name,
-            BOOTSTRAP_TEST_PASSWORD: TEST_LOGIN_PASSWORD,
-            BOOTSTRAP_WAIT_FOR_START: '1',
-          },
-          stdio: ['pipe', 'pipe', 'pipe'],
-        }),
-      );
-
-      // A child that fails to start emits `error` and never `data`; without this
-      // listener the wait below would spin until the suite timed out, with no
-      // indication of why.
-      const startupErrors: string[] = [];
-      for (const child of children) {
-        child.on('error', (error) => startupErrors.push(error.message));
-      }
-
-      const collected = children.map((child) => {
-        const state = { out: '', err: '', ready: false };
-        child.stdout.on('data', (chunk: Buffer) => {
-          state.out += chunk.toString('utf8');
-          if (state.out.includes('READY')) state.ready = true;
-        });
-        child.stderr.on('data', (chunk: Buffer) => {
-          state.err += chunk.toString('utf8');
-        });
-        return state;
-      });
-
-      // Both must be up and waiting before either is released.
-      const deadline = Date.now() + 20_000;
-      while (!collected.every((c) => c.ready)) {
-        if (startupErrors.length > 0) {
-          throw new Error(`a bootstrap child failed to start: ${startupErrors.join('; ')}`);
-        }
-        if (Date.now() > deadline) {
-          throw new Error(
-            `a bootstrap child never signalled READY: ${JSON.stringify(
-              collected.map((c) => ({ out: c.out.slice(0, 200), err: c.err.slice(0, 200) })),
-            )}`,
-          );
-        }
-        await new Promise((r) => setTimeout(r, 50));
-      }
-
-      for (const child of children) child.stdin.write('go\n');
-
-      const exits = await Promise.all(
-        children.map(
-          (child) =>
-            new Promise<number>((resolveExit) => {
-              // Bounded: a child that never exits must fail this test, not hang
-              // the suite until the runner is killed from outside.
-              const timer = setTimeout(() => {
-                child.kill('SIGKILL');
-                resolveExit(-2);
-              }, 30_000);
-              child.on('close', (code) => {
-                clearTimeout(timer);
-                resolveExit(code ?? -1);
-              });
-            }),
-        ),
-      );
-
-      for (const [index, code] of exits.entries()) {
-        expect({ child: index, code, stderr: collected[index]!.err.slice(0, 400) }).toEqual({
-          child: index,
-          code: 0,
-          stderr: '',
-        });
-      }
-
-      const reports = collected.map((c) => {
-        const line = c.out.split('\n').find((l) => l.startsWith('{'));
-        return JSON.parse(line ?? '{}') as { pid: number; enteredAt: number; leftAt: number };
+      // Two OS processes, released together by the parent. `spawnSync` in a
+      // `.map()` runs them one after another, which proves nothing about
+      // contention on the cluster-wide role catalogue.
+      const reports = await runChildRace({
+        script: resolve(cwd, 'test-support', 'bootstrap-once.cjs'),
+        cwd,
+        envs: dbs.map((db) => ({
+          BOOTSTRAP_DATABASE_URL: db.url,
+          BOOTSTRAP_TARGET_DATABASE: db.name,
+          BOOTSTRAP_TEST_PASSWORD: TEST_LOGIN_PASSWORD,
+          BOOTSTRAP_WAIT_FOR_START: '1',
+        })),
+        exitTimeoutMs: 30_000,
       });
 
       // Two genuinely different OS processes…
       expect(reports[0]!.pid).not.toBe(reports[1]!.pid);
       // …whose bootstrap windows overlap in wall-clock time. Without overlap
       // this is a sequential test wearing a concurrent name.
-      const [first, second] = reports.sort((a, b) => a.enteredAt - b.enteredAt);
+      const [first, second] = inStartOrder(reports);
       expect(second!.enteredAt).toBeLessThanOrEqual(first!.leftAt);
 
       // Both databases ended up correctly hardened.
@@ -283,9 +204,6 @@ describe('concurrent bootstrap across independent processes', () => {
         }).toEqual({ database: db.name, hardened: true });
       }
     } finally {
-      // Nothing may outlive the test: children first, then every pool, then the
-      // databases they were connected to.
-      for (const child of children ?? []) child.kill('SIGKILL');
       await Promise.all(dbs.map((db) => db.drop()));
     }
   }, 120000);

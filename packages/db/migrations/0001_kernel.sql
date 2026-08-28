@@ -435,6 +435,52 @@ CREATE TABLE platform.job_run (
 CREATE INDEX job_run_name_idx ON platform.job_run (job_name, started_at DESC);
 --> statement-breakpoint
 
+-- Job rows are the authorisation input for cross-tenant maintenance, so the
+-- fields that decide "may this run" must not be editable by the principal being
+-- authorised. Column grants stop a worker naming a different job or a different
+-- identity; this trigger stops the transitions those grants cannot express.
+CREATE OR REPLACE FUNCTION platform.job_run_transition_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  -- Identity is fixed at creation. A job whose name or owner can change is a
+  -- bearer token, not a record.
+  IF NEW.job_run_id IS DISTINCT FROM OLD.job_run_id
+     OR NEW.hotel_id IS DISTINCT FROM OLD.hotel_id
+     OR NEW.job_name IS DISTINCT FROM OLD.job_name
+     OR NEW.job_identity IS DISTINCT FROM OLD.job_identity
+     OR NEW.started_at IS DISTINCT FROM OLD.started_at THEN
+    RAISE EXCEPTION
+      'job_run identity is immutable: job_run_id, hotel_id, job_name, job_identity and started_at cannot change'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Terminal is terminal. Without this a completed job could be reset to
+  -- running and replayed, which is the same effect the idempotency rules exist
+  -- to prevent.
+  IF OLD.state <> 'running' AND NEW.state IS DISTINCT FROM OLD.state THEN
+    RAISE EXCEPTION 'job % is already %; a terminal job cannot transition to %',
+      OLD.job_run_id, OLD.state, NEW.state USING ERRCODE = '22023';
+  END IF;
+
+  IF OLD.state = 'running' AND NEW.state NOT IN ('running', 'succeeded', 'failed') THEN
+    RAISE EXCEPTION 'unknown job state %', NEW.state USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.job_run_transition_guard() OWNER TO prsystem_migrate;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.job_run_transition_guard() FROM PUBLIC;
+--> statement-breakpoint
+
+CREATE TRIGGER job_run_transition_guard
+  BEFORE UPDATE ON platform.job_run
+  FOR EACH ROW EXECUTE FUNCTION platform.job_run_transition_guard();
+--> statement-breakpoint
+
 CREATE TABLE platform.export_artifact (
   export_id    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   hotel_id     uuid NOT NULL,
@@ -1111,7 +1157,12 @@ GRANT SELECT, INSERT, UPDATE ON platform.idempotency_key TO prsystem_api, prsyst
 GRANT SELECT, INSERT ON platform.outbox_event TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
 -- No INSERT: delivery rows are created only by the append-only event trigger.
-GRANT SELECT, UPDATE ON platform.outbox_delivery TO prsystem_api, prsystem_worker;
+-- The relay is a worker concern. The API has no code path that claims, publishes
+-- or fails a delivery, so it holds read visibility only; the worker keeps the
+-- UPDATE its claim/CAS/publish/fail transitions actually need.
+GRANT SELECT ON platform.outbox_delivery TO prsystem_api;
+--> statement-breakpoint
+GRANT SELECT, UPDATE ON platform.outbox_delivery TO prsystem_worker;
 --> statement-breakpoint
 GRANT SELECT, INSERT ON platform.inbox_consumption TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
@@ -1119,7 +1170,14 @@ GRANT SELECT, INSERT ON platform.provider_event TO prsystem_api, prsystem_worker
 --> statement-breakpoint
 GRANT SELECT ON platform.job_run, platform.export_artifact TO prsystem_api;
 --> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE ON platform.job_run, platform.export_artifact TO prsystem_worker;
+GRANT SELECT, INSERT, UPDATE ON platform.export_artifact TO prsystem_worker;
+--> statement-breakpoint
+-- Column-scoped, not table-wide. The worker records how its own job ended; it
+-- cannot restate which job it was or whose identity it ran under, which is what
+-- platform.maintenance_expire_idempotency_keys authorises on.
+GRANT SELECT, INSERT ON platform.job_run TO prsystem_worker;
+--> statement-breakpoint
+GRANT UPDATE (state, finished_at, error_name, as_of) ON platform.job_run TO prsystem_worker;
 --> statement-breakpoint
 GRANT SELECT ON platform.projection_checkpoint, platform.projection_freshness
   TO prsystem_api, prsystem_worker;
@@ -1207,7 +1265,9 @@ GRANT USAGE ON SCHEMA audit TO prsystem_maintenance_fn;
 GRANT EXECUTE ON FUNCTION audit.append_platform_audit_event(text, text, text, text, text, jsonb)
   TO prsystem_maintenance_fn;
 --> statement-breakpoint
-GRANT SELECT, UPDATE ON platform.job_run TO prsystem_maintenance_fn;
+GRANT SELECT ON platform.job_run TO prsystem_maintenance_fn;
+--> statement-breakpoint
+GRANT UPDATE (state, finished_at, error_name) ON platform.job_run TO prsystem_maintenance_fn;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION platform.current_realm(), platform.current_actor_ref(),
   platform.maintenance_job_name()

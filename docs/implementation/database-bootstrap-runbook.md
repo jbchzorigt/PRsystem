@@ -44,7 +44,16 @@ and refuses to run when it is missing or unsafe. It never creates it.
 Ten group roles in total.
 
 Every LOGIN principal is `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
-NOBYPASSRLS` and is a member of **exactly one** group.
+NOBYPASSRLS` and is a member of **exactly one** group, with exactly the options
+`ADMIN FALSE, INHERIT TRUE, SET TRUE`.
+
+PostgreSQL 17 models MEMBER, USAGE (inheritance), SET and ADMIN as independent
+capabilities, and **keeps the options a later `GRANT` does not mention**. A bare
+`GRANT g TO m` therefore cannot clear an ADMIN OPTION an earlier grant set, so
+bootstrap states all three explicitly and then re-reads `pg_auth_members` to
+prove the result rather than assuming it. `ADMIN TRUE, INHERIT FALSE, SET FALSE`
+is the case that matters most: it confers no privilege and permits no `SET ROLE`,
+yet lets its holder grant the role to anybody, itself included.
 
 `prsystem_maintenance` is the only role holding `BYPASSRLS`. It owns no object,
 holds **no standing grant of any kind** — not even `USAGE` on a schema — no

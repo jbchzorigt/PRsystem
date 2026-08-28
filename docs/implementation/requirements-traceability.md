@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.6 (Phase 03 third security repair — startup ordering, migration equivalence and maintenance accountability)
+**Version:** 1.7 (Phase 03 fourth security repair — membership options, gate reproducibility and regression coverage)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -151,6 +151,9 @@ artefacts below are the traceable output.
 | 03 | Startup refuses before a listener is bound and before Redis or BullMQ is reached: the API principal and key-management guards run first, and worker startup is an injectable orchestration boundary | `apps/api/src/bootstrap.ts`, `apps/worker/src/startup.ts` | `GATE-SEC` / `SEC-STARTUP` (`apps/api/src/security/startup-order.test.ts`), `GATE-SEC` / `SEC-STARTUP-WORKER` (`apps/worker/src/startup.test.ts`) |
 | 03 | Fresh migration and upgrade migration reach an equivalent schema, compared over a fingerprint sensitive to function bodies, view definitions and grants (CLAUDE.md §10) | `packages/db/migrations/`, `packages/db/src/test-support/frozen-baseline/` | `pnpm run test:migrations` (`schemaFingerprint`, `schema fingerprint sensitivity`) |
 | 03 | Cross-tenant maintenance runs as a `SECURITY DEFINER` function owned by `prsystem_maintenance_fn`; the break-glass role owns nothing and holds no standing grant ([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) §§4–5, 7) | `platform.maintenance_expire_idempotency_keys`, `packages/db/bootstrap/cluster-roles.sql` | `GATE-SEC` / `SEC-MAINTENANCE`, `GATE-SEC` / `SEC-OWNERSHIP` |
+| 03 | Exact PostgreSQL 17 role membership: MEMBER, USAGE, SET and ADMIN modelled separately, every approved edge normalised to `ADMIN FALSE, INHERIT TRUE, SET TRUE`, and a migration refused while any runtime principal can reach an owner role | `packages/db/src/principal-guard.ts`, `packages/db/src/bootstrap.ts` | `GATE-SEC` / `SEC-REGRESSION` (`phase03-repair3.test.ts`), `GATE-SEC` / `SEC-ROLE` |
+| 03 | Job rows are not editable by the principal they authorise: identity columns immutable, terminal states terminal, worker `UPDATE` column-scoped | `platform.job_run_transition_guard`, `packages/db/migrations/0001_kernel.sql` | `GATE-SEC` / `SEC-MAINTENANCE`, `GATE-SEC` / `SEC-ACL-MATRIX` |
+| 03 | Every gate builds the checked-out source before consuming generated JavaScript, and no security regression suite can be omitted from GATE-SEC | `turbo.json`, `package.json`, `tools/gate-sec-config.mjs`, `tools/regression-manifest.mjs` | `pnpm run validate:regression-coverage`, clean-checkout CI-equivalent run |
 
 Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions remains `PENDING` after
 them. Phase 04 is the first phase to move a decision to `COVERED`.

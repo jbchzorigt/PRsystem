@@ -8,7 +8,10 @@ import { claimIdempotencyKey, completeIdempotencyKey } from '../kernel/idempoten
 import { appendOutboxEvent, claimOutboxBatch, markOutboxPublished } from '../kernel/outbox';
 import { claimConsumption, registerProviderEvent } from '../kernel/inbox';
 import { recordPlatformAudit } from '../kernel/audit';
+import { resolve } from 'node:path';
 import { runMigrations } from '../migrate';
+import { inStartOrder, runChildRace } from '../test-support/child-race';
+import { schemaFingerprint } from '../test-support/schema-fingerprint';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
 import type { LoginPrincipal } from '../bootstrap';
 import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
@@ -666,9 +669,11 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
   }, 60000);
 
   it('lets exactly one of two concurrent runners populate an empty database', async () => {
-    // The already-migrated case above only proves two no-ops do not collide. The
-    // contended case is an empty ledger, where both runners have real work to do
-    // and the advisory lock must make exactly one of them do it.
+    // Two independent OS processes, released together by the parent. Awaiting
+    // two `runMigrations` calls in one event loop cannot show that either runner
+    // ever waited on the advisory lock; the overlap assertion below fails if the
+    // two runs are sequential, which is what makes this evidence rather than a
+    // description.
     const fresh = await createTestDatabase('kernel_conc_empty');
     try {
       await bootstrapCluster({
@@ -680,19 +685,59 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
         })),
       });
       const url = fresh.loginUrl(TEST_LOGIN_PRINCIPALS.migrate);
+      const cwd = resolve(__dirname, '..', '..');
 
-      const [first, second] = await Promise.all([runMigrations(url), runMigrations(url)]);
+      const reports = await runChildRace({
+        script: resolve(cwd, 'test-support', 'migrate-once.cjs'),
+        cwd,
+        envs: [
+          { MIGRATE_DATABASE_URL: url, MIGRATE_WAIT_FOR_START: '1' },
+          { MIGRATE_DATABASE_URL: url, MIGRATE_WAIT_FOR_START: '1' },
+        ],
+        exitTimeoutMs: 120_000,
+      });
 
-      // `appliedBefore` is read after the lock is held, so the runner that waits
-      // sees the journal already applied and applies nothing.
-      const applied = [first, second].map((r) => r.appliedAfter - r.appliedBefore);
+      // Two genuinely distinct OS processes, hence two distinct backends.
+      expect(reports[0]!.pid).not.toBe(reports[1]!.pid);
+
+      // Observable overlap: the second runner entered before the first left, so
+      // it really did contend for the lock. Sequential execution fails here.
+      const [first, second] = inStartOrder(reports);
+      expect(second!.enteredAt).toBeLessThanOrEqual(first!.leftAt);
+
+      // Exactly one application and one safe no-op.
+      const applied = reports.map((r) => Number(r['appliedAfter']) - Number(r['appliedBefore']));
       expect(applied.filter((n) => n > 0)).toHaveLength(1);
       expect(applied.filter((n) => n === 0)).toHaveLength(1);
-      // Both agree on the final ledger, and it is not empty.
-      expect(first.appliedAfter).toBe(second.appliedAfter);
-      expect(first.appliedAfter).toBeGreaterThan(0);
+      expect(Number(reports[0]!['appliedAfter'])).toBe(Number(reports[1]!['appliedAfter']));
+      expect(Number(reports[0]!['appliedAfter'])).toBeGreaterThan(0);
+
+      // And the database the racers produced is the one a single run produces.
+      const solo = await createTestDatabase('kernel_conc_solo');
+      try {
+        await bootstrapCluster({
+          adminUrl: solo.url,
+          database: solo.name,
+          logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+            principal,
+            password: TEST_LOGIN_PASSWORD,
+          })),
+        });
+        await runMigrations(solo.loginUrl(TEST_LOGIN_PRINCIPALS.migrate));
+
+        const raced = new Pool({ connectionString: fresh.url, max: 1 });
+        const single = new Pool({ connectionString: solo.url, max: 1 });
+        try {
+          expect(await schemaFingerprint(raced)).toBe(await schemaFingerprint(single));
+        } finally {
+          await raced.end();
+          await single.end();
+        }
+      } finally {
+        await solo.drop();
+      }
     } finally {
       await fresh.drop();
     }
-  }, 180000);
+  }, 240000);
 });

@@ -174,14 +174,59 @@ describe('authorisation', () => {
     });
   });
 
-  it('refuses a job belonging to another tenant', async () => {
+  it('refuses a real job belonging to another tenant, and leaves it untouched', async () => {
+    // A nonexistent UUID proves only that the lookup fails. The case that
+    // matters is a job that genuinely exists, is genuinely valid, and belongs to
+    // somebody else: the refusal must come from tenant scope, not from absence.
+    const otherHotel = '4d4d4d4d-4d4d-4d4d-8d4d-4d4d4d4d4d4d';
+    const foreignJob = await committed({ hotel: otherHotel }, async (q) => {
+      const job = await q(
+        `INSERT INTO platform.job_run (hotel_id, job_name, job_identity)
+         VALUES ($1, $2, $3) RETURNING job_run_id::text AS id`,
+        [otherHotel, JOB_NAME, ACTOR],
+      );
+      return String(job.rows[0]?.['id']);
+    });
+    // Tenant B also has an expired key, so a leak would have something to delete.
+    await committed({ hotel: otherHotel }, (q) =>
+      q(
+        `INSERT INTO platform.idempotency_key
+           (hotel_id, realm, actor_ref, client_ref, operation, idempotency_key, request_hash,
+            state, response_status, completed_at, expires_at)
+         VALUES ($1,'hotel','a','c','op.expire','idem-expired-tenant-b', repeat('d',64),
+                 'succeeded', 200, now(), now() - interval '1 day')`,
+        [otherHotel],
+      ),
+    );
+
+    // Invoked under tenant A, naming tenant B's job.
     await attempted({}, async (q) => {
       await expect(
-        q('SELECT platform.maintenance_expire_idempotency_keys($1)', [
-          '00000000-0000-4000-8000-000000000099',
-        ]),
-      ).rejects.toThrow(/no job_run/i);
+        q('SELECT platform.maintenance_expire_idempotency_keys($1)', [foreignJob]),
+      ).rejects.toMatchObject({ code: '22023', message: expect.stringMatching(/no job_run/i) });
     });
+
+    // Tenant B's job is exactly as it was: still running, never finished.
+    const job = await env.admin.query(
+      `SELECT state, finished_at FROM platform.job_run WHERE job_run_id = $1`,
+      [foreignJob],
+    );
+    expect(job.rows[0]).toMatchObject({ state: 'running', finished_at: null });
+
+    // Tenant B's expired key was not swept by tenant A's invocation.
+    const key = await env.admin.query(
+      `SELECT count(*)::int AS n FROM platform.idempotency_key
+        WHERE hotel_id = $1 AND idempotency_key = 'idem-expired-tenant-b'`,
+      [otherHotel],
+    );
+    expect(Number(key.rows[0]?.['n'])).toBe(1);
+
+    // And no audit event claims the sweep happened.
+    const audit = await env.auditReader.query(
+      `SELECT count(*)::int AS n FROM audit.platform_event WHERE target_ref = $1`,
+      [foreignJob],
+    );
+    expect(Number(audit.rows[0]?.['n'])).toBe(0);
   });
 
   it('refuses a job of the wrong type', async () => {
@@ -259,7 +304,29 @@ describe('a successful run is accountable and atomic', () => {
     const poolA = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
     const poolB = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
     try {
-      const invoke = async (pool: Pool): Promise<{ pid: number; ok: boolean }> => {
+      // Released only once both callers are inside their transaction with the
+      // tenant context applied, so neither can finish before the other starts.
+      let arrived = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const barrier = (): Promise<void> => {
+        arrived += 1;
+        if (arrived >= 2) release();
+        return gate;
+      };
+
+      interface Attempt {
+        pid: number;
+        ok: boolean;
+        code?: string;
+        message?: string;
+        enteredAt: number;
+        leftAt: number;
+      }
+
+      const invoke = async (pool: Pool): Promise<Attempt> => {
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
@@ -272,15 +339,24 @@ describe('a successful run is accountable and atomic', () => {
             await client.query('SELECT set_config($1, $2, true)', [k, v]);
           }
           const pid = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          await barrier();
+          const enteredAt = Date.now();
           try {
             await client.query('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [
               job,
             ]);
             await client.query('COMMIT');
-            return { pid: pid.rows[0]!.pid, ok: true };
-          } catch {
+            return { pid: pid.rows[0]!.pid, ok: true, enteredAt, leftAt: Date.now() };
+          } catch (error) {
             await client.query('ROLLBACK');
-            return { pid: pid.rows[0]!.pid, ok: false };
+            return {
+              pid: pid.rows[0]!.pid,
+              ok: false,
+              code: (error as { code?: string }).code,
+              message: (error as Error).message,
+              enteredAt,
+              leftAt: Date.now(),
+            };
           }
         } finally {
           client.release();
@@ -289,8 +365,17 @@ describe('a successful run is accountable and atomic', () => {
 
       const [a, b] = await Promise.all([invoke(poolA), invoke(poolB)]);
       expect(a.pid).not.toBe(b.pid);
+      // Observable overlap: both were inside the critical section together.
+      const [first, second] = [a, b].sort((x, y) => x.enteredAt - y.enteredAt);
+      expect(second!.enteredAt).toBeLessThanOrEqual(first!.leftAt);
       // The FOR UPDATE lock serialises them; the loser finds the job closed.
       expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+      // And it lost for the intended reason. An unrelated failure — a deadlock,
+      // a permission error, a serialisation abort — is not a valid loser, so the
+      // SQLSTATE and message are asserted rather than any error being accepted.
+      const loser = a.ok ? b : a;
+      expect(loser.code).toBe('22023');
+      expect(loser.message).toMatch(/already succeeded|cannot be replayed/i);
     } finally {
       await poolA.end();
       await poolB.end();
@@ -362,4 +447,178 @@ describe('an audit failure rolls the whole operation back', () => {
     );
     expect(alertsAfter.rows[0]?.count).toBe(alertsBefore.rows[0]?.count);
   }, 60000);
+});
+
+describe('job_run state integrity', () => {
+  /** Reads one job row through the superuser connection, bypassing the grants under test. */
+  async function readJob(id: string): Promise<Record<string, unknown>> {
+    const row = await env.admin.query(
+      `SELECT job_name, job_identity, state, finished_at FROM platform.job_run WHERE job_run_id = $1`,
+      [id],
+    );
+    return row.rows[0] as Record<string, unknown>;
+  }
+
+  it('lets the worker record how its own job ended', async () => {
+    // The positive control. Without it, every refusal below could be explained
+    // by the worker having lost the ability to write job rows at all.
+    const id = await seedJob();
+
+    await committed({}, (q) =>
+      q(
+        `UPDATE platform.job_run SET state = 'succeeded', finished_at = now() WHERE job_run_id = $1`,
+        [id],
+      ),
+    );
+
+    const after = await readJob(id);
+    expect(after['state']).toBe('succeeded');
+    expect(after['finished_at']).not.toBeNull();
+  });
+
+  it('lets the worker record a failure with an error name', async () => {
+    const id = await seedJob();
+
+    await committed({}, (q) =>
+      q(
+        `UPDATE platform.job_run SET state = 'failed', finished_at = now(), error_name = $2
+          WHERE job_run_id = $1`,
+        [id, 'SomeError'],
+      ),
+    );
+
+    expect((await readJob(id))['state']).toBe('failed');
+  });
+
+  it('refuses to let the worker rename the job it is running', async () => {
+    // job_name is what maintenance_expire_idempotency_keys authorises on, so a
+    // worker that could rewrite it could authorise itself for any job type.
+    const id = await seedJob('platform.maintenance.something_else');
+
+    await expect(
+      attempted({}, (q) =>
+        q(`UPDATE platform.job_run SET job_name = $2 WHERE job_run_id = $1`, [id, JOB_NAME]),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    expect((await readJob(id))['job_name']).toBe('platform.maintenance.something_else');
+  });
+
+  it('refuses to let the worker reassign the job identity', async () => {
+    const id = await seedJob(JOB_NAME, 'someone-else');
+
+    await expect(
+      attempted({}, (q) =>
+        q(`UPDATE platform.job_run SET job_identity = $2 WHERE job_run_id = $1`, [id, ACTOR]),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    expect((await readJob(id))['job_identity']).toBe('someone-else');
+  });
+
+  it('refuses to move a hotel_id, even to the same value', async () => {
+    const id = await seedJob();
+    await expect(
+      attempted({}, (q) =>
+        q(`UPDATE platform.job_run SET hotel_id = hotel_id WHERE job_run_id = $1`, [id]),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('refuses to return a terminal job to running', async () => {
+    // The replay path: finish a job, then reset it so the maintenance function
+    // accepts it a second time.
+    const id = await seedJob();
+    await committed({}, (q) =>
+      q(
+        `UPDATE platform.job_run SET state = 'succeeded', finished_at = now() WHERE job_run_id = $1`,
+        [id],
+      ),
+    );
+
+    await expect(
+      attempted({}, (q) =>
+        q(
+          `UPDATE platform.job_run SET state = 'running', finished_at = NULL WHERE job_run_id = $1`,
+          [id],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '22023' });
+
+    expect((await readJob(id))['state']).toBe('succeeded');
+  });
+
+  it('refuses to flip one terminal state to the other', async () => {
+    const id = await seedJob();
+    await committed({}, (q) =>
+      q(`UPDATE platform.job_run SET state = 'failed', finished_at = now() WHERE job_run_id = $1`, [
+        id,
+      ]),
+    );
+
+    await expect(
+      attempted({}, (q) =>
+        q(`UPDATE platform.job_run SET state = 'succeeded' WHERE job_run_id = $1`, [id]),
+      ),
+    ).rejects.toMatchObject({ code: '22023' });
+  });
+
+  it('refuses an unknown state', async () => {
+    const id = await seedJob();
+    await expect(
+      attempted({}, (q) =>
+        q(`UPDATE platform.job_run SET state = 'cancelled' WHERE job_run_id = $1`, [id]),
+      ),
+      // The table check constraint and the transition guard both reject it.
+    ).rejects.toMatchObject({
+      code: expect.stringMatching(/^(22023|23514)$/) as unknown as string,
+    });
+  });
+});
+
+describe('outbox delivery least privilege', () => {
+  it('refuses an API attempt to claim a delivery', async () => {
+    // The relay is a worker concern; the API has no code path that transitions a
+    // delivery, so it holds no UPDATE.
+    const client = await env.api.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL]);
+      await expect(
+        client.query(`UPDATE platform.outbox_delivery SET state = 'claimed'`),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it('still lets the API read delivery state', async () => {
+    // The positive control for the grant above: SELECT is retained deliberately.
+    const client = await env.api.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL]);
+      const rows = await client.query(`SELECT count(*)::int AS n FROM platform.outbox_delivery`);
+      expect(Number(rows.rows[0]?.['n'])).toBeGreaterThanOrEqual(0);
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it('still lets the worker transition a delivery', async () => {
+    const client = await env.worker.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL]);
+      const affected = await client.query(
+        `UPDATE platform.outbox_delivery SET available_at = available_at`,
+      );
+      expect(affected.rowCount).not.toBeNull();
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  });
 });
