@@ -1154,10 +1154,10 @@ Measured on the tenth-repair tree. Every command exited 0.
 | Command | Result |
 | --- | --- |
 | `node tools/validate-governance.mjs` | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | 17 of 17 drift fixtures caught |
+| `node tools/validate-governance.fixtures.mjs` | 18 of 18 drift fixtures caught |
 | `node tools/validate-secret-scan.fixtures.mjs` | 6 of 6 correct |
 | `node tools/validate-workspace.mjs` | 15 of 15 |
-| `node tools/scan-secrets.mjs` | 327 tracked text files, none reported |
+| `node tools/scan-secrets.mjs` | 328 tracked text files, none reported |
 | `pnpm run format:check` | clean |
 | `pnpm run lint` | 16 of 16 projects |
 | `pnpm run typecheck` | 25 of 25 graphs |
@@ -1172,7 +1172,7 @@ Measured on the tenth-repair tree. Every command exited 0.
 | `node tools/validate-regression-coverage.mjs` | 249 of 249 |
 | `node tools/validate-regression-coverage.fixtures.mjs` | 44 of 44 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | 12 of 12, four fixtures |
-| `pnpm run test:security` (three runs) | 18 of 18 sub-gates, 494, each run |
+| `pnpm run test:security` (three runs) | 18 of 18 sub-gates, 488, each run |
 | `pnpm run test:e2e` | 15 |
 | `pnpm run audit:prod` | no known vulnerabilities |
 | `pnpm run audit:tree` | none at high or critical; one moderate, DSR-01 |
