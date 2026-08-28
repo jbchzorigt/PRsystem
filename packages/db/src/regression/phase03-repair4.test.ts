@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, Pool } from 'pg';
+import type { Pool } from 'pg';
+import { Client } from 'pg';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -7,6 +8,7 @@ import {
   TEST_LOGIN_PRINCIPALS,
   adminUrl,
   createTestDatabase,
+  quietPool,
 } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
@@ -58,7 +60,7 @@ beforeAll(async () => {
   await runMigrations(migrateUrl);
 
   for (const [key, principal] of Object.entries(TEST_LOGIN_PRINCIPALS)) {
-    pools.set(key, new Pool({ connectionString: db.loginUrl(principal), max: 1 }));
+    pools.set(key, quietPool({ connectionString: db.loginUrl(principal), max: 1 }));
   }
 
   admin = new Client({ connectionString: adminUrl() });

@@ -8,6 +8,7 @@ export {
   adminUrl,
   createRolePool,
   createTestDatabase,
+  quietPool,
   testDatabaseName,
 } from './pg-harness';
 export type { TestDatabase } from './pg-harness';

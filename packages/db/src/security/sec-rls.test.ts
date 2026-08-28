@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
 import { TABLE_CLASSIFICATION } from '../classification';
@@ -8,6 +8,7 @@ import { PLATFORM_SCOPE, assertTenantContext } from '../tenant-context';
 import { withTenantTransaction } from '../unit-of-work';
 import { appendOutboxEvent } from '../kernel/outbox';
 import { STRUCTURAL_SQLSTATES, TENANT_ROW_SPECS } from '../test-support/tenant-rows';
+import { quietPool } from '@prsystem/testing';
 
 /**
  * SEC-RLS — tenant isolation as the runtimes actually experience it.
@@ -270,7 +271,7 @@ describe('tenant isolation across CRUD, per runtime login', () => {
     // and it must be refused by the policy itself. The owner is used because
     // FORCE ROW LEVEL SECURITY means even it cannot escape, and because no
     // runtime login holds INSERT at all.
-    const owner = new Pool({ connectionString: env.migrateUrl, max: 1 });
+    const owner = quietPool({ connectionString: env.migrateUrl, max: 1 });
     try {
       // Seeded in tenant B's own scope and committed. The delivery row the
       // definer trigger creates is removed here, so the insert below must fail
@@ -324,7 +325,7 @@ describe('tenant isolation across CRUD, per runtime login', () => {
   });
 
   it('applies the policy to the table owner too (FORCE)', async () => {
-    const owner = new Pool({ connectionString: env.migrateUrl, max: 1 });
+    const owner = quietPool({ connectionString: env.migrateUrl, max: 1 });
     try {
       const client = await owner.connect();
       try {
@@ -440,7 +441,7 @@ describe('scope cleanup', () => {
   });
 
   it('leaves no scope on a pooled connection reused by the next borrower', async () => {
-    const single = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+    const single = quietPool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
     try {
       await withTenantTransaction(single, ctx(HOTEL_A), async () => undefined);
       const client = await single.connect();

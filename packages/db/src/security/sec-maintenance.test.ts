@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
+import { quietPool } from '@prsystem/testing';
 
 /**
  * SEC-MAINTENANCE — a maintenance action is accountable, authorised and atomic,
@@ -353,12 +353,15 @@ describe('a successful run is accountable and atomic', () => {
     const job = await seedJob();
     await seedExpired('idem-expired-lockwait');
 
-    const holder = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
-    const waiterPool = new Pool({
+    const holder = quietPool({
       connectionString: env.db.loginUrl('prsystem_worker_login'),
       max: 1,
     });
-    const observer = new Pool({ connectionString: env.db.url, max: 1 });
+    const waiterPool = quietPool({
+      connectionString: env.db.loginUrl('prsystem_worker_login'),
+      max: 1,
+    });
+    const observer = quietPool({ connectionString: env.db.url, max: 1 });
 
     const a = await holder.connect();
     const b = await waiterPool.connect();

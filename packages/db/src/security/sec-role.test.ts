@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
 import { GROUP_ROLES, LOGIN_PRINCIPALS, UNREACHABLE_ROLES } from '../bootstrap';
@@ -8,6 +8,7 @@ import {
   assertMigrationPrincipal,
   assertRuntimePrincipal,
 } from '../principal-guard';
+import { quietPool } from '@prsystem/testing';
 
 /**
  * SEC-ROLE — the cluster role model.
@@ -24,7 +25,7 @@ let migratePool: Pool;
 
 beforeAll(async () => {
   env = await provisionKernelDatabase('sec_role');
-  migratePool = new Pool({ connectionString: env.migrateUrl, max: 1 });
+  migratePool = quietPool({ connectionString: env.migrateUrl, max: 1 });
 }, 90000);
 
 afterAll(async () => {

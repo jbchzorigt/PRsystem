@@ -1,6 +1,10 @@
-import { Pool } from 'pg';
 import type { TestDatabase } from '@prsystem/testing';
-import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
+import {
+  TEST_LOGIN_PASSWORD,
+  TEST_LOGIN_PRINCIPALS,
+  createTestDatabase,
+  quietPool,
+} from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
 import type { LoginPrincipal } from '../bootstrap';
 import { runMigrations } from '../migrate';
@@ -31,7 +35,7 @@ export interface ProvisionedDatabase {
 }
 
 function loginPool(db: TestDatabase, principal: string, max = 6): Pool {
-  return new Pool({ connectionString: db.loginUrl(principal), max });
+  return quietPool({ connectionString: db.loginUrl(principal), max });
 }
 
 export async function provisionKernelDatabase(suite: string): Promise<ProvisionedDatabase> {

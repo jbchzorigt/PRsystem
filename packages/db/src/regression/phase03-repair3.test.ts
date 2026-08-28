@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, Pool } from 'pg';
+import { Client } from 'pg';
+import type { Pool } from 'pg';
 import {
   TEST_LOGIN_PASSWORD,
   TEST_LOGIN_PRINCIPALS,
   adminUrl,
   createTestDatabase,
+  quietPool,
 } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
@@ -46,7 +48,7 @@ beforeAll(async () => {
   await bootstrapCluster({ adminUrl: db.url, database: db.name, logins });
   migrateUrl = db.loginUrl(TEST_LOGIN_PRINCIPALS.migrate);
   await runMigrations(migrateUrl);
-  apiPool = new Pool({ connectionString: db.loginUrl(TEST_LOGIN_PRINCIPALS.api), max: 1 });
+  apiPool = quietPool({ connectionString: db.loginUrl(TEST_LOGIN_PRINCIPALS.api), max: 1 });
 
   admin = new Client({ connectionString: adminUrl() });
   await admin.connect();
@@ -258,7 +260,7 @@ describe('C3 — approved memberships are normalised to exact options', () => {
   }, 120000);
 
   it('accepts the migration principal once the cluster is contained', async () => {
-    const migratePool = new Pool({ connectionString: migrateUrl, max: 1 });
+    const migratePool = quietPool({ connectionString: migrateUrl, max: 1 });
     try {
       const facts = await assertMigrationPrincipal(migratePool);
       expect(facts.directMemberships).toHaveLength(1);

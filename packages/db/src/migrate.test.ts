@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { Pool } from 'pg';
-import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS } from '@prsystem/testing';
+import type { Pool } from 'pg';
+import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, quietPool } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from './bootstrap';
 import type { LoginPrincipal } from './bootstrap';
 import { MIGRATIONS_FOLDER, runMigrations } from './migrate';
@@ -76,7 +76,7 @@ function frozenBaselineChecksum(): string {
 }
 
 beforeAll(async () => {
-  admin = new Pool({ connectionString: ADMIN_URL, max: 1, connectionTimeoutMillis: 5000 });
+  admin = quietPool({ connectionString: ADMIN_URL, max: 1, connectionTimeoutMillis: 5000 });
   // Fails loudly when PostgreSQL is not running: this gate must never pass by skipping.
   await admin.query('SELECT 1');
   // PostgreSQL serialises CREATE DATABASE against its template, so a suite in
@@ -135,7 +135,7 @@ describe('migration runner', () => {
     expect(outcome.appliedBefore).toBe(0);
     expect(outcome.appliedAfter).toBe(2);
 
-    const pool = new Pool({ connectionString: freshUrl, max: 1 });
+    const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
       expect(freshLedger).toHaveLength(2);
@@ -175,8 +175,8 @@ describe('migration runner', () => {
   }, 120000);
 
   it('keeps the catalogue fingerprint as a supplementary check', async () => {
-    const fresh = new Pool({ connectionString: freshUrl, max: 1 });
-    const upgraded = new Pool({ connectionString: upgradeUrl, max: 1 });
+    const fresh = quietPool({ connectionString: freshUrl, max: 1 });
+    const upgraded = quietPool({ connectionString: upgradeUrl, max: 1 });
     try {
       expect(await schemaFingerprint(upgraded)).toBe(await schemaFingerprint(fresh));
     } finally {
@@ -189,7 +189,7 @@ describe('migration runner', () => {
     // A blocking drift check. The migration SQL is authoritative, so this fails
     // when the declaration falls behind it — which is the direction drift
     // actually travels.
-    const pool = new Pool({ connectionString: freshUrl, max: 1 });
+    const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       const declared = DECLARED_TABLES.flatMap((table) => {
         const config = getTableConfig(table);
@@ -221,7 +221,7 @@ describe('migration runner', () => {
   }, 60000);
 
   it('installs the extensions the data model depends on', async () => {
-    const pool = new Pool({ connectionString: freshUrl, max: 1 });
+    const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       const result = await pool.query<{ extname: string }>(
         "SELECT extname FROM pg_extension WHERE extname IN ('btree_gist', 'pgcrypto') ORDER BY extname",
@@ -233,7 +233,7 @@ describe('migration runner', () => {
   });
 
   it('creates no business-domain table', async () => {
-    const pool = new Pool({ connectionString: freshUrl, max: 1 });
+    const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       // The kernel owns platform, audit and police_audit. Anything outside those
       // schemas — or anything named after a business entity — is Phase 04+ scope
@@ -257,7 +257,7 @@ describe('migration runner', () => {
     expect(outcome.appliedBefore).toBe(2);
     expect(outcome.appliedAfter).toBe(2);
 
-    const pool = new Pool({ connectionString: freshUrl, max: 1 });
+    const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       // Not merely "the count is unchanged": the recorded rows must be untouched,
       // which proves the statements were skipped rather than replayed.
@@ -282,7 +282,7 @@ describe('schema fingerprint sensitivity', () => {
 
   beforeAll(async () => {
     await runMigrations(migrateUrl);
-    pool = new Pool({ connectionString: withDatabase(ADMIN_URL, SENSITIVITY_DATABASE), max: 1 });
+    pool = quietPool({ connectionString: withDatabase(ADMIN_URL, SENSITIVITY_DATABASE), max: 1 });
   }, 60000);
 
   afterAll(async () => {
@@ -513,7 +513,7 @@ describe('schema fingerprint sensitivity', () => {
 
 describe('server and extension evidence', () => {
   it('records the exact PostgreSQL version the gates ran against', async () => {
-    const pool = new Pool({
+    const pool = quietPool({
       connectionString: asMigrationLogin(withDatabase(ADMIN_URL, FRESH_DATABASE)),
       max: 1,
     });
@@ -581,7 +581,7 @@ describe('transactional failure recovery', () => {
 
       await expect(runMigrations(url, { migrationsFolder: folder })).rejects.toThrow();
 
-      const pool = new Pool({ connectionString: url, max: 1 });
+      const pool = quietPool({ connectionString: url, max: 1 });
       try {
         const leftover = await pool.query<{ count: string }>(
           `SELECT count(*)::text AS count FROM information_schema.tables

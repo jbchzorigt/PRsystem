@@ -842,6 +842,19 @@ The previous arrangement let the worker mint its own authorisation: it held unre
 - Adding `js-yaml@4.1.0` for the structural CI parse introduced two **high** advisories
   (GHSA-52cp-r559-cp3m, GHSA-5p4m-2wfm-xmqj). Caught by `audit:tree` in this repair's own validation
   run and fixed by pinning `js-yaml@4.3.2`; `audit:tree` is clean at high and above.
+- **A real flake in a blocking security gate.** Running GATE-SEC three consecutive times failed once,
+  and then — after a first, insufficient fix — failed again on a different sub-gate. In both cases
+  every test in the suite passed and the runner still exited non-zero, which GATE-SEC reported only
+  as `0/N failed`. The cause was a `pg.Pool` idle-client `error` event with no listener:
+  `DROP DATABASE ... WITH (FORCE)` terminates the backends a pool is still holding, and an `error`
+  event with no listener is a process-level exception raised *after* the tests have finished. Every
+  test pool now goes through `quietPool`, which handles idle-client errors while leaving query
+  rejections intact, and GATE-SEC now prints the runner's own output when a suite passes its tests
+  but exits non-zero. Five consecutive GATE-SEC runs are clean.
+
+  The first attempt at this fix — hardening the child-process pipe handling in the concurrency race —
+  addressed a genuine latent problem but was **not** the cause, and is recorded here as such rather
+  than as a success.
 
 #### Negative proofs executed
 

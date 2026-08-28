@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, Pool } from 'pg';
+import { Client } from 'pg';
+import type { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
 import type { TenantContext } from '../tenant-context';
@@ -12,7 +13,12 @@ import { MIGRATION_LOCK_KEY, runMigrations } from '../migrate';
 import { schemaFingerprint } from '../test-support/schema-fingerprint';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
 import type { LoginPrincipal } from '../bootstrap';
-import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
+import {
+  TEST_LOGIN_PASSWORD,
+  TEST_LOGIN_PRINCIPALS,
+  createTestDatabase,
+  quietPool,
+} from '@prsystem/testing';
 
 /**
  * GATE-CONC — real connections racing against each other, not a simulated
@@ -57,7 +63,7 @@ function createBarrier(parties: number): () => Promise<void> {
  * than evidence. Every race below asserts distinct `pg_backend_pid()` values.
  */
 function racerPool(): Pool {
-  return new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+  return quietPool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
 }
 
 function ctx(overrides: Partial<TenantContext> = {}): TenantContext {
@@ -85,7 +91,7 @@ describe('connection pool tenant context (ADR-0017 §2)', () => {
   it('leaves no tenant context on a connection returned to the pool', async () => {
     // max: 1 guarantees the second borrow is the same physical connection, which
     // is the only way this test can prove anything.
-    const single = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+    const single = quietPool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
     try {
       await withTenantTransaction(single, ctx(), async (uow) => {
         const seen = await uow.query<{ hotel_id: string }>(
@@ -101,7 +107,7 @@ describe('connection pool tenant context (ADR-0017 §2)', () => {
   });
 
   it('does not let one transaction inherit another transaction s scope', async () => {
-    const single = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+    const single = quietPool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
     try {
       await withTenantTransaction(single, ctx(), async () => undefined);
 
@@ -304,8 +310,8 @@ describe('outbox relay under concurrency (ADR-0010, ADR-0011)', () => {
 
     // Two dedicated pools so the two claims cannot share a backend, and a
     // barrier so both are genuinely inside the critical section at once.
-    const poolA = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
-    const poolB = new Pool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
+    const poolA = quietPool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
+    const poolB = quietPool({ connectionString: env.db.loginUrl('prsystem_worker_login'), max: 1 });
     try {
       const barrier = createBarrier(2);
       const claim = async (pool: Pool, worker: string): Promise<{ pid: number; ids: string[] }> =>
@@ -388,8 +394,8 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
     // reference. The provider-event unique constraint, not the idempotency key,
     // is what stops the second one producing a second effect.
     const reference = 'REF-SHARED-0001';
-    const poolA = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
-    const poolB = new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+    const poolA = quietPool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
+    const poolB = quietPool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
 
     try {
       const barrier = createBarrier(2);
@@ -759,8 +765,8 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
         });
         await runMigrations(solo.loginUrl(TEST_LOGIN_PRINCIPALS.migrate));
 
-        const raced = new Pool({ connectionString: fresh.url, max: 1 });
-        const single = new Pool({ connectionString: solo.url, max: 1 });
+        const raced = quietPool({ connectionString: fresh.url, max: 1 });
+        const single = quietPool({ connectionString: solo.url, max: 1 });
         try {
           expect(await schemaFingerprint(raced)).toBe(await schemaFingerprint(single));
         } finally {

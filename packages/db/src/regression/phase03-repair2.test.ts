@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, Pool } from 'pg';
+import { Client } from 'pg';
+import type { Pool } from 'pg';
 import {
   TEST_LOGIN_PASSWORD,
   TEST_LOGIN_PRINCIPALS,
   adminUrl,
   createTestDatabase,
+  quietPool,
 } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
@@ -78,7 +80,7 @@ describe('B2 — the principal closure is exact and recursive', () => {
     db = await createTestDatabase('regr2_closure');
     await bootstrapCluster({ adminUrl: db.url, database: db.name, logins });
     await runMigrations(db.loginUrl(TEST_LOGIN_PRINCIPALS.migrate));
-    apiPool = new Pool({ connectionString: db.loginUrl(TEST_LOGIN_PRINCIPALS.api), max: 1 });
+    apiPool = quietPool({ connectionString: db.loginUrl(TEST_LOGIN_PRINCIPALS.api), max: 1 });
 
     admin = new Client({ connectionString: adminUrl() });
     await admin.connect();

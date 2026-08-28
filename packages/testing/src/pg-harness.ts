@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import type { PoolConfig } from 'pg';
 
 /**
  * Scratch-database harness for real PostgreSQL tests (CLAUDE.md §10).
@@ -49,6 +50,28 @@ export interface TestDatabase {
 export const TEST_LOGIN_PASSWORD =
   process.env['PRSYSTEM_TEST_LOGIN_PASSWORD'] ?? 'prsystem_local_dev_login_only';
 
+/**
+ * A `pg.Pool` that will not take the process down when its database disappears.
+ *
+ * `DROP DATABASE ... WITH (FORCE)` terminates the backends a pool is still
+ * holding idle, and `pg.Pool` reports that as an `error` event. An `error` event
+ * with no listener is a process-level exception, so the symptom is a test runner
+ * that exits non-zero *after* every test has passed — an intermittent failure
+ * with nothing in the report to explain it. Every pool a test opens against a
+ * throwaway database should be created here.
+ *
+ * Only idle-client errors are swallowed. A query that fails still rejects, so no
+ * assertion can pass because an error went missing.
+ */
+export function quietPool(config: PoolConfig): Pool {
+  const pool = new Pool(config);
+  pool.on('error', () => {
+    // Deliberately empty: the connection is already gone, and the test that
+    // owned it has finished.
+  });
+  return pool;
+}
+
 export const TEST_LOGIN_PRINCIPALS = {
   api: 'prsystem_api_login',
   worker: 'prsystem_worker_login',
@@ -80,7 +103,7 @@ export function createRolePool(url: string, role: string, max = 8): Pool {
   if (!/^prsystem_[a-z_]+$/.test(role)) {
     throw new Error('role must be a prsystem_* role');
   }
-  return new Pool({ connectionString: url, max, options: `-c role=${role}` });
+  return quietPool({ connectionString: url, max, options: `-c role=${role}` });
 }
 
 /**
@@ -109,14 +132,14 @@ async function withProvisioningRetry(work: () => Promise<unknown>): Promise<void
 
 export async function createTestDatabase(suite: string): Promise<TestDatabase> {
   const name = testDatabaseName(suite);
-  const admin = new Pool({ connectionString: adminUrl(), max: 1, connectionTimeoutMillis: 5000 });
+  const admin = quietPool({ connectionString: adminUrl(), max: 1, connectionTimeoutMillis: 5000 });
 
   await admin.query('SELECT 1');
   await withProvisioningRetry(() => admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
   await withProvisioningRetry(() => admin.query(`CREATE DATABASE ${name}`));
 
   const url = withDatabase(adminUrl(), name);
-  const pool = new Pool({ connectionString: url, max: 8 });
+  const pool = quietPool({ connectionString: url, max: 8 });
 
   return {
     name,

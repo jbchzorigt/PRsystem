@@ -98,7 +98,14 @@ for (const gate of SUB_GATES) {
       const detail =
         passed === total
           ? `all ${String(total)} tests passed but the runner exited ${String(run.status)}: ` +
-            `${(run.stderr || run.stdout || '').trim().split('\n').slice(-6).join(' | ').slice(0, 500)}`
+            `${[run.stdout ?? '', run.stderr ?? '']
+              .join('\n')
+              .split('\n')
+              .filter((line) => line.trim().length > 0)
+              .filter((line) => !/DeprecationWarning|trace-deprecation/.test(line))
+              .slice(-12)
+              .join(' | ')
+              .slice(0, 900)}`
           : `${String(total - passed)}/${String(total)} failed`;
       fail(gate.id, gate.what, detail);
     } else if (gate.also !== undefined) {
