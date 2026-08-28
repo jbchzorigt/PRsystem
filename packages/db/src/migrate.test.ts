@@ -1250,8 +1250,11 @@ describe('ownership manifest on upgrade', () => {
       [`ALTER TABLE platform.job_run OWNER TO prsystem_migrate`],
     );
     expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    // Reported by the narrow-owner census, which now runs first and is the more
+    // general statement of the same rule: a narrow owner holds only what the
+    // manifest names, in any schema.
     expect((raised as Error).message).toMatch(
-      /platform\.job_run is owned by prsystem_maintenance_fn; the manifest requires prsystem_migrate/,
+      /platform\.job_run is owned by prsystem_maintenance_fn, which owns only what the manifest names/,
     );
   }, 120000);
 
@@ -1360,9 +1363,104 @@ describe('ownership manifest on upgrade', () => {
         [],
       );
       expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
-      expect((raised as Error).message).toMatch(/must own nothing/);
+      // A runtime or login role "must own nothing"; a narrow owner "owns only
+      // what the manifest names". Both are refusals of the same position.
+      expect((raised as Error).message).toMatch(
+        /must own nothing|owns only what the manifest names/,
+      );
     }, 120000);
   }
+
+  /**
+   * A narrow owner owns only what the manifest names, by exact signature and in
+   * every schema.
+   *
+   * Two gaps met here. Functions were keyed by `schema.name`, so an added
+   * overload inherited the exception granted to the real function; and the
+   * reverse census excluded all four kernel owners, so a narrow owner could hold
+   * arbitrary objects in `public` or in a schema an operator created and nothing
+   * looked.
+   */
+  it('refuses an extra overload owned by a narrow owner', async () => {
+    // Same schema, same name, different arguments — and therefore a different
+    // function. By name alone this inherited prsystem_maintenance_fn from the
+    // real scheduler wrapper and passed.
+    const raised = await refusesUpgrade(
+      [
+        `CREATE FUNCTION platform.schedule_maintenance_job(p_only text)
+           RETURNS void LANGUAGE sql AS $fn$ SELECT $fn$`,
+        `ALTER FUNCTION platform.schedule_maintenance_job(text) OWNER TO prsystem_maintenance_fn`,
+      ],
+      [`DROP FUNCTION IF EXISTS platform.schedule_maintenance_job(text)`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/schedule_maintenance_job\(p_only text\)/);
+  }, 120000);
+
+  it('refuses a public function owned by a narrow owner', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE FUNCTION public.rogue_helper() RETURNS void LANGUAGE sql AS $fn$ SELECT $fn$`,
+        `ALTER FUNCTION public.rogue_helper() OWNER TO prsystem_audit_writer`,
+      ],
+      [`DROP FUNCTION IF EXISTS public.rogue_helper()`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/public\.rogue_helper/);
+  }, 120000);
+
+  it('refuses a relation in a rogue schema owned by a narrow owner', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE SCHEMA IF NOT EXISTS rogue_ops`,
+        `CREATE TABLE rogue_ops.stash (id int primary key)`,
+        `ALTER TABLE rogue_ops.stash OWNER TO prsystem_partition_mgr`,
+      ],
+      [`DROP SCHEMA IF EXISTS rogue_ops CASCADE`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/rogue_ops\.stash/);
+  }, 120000);
+
+  it('refuses a function in a rogue schema owned by a narrow owner', async () => {
+    const raised = await refusesUpgrade(
+      [
+        `CREATE SCHEMA IF NOT EXISTS rogue_fns`,
+        `CREATE FUNCTION rogue_fns.helper() RETURNS void LANGUAGE sql AS $fn$ SELECT $fn$`,
+        `ALTER FUNCTION rogue_fns.helper() OWNER TO prsystem_maintenance_fn`,
+      ],
+      [`DROP SCHEMA IF EXISTS rogue_fns CASCADE`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/rogue_fns\.helper/);
+  }, 120000);
+
+  it('refuses the wrong narrow owner on an existing declared function', async () => {
+    // The audit writer holding a scheduler wrapper: still one of the four, and
+    // still not the owner this object is declared to have.
+    const raised = await refusesUpgrade(
+      [`ALTER FUNCTION platform.begin_worker_job(text, uuid) OWNER TO prsystem_audit_writer`],
+      [`ALTER FUNCTION platform.begin_worker_job(text, uuid) OWNER TO prsystem_maintenance_fn`],
+    );
+    expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+    expect((raised as Error).message).toMatch(/begin_worker_job/);
+  }, 120000);
+
+  it('accepts the audit partitions a narrow owner legitimately owns', async () => {
+    // The positive control for the census: partition descendants are resolved
+    // through pg_inherits to their declared root, so the month partitions of
+    // audit.platform_event are accepted without being listed one by one.
+    const children = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM pg_inherits i
+         JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE pg_get_userbyid(c.relowner) = 'prsystem_partition_mgr'`,
+    );
+    expect(Number(children.rows[0]?.count)).toBeGreaterThan(0);
+    await expect(
+      runMigrations(ownershipUrl, { migrationsFolder: MIGRATIONS_FOLDER }),
+    ).resolves.toBeDefined();
+  }, 120000);
 
   it('applies the pending migration once ownership is intact', async () => {
     // The positive control. Every case above reverts in its own `finally`, so a

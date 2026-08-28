@@ -41,22 +41,40 @@ export const OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   // Partitioned audit parents. Their partitions inherit this expectation.
   'audit.platform_event': KERNEL_OWNERS.partitionMgr,
   'police_audit.security_event': KERNEL_OWNERS.partitionMgr,
+};
 
+/**
+ * Functions whose owner is deliberately *not* the DDL owner, keyed by exact
+ * signature.
+ *
+ * By `schema.name` alone, an added overload inherited the exception: creating a
+ * second `platform.schedule_maintenance_job(...)` with different arguments and
+ * giving it to `prsystem_maintenance_fn` matched the entry for the real one and
+ * passed. PostgreSQL identifies a function by its argument types, so the
+ * manifest does too — an overload nobody declared falls under the default owner
+ * and is refused there.
+ */
+export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   // Append-only audit writers.
-  'audit.append_platform_audit_event': KERNEL_OWNERS.auditWriter,
-  'police_audit.append_police_security_event': KERNEL_OWNERS.auditWriter,
+  'audit.append_platform_audit_event(p_action text, p_outcome text, p_target_type text, p_target_ref text, p_reason text, p_payload jsonb)':
+    KERNEL_OWNERS.auditWriter,
+  'police_audit.append_police_security_event(p_action text, p_outcome text, p_case_ref text, p_reason text, p_payload jsonb)':
+    KERNEL_OWNERS.auditWriter,
 
   // Partition maintenance.
-  'platform.ensure_month_partitions': KERNEL_OWNERS.partitionMgr,
-  'platform.partition_horizon': KERNEL_OWNERS.partitionMgr,
-  'platform.check_partition_horizon': KERNEL_OWNERS.partitionMgr,
+  'platform.ensure_month_partitions(p_schema text, p_table text, p_from timestamp with time zone, p_months integer)':
+    KERNEL_OWNERS.partitionMgr,
+  'platform.partition_horizon(p_schema text, p_table text)': KERNEL_OWNERS.partitionMgr,
+  'platform.check_partition_horizon(p_threshold integer)': KERNEL_OWNERS.partitionMgr,
 
   // D-09 scheduler and maintenance wrappers.
-  'platform.assert_exact_role_closure': KERNEL_OWNERS.maintenanceFn,
-  'platform.schedule_maintenance_job': KERNEL_OWNERS.maintenanceFn,
-  'platform.begin_worker_job': KERNEL_OWNERS.maintenanceFn,
-  'platform.finish_worker_job': KERNEL_OWNERS.maintenanceFn,
-  'platform.maintenance_expire_idempotency_keys': KERNEL_OWNERS.maintenanceFn,
+  'platform.assert_exact_role_closure(p_login text, p_group text)': KERNEL_OWNERS.maintenanceFn,
+  'platform.schedule_maintenance_job(p_job_name text, p_hotel_id uuid, p_executor_identity text)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.begin_worker_job(p_job_name text, p_hotel_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.finish_worker_job(p_job_run_id uuid, p_state text, p_error_name text)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.maintenance_expire_idempotency_keys(p_job_run_id uuid)': KERNEL_OWNERS.maintenanceFn,
 };
 
 /**
@@ -73,6 +91,21 @@ export function rolesThatOwnNothing(): ReadonlySet<string> {
     [...GROUP_ROLES, ...Object.keys(LOGIN_PRINCIPALS)].filter((role) => !owners.has(role)),
   );
 }
+
+/**
+ * The three narrow owners, which own only what the manifest names.
+ *
+ * They were excluded from the reverse census entirely, so any of them could own
+ * an arbitrary relation or function anywhere outside the kernel schemas — in
+ * `public`, or in a schema an operator created — and nothing looked. Owning an
+ * object means being able to drop it, disable its RLS and re-grant it, so
+ * "narrow owner" has to mean narrow everywhere, not narrow inside five schemas.
+ */
+export const NARROW_OWNERS: readonly string[] = [
+  KERNEL_OWNERS.auditWriter,
+  KERNEL_OWNERS.partitionMgr,
+  KERNEL_OWNERS.maintenanceFn,
+];
 
 /** PostgreSQL's own owner of `public` since 15. Resolves to the database owner. */
 export const PG_DATABASE_OWNER = 'pg_database_owner';
@@ -95,16 +128,19 @@ export interface OwnedObject {
  * that, so the exclusion is a fact rather than a name list to maintain.
  */
 const MANIFEST_QUERY = `
-  SELECT 'database'::text AS kind, d.datname AS name,
-         pg_get_userbyid(d.datdba) AS owner, NULL::text AS parent, false AS secdef
+  -- ::text on every name. The first branch of a UNION fixes the column type,
+  -- and pg_database.datname is of type name, which truncates at 63 bytes: long
+  -- enough to cut a function signature in half and make it match nothing.
+  SELECT 'database'::text AS kind, d.datname::text AS name,
+         pg_get_userbyid(d.datdba)::text AS owner, NULL::text AS parent, false AS secdef
     FROM pg_database d
    WHERE d.datname = current_database()
   UNION ALL
-  SELECT 'schema', n.nspname, pg_get_userbyid(n.nspowner), NULL, false
+  SELECT 'schema', n.nspname::text, pg_get_userbyid(n.nspowner)::text, NULL, false
     FROM pg_namespace n
    WHERE n.nspname = ANY($1) OR n.nspname = 'public'
   UNION ALL
-  SELECT 'relation', n.nspname || '.' || c.relname, pg_get_userbyid(c.relowner),
+  SELECT 'relation', n.nspname || '.' || c.relname, pg_get_userbyid(c.relowner)::text,
          (SELECT pn.nspname || '.' || pc.relname
             FROM pg_inherits i
             JOIN pg_class pc ON pc.oid = i.inhparent
@@ -116,7 +152,10 @@ const MANIFEST_QUERY = `
      AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
      AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = c.oid AND e.deptype = 'e')
   UNION ALL
-  SELECT 'function', n.nspname || '.' || p.proname, pg_get_userbyid(p.proowner), NULL, p.prosecdef
+  SELECT 'function',
+         n.nspname || '.' || p.proname || '(' ||
+           pg_get_function_identity_arguments(p.oid) || ')',
+         pg_get_userbyid(p.proowner)::text, NULL, p.prosecdef
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = ANY($1)
      AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = p.oid AND e.deptype = 'e')
@@ -131,25 +170,72 @@ const MANIFEST_QUERY = `
  * fix. The table itself is still reported.
  */
 const STRAY_OWNERSHIP_QUERY = `
-  SELECT 'schema'::text AS kind, n.nspname AS name, pg_get_userbyid(n.nspowner) AS owner
+  SELECT 'schema'::text AS kind, n.nspname::text AS name,
+         pg_get_userbyid(n.nspowner)::text AS owner
     FROM pg_namespace n
    WHERE pg_get_userbyid(n.nspowner) = ANY($1)
      AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
   UNION ALL
-  SELECT 'relation', n.nspname || '.' || c.relname, pg_get_userbyid(c.relowner)
+  SELECT 'relation', n.nspname || '.' || c.relname, pg_get_userbyid(c.relowner)::text
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE pg_get_userbyid(c.relowner) = ANY($1) AND c.relkind IN ('r','p','v','m','S')
      AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
   UNION ALL
-  SELECT 'function', n.nspname || '.' || p.proname, pg_get_userbyid(p.proowner)
+  SELECT 'function',
+         n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
+         pg_get_userbyid(p.proowner)::text
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE pg_get_userbyid(p.proowner) = ANY($1)
      AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
   UNION ALL
-  SELECT 'database', d.datname, pg_get_userbyid(d.datdba)
+  SELECT 'database', d.datname::text, pg_get_userbyid(d.datdba)::text
     FROM pg_database d
    WHERE d.datname = current_database() AND pg_get_userbyid(d.datdba) = ANY($1)
    ORDER BY 1, 2`;
+
+/**
+ * Everything a narrow owner owns, anywhere in the database.
+ *
+ * Partition descendants are resolved through `pg_inherits` and reported by their
+ * root, so `audit.platform_event_2026_08` is accepted because
+ * `audit.platform_event` is declared — a fact from the catalogue rather than a
+ * name pattern. Extension members are excluded through `pg_depend`, for the same
+ * reason.
+ */
+const NARROW_OWNER_CENSUS_QUERY = `
+  WITH roots AS (
+    SELECT c.oid,
+           coalesce(
+             (SELECT pn.nspname || '.' || pc.relname
+                FROM pg_inherits i
+                JOIN pg_class pc ON pc.oid = i.inhparent
+                JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+               WHERE i.inhrelid = c.oid),
+             n.nspname || '.' || c.relname
+           ) AS root_name,
+           n.nspname || '.' || c.relname AS name,
+           pg_get_userbyid(c.relowner) AS owner
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE pg_get_userbyid(c.relowner) = ANY($1)
+       AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+       AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+       AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = c.oid AND e.deptype = 'e')
+  )
+  SELECT 'relation'::text AS kind, root_name::text AS name, owner::text FROM roots
+  UNION ALL
+  SELECT 'schema', n.nspname::text, pg_get_userbyid(n.nspowner)::text
+    FROM pg_namespace n
+   WHERE pg_get_userbyid(n.nspowner) = ANY($1)
+     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+  UNION ALL
+  SELECT 'function',
+         n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
+         pg_get_userbyid(p.proowner)::text
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE pg_get_userbyid(p.proowner) = ANY($1)
+     AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+     AND NOT EXISTS (SELECT 1 FROM pg_depend e WHERE e.objid = p.oid AND e.deptype = 'e')
+  ORDER BY 1, 2`;
 
 export interface ManifestClient {
   query<R>(text: string, values?: unknown[]): Promise<{ rows: R[] }>;
@@ -161,8 +247,12 @@ export class MigrationOwnershipError extends Error {
 }
 
 /** The owner every object is required to have. */
-export function expectedOwnerOf(object: Pick<OwnedObject, 'name' | 'parent'>): string {
-  const direct = OWNERSHIP_MANIFEST[object.name];
+export function expectedOwnerOf(object: Pick<OwnedObject, 'kind' | 'name' | 'parent'>): string {
+  // Functions are keyed by exact signature. An overload nobody declared falls
+  // here, under the default owner, rather than inheriting the exception granted
+  // to a function that merely shares its name.
+  const table = object.kind === 'function' ? FUNCTION_OWNERSHIP_MANIFEST : OWNERSHIP_MANIFEST;
+  const direct = table[object.name];
   if (direct !== undefined) return direct;
   if (object.parent !== null) {
     // A partition belongs to whoever owns its parent.
@@ -206,6 +296,28 @@ export async function assertOwnershipManifest(
       `${stray.kind} ${stray.name} is owned by ${stray.owner}, which must own nothing: ` +
         'no runtime, reader, scheduler, break-glass or login role may own any object' +
         (others > 0 ? ` (and ${String(others)} further object(s))` : ''),
+    );
+  }
+
+  // The three narrow owners, across the whole database.
+  //
+  // They were excluded from the census entirely, so any of them could own an
+  // arbitrary relation or function in `public` or in a schema an operator
+  // created, and nothing looked. Everything they legitimately own is either
+  // named in the manifest or a partition descendant of something named there.
+  const narrow = await client.query<{ kind: string; name: string; owner: string }>(
+    NARROW_OWNER_CENSUS_QUERY,
+    [[...NARROW_OWNERS]],
+  );
+  for (const row of narrow.rows) {
+    const declared =
+      row.kind === 'function'
+        ? FUNCTION_OWNERSHIP_MANIFEST[row.name] === row.owner
+        : OWNERSHIP_MANIFEST[row.name] === row.owner;
+    if (declared) continue;
+    throw new MigrationOwnershipError(
+      `${row.kind} ${row.name} is owned by ${row.owner}, which owns only what the manifest ` +
+        'names: a narrow owner may hold nothing else, in any schema',
     );
   }
 
