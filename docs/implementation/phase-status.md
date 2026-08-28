@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 12, `GATE-INTEG` 46, `GATE-CONC` 17, `GATE-SEC` 14/14 (302 tests), `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507`, `ed0a9a7`, _third repair pending commit_ |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 12, `GATE-INTEG` 46, `GATE-CONC` 17, `GATE-SEC` 14/14 (302 tests), `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445` |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -617,6 +617,9 @@ No gate was skipped, and no sub-gate ran zero tests — `tools/gate-sec.mjs` fai
 No result below is a static-regex-only or early-return case. The one remaining static source check,
 regression `R6`, is explicitly marked supplementary in its own comment; the executable startup
 evidence is `apps/api/src/security/startup-order.test.ts` and `apps/worker/src/startup.test.ts`.
+
+Commit for this repair: `7f43445`. Previous commits are unchanged; nothing was
+amended, rebased, force-pushed, pushed, merged or deployed.
 
 #### External and manual actions still pending
 
