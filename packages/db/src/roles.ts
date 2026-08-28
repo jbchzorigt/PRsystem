@@ -70,3 +70,31 @@ export type LoginPrincipal = keyof typeof LOGIN_PRINCIPALS;
 export const CANONICAL_LOGIN_BY_GROUP: Readonly<Record<string, string>> = Object.fromEntries(
   Object.entries(LOGIN_PRINCIPALS).map(([login, group]) => [group, login]),
 );
+
+/** Group roles the migration and the runtimes depend on. */
+export const GROUP_ROLES = [
+  'prsystem_api',
+  'prsystem_worker',
+  'prsystem_police',
+  'prsystem_audit_reader',
+  'prsystem_police_audit_reader',
+  'prsystem_migrate',
+  'prsystem_audit_writer',
+  'prsystem_partition_mgr',
+  'prsystem_maintenance_fn',
+  'prsystem_maintenance',
+  // D-09: issues privileged maintenance jobs; cannot execute them.
+  'prsystem_job_scheduler',
+] as const;
+
+/**
+ * Every role this platform creates: the group roles and the canonical logins.
+ *
+ * The single definition. Bootstrap forbids all of them as the owner of the
+ * database or schema `public`, and the migration ownership manifest must forbid
+ * exactly the same set — two hand-kept lists is two chances for the bootstrap
+ * check and the migration check to disagree about the same invariant.
+ */
+export function projectRoles(): ReadonlySet<string> {
+  return new Set<string>([...GROUP_ROLES, ...Object.keys(LOGIN_PRINCIPALS)]);
+}

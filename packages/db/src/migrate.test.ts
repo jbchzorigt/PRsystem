@@ -1143,11 +1143,15 @@ describe('ownership manifest on upgrade', () => {
     mutate: string[],
     revert: string[],
     options: { readonly approvedOperatorOwners?: readonly string[] } = {},
+    adminMutate: string[] = [],
+    adminRevert: string[] = [],
   ): Promise<unknown> {
     const before = await ledgerSize();
     // On the ownership database, not the cluster's default: `admin` is
     // connected elsewhere and would report "schema platform does not exist".
     for (const statement of mutate) await pool.query(statement);
+    // `ALTER DATABASE ... OWNER TO` must run from another database.
+    for (const statement of adminMutate) await admin.query(statement);
     try {
       let raised: unknown;
       try {
@@ -1163,6 +1167,7 @@ describe('ownership manifest on upgrade', () => {
       return raised;
     } finally {
       for (const statement of revert) await pool.query(statement).catch(() => undefined);
+      for (const statement of adminRevert) await admin.query(statement).catch(() => undefined);
     }
   }
 
@@ -1289,6 +1294,75 @@ describe('ownership manifest on upgrade', () => {
     expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
     expect((raised as Error).message).toMatch(/audit\.platform_event/);
   }, 120000);
+
+  /**
+   * No project role may own the database or `public`, whatever the allow-list
+   * says.
+   *
+   * Bootstrap forbids every project role at these two positions
+   * unconditionally, and the manifest accepted any name the operator list
+   * happened to contain — so approving `prsystem_migrate` or
+   * `prsystem_maintenance_fn` made a kernel owner the database owner, and the
+   * two checks disagreed about one invariant.
+   *
+   * Changing an owner drops the previous owner's implicit rights, so each case
+   * re-grants `CONNECT` to the migration role. Without it PostgreSQL refuses the
+   * connection and the run never reaches the manifest — a refusal, but not the
+   * one being tested, and one that would keep passing if the manifest were
+   * deleted.
+   */
+  const PROJECT_OWNER_CASES = [
+    // The two kernel owners are caught even earlier, and by a different guard:
+    // owning the database makes them implicit members of `pg_database_owner`,
+    // which the migration principal must not reach. That is a stricter refusal
+    // than the manifest's, so it is asserted as what actually happens rather
+    // than worked around.
+    { kind: 'kernel owner', role: 'prsystem_migrate', databaseError: 'PrincipalError' },
+    { kind: 'narrow owner', role: 'prsystem_maintenance_fn', databaseError: 'PrincipalError' },
+    { kind: 'runtime', role: 'prsystem_api', databaseError: 'MigrationOwnershipError' },
+    {
+      kind: 'canonical login',
+      role: 'prsystem_worker_login',
+      databaseError: 'MigrationOwnershipError',
+    },
+  ] as const;
+
+  for (const { kind, role, databaseError } of PROJECT_OWNER_CASES) {
+    it(`refuses the ${kind} ${role} as database owner even when approved`, async () => {
+      const raised = await refusesUpgrade(
+        [],
+        [],
+        { approvedOperatorOwners: [role] },
+        [
+          `ALTER DATABASE ${OWNERSHIP_DATABASE} OWNER TO ${role}`,
+          `GRANT CONNECT, CREATE ON DATABASE ${OWNERSHIP_DATABASE} TO prsystem_migrate`,
+        ],
+        [
+          `ALTER DATABASE ${OWNERSHIP_DATABASE} OWNER TO prsystem`,
+          // Transferring ownership rewrites the database ACL, so the grants
+          // bootstrap applied are restored explicitly. Without this the next
+          // case — and the positive control — fail on "permission denied for
+          // database", which would be a fixture artefact rather than a finding.
+          `GRANT CONNECT, CREATE ON DATABASE ${OWNERSHIP_DATABASE} TO prsystem_migrate`,
+        ],
+      );
+      expect((raised as Error | undefined)?.name).toBe(databaseError);
+    }, 120000);
+
+    it(`refuses the ${kind} ${role} as owner of schema public even when approved`, async () => {
+      // Ownership of `public` does not change what the migration principal
+      // reaches, so the manifest is the guard in every one of these.
+      const raised = await refusesUpgrade(
+        [`ALTER SCHEMA public OWNER TO ${role}`],
+        [`ALTER SCHEMA public OWNER TO pg_database_owner`],
+        { approvedOperatorOwners: [role, 'prsystem'] },
+        [`GRANT CONNECT, CREATE ON DATABASE ${OWNERSHIP_DATABASE} TO prsystem_migrate`],
+        [],
+      );
+      expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+      expect((raised as Error).message).toMatch(/must own nothing/);
+    }, 120000);
+  }
 
   it('applies the pending migration once ownership is intact', async () => {
     // The positive control. Every case above reverts in its own `finally`, so a

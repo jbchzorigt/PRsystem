@@ -2,12 +2,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Client, Pool } from 'pg';
 import { INTENDED_MEMBERSHIP_OPTIONS } from './principal-guard';
-import { CANONICAL_LOGIN_BY_GROUP, LOGIN_PRINCIPALS } from './roles';
+import { CANONICAL_LOGIN_BY_GROUP, GROUP_ROLES, LOGIN_PRINCIPALS, projectRoles } from './roles';
 import type { LoginPrincipal } from './roles';
 
-// Re-exported so existing importers keep one import site; the mapping itself is
+// Re-exported so existing importers keep one import site; each of these is
 // declared once, in `roles.ts`.
-export { LOGIN_PRINCIPALS } from './roles';
+export { GROUP_ROLES, LOGIN_PRINCIPALS, projectRoles } from './roles';
 export type { LoginPrincipal } from './roles';
 
 /**
@@ -24,22 +24,6 @@ export type { LoginPrincipal } from './roles';
  */
 
 export const BOOTSTRAP_SQL = resolve(__dirname, '..', 'bootstrap', 'cluster-roles.sql');
-
-/** Group roles the migration and the runtimes depend on. */
-export const GROUP_ROLES = [
-  'prsystem_api',
-  'prsystem_worker',
-  'prsystem_police',
-  'prsystem_audit_reader',
-  'prsystem_police_audit_reader',
-  'prsystem_migrate',
-  'prsystem_audit_writer',
-  'prsystem_partition_mgr',
-  'prsystem_maintenance_fn',
-  'prsystem_maintenance',
-  // D-09: issues privileged maintenance jobs; cannot execute them.
-  'prsystem_job_scheduler',
-] as const;
 
 /**
  * Roles no runtime group and no runtime login may reach, directly or
@@ -477,18 +461,6 @@ async function applyDatabaseGrants(
     await executeFormatted(pool, 'REVOKE ALL ON DATABASE %I FROM %I', [database, grantee]);
     await executeFormatted(pool, 'REVOKE ALL ON SCHEMA public FROM %I', [grantee]);
   }
-}
-
-/**
- * Roles that may never own the target database or schema `public`.
- *
- * Ownership carries implicit, unrevokable rights. A runtime that owned the
- * database could grant itself anything at any time, so no amount of ACL
- * reconciliation would contain it — and the previous implementation added
- * whatever it found as owner to the ACL allow-list without asking what it was.
- */
-export function projectRoles(): ReadonlySet<string> {
-  return new Set<string>([...GROUP_ROLES, ...Object.keys(LOGIN_PRINCIPALS)]);
 }
 
 /** PostgreSQL's own owner of `public` since 15. Conditionally acceptable. */

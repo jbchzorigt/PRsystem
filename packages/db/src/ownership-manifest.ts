@@ -1,4 +1,4 @@
-import { GROUP_ROLES, LOGIN_PRINCIPALS } from './bootstrap';
+import { GROUP_ROLES, LOGIN_PRINCIPALS, projectRoles } from './roles';
 
 /**
  * The exact ownership contract for every object a migration creates.
@@ -215,6 +215,22 @@ export async function assertOwnershipManifest(
   if (databaseRow === undefined) {
     throw new MigrationOwnershipError('could not read the owner of the current database');
   }
+
+  // No project role, whatever the allow-list says.
+  //
+  // The approved-operator list used to be the only gate here, so approving
+  // `prsystem_migrate` or `prsystem_maintenance_fn` made a kernel owner the
+  // database owner — while bootstrap forbade every project role at the same
+  // position unconditionally. The two checks disagreed about one invariant. The
+  // list is a tightening on top of this rule, never a way around it.
+  const project = projectRoles();
+  if (project.has(databaseRow.owner)) {
+    throw new MigrationOwnershipError(
+      `database ${databaseRow.name} is owned by the project role ${databaseRow.owner}, which ` +
+        'must own nothing at this position: no group role or canonical login may own the ' +
+        'database or schema public, whatever PRSYSTEM_APPROVED_OPERATOR_OWNERS names',
+    );
+  }
   if (!approved.has(databaseRow.owner)) {
     throw new MigrationOwnershipError(
       `database ${databaseRow.name} is owned by ${databaseRow.owner}, which is not an approved ` +
@@ -226,7 +242,14 @@ export async function assertOwnershipManifest(
     if (row.kind === 'database') continue;
 
     if (row.kind === 'schema' && row.name === 'public') {
-      // `pg_database_owner` resolves to the database owner, already approved above.
+      if (project.has(row.owner)) {
+        throw new MigrationOwnershipError(
+          `schema public is owned by the project role ${row.owner}, which must own nothing at ` +
+            'this position: no group role or canonical login may own the database or schema ' +
+            'public, whatever PRSYSTEM_APPROVED_OPERATOR_OWNERS names',
+        );
+      }
+      // `pg_database_owner` resolves to the database owner, already checked above.
       if (row.owner === PG_DATABASE_OWNER || approved.has(row.owner)) continue;
       throw new MigrationOwnershipError(
         `schema public is owned by ${row.owner}, which is not an approved operator owner ` +
