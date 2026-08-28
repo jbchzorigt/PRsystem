@@ -67,17 +67,26 @@ const BINARY_EXT = new Set([
   '.ttf',
 ]);
 
+// Overridable so the negative-fixture harness can scan a probe tree without
+// touching the repository. Both must be supplied together; neither has a
+// default that could quietly narrow a real scan.
+const SCAN_ROOT = process.env['PRSYSTEM_SCAN_ROOT'];
+const SCAN_FILES = process.env['PRSYSTEM_SCAN_FILES'];
+
 // Tracked files only, enumerated by git. If git metadata is unavailable the scan
 // cannot know what is tracked, so it fails closed with a legible message rather
 // than dying on an unhandled exception — or, worse, scanning nothing and
 // reporting a clean result.
 let tracked;
 try {
-  tracked = execFileSync('git', ['ls-files', '-z'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  tracked =
+    SCAN_ROOT !== undefined && SCAN_FILES !== undefined
+      ? SCAN_FILES.split(',').join('\0')
+      : execFileSync('git', ['ls-files', '-z'], {
+          cwd: ROOT,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
 } catch (error) {
   console.error(
     'scan-secrets: cannot enumerate tracked files. This gate needs a git working tree ' +
@@ -97,8 +106,10 @@ const files = tracked
 const findings = [];
 let scanned = 0;
 
+const scanRoot = SCAN_ROOT ?? ROOT;
+
 for (const rel of files) {
-  const abs = resolve(ROOT, rel);
+  const abs = resolve(scanRoot, rel);
   let stat;
   try {
     stat = statSync(abs);
@@ -111,9 +122,26 @@ for (const rel of files) {
   scanned += 1;
 
   text.split('\n').forEach((line, index) => {
-    if (ALLOWED_VALUES.some((allowed) => line.includes(allowed))) return;
+    // Remove the allowed spans, then scan what is left.
+    //
+    // Skipping the whole line because it mentioned an allowed literal turned
+    // every allowance into a way to hide a real credential beside it:
+    //
+    //     password = "this-is-a-real-looking-password" # startup-log-probe-password
+    //
+    // passed with zero findings. An allowance covers its own value and nothing
+    // else, so each occurrence is cut out and the remainder of the line is
+    // scanned normally. Cut out entirely rather than replaced with a
+    // same-length placeholder: a placeholder preserves the length, and length
+    // is exactly what `generic-assignment` keys on, so every allowed line would
+    // then report itself.
+    let remainder = line;
+    for (const allowed of ALLOWED_VALUES) {
+      if (!remainder.includes(allowed)) continue;
+      remainder = remainder.split(allowed).join('');
+    }
     for (const { id, re } of PATTERNS) {
-      if (re.test(line)) {
+      if (re.test(remainder)) {
         findings.push({ rel, line: index + 1, id });
       }
     }

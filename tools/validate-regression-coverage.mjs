@@ -432,6 +432,7 @@ const REQUIRED_SECURITY_STAGES = [
   'node tools/validate-regression-coverage.mjs',
   'node tools/validate-regression-coverage.fixtures.mjs',
   'node tools/validate-governance.fixtures.mjs',
+  'node tools/validate-secret-scan.fixtures.mjs',
   'node tools/validate-pool-error-fixture.mjs',
   'node tools/gate-sec.mjs',
 ];
