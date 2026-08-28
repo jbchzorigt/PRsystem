@@ -17,9 +17,21 @@ export type SchemaSnapshotInput = Pick<SchemaSnapshot, 'columns' | 'constraints'
  * ever compared the two declarations to each other. The projection closes that
  * by making the DSL's own statements checkable.
  *
- * It covers exactly what the DSL expresses. Partial and expression indexes,
- * exclusion constraints, check text, foreign keys and partitioning stay in the
- * snapshot, which is what "SQL-only" means here.
+ * It projects every *persistent* property the DSL expresses and the canonical
+ * snapshot can verify: column type, nullability, default, identity, generated
+ * expression, primary keys, unique constraints including `NULLS NOT DISTINCT`,
+ * foreign keys with both referential actions, check predicates, and indexes with
+ * their uniqueness, method, column order, NULL ordering, operator class, storage
+ * parameters and `ONLY` flag.
+ *
+ * One declared option is construction-only: `concurrently` changes how an index
+ * is built and leaves no trace in `pg_get_indexdef`, so nothing downstream could
+ * verify it. It is refused rather than ignored — a declaration nothing can check
+ * is worse than no declaration, because it reads as covered.
+ *
+ * What stays snapshot-only is what the DSL cannot express at all: RLS and
+ * policies, grants, triggers, partitioning and exclusion constraints. The reason
+ * for each is recorded in `schema-snapshot.ts`.
  */
 
 const dialect = new PgDialect();
@@ -73,12 +85,82 @@ function render(fragment: unknown): string {
   return dialect.sqlToQuery(fragment as Parameters<typeof dialect.sqlToQuery>[0]).sql;
 }
 
-export function drizzleProjection(): SchemaProjection {
+/** The parts of Drizzle's index configuration this projection reads. */
+interface IndexConfig {
+  readonly name?: string;
+  readonly unique?: boolean;
+  readonly only?: boolean;
+  readonly concurrently?: boolean;
+  readonly method?: string;
+  readonly with?: Record<string, unknown>;
+  readonly where?: unknown;
+  readonly columns?: readonly unknown[];
+}
+
+interface IndexedColumn {
+  readonly name?: string;
+  readonly indexConfig?: {
+    readonly order?: 'asc' | 'desc';
+    readonly nulls?: 'first' | 'last';
+    readonly opClass?: string;
+  };
+}
+
+/**
+ * One index column, spelled the way `pg_get_indexdef` spells it.
+ *
+ * PostgreSQL prints only what deviates from the default: ascending order and
+ * the NULL ordering implied by the direction are omitted. Rendering the column
+ * name alone dropped direction, NULL ordering and operator class entirely, so a
+ * change to any of them produced an empty diff while changing which rows the
+ * index can serve and in what order.
+ */
+function renderIndexColumn(column: unknown): string {
+  if (typeof column !== 'object' || column === null || !('name' in column)) {
+    // An expression index: the fragment is its own text.
+    return render(column);
+  }
+  const typed = column as IndexedColumn;
+  const order = typed.indexConfig?.order ?? 'asc';
+  const nulls = typed.indexConfig?.nulls ?? (order === 'desc' ? 'first' : 'last');
+  const defaultNulls = order === 'desc' ? 'first' : 'last';
+
+  return (
+    `${typed.name ?? ''}` +
+    (typed.indexConfig?.opClass === undefined ? '' : ` ${typed.indexConfig.opClass}`) +
+    (order === 'desc' ? ' DESC' : '') +
+    (nulls === defaultNulls ? '' : ` NULLS ${nulls.toUpperCase()}`)
+  );
+}
+
+/** Index storage parameters, in PostgreSQL's `key='value'` form. */
+function renderStorage(options: Record<string, unknown>): string {
+  return Object.entries(options)
+    .map(([key, value]) => `${key}='${String(value)}'`)
+    .join(', ');
+}
+
+/** Anything `getTableConfig` accepts. */
+export type ProjectableTable = Parameters<typeof getTableConfig>[0];
+
+/**
+ * Projects the declared tables.
+ *
+ * Takes the tables as an argument so a test can hand it a *declaration* it built
+ * itself and compare the result. Mutating an already-produced projection proves
+ * only that `diffDeclarations` compares two objects; it says nothing about
+ * whether extraction reads the property at all, which is how `onUpdate`,
+ * `NULLS NOT DISTINCT`, generated expressions and index ordering came to be
+ * silently dropped.
+ */
+export function drizzleProjection(
+  tables: readonly ProjectableTable[] = DECLARED_TABLES,
+): SchemaProjection {
   const columns: ProjectedColumn[] = [];
   const constraints: ProjectedConstraint[] = [];
   const indexes: ProjectedIndex[] = [];
 
-  for (const table of DECLARED_TABLES) {
+  for (const table of tables) {
     const config = getTableConfig(table);
     const qualified = `${config.schema ?? 'public'}.${config.name}`;
     const simplePrimary: string[] = [];
@@ -87,19 +169,21 @@ export function drizzleProjection(): SchemaProjection {
       // Rendered through the dialect, so a default declared as `sql` produces
       // the exact text PostgreSQL reports rather than a JavaScript value
       // guessed into SQL.
+      const generated = (
+        column as unknown as { generated?: { as?: unknown; type?: string } | undefined }
+      ).generated;
+      // A generated column's expression is what PostgreSQL stores in
+      // `pg_attrdef`, so it lands in the same slot the live query reads it from.
+      // Without this the expression was projected nowhere and a change to it
+      // produced an empty diff.
       const defaultText =
-        column.default === undefined
-          ? ''
-          : dialect.sqlToQuery(column.default as Parameters<typeof dialect.sqlToQuery>[0]).sql;
+        generated !== undefined
+          ? render(generated.as)
+          : column.default === undefined
+            ? ''
+            : dialect.sqlToQuery(column.default as Parameters<typeof dialect.sqlToQuery>[0]).sql;
       const identity = (column as unknown as { generatedIdentity?: { type?: string } })
         .generatedIdentity;
-      // Read from the declaration rather than assumed. Drizzle 0.45.2 expresses
-      // generated columns through `.generatedAlwaysAs()`, so hard-coding "not
-      // generated" meant a declared generated column projected as an ordinary
-      // one and the two declarations could disagree without anything noticing.
-      const generated = (column as unknown as { generated?: { type?: string } | undefined })
-        .generated;
-
       columns.push({
         table: qualified,
         column: column.name,
@@ -134,11 +218,18 @@ export function drizzleProjection(): SchemaProjection {
       });
     }
     for (const unique of config.uniqueConstraints) {
+      // NULLS NOT DISTINCT changes which rows the constraint rejects, and
+      // PostgreSQL prints it. Dropping it made a real uniqueness change
+      // invisible.
+      const nullsNotDistinct =
+        (unique as unknown as { nullsNotDistinct?: boolean }).nullsNotDistinct === true;
       constraints.push({
         table: qualified,
         name: unique.name ?? '',
         kind: 'u',
-        definition: `UNIQUE (${unique.columns.map((column) => column.name).join(', ')})`,
+        definition:
+          `UNIQUE${nullsNotDistinct ? ' NULLS NOT DISTINCT' : ''} ` +
+          `(${unique.columns.map((column) => column.name).join(', ')})`,
       });
     }
 
@@ -148,7 +239,14 @@ export function drizzleProjection(): SchemaProjection {
       const reference = foreignKey.reference();
       const foreignConfig = getTableConfig(reference.foreignTable);
       const foreignQualified = `${foreignConfig.schema ?? 'public'}.${foreignConfig.name}`;
-      const onDelete = (foreignKey.onDelete ?? '').toUpperCase();
+      // Both referential actions. `ON UPDATE` was dropped entirely, so changing
+      // it produced no difference at all. `NO ACTION` is PostgreSQL's default
+      // and the one form it does not print, so it is omitted here too.
+      const action = (value: string | undefined): string => (value ?? '').toUpperCase();
+      const onDelete = action(foreignKey.onDelete);
+      const onUpdate = action(foreignKey.onUpdate);
+      const suffix = (keyword: string, value: string): string =>
+        value === '' || value === 'NO ACTION' ? '' : ` ON ${keyword} ${value}`;
       constraints.push({
         table: qualified,
         name: foreignKey.getName(),
@@ -157,7 +255,9 @@ export function drizzleProjection(): SchemaProjection {
           `FOREIGN KEY (${reference.columns.map((column) => column.name).join(', ')}) ` +
           `REFERENCES ${foreignQualified}` +
           `(${reference.foreignColumns.map((column) => column.name).join(', ')})` +
-          (onDelete === '' || onDelete === 'NO ACTION' ? '' : ` ON DELETE ${onDelete}`),
+          // PostgreSQL prints UPDATE before DELETE.
+          suffix('UPDATE', onUpdate) +
+          suffix('DELETE', onDelete),
       });
     }
 
@@ -174,19 +274,28 @@ export function drizzleProjection(): SchemaProjection {
     }
 
     for (const declared of config.indexes) {
-      const built = declared.config;
-      const columns = (built.columns ?? []).map((column) =>
-        typeof column === 'object' && column !== null && 'name' in column
-          ? (column as { name: string }).name
-          : render(column),
-      );
+      const built = declared.config as unknown as IndexConfig;
+
+      if (built.concurrently === true) {
+        // Construction-only: CREATE INDEX CONCURRENTLY leaves no trace in
+        // pg_get_indexdef, so nothing downstream can verify it. Refused rather
+        // than ignored — a declaration nothing checks reads as covered.
+        throw new Error(
+          `index ${built.name ?? '(unnamed)'} declares \`concurrently\`, which is a ` +
+            'construction-only option with no persistent form: the snapshot cannot verify it',
+        );
+      }
+
+      const columns = (built.columns ?? []).map((column) => renderIndexColumn(column));
+      const storage = built.with === undefined ? '' : ` WITH (${renderStorage(built.with)})`;
       const where = built.where === undefined ? '' : ` WHERE (${render(built.where)})`;
       indexes.push({
         table: qualified,
         name: built.name ?? '',
         definition:
           `CREATE ${built.unique === true ? 'UNIQUE ' : ''}INDEX ${built.name ?? ''} ` +
-          `ON ${qualified} USING ${built.method ?? 'btree'} (${columns.join(', ')})${where}`,
+          `ON ${built.only === true ? 'ONLY ' : ''}${qualified} ` +
+          `USING ${built.method ?? 'btree'} (${columns.join(', ')})${storage}${where}`,
       });
     }
   }

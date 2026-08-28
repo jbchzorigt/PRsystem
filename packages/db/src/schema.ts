@@ -73,7 +73,7 @@ export const idempotencyKey = platform.table(
     completedAt: timestamp('completed_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },
-  () => [
+  (table) => [
     check(
       'idempotency_key_not_blank',
       sql`((length(idempotency_key) >= 8) AND (length(idempotency_key) <= 200))`,
@@ -86,13 +86,12 @@ export const idempotencyKey = platform.table(
       'idempotency_terminal_has_response',
       sql`(((state = 'in_progress'::text) AND (response_status IS NULL) AND (completed_at IS NULL)) OR ((state <> 'in_progress'::text) AND (response_status IS NOT NULL) AND (completed_at IS NOT NULL)))`,
     ),
-    index('idempotency_key_expiry_idx').using('btree', sql`expires_at`),
-    uniqueIndex('idempotency_key_scope_uq').using(
-      'btree',
-      sql`realm`,
-      sql`actor_ref`,
-      sql`operation`,
-      sql`idempotency_key`,
+    index('idempotency_key_expiry_idx').on(table.expiresAt),
+    uniqueIndex('idempotency_key_scope_uq').on(
+      table.realm,
+      table.actorRef,
+      table.operation,
+      table.idempotencyKey,
     ),
   ],
 );
@@ -122,12 +121,7 @@ export const outboxEvent = platform.table(
     unique('outbox_event_uuid_uq').on(table.eventUuid),
     check('outbox_event_version_positive', sql`(event_version >= 1)`),
     check('outbox_payload_sanitised', sql`(NOT platform.contains_denied_key(payload))`),
-    index('outbox_event_aggregate_idx').using(
-      'btree',
-      sql`aggregate_type`,
-      sql`aggregate_id`,
-      sql`event_id`,
-    ),
+    index('outbox_event_aggregate_idx').on(table.aggregateType, table.aggregateId, table.eventId),
   ],
 );
 
@@ -169,7 +163,7 @@ export const outboxDelivery = platform.table(
       foreignColumns: [outboxEvent.eventId],
     }).onDelete('restrict'),
     index('outbox_delivery_claimable_idx')
-      .using('btree', sql`available_at`, sql`event_id`)
+      .on(table.availableAt, table.eventId)
       .where(sql`state = ANY (ARRAY['pending'::text, 'claimed'::text])`),
   ],
 );
@@ -240,7 +234,7 @@ export const jobRun = platform.table(
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     errorName: text('error_name'),
   },
-  () => [
+  (table) => [
     check(
       'job_run_error_name_bounded',
       sql`((error_name IS NULL) OR ((length(error_name) >= 1) AND (length(error_name) <= 128)))`,
@@ -260,7 +254,7 @@ export const jobRun = platform.table(
       sql`(state = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text]))`,
     ),
     check('job_run_terminal_has_finish', sql`((state = 'running'::text) = (finished_at IS NULL))`),
-    index('job_run_name_idx').using('btree', sql`job_name`, sql`started_at DESC`),
+    index('job_run_name_idx').on(table.jobName, table.startedAt.desc().nullsFirst()),
   ],
 );
 
@@ -381,13 +375,13 @@ export const operationalAlert = platform.table(
       .default(sql`now()`),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   },
-  () => [
+  (table) => [
     check(
       'operational_alert_severity_known',
       sql`(severity = ANY (ARRAY['info'::text, 'warning'::text, 'critical'::text]))`,
     ),
     index('operational_alert_open_idx')
-      .using('btree', sql`alert_code`, sql`raised_at DESC`)
+      .on(table.alertCode, table.raisedAt.desc().nullsFirst())
       .where(sql`resolved_at IS NULL`),
   ],
 );

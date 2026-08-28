@@ -18,7 +18,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "lint": "eslint src",
-    "test:unit": "vitest run src/migrations.test.ts",
+    "test:unit": "vitest run src/migrations.test.ts src/schema-extraction.test.ts",
     "test:migrations": "vitest run src/migrate.test.ts",
     "migrate": "tsx src/cli.ts",
     "test:integration": "vitest run src/integration",
