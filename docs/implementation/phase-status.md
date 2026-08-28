@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 39, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 18/18 (421 tests), regression 40, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, regression-coverage 32/32, CI bypass fixtures 13/13 | `8a62b0b`, `b8a3507`, `ed0a9a7`, `7f43445`, `c5a6888`, `4cf3adb`, `074a674`, `20d0131`, `15b1380`, `6e39256`, `0b7659e`, `c7ed78a`, `a4b2103`, `7d16e28`, `2286161`, `ebb12ba`, _final documentation commit_ |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 49, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 18/18 (439 tests), regression 51, `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15, coverage 51/51, CI bypass fixtures 26/26, pool fixture 3/3 | `8a62b0b` … `85d745c`, `66c2c65`, `f3e0c16`, `f88cc38`, `46fdce1`, `816756d`, `41b1e35`, `08f0fa0`, _final documentation commit_ |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -103,28 +103,29 @@ tabulated in [requirements-traceability.md](requirements-traceability.md) §2.
 
 ### Test gates
 
-Current counts, measured on the tree the sixth repair describes. Earlier
+Current counts, measured on the tree the seventh repair describes. Earlier
 sections quote the counts current when they were written and are labelled as
 historical snapshots.
 
 ```bash
 node tools/validate-governance.mjs                       # GATE-GOV 13/13
 node tools/validate-workspace.mjs                        # 15/15
-node tools/validate-regression-coverage.mjs              # 32/32 structural CI checks
-node tools/validate-regression-coverage.fixtures.mjs     # 13/13 CI bypasses rejected
+node tools/validate-regression-coverage.mjs              # 51/51 structural CI checks
+node tools/validate-regression-coverage.fixtures.mjs     # 26/26 bypasses rejected
+node tools/validate-pool-error-fixture.mjs               # 3/3 — an idle-pool error fails a suite
 node tools/scan-secrets.mjs                              # 0 findings
 pnpm run format:check                                    # clean
 pnpm run lint                                            # GATE-LINT — 16 projects + e2e
 pnpm run typecheck                                       # GATE-TYPES — 25 graphs, tests included
 pnpm run test:unit                                       # GATE-UNIT — 175 passed
-pnpm run test:migrations                                 # GATE-MIGR — 39 passed
+pnpm run test:migrations                                 # GATE-MIGR — 49 passed
 pnpm run test:integration                                # GATE-INTEG — 51 passed
 pnpm run test:concurrency                                # GATE-CONC — 16 passed
-pnpm run test:regression                                 # 40 passed
-pnpm run test:security                                   # GATE-SEC — 18/18 sub-gates, 421 tests
+pnpm run test:regression                                 # 51 passed
+pnpm run test:security                                   # GATE-SEC — 18/18 sub-gates, 439 tests
 pnpm run test:e2e                                        # GATE-E2E — 15 passed
 pnpm run audit:prod                                      # no known vulnerabilities
-pnpm run audit:tree                                      # 1 moderate (DSR-01)
+pnpm run audit:tree                                      # clean at high; now blocking
 pnpm run build                                           # 16 projects
 pnpm run openapi                                         # /api/v1 document
 git diff --check                                         # clean
@@ -925,6 +926,9 @@ SEC-PII-LEAK 10, SEC-SECRETS 6. **372 tests**, identical across three consecutiv
 
 ### Sixth security repair (customer review 6) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Counts here (18 sub-gates, 421 GATE-SEC tests) are those
+> of the sixth pass; the current figures are in *Seventh security repair* below.
+
 The fifth repair was **not accepted**. Seven defects were raised; all are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts.**
 
@@ -968,6 +972,37 @@ Eleven group roles, seven canonical login principals. Corrections this repair ma
 - **Pool errors.** Only an expected teardown termination is suppressed, and not every raw `Pool` in
   the tree goes through the helper — the harness and the db suites do, and
   `assertNoUnexpectedPoolErrors` is what makes an escape a failure rather than a silence.
+
+### Seventh security repair (customer review 7) — `SECURITY_REPAIR_REQUIRED`
+
+The sixth repair was **not accepted**. Eight defects were raised; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts.**
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | The startup guard created a scheduler pool, verified it, and closed it. The capability existed on paper with no connection holding it, and the only proof was a test constructing the service by hand | `MaintenanceModule` registers the pool and service in the Nest container; the guard validates *that* pool after the container exists and before `listen`; Nest closes it through `OnApplicationShutdown`. `SCHEDULER_ENABLED` defaults on and a production API with the capability and no `SCHEDULER_DATABASE_URL` fails env validation. `.env.example` documents it. The test starts the real application, resolves the service and pool from the container, issues through the application-owned pool and proves shutdown ends it |
+| 2 | The functions trusted the role graph as of the last bootstrap, so a login granted a second group afterwards could issue *and* execute | `platform.assert_exact_role_closure` re-validates at call time: LOGIN, no privileged attribute, exactly one membership with exact options, nothing else reachable, no ADMIN OPTION. The scheduler validates itself and its executor; the maintenance function validates the executing principal |
+| 3 | Column-scoped `UPDATE` still let a Worker mark any tenant-visible row succeeded — another Worker's job, or a privileged job whose function never ran | The Worker holds `SELECT` only. `platform.finish_worker_job` performs ordinary transitions, requiring `job_identity = session_user` and refusing the privileged namespace. A maintenance job terminalises only inside its audited function |
+| 4 | `prsystem_migrate_login` was absent from the raw SQL closure checks, and the runner never looked at ownership | The migration login is checked for attributes, ADMIN and unexpected membership alongside the others. The runner validates database, schema and kernel-object ownership before any new DDL and again after. `PRSYSTEM_APPROVED_OPERATOR_OWNERS` is the shipped contract |
+| 5 | Comparing two `pg_dump` outputs cannot catch a defect the fresh and upgrade paths share | One exported comparator, used by the blocking gate *and* by nine mutation tests. Compares the exact 14-table set, columns with type/nullability/default/identity, primary keys including the composite audit key, foreign keys, unique and check constraints, and index definitions |
+| 6 | The pool-error report was process-global: one suite's reset erased another's failure, and only suites that asked ever failed | Per-database accounting; `drop()` asserts its own database's account after orderly closure. A fixture proves an ordinary suite exits non-zero without calling the assertion itself |
+| 7 | The `governance` job ran pnpm validators with no pnpm setup and no install | It installs with a frozen lockfile first, and the validator requires that of every job using pnpm. `if:`-disabled steps, expression `continue-on-error`, and a substring-matched root script are all rejected now |
+| 8 | Documentation contradicted the code | Corrected; superseded sections labelled historical |
+
+#### What the new checks found on the way
+
+- Adding `MaintenanceModule` to `AppModule` broke `pnpm run openapi`: the pool factory read the fully
+  validated `env()`, and document generation deliberately runs with no runtime environment. Caught by
+  the gate, fixed by reading the one variable the factory needs.
+- The full-tree audit carried `continue-on-error: true` while passing — dead weight that also
+  functioned as a bypass. It is blocking now.
+
+#### GATE-SEC — 18 sub-gates, 439 tests
+
+SEC-ROLE 12, SEC-RLS 33, SEC-ACL-MATRIX 110, SEC-OWNERSHIP 10, SEC-LOCK-EVIDENCE 16,
+SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 19, SEC-SCHEDULER 38, SEC-MAINTENANCE 24, SEC-STARTUP 21,
+SEC-STARTUP-WORKER 4, SEC-REGRESSION 51, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
+SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Identical across three consecutive runs.
 
 ---
 
