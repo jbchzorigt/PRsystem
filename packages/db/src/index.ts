@@ -10,6 +10,8 @@ export {
   RUNTIME_AND_READER_ROLES,
   UNREACHABLE_ROLES,
   bootstrapCluster,
+  approvedOperatorOwnersFromEnv,
+  assertOwnershipContract,
 } from './bootstrap';
 export type {
   BootstrapOptions,

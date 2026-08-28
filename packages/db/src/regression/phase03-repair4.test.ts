@@ -86,8 +86,16 @@ afterAll(async () => {
  * test that only called `runMigrations` could not tell whether the SQL or the
  * TypeScript did the refusing. This executes the SQL alone.
  */
-async function runPreconditionSql(): Promise<{ code?: string; message?: string } | undefined> {
-  const client = new Client({ connectionString: migrateUrl });
+async function runPreconditionSql(
+  options: { as?: 'migrate' | 'admin' } = {},
+): Promise<{ code?: string; message?: string } | undefined> {
+  // Some drift makes the migration login itself unusable — NOLOGIN, or a
+  // membership without INHERIT. The precondition SQL is what is under test, not
+  // the connection, so those cases run it through the admin connection with the
+  // same SET ROLE the runner uses.
+  const client = new Client({
+    connectionString: options.as === 'admin' ? adminUrl() : migrateUrl,
+  });
   await client.connect();
   try {
     await client.query('SET ROLE prsystem_migrate');
@@ -341,4 +349,158 @@ describe('E5 — every existing canonical login must hold its exact edge', () =>
   it('accepts the cluster once every login edge is exact', async () => {
     expect(await runPreconditionSql()).toBeUndefined();
   });
+});
+
+describe('E6 — the migration login is contained by the raw SQL too', () => {
+  it('rejects a bridge role reachable from the migration login', async () => {
+    await admin.query(`DROP ROLE IF EXISTS prsystem_e6_bridge`);
+    await admin.query(`CREATE ROLE prsystem_e6_bridge NOLOGIN`);
+    try {
+      await admin.query(
+        `GRANT prsystem_e6_bridge TO prsystem_migrate_login WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+      );
+      const sqlError = await runPreconditionSql();
+      expect(sqlError, 'the SQL precondition must refuse this by itself').toBeDefined();
+      expect(sqlError?.code).toBe('42501');
+    } finally {
+      await admin.query(`REVOKE prsystem_e6_bridge FROM prsystem_migrate_login`);
+      await admin.query(`DROP ROLE IF EXISTS prsystem_e6_bridge`);
+    }
+  });
+
+  it('rejects a predefined role reachable from the migration login', async () => {
+    await admin.query(`GRANT pg_read_all_data TO prsystem_migrate_login`);
+    try {
+      const sqlError = await runPreconditionSql();
+      expect(sqlError?.code).toBe('42501');
+    } finally {
+      await admin.query(`REVOKE pg_read_all_data FROM prsystem_migrate_login`);
+    }
+  });
+
+  it('rejects a privileged attribute on the migration login', async () => {
+    await admin.query(`ALTER ROLE prsystem_migrate_login CREATEDB`);
+    try {
+      const sqlError = await runPreconditionSql();
+      expect(sqlError?.code).toBe('42501');
+      expect(sqlError?.message).toMatch(/CREATEDB/i);
+    } finally {
+      await admin.query(`ALTER ROLE prsystem_migrate_login NOCREATEDB`);
+    }
+  });
+
+  it('rejects ADMIN OPTION held by the migration login', async () => {
+    await admin.query(
+      `GRANT prsystem_migrate TO prsystem_migrate_login WITH ADMIN TRUE, INHERIT TRUE, SET TRUE`,
+    );
+    try {
+      const sqlError = await runPreconditionSql();
+      expect(sqlError?.code).toBe('42501');
+    } finally {
+      await admin.query(
+        `GRANT prsystem_migrate TO prsystem_migrate_login WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+      );
+    }
+  });
+
+  it('rejects wrong membership options on the migration login', async () => {
+    await admin.query(
+      `GRANT prsystem_migrate TO prsystem_migrate_login WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`,
+    );
+    try {
+      const sqlError = await runPreconditionSql({ as: 'admin' });
+      expect(sqlError?.code).toBe('42501');
+    } finally {
+      await admin.query(
+        `GRANT prsystem_migrate TO prsystem_migrate_login WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`,
+      );
+    }
+  });
+
+  it('rejects a NOLOGIN migration principal', async () => {
+    await admin.query(`ALTER ROLE prsystem_migrate_login NOLOGIN`);
+    try {
+      const sqlError = await runPreconditionSql({ as: 'admin' });
+      expect(sqlError?.code).toBe('42501');
+      expect(sqlError?.message).toMatch(/lacks LOGIN/i);
+    } finally {
+      await admin.query(`ALTER ROLE prsystem_migrate_login LOGIN`);
+    }
+  });
+});
+
+describe('E7 — the migration runner validates ownership before applying DDL', () => {
+  /** Runs one statement inside the *target* database, where the kernel lives. */
+  async function inTarget(sql: string): Promise<void> {
+    const client = new Client({ connectionString: db.url });
+    await client.connect();
+    try {
+      await client.query(sql);
+    } finally {
+      await client.end();
+    }
+  }
+
+  it('applies to a fresh database and repeats as a no-op', async () => {
+    // The positive controls: fresh apply and repeat apply both work, so the
+    // refusals below are about ownership and not about the runner being broken.
+    const first = await runMigrations(migrateUrl);
+    expect(first.appliedBefore).toBe(first.appliedAfter);
+
+    const second = await runMigrations(migrateUrl);
+    expect(second.appliedAfter).toBe(first.appliedAfter);
+  }, 120000);
+
+  it('refuses when a runtime role owns a kernel relation', async () => {
+    await inTarget(`ALTER TABLE platform.job_run OWNER TO prsystem_worker`);
+    try {
+      await expect(runMigrations(migrateUrl)).rejects.toMatchObject({
+        name: 'MigrationOwnershipError',
+        message: expect.stringMatching(
+          /job_run is owned by the project role prsystem_worker/,
+        ) as unknown as string,
+      });
+    } finally {
+      await inTarget(`ALTER TABLE platform.job_run OWNER TO prsystem_migrate`);
+    }
+  }, 60000);
+
+  it('refuses when a runtime role owns a kernel schema', async () => {
+    await inTarget(`ALTER SCHEMA platform OWNER TO prsystem_api`);
+    try {
+      await expect(runMigrations(migrateUrl)).rejects.toMatchObject({
+        name: 'MigrationOwnershipError',
+      });
+    } finally {
+      await inTarget(`ALTER SCHEMA platform OWNER TO prsystem_migrate`);
+    }
+  }, 60000);
+
+  it('refuses an unapproved operator owner when the allow-list is declared', async () => {
+    // The allow-list is an explicit tightening, read from the environment
+    // contract the CLI ships. Declaring one that excludes the real owner must
+    // stop the migration.
+    process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'] = 'some_other_operator';
+    try {
+      await expect(runMigrations(migrateUrl)).rejects.toMatchObject({
+        name: 'MigrationOwnershipError',
+        message: expect.stringMatching(/not an approved operator owner/) as unknown as string,
+      });
+    } finally {
+      delete process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'];
+    }
+  }, 60000);
+
+  it('accepts the real owner when the allow-list names it', async () => {
+    const owner = await admin.query<{ owner: string }>(
+      `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1`,
+      [db.name],
+    );
+    process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'] = `${owner.rows[0]!.owner}, another_operator`;
+    try {
+      await expect(runMigrations(migrateUrl)).resolves.toBeDefined();
+    } finally {
+      delete process.env['PRSYSTEM_APPROVED_OPERATOR_OWNERS'];
+    }
+  }, 60000);
 });

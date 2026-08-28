@@ -1,4 +1,4 @@
-import { bootstrapCluster, LOGIN_PRINCIPALS } from './bootstrap';
+import { approvedOperatorOwnersFromEnv, bootstrapCluster, LOGIN_PRINCIPALS } from './bootstrap';
 import type { LoginCredential, LoginPrincipal } from './bootstrap';
 
 /**
@@ -25,7 +25,9 @@ async function main(): Promise<void> {
   if (adminUrl === undefined || database === undefined) {
     process.stderr.write(
       'BOOTSTRAP_DATABASE_URL and BOOTSTRAP_TARGET_DATABASE are required.\n' +
-        'This is a privileged DBA/IaC step — see docs/implementation/database-bootstrap-runbook.md\n',
+        'This is a privileged DBA/IaC step — see docs/implementation/database-bootstrap-runbook.md\n' +
+        'Optional: PRSYSTEM_APPROVED_OPERATOR_OWNERS=<comma-separated operator roles> declares\n' +
+        'which identities may own the target database and schema public.\n',
     );
     process.exitCode = 1;
     return;
@@ -37,7 +39,16 @@ async function main(): Promise<void> {
     if (password !== undefined && password.length > 0) logins.push({ principal, password });
   }
 
-  const result = await bootstrapCluster({ adminUrl, database, logins });
+  // The approved-operator-owner contract is part of the shipped environment
+  // surface, not a library constant only a test can reach.
+  const approvedOperatorOwners = approvedOperatorOwnersFromEnv();
+
+  const result = await bootstrapCluster({
+    adminUrl,
+    database,
+    logins,
+    ...(approvedOperatorOwners === undefined ? {} : { approvedOperatorOwners }),
+  });
   process.stdout.write(
     `cluster bootstrap complete: ${String(result.groupRoles)} group roles, ` +
       `${String(result.loginsConfigured)} login principal(s) configured\n`,

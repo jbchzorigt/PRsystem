@@ -35,6 +35,13 @@ DECLARE
     'prsystem_audit_reader_login', 'prsystem_police_audit_reader_login',
     'prsystem_job_scheduler_login'
   ];
+  -- The migration login is contained too, but separately: it legitimately
+  -- reaches prsystem_migrate, so it cannot join the list above whose members
+  -- must reach no owner role at all. Everything else applies to it identically —
+  -- attributes, LOGIN, exact edge, options, ADMIN and unexpected reach — and
+  -- leaving it out meant a bridge or predefined role granted to the principal
+  -- that applies DDL was never noticed.
+  c_all_principals constant text[] := c_contained || ARRAY['prsystem_migrate_login'];
   -- Roles none of the above may reach by any capability.
   c_owners constant text[] := ARRAY[
     'prsystem_maintenance', 'prsystem_maintenance_fn',
@@ -92,10 +99,10 @@ BEGIN
                 WHEN rolreplication THEN 'REPLICATION'
                 ELSE 'BYPASSRLS' END AS attribute
       FROM pg_roles
-     WHERE rolname = ANY(c_contained)
+     WHERE rolname = ANY(c_all_principals)
        AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
   LOOP
-    RAISE EXCEPTION 'principal % holds %, which no runtime, reader or scheduler may hold',
+    RAISE EXCEPTION 'principal % holds %, which no application principal may hold',
       r.rolname, r.attribute USING ERRCODE = '42501';
   END LOOP;
 
@@ -128,7 +135,7 @@ BEGIN
       FROM pg_auth_members am
       JOIN pg_roles m ON m.oid = am.member
       JOIN pg_roles g ON g.oid = am.roleid
-     WHERE am.admin_option AND m.rolname = ANY(c_contained)
+     WHERE am.admin_option AND m.rolname = ANY(c_all_principals)
   LOOP
     RAISE EXCEPTION 'principal % holds ADMIN OPTION on %, so it can grant itself further reach',
       r.member, r.role USING ERRCODE = '42501';
@@ -141,9 +148,10 @@ BEGIN
       FROM pg_roles contained
       JOIN pg_auth_members am ON am.member = contained.oid
       JOIN pg_roles reached ON reached.oid = am.roleid
-     WHERE contained.rolname = ANY(c_contained)
+     WHERE contained.rolname = ANY(c_all_principals)
        AND reached.rolname IS DISTINCT FROM (
              CASE contained.rolname
+               WHEN 'prsystem_migrate_login' THEN 'prsystem_migrate'
                WHEN 'prsystem_api_login' THEN 'prsystem_api'
                WHEN 'prsystem_worker_login' THEN 'prsystem_worker'
                WHEN 'prsystem_police_login' THEN 'prsystem_police'

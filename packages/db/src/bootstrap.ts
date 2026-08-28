@@ -433,7 +433,7 @@ async function applyDatabaseGrants(
  * reconciliation would contain it — and the previous implementation added
  * whatever it found as owner to the ACL allow-list without asking what it was.
  */
-function projectRoles(): ReadonlySet<string> {
+export function projectRoles(): ReadonlySet<string> {
   return new Set<string>([...GROUP_ROLES, ...Object.keys(LOGIN_PRINCIPALS)]);
 }
 
@@ -443,6 +443,25 @@ const PG_DATABASE_OWNER = 'pg_database_owner';
 export interface OwnershipContract {
   readonly databaseOwner: string;
   readonly publicSchemaOwner: string;
+}
+
+/**
+ * Operator identities a deployment has approved to own the database.
+ *
+ * Read from `PRSYSTEM_APPROVED_OPERATOR_OWNERS` (comma-separated) so the
+ * contract is part of the shipped environment surface rather than a library
+ * constant only a test can reach. Empty means "the identity performing the
+ * operation", which is the identity a deployment has actually authorised.
+ */
+export function approvedOperatorOwnersFromEnv(
+  environment: NodeJS.ProcessEnv = process.env,
+): readonly string[] | undefined {
+  const raw = environment['PRSYSTEM_APPROVED_OPERATOR_OWNERS'];
+  if (raw === undefined || raw.trim().length === 0) return undefined;
+  return raw
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
 }
 
 /**
@@ -458,7 +477,7 @@ export interface OwnershipContract {
  * `pg_database_owner` is accepted for `public` only when the database owner is
  * itself approved, because it resolves to exactly that role.
  */
-async function assertOwnershipContract(
+export async function assertOwnershipContract(
   target: Pool,
   database: string,
   approved: ReadonlySet<string>,
