@@ -1498,6 +1498,7 @@ CREATE OR REPLACE FUNCTION platform.assert_exact_role_closure(
   LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_oid oid;
+  v_group_oid oid;
   r record;
 BEGIN
   SELECT oid INTO v_oid FROM pg_roles WHERE rolname = p_login;
@@ -1515,6 +1516,27 @@ BEGIN
        AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)
   ) THEN
     RAISE EXCEPTION 'principal % holds a privileged attribute', p_login USING ERRCODE = '42501';
+  END IF;
+
+  -- The expected group itself. A clean login inside a compromised group is
+  -- still a compromised principal, and PostgreSQL does not inherit role
+  -- attributes: altering prsystem_worker or prsystem_job_scheduler changes what
+  -- every member can do while leaving each member's own catalogue row
+  -- untouched. Checking only the login made that drift invisible here.
+  SELECT oid INTO v_group_oid FROM pg_roles WHERE rolname = p_group;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'group % does not exist', p_group USING ERRCODE = '42501';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_roles
+     WHERE oid = v_group_oid
+       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole
+            OR rolreplication OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION
+      'group % must be NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION and NOBYPASSRLS',
+      p_group USING ERRCODE = '42501';
   END IF;
 
   -- Exactly one direct membership, in the expected group, with exact options.
@@ -1536,6 +1558,21 @@ BEGIN
       'principal % must be a member of % with exactly ADMIN FALSE, INHERIT TRUE, SET TRUE',
       p_login, p_group USING ERRCODE = '42501';
   END IF;
+
+  -- No privileged attribute anywhere in the closure. The loop below already
+  -- constrains the reachable set to {p_login, p_group}, both of which are
+  -- checked above; this states the invariant over whatever is actually
+  -- reachable, so it keeps holding if that set is ever widened.
+  FOR r IN
+    SELECT g.rolname AS reached
+      FROM pg_roles g
+     WHERE pg_has_role(v_oid, g.oid, 'USAGE')
+       AND (g.rolsuper OR g.rolcreatedb OR g.rolcreaterole
+            OR g.rolreplication OR g.rolbypassrls)
+  LOOP
+    RAISE EXCEPTION 'principal % reaches %, which holds a privileged attribute',
+      p_login, r.reached USING ERRCODE = '42501';
+  END LOOP;
 
   -- And nothing else is reachable: no second project group, no predefined role,
   -- no ADMIN OPTION anywhere in the closure.

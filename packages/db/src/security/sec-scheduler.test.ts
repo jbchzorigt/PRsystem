@@ -869,3 +869,85 @@ describe('R7 — a Worker cannot forge job completion', () => {
     expect(state.rows[0]?.['finished_at']).not.toBeNull();
   }, 60000);
 });
+
+describe('R8 — the expected group is validated, not only the login', () => {
+  /**
+   * A clean login inside a compromised group is still a compromised principal.
+   *
+   * The invocation-time check validated the *login* — LOGIN set, no privileged
+   * attribute, exactly one membership — and then took the group on trust. An
+   * operator who altered `prsystem_worker` or `prsystem_job_scheduler` itself
+   * changed what every member could do, and nothing in the scheduling or
+   * execution path noticed. Attributes are not inherited in PostgreSQL, so the
+   * member's own catalogue row looks untouched: the group has to be inspected
+   * directly or the drift is invisible.
+   */
+  const GROUP_MUTATIONS = [
+    { attribute: 'LOGIN', reset: 'NOLOGIN' },
+    { attribute: 'BYPASSRLS', reset: 'NOBYPASSRLS' },
+    { attribute: 'CREATEROLE', reset: 'NOCREATEROLE' },
+  ] as const;
+
+  for (const { attribute, reset } of GROUP_MUTATIONS) {
+    it(`refuses scheduling when prsystem_job_scheduler holds ${attribute}`, async () => {
+      await env.admin.query(`ALTER ROLE prsystem_job_scheduler ${attribute}`);
+      try {
+        await expect(
+          attempted(env.jobScheduler, {}, (q) =>
+            q('SELECT platform.schedule_maintenance_job($1, $2, $3)', [JOB_NAME, HOTEL, EXECUTOR]),
+          ),
+        ).rejects.toMatchObject({ code: '42501' });
+      } finally {
+        await env.admin.query(`ALTER ROLE prsystem_job_scheduler ${reset}`);
+      }
+    }, 60000);
+
+    it(`refuses scheduling and execution when prsystem_worker holds ${attribute}`, async () => {
+      // Issued while the graph is still clean, so the refusal below is the
+      // execution-time check seeing the group as it is now.
+      const id = await issue();
+      await env.admin.query(`ALTER ROLE prsystem_worker ${attribute}`);
+      try {
+        await expect(
+          attempted(env.jobScheduler, {}, (q) =>
+            q('SELECT platform.schedule_maintenance_job($1, $2, $3)', [JOB_NAME, HOTEL, EXECUTOR]),
+          ),
+        ).rejects.toMatchObject({ code: '42501' });
+
+        await expect(
+          attempted(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+            q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
+          ),
+        ).rejects.toMatchObject({ code: '42501' });
+      } finally {
+        await env.admin.query(`ALTER ROLE prsystem_worker ${reset}`);
+      }
+    }, 60000);
+  }
+
+  it('refuses when the expected group has acquired a membership of its own', async () => {
+    // A group that reaches a predefined role hands that reach to every member.
+    await env.admin.query(`GRANT pg_read_all_data TO prsystem_worker`);
+    try {
+      await expect(
+        attempted(env.jobScheduler, {}, (q) =>
+          q('SELECT platform.schedule_maintenance_job($1, $2, $3)', [JOB_NAME, HOTEL, EXECUTOR]),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await env.admin.query(`REVOKE pg_read_all_data FROM prsystem_worker`);
+    }
+  }, 60000);
+
+  it('still accepts the canonical groups once the drift is reverted', async () => {
+    // The positive control: every mutation above is reverted in its own
+    // `finally`, so a green run here proves the checks reject drift rather
+    // than rejecting everything.
+    const id = await issue();
+    await seedExpired('idem_group_control');
+    const result = await committed(env.worker, { actor: WORKER_ACTOR, realm: 'hotel' }, (q) =>
+      q('SELECT * FROM platform.maintenance_expire_idempotency_keys($1)', [id]),
+    );
+    expect(Number(result.rows[0]?.['deleted'])).toBeGreaterThan(0);
+  }, 60000);
+});
