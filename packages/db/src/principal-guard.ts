@@ -33,6 +33,20 @@ export class PrincipalError extends Error {
   }
 }
 
+/** One role the principal can reach, and the attributes it would bring. */
+export interface ReachableRole {
+  readonly name: string;
+  /** Privileges apply automatically: every edge on some path carries INHERIT. */
+  readonly inherited: boolean;
+  /** The principal can `SET ROLE` into it, whether or not it inherits. */
+  readonly settable: boolean;
+  readonly isSuperuser: boolean;
+  readonly canCreateRole: boolean;
+  readonly canCreateDb: boolean;
+  readonly canReplicate: boolean;
+  readonly bypassRls: boolean;
+}
+
 export interface PrincipalFacts {
   readonly currentUser: string;
   readonly sessionUser: string;
@@ -41,7 +55,13 @@ export interface PrincipalFacts {
   readonly canCreateDb: boolean;
   readonly canReplicate: boolean;
   readonly bypassRls: boolean;
-  /** Every role reachable by inheritance or SET ROLE, excluding the principal. */
+  /**
+   * The complete transitive closure, direct and indirect, including PostgreSQL
+   * predefined roles and memberships that grant no inherited privilege but can
+   * still be assumed with `SET ROLE`.
+   */
+  readonly reachable: readonly ReachableRole[];
+  /** Names only, for convenience. Always `reachable.map(r => r.name)`. */
   readonly memberOf: readonly string[];
 }
 
@@ -64,21 +84,62 @@ export async function readPrincipalFacts(pool: Queryable): Promise<PrincipalFact
   const row = attributes.rows[0];
   if (row === undefined) throw new PrincipalError('session role not found', 'forbidden_principal');
 
-  // One row per reachable role, never an aggregate.
+  // The complete transitive closure, computed in the database.
   //
-  // An aggregate came back from the driver as a delimited string, which turned
-  // every membership test into a *substring* match — `prsystem_maintenance_fn`
-  // satisfied a check for `prsystem_maintenance`. A privilege check that can
-  // match a prefix is worse than no check, so the shape is rows and the
-  // comparison is exact equality.
-  const roles = await pool.query<{ rolname: string }>(
-    `SELECT g.rolname
-       FROM pg_roles g
+  // Three earlier mistakes are closed here at once. It no longer excludes
+  // `pg_*`, because `pg_read_all_data` is precisely the kind of role that must
+  // never be reachable. It no longer tests `pg_has_role(..., 'USAGE')` alone,
+  // because a `GRANT ... WITH INHERIT FALSE, SET TRUE` grants no inherited
+  // privilege — so USAGE reports nothing — while still letting the login become
+  // that role at will. And it carries each reachable role's own attributes, so a
+  // privileged attribute placed on an expected group is visible rather than
+  // hidden behind a check that only ever looked at `session_user`.
+  const roles = await pool.query<{
+    rolname: string;
+    inherited: boolean;
+    settable: boolean;
+    rolsuper: boolean;
+    rolcreaterole: boolean;
+    rolcreatedb: boolean;
+    rolreplication: boolean;
+    rolbypassrls: boolean;
+  }>(
+    `WITH RECURSIVE reachable(roleid, inherited, settable) AS (
+       SELECT am.roleid, am.inherit_option, am.set_option
+         FROM pg_auth_members am
+         JOIN pg_roles me ON me.oid = am.member
+        WHERE me.rolname = session_user
+          AND (am.inherit_option OR am.set_option)
+       UNION
+       SELECT am.roleid,
+              r.inherited AND am.inherit_option,
+              r.settable OR am.set_option
+         FROM pg_auth_members am
+         JOIN reachable r ON r.roleid = am.member
+        WHERE am.inherit_option OR am.set_option
+     )
+     SELECT g.rolname,
+            bool_or(r.inherited) AS inherited,
+            bool_or(r.settable)  AS settable,
+            g.rolsuper, g.rolcreaterole, g.rolcreatedb, g.rolreplication, g.rolbypassrls
+       FROM reachable r
+       JOIN pg_roles g ON g.oid = r.roleid
       WHERE g.rolname <> session_user
-        AND g.rolname NOT LIKE 'pg\\_%'
-        AND pg_has_role(session_user, g.oid, 'USAGE')
+      GROUP BY g.rolname, g.rolsuper, g.rolcreaterole, g.rolcreatedb,
+               g.rolreplication, g.rolbypassrls
       ORDER BY g.rolname`,
   );
+
+  const reachable: ReachableRole[] = roles.rows.map((r) => ({
+    name: r.rolname,
+    inherited: r.inherited,
+    settable: r.settable,
+    isSuperuser: r.rolsuper,
+    canCreateRole: r.rolcreaterole,
+    canCreateDb: r.rolcreatedb,
+    canReplicate: r.rolreplication,
+    bypassRls: r.rolbypassrls,
+  }));
 
   return {
     currentUser: row.current_user,
@@ -88,13 +149,39 @@ export async function readPrincipalFacts(pool: Queryable): Promise<PrincipalFact
     canCreateDb: row.rolcreatedb,
     canReplicate: row.rolreplication,
     bypassRls: row.rolbypassrls,
-    memberOf: roles.rows.map((r) => r.rolname),
+    reachable,
+    memberOf: reachable.map((r) => r.name),
   };
 }
 
 /** Exact equality, never substring or prefix matching. */
 function reaches(facts: PrincipalFacts, role: string): boolean {
   return facts.memberOf.some((candidate) => candidate === role);
+}
+
+/**
+ * No role anywhere in the closure may carry a privileged attribute.
+ *
+ * Checking only `session_user` missed the case that matters most: a login that
+ * looks harmless but can reach a group somebody granted `BYPASSRLS` to.
+ */
+function assertClosureUnprivileged(facts: PrincipalFacts): void {
+  for (const role of facts.reachable) {
+    for (const [attribute, held] of [
+      ['SUPERUSER', role.isSuperuser],
+      ['CREATEROLE', role.canCreateRole],
+      ['CREATEDB', role.canCreateDb],
+      ['REPLICATION', role.canReplicate],
+      ['BYPASSRLS', role.bypassRls],
+    ] as const) {
+      if (held) {
+        throw new PrincipalError(
+          `${facts.sessionUser} can reach ${role.name}, which holds ${attribute}`,
+          'privileged_attribute',
+        );
+      }
+    }
+  }
 }
 
 function assertNoPrivilegedAttribute(facts: PrincipalFacts): void {
@@ -130,12 +217,25 @@ export const FORBIDDEN_FOR_RUNTIME = [
   'prsystem_partition_mgr',
 ] as const;
 
-/** The complete membership closure a runtime login is permitted to have. */
+/**
+ * The complete membership closure each principal is permitted to have.
+ *
+ * Exact sets, not minimums: anything reachable and not listed is a finding,
+ * whether it is a project role or a PostgreSQL predefined one.
+ */
 const ALLOWED_RUNTIME_CLOSURE: Readonly<Record<string, readonly string[]>> = {
   prsystem_api: ['prsystem_api'],
   prsystem_worker: ['prsystem_worker'],
   prsystem_police: ['prsystem_police'],
 };
+
+/** The migration principal owns objects, so it reaches the three narrow owners. */
+export const ALLOWED_MIGRATION_CLOSURE: readonly string[] = [
+  'prsystem_migrate',
+  'prsystem_audit_writer',
+  'prsystem_partition_mgr',
+  'prsystem_maintenance_fn',
+];
 
 /**
  * Verifies a migration connection: restricted, non-superuser, a member of
@@ -151,12 +251,16 @@ export async function assertMigrationPrincipal(pool: Queryable): Promise<Princip
       'missing_membership',
     );
   }
-  // The migration principal owns objects, so it must be able to assign them to
-  // the narrow function-owner roles. It must never reach the one role that holds
-  // BYPASSRLS — that is break-glass, and a migration is not break-glass.
-  if (reaches(facts, 'prsystem_maintenance')) {
+  // The migration principal owns objects, so it reaches the three narrow
+  // function-owner roles — and nothing else. `prsystem_maintenance` holds
+  // BYPASSRLS and is break-glass; a migration is not break-glass.
+  assertClosureUnprivileged(facts);
+
+  const allowed = new Set(ALLOWED_MIGRATION_CLOSURE);
+  const unexpected = facts.memberOf.filter((role) => !allowed.has(role));
+  if (unexpected.length > 0) {
     throw new PrincipalError(
-      'the migration principal must not be able to reach prsystem_maintenance',
+      `the migration principal additionally reaches ${unexpected.join(', ')}`,
       'unexpected_membership',
     );
   }
@@ -192,6 +296,8 @@ export async function assertRuntimePrincipal(
   // An exact closure, not merely "contains the expected role". A login that also
   // reached some other group would pass a containment check while holding reach
   // the design never granted it.
+  assertClosureUnprivileged(facts);
+
   const allowed = new Set(ALLOWED_RUNTIME_CLOSURE[expectedGroup] ?? [expectedGroup]);
   const unexpected = facts.memberOf.filter((role) => !allowed.has(role));
   if (unexpected.length > 0) {

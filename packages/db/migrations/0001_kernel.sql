@@ -98,13 +98,20 @@ CREATE SCHEMA IF NOT EXISTS police_audit;
 CREATE SCHEMA IF NOT EXISTS police;
 --> statement-breakpoint
 
-GRANT USAGE ON SCHEMA platform TO prsystem_api, prsystem_worker, prsystem_maintenance;
+-- ADR-0017 §5: `prsystem_maintenance` owns nothing and holds **no standing
+-- grant**. It previously held USAGE on all four schemas, which contradicted the
+-- ADR: a break-glass identity with permanent reach is not break-glass. A DBA
+-- acting under an incident grants what that incident needs, at the time, under
+-- its own audit trail — and revokes it afterwards.
+GRANT USAGE ON SCHEMA platform TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA audit TO prsystem_api, prsystem_worker, prsystem_maintenance, prsystem_audit_reader;
+GRANT USAGE ON SCHEMA audit TO prsystem_api, prsystem_worker, prsystem_audit_reader;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA police_audit TO prsystem_police, prsystem_police_audit_reader, prsystem_maintenance;
+GRANT USAGE ON SCHEMA police_audit TO prsystem_police, prsystem_police_audit_reader;
 --> statement-breakpoint
-GRANT USAGE ON SCHEMA police TO prsystem_police, prsystem_maintenance;
+GRANT USAGE ON SCHEMA police TO prsystem_police;
+--> statement-breakpoint
+REVOKE ALL ON SCHEMA platform, audit, police_audit, police FROM prsystem_maintenance;
 --> statement-breakpoint
 
 -- SECURITY DEFINER owners resolve fully qualified objects in these schemas, so
@@ -348,13 +355,27 @@ CREATE INDEX outbox_delivery_claimable_idx
 
 -- An event with no delivery row would never be relayed. The pairing is a
 -- database guarantee rather than a caller obligation.
+-- SECURITY DEFINER so the *trigger* owns the write, not the caller.
+--
+-- Previously this ran with the caller's privileges, which forced a direct INSERT
+-- grant on outbox_delivery for every runtime — a grant nothing legitimately used,
+-- and one the ACL matrix could only "cover" by skipping the case. With the
+-- trigger as definer the grant is gone and a direct INSERT is refused outright.
 CREATE OR REPLACE FUNCTION platform.enqueue_outbox_delivery() RETURNS trigger
-  LANGUAGE plpgsql AS $$
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = pg_catalog, pg_temp
+  AS $$
 BEGIN
   INSERT INTO platform.outbox_delivery (event_id, hotel_id)
   VALUES (NEW.event_id, NEW.hotel_id);
   RETURN NEW;
 END $$;
+--> statement-breakpoint
+
+ALTER FUNCTION platform.enqueue_outbox_delivery() OWNER TO prsystem_migrate;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION platform.enqueue_outbox_delivery() FROM PUBLIC;
 --> statement-breakpoint
 
 CREATE TRIGGER outbox_event_enqueue
@@ -795,8 +816,10 @@ BEGIN
   IF v_realm IS NULL OR v_actor IS NULL OR v_hotel IS NULL THEN
     RAISE EXCEPTION 'audit requires an established transaction context' USING ERRCODE = '42501';
   END IF;
-  -- The Police stream is a different function with a different owner; a Police
-  -- action must not be recorded here.
+  -- The Police stream is a separate function writing a separate table. Both
+  -- append functions share the approved `prsystem_audit_writer` owner (ADR-0018);
+  -- separation comes from this realm check and from realm-separated EXECUTE
+  -- grants, not from ownership. A Police action must not be recorded here.
   IF v_realm = 'police' THEN
     RAISE EXCEPTION 'police realm must use police_audit.append_police_security_event'
       USING ERRCODE = '42501';
@@ -891,6 +914,14 @@ REVOKE ALL ON FUNCTION police_audit.append_police_security_event(text, text, tex
 --
 -- Deletion and audit share one transaction, so a failure to record the audit
 -- rolls the deletion back (ADR-0018 §5).
+-- The job name this operation is allowed to run under. A job row of any other
+-- kind is not authorisation for this deletion.
+CREATE OR REPLACE FUNCTION platform.maintenance_job_name() RETURNS text
+  LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
+  SELECT 'platform.maintenance.expire_idempotency_keys'::text
+$$;
+--> statement-breakpoint
+
 CREATE OR REPLACE FUNCTION platform.maintenance_expire_idempotency_keys(
   p_job_run_id uuid
 ) RETURNS TABLE (deleted integer, audit_event_id uuid)
@@ -907,15 +938,12 @@ DECLARE
   v_correlation text := nullif(pg_catalog.current_setting('app.correlation_id', true), '');
   v_job record;
 BEGIN
-  -- Trusted transaction context, not caller-supplied identity.
   IF v_hotel IS NULL OR v_actor IS NULL OR v_realm IS NULL OR v_correlation IS NULL THEN
     RAISE EXCEPTION
       'maintenance requires an established transaction context (hotel, realm, actor, correlation)'
       USING ERRCODE = '42501';
   END IF;
 
-  -- The Police realm has its own stream and its own principals; a platform
-  -- maintenance action must not be attributed to it.
   IF v_realm = 'police' THEN
     RAISE EXCEPTION 'the police realm may not run platform maintenance' USING ERRCODE = '42501';
   END IF;
@@ -924,30 +952,49 @@ BEGIN
     RAISE EXCEPTION 'maintenance requires a running job identity' USING ERRCODE = '22023';
   END IF;
 
-  -- Lock the job row: the run is the unit of accountability, and two concurrent
-  -- invocations must not share one.
+  -- FOR UPDATE, and only a *running* job of exactly this kind belonging to this
+  -- tenant. The lock is what makes two concurrent invocations sharing one job
+  -- impossible: the second waits, then finds the job no longer running.
   SELECT * INTO v_job
     FROM platform.job_run
-   WHERE job_run_id = p_job_run_id AND hotel_id = v_hotel AND state = 'running'
+   WHERE job_run_id = p_job_run_id AND hotel_id = v_hotel
    FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'no running job_run % for this tenant', p_job_run_id USING ERRCODE = '22023';
+    RAISE EXCEPTION 'no job_run % for this tenant', p_job_run_id USING ERRCODE = '22023';
+  END IF;
+  IF v_job.job_name IS DISTINCT FROM platform.maintenance_job_name() THEN
+    RAISE EXCEPTION 'job % is a % job, not %',
+      p_job_run_id, v_job.job_name, platform.maintenance_job_name() USING ERRCODE = '22023';
+  END IF;
+  IF v_job.state IS DISTINCT FROM 'running' THEN
+    RAISE EXCEPTION 'job % is already %; a completed job cannot be replayed',
+      p_job_run_id, v_job.state USING ERRCODE = '22023';
+  END IF;
+  -- The job must belong to the actor running it, or a job row becomes a bearer
+  -- token any actor could present.
+  IF v_job.job_identity IS DISTINCT FROM v_actor THEN
+    RAISE EXCEPTION 'job % belongs to another actor', p_job_run_id USING ERRCODE = '42501';
   END IF;
 
   DELETE FROM platform.idempotency_key
    WHERE hotel_id = v_hotel AND expires_at < pg_catalog.now() AND state <> 'in_progress';
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
 
-  -- Immutable audit, same transaction. If this raises, the delete above is undone.
+  -- Immutable audit, same transaction. If this raises, the delete above and the
+  -- job transition below are both undone.
   v_audit_event_id := audit.append_platform_audit_event(
-    'platform.maintenance.expire_idempotency_keys',
+    platform.maintenance_job_name(),
     'allowed',
     'job_run',
     p_job_run_id::text,
     v_job.job_name,
     pg_catalog.jsonb_build_object('rows', v_deleted)
   );
+
+  UPDATE platform.job_run
+     SET state = 'succeeded', finished_at = pg_catalog.now()
+   WHERE job_run_id = p_job_run_id;
 
   -- Telemetry, carrying the generated audit id. Not the audit record itself.
   INSERT INTO platform.operational_alert (alert_code, severity, detail)
@@ -1063,7 +1110,8 @@ GRANT SELECT, INSERT, UPDATE ON platform.idempotency_key TO prsystem_api, prsyst
 --> statement-breakpoint
 GRANT SELECT, INSERT ON platform.outbox_event TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
-GRANT SELECT, INSERT, UPDATE ON platform.outbox_delivery TO prsystem_api, prsystem_worker;
+-- No INSERT: delivery rows are created only by the append-only event trigger.
+GRANT SELECT, UPDATE ON platform.outbox_delivery TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
 GRANT SELECT, INSERT ON platform.inbox_consumption TO prsystem_api, prsystem_worker;
 --> statement-breakpoint
@@ -1161,7 +1209,8 @@ GRANT EXECUTE ON FUNCTION audit.append_platform_audit_event(text, text, text, te
 --> statement-breakpoint
 GRANT SELECT, UPDATE ON platform.job_run TO prsystem_maintenance_fn;
 --> statement-breakpoint
-GRANT EXECUTE ON FUNCTION platform.current_realm(), platform.current_actor_ref()
+GRANT EXECUTE ON FUNCTION platform.current_realm(), platform.current_actor_ref(),
+  platform.maintenance_job_name()
   TO prsystem_maintenance_fn;
 --> statement-breakpoint
 

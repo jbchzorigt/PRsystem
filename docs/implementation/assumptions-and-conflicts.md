@@ -77,6 +77,21 @@ document. Each is resolved by precedence, not by choice.
 
 ---
 
+### D-08 — Which role runs a cross-tenant system job (ADR-0017, internal)
+
+- **Earlier text.** ADR-0017 §7 role table: a cross-tenant system job "Runs as `prsystem_maintenance`
+  under a named job identity".
+- **Canonical text.** ADR-0017 §4 role table, same document: `prsystem_maintenance` is break-glass,
+  **owns nothing, grants nothing**, and is "reachable by nobody, including the migration principal";
+  §5 adds that normal cross-tenant maintenance does not use `BYPASSRLS`.
+- **Resolution.** The §4/§5 reading is canonical; §7 was stale wording from before the Phase 03
+  review removed the maintenance grants. §7 now names the `SECURITY DEFINER` function owned by
+  `prsystem_maintenance_fn`, which holds no `BYPASSRLS` and establishes tenant scope one tenant at a
+  time. This is a wording correction inside one implementation-owned ADR, not a design change: the
+  code, the grants and `database-bootstrap-runbook.md` already implement the §4 reading. Enforced by
+  `sec-ownership.test.ts` ("the break-glass role holds no schema privilege at all") and by the
+  bootstrap final invariants.
+
 ## 3. Recorded implementation assumptions
 
 Assumptions made where the requirements specify behaviour but not a mechanism. Each is reversible and

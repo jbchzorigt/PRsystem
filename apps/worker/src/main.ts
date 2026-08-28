@@ -4,7 +4,7 @@ import { env } from '@prsystem/config';
 import { selectKeyManagement } from '@prsystem/ports';
 import { createLogger, newRequestId, runWithCorrelation } from '@prsystem/telemetry';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
-import { assertWorkerConnectionPrincipal } from './observability/connection-guard';
+import { startWorker } from './startup';
 
 async function main(): Promise<void> {
   const config = env();
@@ -13,42 +13,41 @@ async function main(): Promise<void> {
     serviceName: `${config.OTEL_SERVICE_NAME}-worker`,
   });
 
-  // Before Redis is contacted and before any Worker is constructed: a process
-  // that cannot prove its database identity, or that has no key management, must
-  // not start consuming jobs.
-  const guardPool = new Pool({ connectionString: config.DATABASE_URL, max: 1 });
-  try {
-    await assertWorkerConnectionPrincipal(guardPool, logger);
-    selectKeyManagement({
-      appEnv: config.APP_ENV,
-      kmsAdapter: config.KMS_ADAPTER,
-      ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
-    });
-  } finally {
-    await guardPool.end();
-  }
-
-  const connection = connectionFromUrl(config.REDIS_URL);
-
-  const heartbeat = new Worker(
-    QUEUE_NAMES.heartbeat,
-    async (job) =>
-      runWithCorrelation({ requestId: newRequestId() }, () => {
-        logger.info({ jobId: job.id, queue: QUEUE_NAMES.heartbeat }, 'job processed');
-        return Promise.resolve();
-      }),
-    workerOptions(connection, { concurrency: 1, attempts: 3 }),
-  );
-
-  heartbeat.on('failed', (job, error) => {
-    logger.error({ jobId: job?.id, err: error }, 'job failed');
+  // Startup order is enforced by startWorker: the security preconditions run to
+  // completion before Redis is contacted or any consumer is constructed.
+  const started = await startWorker({
+    logger,
+    openGuardPool: () => new Pool({ connectionString: config.DATABASE_URL, max: 1 }),
+    verifyKeyManagement: () => {
+      selectKeyManagement({
+        appEnv: config.APP_ENV,
+        kmsAdapter: config.KMS_ADAPTER,
+        ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
+      });
+    },
+    createConnection: () => connectionFromUrl(config.REDIS_URL),
+    createWorkers: (connection) => {
+      const heartbeat = new Worker(
+        QUEUE_NAMES.heartbeat,
+        async (job) =>
+          runWithCorrelation({ requestId: newRequestId() }, () => {
+            logger.info({ jobId: job.id, queue: QUEUE_NAMES.heartbeat }, 'job processed');
+            return Promise.resolve();
+          }),
+        workerOptions(connection, { concurrency: 1, attempts: 3 }),
+      );
+      heartbeat.on('failed', (job, error) => {
+        logger.error({ jobId: job?.id, err: error }, 'job failed');
+      });
+      return [heartbeat];
+    },
   });
 
   logger.info({ queues: Object.values(QUEUE_NAMES) }, 'worker started');
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'worker shutting down');
-    await heartbeat.close();
+    await started.close();
     process.exit(0);
   };
 

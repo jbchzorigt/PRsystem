@@ -58,11 +58,14 @@ const TENANT_TABLES: readonly TenantTable[] = [
     grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
   },
   {
+    // Delivery rows are created only by the SECURITY DEFINER trigger on
+    // outbox_event. No runtime holds INSERT, so the INSERT cell is a real
+    // forbidden case asserting 42501 rather than one that had to be skipped.
     name: 'platform.outbox_delivery',
-    insert: () => ({ sql: '', values: [] }), // rows are created by a trigger, never directly
+    insert: () => ({ sql: '', values: [] }),
     grants: {
-      api: ['SELECT', 'INSERT', 'UPDATE'],
-      worker: ['SELECT', 'INSERT', 'UPDATE'],
+      api: ['SELECT', 'UPDATE'],
+      worker: ['SELECT', 'UPDATE'],
       police: [],
     },
   },
@@ -163,14 +166,30 @@ beforeAll(async () => {
   env = await provisionKernelDatabase('sec_acl');
   pools = { api: env.api, worker: env.worker, police: env.police };
 
-  // Seed one complete row per tenant per table, as the migration owner, so the
-  // read and write cases below have real data on both sides of the boundary.
+  // Seed complete rows for both tenants so every read and write case below has
+  // real data on both sides of the boundary.
+  //
+  // The scope is set even on the administrative connection: the outbox trigger
+  // is SECURITY DEFINER and runs as a non-superuser, so it is subject to the
+  // policy and needs a tenant context to insert the delivery row.
   for (const table of TENANT_TABLES) {
     if (table.name === 'platform.outbox_delivery') continue;
     for (const hotelId of [A, B]) {
-      seq += 1;
-      const { sql, values } = table.insert(hotelId, seq);
-      await env.admin.query(sql, values);
+      const client = await env.admin.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', hotelId]);
+        // Two rows per tenant per table: an UPDATE/DELETE cell that affects one
+        // row proves less than one that affects the exact number visible.
+        for (let n = 0; n < 2; n += 1) {
+          seq += 1;
+          const { sql, values } = table.insert(hotelId, seq);
+          await client.query(sql, values);
+        }
+        await client.query('COMMIT');
+      } finally {
+        client.release();
+      }
     }
   }
 }, 120000);
@@ -189,27 +208,31 @@ describe.each(TENANT_TABLES)('$name', (table) => {
           await scoped(runtime, A, async (query) => {
             if (verb === 'SELECT') {
               const rows = await query(`SELECT hotel_id FROM ${table.name}`);
-              // Only tenant A's rows are visible — never tenant B's.
-              expect(new Set(rows.rows.map((r) => r['hotel_id']))).toEqual(
-                rows.rowCount === 0 ? new Set() : new Set([A]),
-              );
+              // At least one seeded row must come back, and only tenant A's. A
+              // policy that hid everything would otherwise pass this cell.
+              expect(rows.rowCount).toBeGreaterThan(0);
+              expect([...new Set(rows.rows.map((r) => r['hotel_id']))]).toEqual([A]);
               return;
             }
             if (verb === 'INSERT') {
-              if (table.name === 'platform.outbox_delivery') return; // trigger-created
               seq += 1;
               const { sql, values } = table.insert(A, seq);
               const result = await query(sql, values);
               expect(result.rowCount).toBe(1);
               return;
             }
-            // UPDATE and DELETE: a no-op predicate is enough to prove the grant
-            // exists; the cross-tenant case below proves the policy still binds.
+            // UPDATE and DELETE must actually affect the rows seeded for tenant
+            // A. A false predicate would prove only that the parser ran.
+            const visible = await query(`SELECT count(*)::int AS n FROM ${table.name}`);
+            const expected = Number(visible.rows[0]?.['n']);
+            expect(expected).toBeGreaterThan(0);
+
             const verbSql =
               verb === 'UPDATE'
-                ? `UPDATE ${table.name} SET hotel_id = hotel_id WHERE hotel_id = $1`
-                : `DELETE FROM ${table.name} WHERE hotel_id = $1 AND false`;
-            await query(verbSql, [A]);
+                ? `UPDATE ${table.name} SET hotel_id = hotel_id`
+                : `DELETE FROM ${table.name}`;
+            const affected = await query(verbSql);
+            expect(affected.rowCount).toBe(expected);
           });
         });
 
@@ -223,7 +246,6 @@ describe.each(TENANT_TABLES)('$name', (table) => {
               return;
             }
             if (verb === 'INSERT') {
-              if (table.name === 'platform.outbox_delivery') return;
               seq += 1;
               const { sql, values } = table.insert(B, seq);
               // RLS WITH CHECK rejects a write aimed at another tenant: 42501.

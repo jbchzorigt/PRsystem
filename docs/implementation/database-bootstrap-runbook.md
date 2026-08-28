@@ -39,7 +39,6 @@ and refuses to run when it is missing or unsafe. It never creates it.
 | `prsystem_audit_writer` | function owner | NOLOGIN, none | the two audit append functions | `prsystem_migrate` only |
 | `prsystem_partition_mgr` | function owner | NOLOGIN, none | the two audit streams, their partitions, the partition functions | `prsystem_migrate` only |
 | `prsystem_maintenance_fn` | function owner | NOLOGIN, none | cross-tenant maintenance functions | `prsystem_migrate` only |
-| `prsystem_maintenance_fn` | function owner | NOLOGIN, none | cross-tenant maintenance functions | `prsystem_migrate` only |
 | `prsystem_maintenance` | **break-glass** | NOLOGIN, **BYPASSRLS** | **nothing** | **nobody, including the migration principal** |
 
 Ten group roles in total.
@@ -48,7 +47,8 @@ Every LOGIN principal is `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
 NOBYPASSRLS` and is a member of **exactly one** group.
 
 `prsystem_maintenance` is the only role holding `BYPASSRLS`. It owns no object,
-no application connects as it, and no role is a member of it. It exists as a
+holds **no standing grant of any kind** — not even `USAGE` on a schema — no
+application connects as it, and no role is a member of it. It exists as a
 documented break-glass identity for a DBA acting under an incident, with that
 action audited outside the application. Cross-tenant maintenance in normal
 operation does **not** use it: `prsystem_maintenance_fn` holds no `BYPASSRLS` and

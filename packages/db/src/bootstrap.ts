@@ -162,16 +162,31 @@ export async function bootstrapCluster(options: BootstrapOptions): Promise<Boots
     await coordinator.query('SELECT pg_advisory_lock($1)', [BOOTSTRAP_LOCK_KEY]);
     held = true;
 
-    const pool = new Pool({ connectionString: options.adminUrl, max: 1 });
+    // Cluster-scoped work (roles, attributes, memberships) can run anywhere.
+    const clusterPool = new Pool({ connectionString: options.adminUrl, max: 1 });
+    // Database-scoped work (schema and database ACLs) must run *in the target*.
+    // Using the admin URL for these hardened whichever database that URL named,
+    // which is not necessarily the one being bootstrapped.
+    const targetPool = new Pool({
+      connectionString: withDatabase(options.adminUrl, options.database),
+      max: 1,
+    });
+
     try {
-      await applyGroupRoles(pool);
-      await applyDatabaseGrants(pool, options.database);
-      const loginsConfigured = await applyLogins(pool, options.logins ?? []);
-      await assertInvariants(pool);
+      await assertConnectedTo(targetPool, options.database);
+
+      await applyGroupRoles(clusterPool);
+      await applyLogins(clusterPool, options.logins ?? []).then(() => undefined);
+      const loginsConfigured = (options.logins ?? []).length;
+
+      await applyDatabaseGrants(targetPool, options.database);
+      await reconcileMemberships(clusterPool);
+      await assertInvariants(clusterPool, targetPool, options.database);
 
       return { groupRoles: GROUP_ROLES.length, loginsConfigured };
     } finally {
-      await pool.end();
+      await targetPool.end();
+      await clusterPool.end();
     }
   } finally {
     // Released explicitly, then again implicitly when the session closes.
@@ -188,6 +203,59 @@ function withDatabase(url: string, database: string): string {
   const parsed = new URL(url);
   parsed.pathname = `/${database}`;
   return parsed.toString();
+}
+
+/** Refuses to apply database-scoped grants through a connection to another database. */
+async function assertConnectedTo(pool: Pool, database: string): Promise<void> {
+  const result = await pool.query<{ current: string }>('SELECT current_database() AS current');
+  const current = result.rows[0]?.current;
+  if (current !== database) {
+    throw new BootstrapError(
+      `target connection is attached to "${String(current)}" but the target database is "${database}"`,
+    );
+  }
+}
+
+/**
+ * Reconciles **every** direct membership in the cluster, not only the ones this
+ * module happens to list.
+ *
+ * A grant made by hand — or by an earlier version of this file — is invisible to
+ * a reconciliation that only iterates a hard-coded array. Anything not in the
+ * approved map is removed.
+ */
+async function reconcileMemberships(pool: Pool): Promise<void> {
+  const approved = new Map<string, string>(
+    Object.entries(LOGIN_PRINCIPALS).map(([login, group]) => [login, group]),
+  );
+  const ownerRoles = new Set([
+    'prsystem_audit_writer',
+    'prsystem_partition_mgr',
+    'prsystem_maintenance_fn',
+  ]);
+
+  const edges = await pool.query<{ member: string; role: string }>(
+    `SELECT m.rolname AS member, g.rolname AS role
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE m.rolname LIKE 'prsystem\\_%' OR g.rolname LIKE 'prsystem\\_%'`,
+  );
+
+  for (const edge of edges.rows) {
+    const permitted =
+      approved.get(edge.member) === edge.role ||
+      (edge.member === 'prsystem_migrate' && ownerRoles.has(edge.role));
+
+    if (!permitted) {
+      await executeFormatted(pool, 'REVOKE %I FROM %I', [edge.role, edge.member]);
+    }
+  }
+
+  // Re-assert the approved edges the reconciliation may just have removed.
+  for (const owner of ownerRoles) {
+    await executeFormatted(pool, 'GRANT %I TO %I', [owner, 'prsystem_migrate']);
+  }
 }
 
 async function applyGroupRoles(pool: Pool): Promise<void> {
@@ -259,7 +327,7 @@ async function applyLogins(pool: Pool, logins: readonly LoginCredential[]): Prom
  * lock so it describes a settled cluster, not one another runner is mid-way
  * through changing.
  */
-async function assertInvariants(pool: Pool): Promise<void> {
+async function assertInvariants(pool: Pool, target: Pool, database: string): Promise<void> {
   const privileged = await pool.query<{ rolname: string; attribute: string }>(
     `SELECT rolname,
             CASE WHEN rolsuper THEN 'SUPERUSER'
@@ -312,5 +380,36 @@ async function assertInvariants(pool: Pool): Promise<void> {
         .map((r) => r.member)
         .join(', ')}`,
     );
+  }
+
+  // Database and schema ACLs, in the target database. Roles alone are not the
+  // posture: a correct role set on a database that still grants PUBLIC is not
+  // hardened.
+  await assertConnectedTo(target, database);
+
+  const publicSchema = await target.query<{ acl: string }>(
+    `SELECT coalesce(array_to_string(nspacl, ' '), '') AS acl
+       FROM pg_namespace WHERE nspname = 'public'`,
+  );
+  const schemaAcl = publicSchema.rows[0]?.acl ?? '';
+  if (/(^|\s)=[UC]+\//.test(schemaAcl)) {
+    throw new BootstrapError('PUBLIC still holds a grant on schema public in the target database');
+  }
+  if (!schemaAcl.includes('prsystem_migrate=UC/')) {
+    throw new BootstrapError('prsystem_migrate lacks CREATE and USAGE on schema public');
+  }
+
+  const databaseAcl = await target.query<{ acl: string }>(
+    `SELECT coalesce(array_to_string(datacl, ' '), '') AS acl
+       FROM pg_database WHERE datname = current_database()`,
+  );
+  const dbAcl = databaseAcl.rows[0]?.acl ?? '';
+  if (/(^|\s)=[A-Za-z]+\//.test(dbAcl)) {
+    throw new BootstrapError('PUBLIC still holds a grant on the target database');
+  }
+  for (const role of RUNTIME_AND_READER_ROLES) {
+    if (!dbAcl.includes(`${role}=c/`)) {
+      throw new BootstrapError(`${role} lacks CONNECT on the target database`);
+    }
   }
 }

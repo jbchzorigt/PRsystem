@@ -18,13 +18,14 @@ export type {
   LoginPrincipal,
 } from './bootstrap';
 export {
+  ALLOWED_MIGRATION_CLOSURE,
   FORBIDDEN_FOR_RUNTIME,
   PrincipalError,
   assertMigrationPrincipal,
   assertRuntimePrincipal,
   readPrincipalFacts,
 } from './principal-guard';
-export type { PrincipalFacts } from './principal-guard';
+export type { PrincipalFacts, ReachableRole } from './principal-guard';
 export { DATABASE_ROLES, ROLES_WITHOUT_BYPASSRLS } from './roles';
 export type { DatabaseRole } from './roles';
 export {

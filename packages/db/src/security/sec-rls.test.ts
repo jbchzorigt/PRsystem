@@ -154,9 +154,10 @@ describe('tenant isolation across CRUD, per runtime login', () => {
     });
   });
 
-  it('refuses a cross-tenant foreign-key insert', async () => {
-    // outbox_delivery references outbox_event. Referencing tenant B's event from
-    // tenant A's scope must fail rather than create a cross-tenant edge.
+  it('refuses a direct delivery insert from a runtime login', async () => {
+    // Delivery rows are created only by the SECURITY DEFINER trigger on
+    // outbox_event. No runtime holds INSERT, so the attempt is refused on the
+    // grant, before RLS is even consulted.
     const bEventId = await env.admin.query<{ event_id: string }>(
       `SELECT event_id::text AS event_id FROM platform.outbox_event WHERE hotel_id = $1`,
       [HOTEL_B],
@@ -168,8 +169,59 @@ describe('tenant isolation across CRUD, per runtime login', () => {
           bEventId.rows[0]?.event_id,
           HOTEL_A,
         ]),
-      ).rejects.toThrow(/foreign key|violates|row-level security/i);
+      ).rejects.toMatchObject({ code: '42501' });
     });
+  });
+
+  it('refuses a cross-tenant delivery row even for the table owner', async () => {
+    // The previous shape of this test inserted tenant B's event id under tenant
+    // A's scope and accepted any error matching /violates/. That passed on the
+    // primary key — the trigger had already created a delivery row for that
+    // event — so it proved nothing about tenant isolation.
+    //
+    // The real cross-tenant write is a row carrying *another tenant's* hotel_id,
+    // and it must be refused by the policy itself. The owner is used because
+    // FORCE ROW LEVEL SECURITY means even it cannot escape, and because no
+    // runtime login holds INSERT at all.
+    const owner = new Pool({ connectionString: env.migrateUrl, max: 1 });
+    try {
+      // Seeded in tenant B's own scope and committed. The delivery row the
+      // definer trigger creates is removed here, so the insert below must fail
+      // on the policy rather than on the primary key.
+      const seed = await env.admin.connect();
+      let eventId: string | undefined;
+      try {
+        await seed.query('BEGIN');
+        await seed.query('SELECT set_config($1, $2, true)', ['app.hotel_id', HOTEL_B]);
+        const created = await seed.query<{ event_id: string }>(
+          `INSERT INTO platform.outbox_event
+             (hotel_id, aggregate_type, aggregate_id, event_type, payload)
+           VALUES ($1, 'rls_probe', 'cross-tenant-check', 'rls.probe', '{}'::jsonb)
+           RETURNING event_id::text AS event_id`,
+          [HOTEL_B],
+        );
+        eventId = created.rows[0]?.event_id;
+        await seed.query(`DELETE FROM platform.outbox_delivery WHERE event_id = $1`, [eventId]);
+        await seed.query('COMMIT');
+      } catch (error) {
+        await seed.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        seed.release();
+      }
+
+      await scoped(owner, HOTEL_A, async (query) => {
+        const attempt = query(
+          `INSERT INTO platform.outbox_delivery (event_id, hotel_id) VALUES ($1, $2)`,
+          [eventId, HOTEL_B],
+        );
+        // The intended SQLSTATE, not an unrelated integrity error.
+        await expect(attempt).rejects.toMatchObject({ code: '42501' });
+        await expect(attempt).rejects.toThrow(/row-level security policy/i);
+      });
+    } finally {
+      await owner.end();
+    }
   });
 
   it('fails the query closed when a client turns row security off', async () => {

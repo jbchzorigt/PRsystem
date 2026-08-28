@@ -74,7 +74,7 @@ existing controls; it never replaces them.
    | --- | --- | --- |
    | Public projection | Published hotel listing, search index, published reviews and rating aggregate | Separate tables, no RLS, populated only from tenant-scoped sources; contain no C2/C3 data |
    | Global reference | Packages, permission catalog, config versions | No tenant column; read-only at runtime |
-   | Cross-tenant system job | Operation KPI aggregation, retention sweep, projection rebuild | Runs as `prsystem_maintenance` under a named job identity, per-tenant transaction where possible, fully audited |
+   | Cross-tenant system job | Operation KPI aggregation, retention sweep, projection rebuild | Runs through a `SECURITY DEFINER` function owned by `prsystem_maintenance_fn` under a named job identity, per-tenant transaction where possible, fully audited. **Not** `prsystem_maintenance`: that role is break-glass only, owns nothing and grants nothing (§ role table above). |
 
    Operation KPI aggregation reads only subscription metadata, never guest or operational hotel data,
    so widening its role does not widen its data reach.

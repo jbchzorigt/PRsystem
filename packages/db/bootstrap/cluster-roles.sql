@@ -13,10 +13,9 @@
 -- the ability to grant BYPASSRLS). That is a DBA/IaC step — see
 -- docs/implementation/database-bootstrap-runbook.md.
 
--- Cluster-wide serialisation. The bootstrap connects to one designated database,
--- so a session-level advisory lock on a fixed key serialises every runner.
-SELECT pg_advisory_xact_lock(hashtext('prsystem.cluster.bootstrap'));
---> statement-breakpoint
+-- Serialisation is the runner's job: it holds a *session-level* advisory lock on
+-- the coordination database for the whole operation, which this file is only one
+-- step of. A transaction lock here would add nothing and would end early.
 
 DO $bootstrap$
 DECLARE
@@ -45,8 +44,10 @@ BEGIN
       ('prsystem_audit_writer',        false),
       ('prsystem_partition_mgr',       false),
       ('prsystem_maintenance_fn',      false),
-      -- Break-glass only. Holds BYPASSRLS, owns nothing, is reachable by nobody
-      -- — not even the migration principal — and no application connects as it.
+      -- Break-glass only. Holds BYPASSRLS, owns nothing — the cross-tenant
+      -- maintenance functions are owned by prsystem_maintenance_fn, which holds
+      -- no BYPASSRLS — is reachable by nobody, not even the migration principal,
+      -- and no application connects as it.
       ('prsystem_maintenance',         true)
     ) AS t(role_name, wants_bypassrls)
   LOOP
@@ -113,5 +114,7 @@ END
 $memberships$;
 --> statement-breakpoint
 
--- PUBLIC may not create objects in `public` anywhere in this cluster.
-REVOKE ALL ON SCHEMA public FROM PUBLIC;
+-- Nothing database-scoped belongs in this file. `REVOKE ALL ON SCHEMA public
+-- FROM PUBLIC` used to live here and ran on whichever database the admin URL
+-- happened to name — hardening a bystander database instead of the target. It is
+-- now applied by the runner on a connection to the target database.

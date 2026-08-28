@@ -7,9 +7,10 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --exclude 'src/startup.test.ts'",
     "dev": "tsx watch src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "test:security": "vitest run src/startup.test.ts"
   },
   "dependencies": {
     "@prsystem/config": "workspace:*",
@@ -23,6 +24,7 @@
     "pg": "8.23.0"
   },
   "devDependencies": {
+    "@prsystem/testing": "workspace:*",
     "@types/node": "22.20.1",
     "@types/pg": "8.23.1",
     "tsx": "4.23.12",

@@ -220,12 +220,20 @@ describe('R6 — startup guards must have real callers', () => {
   });
 
   it('wires the worker principal and KMS guards into its entrypoint', () => {
-    const source = readFileSync(
-      resolve(__dirname, '..', '..', '..', '..', 'apps', 'worker', 'src', 'main.ts'),
-      'utf8',
-    );
-    expect(source).toMatch(/assertWorkerConnectionPrincipal/);
-    expect(source).toMatch(/selectKeyManagement/);
+    // The guards moved into `startup.ts`, the orchestration boundary, so that the
+    // *ordering* could be executed rather than asserted by regex. This check is
+    // supplementary: the evidence that a refused startup never reaches Redis or
+    // BullMQ is `apps/worker/src/startup.test.ts`, which runs the boundary and
+    // asserts the factories were never invoked.
+    const workerSrc = resolve(__dirname, '..', '..', '..', '..', 'apps', 'worker', 'src');
+    const startup = readFileSync(resolve(workerSrc, 'startup.ts'), 'utf8');
+    expect(startup).toMatch(/assertWorkerConnectionPrincipal/);
+    expect(startup).toMatch(/verifyKeyManagement/);
+
+    // The entrypoint must actually go through that boundary rather than around it.
+    const main = readFileSync(resolve(workerSrc, 'main.ts'), 'utf8');
+    expect(main).toMatch(/startWorker/);
+    expect(main).toMatch(/selectKeyManagement/);
   });
 });
 

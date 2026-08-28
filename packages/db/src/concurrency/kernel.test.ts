@@ -9,6 +9,9 @@ import { appendOutboxEvent, claimOutboxBatch, markOutboxPublished } from '../ker
 import { claimConsumption, registerProviderEvent } from '../kernel/inbox';
 import { recordPlatformAudit } from '../kernel/audit';
 import { runMigrations } from '../migrate';
+import { LOGIN_PRINCIPALS, bootstrapCluster } from '../bootstrap';
+import type { LoginPrincipal } from '../bootstrap';
+import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
 
 /**
  * GATE-CONC — real connections racing against each other, not a simulated
@@ -43,6 +46,17 @@ function createBarrier(parties: number): () => Promise<void> {
     if (arrived >= parties) release();
     return gate;
   };
+}
+
+/**
+ * A dedicated single-connection pool for one racer.
+ *
+ * A shared pool cannot prove a race: two checkouts may be served by the same
+ * backend, and a `max` large enough to avoid that is still an assumption rather
+ * than evidence. Every race below asserts distinct `pg_backend_pid()` values.
+ */
+function racerPool(): Pool {
+  return new Pool({ connectionString: env.db.loginUrl('prsystem_api_login'), max: 1 });
 }
 
 function ctx(overrides: Partial<TenantContext> = {}): TenantContext {
@@ -130,19 +144,54 @@ describe('idempotency under concurrency (CLAUDE.md §6)', () => {
 
   it('produces exactly one effect for concurrent identical requests', async () => {
     const key = 'idem-concurrent-000001';
-    const results = await Promise.all(
-      Array.from({ length: 6 }, () => attempt(key, { amountMnt: '1000' })),
-    );
+    const pools = [racerPool(), racerPool()];
 
-    expect(results.filter((r) => r === 'claimed')).toHaveLength(1);
+    try {
+      const barrier = createBarrier(2);
+      const race = async (pool: Pool) =>
+        withTenantTransaction(pool, ctx(), async (uow) => {
+          const backend = await uow.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          // Both participants are inside an open transaction with tenant context
+          // applied before either reaches the unique index that arbitrates.
+          await barrier();
+          const outcome = await claimIdempotencyKey(uow, {
+            operation: 'kernel.probe.create',
+            key,
+            clientRef: 'client-synthetic',
+            payload: { amountMnt: '1000' },
+          });
+          if (outcome.kind === 'claimed') {
+            await appendOutboxEvent(uow, {
+              aggregateType: 'kernel_probe',
+              aggregateId: key,
+              eventType: 'kernel.probe.created',
+              payload: { key },
+            });
+            await completeIdempotencyKey(uow, outcome.idempotencyId, 201, { key });
+          }
+          return { pid: backend.rows[0]!.pid, outcome };
+        });
 
-    const effects = await withTenantTransaction(apiPool, ctx(), (uow) =>
-      uow.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM platform.outbox_event WHERE aggregate_id = $1`,
-        [key],
-      ),
-    );
-    expect(effects.rows[0]?.count).toBe('1');
+      // Promise.all, not allSettled: a transaction that failed is not an
+      // acceptable loser. Both must complete and report a coherent outcome.
+      const [a, b] = await Promise.all([race(pools[0]!), race(pools[1]!)]);
+
+      expect(a.pid).not.toBe(b.pid);
+      expect([a.outcome.kind, b.outcome.kind].sort()).toEqual(['claimed', 'replay']);
+      // The loser is served the winner's committed response, not a bare refusal.
+      const loser = (a.outcome.kind === 'claimed' ? b : a).outcome;
+      expect(loser).toEqual({ kind: 'replay', status: 201, body: { key } });
+
+      const effects = await withTenantTransaction(apiPool, ctx(), (uow) =>
+        uow.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM platform.outbox_event WHERE aggregate_id = $1`,
+          [key],
+        ),
+      );
+      expect(effects.rows[0]?.count).toBe('1');
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+    }
   });
 
   it('replays the stored response instead of repeating the effect', async () => {
@@ -204,15 +253,34 @@ describe('idempotency under concurrency (CLAUDE.md §6)', () => {
 describe('inbox deduplication under concurrency (ADR-0019 §2)', () => {
   it('consumes a redelivered event once when consumers race', async () => {
     const dedupKey = 'evt-redelivered-0001';
-    const claims = await Promise.all(
-      Array.from({ length: 5 }, () =>
-        withTenantTransaction(apiPool, ctx(), (uow) =>
-          claimConsumption(uow, 'kernel.probe.projector', dedupKey, 'outbox'),
-        ),
-      ),
-    );
+    const pools = [racerPool(), racerPool()];
 
-    expect(claims.filter(Boolean)).toHaveLength(1);
+    try {
+      const barrier = createBarrier(2);
+      const race = async (pool: Pool) =>
+        withTenantTransaction(pool, ctx(), async (uow) => {
+          const backend = await uow.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+          await barrier();
+          const claimed = await claimConsumption(uow, 'kernel.probe.projector', dedupKey, 'outbox');
+          return { pid: backend.rows[0]!.pid, claimed };
+        });
+
+      const [a, b] = await Promise.all([race(pools[0]!), race(pools[1]!)]);
+
+      expect(a.pid).not.toBe(b.pid);
+      // Exactly one consumer wins; the other is told it lost rather than failing.
+      expect([a.claimed, b.claimed].sort()).toEqual([false, true]);
+
+      const rows = await withTenantTransaction(apiPool, ctx(), (uow) =>
+        uow.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM platform.inbox_consumption WHERE dedup_key = $1`,
+          [dedupKey],
+        ),
+      );
+      expect(rows.rows[0]?.count).toBe('1');
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+    }
   });
 });
 
@@ -347,18 +415,21 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
           return { pid: backend.rows[0]!.pid, outcome };
         });
 
-      const results = await Promise.allSettled([
+      // Promise.all, not allSettled: both transactions must fulfil. A rejected
+      // transaction would be an unrelated failure, not a valid loser, and
+      // accepting one would let a broken constraint pass as a passing race.
+      const [a, b] = await Promise.all([
         attempt(poolA, 'idem-shared-ref-00001'),
         attempt(poolB, 'idem-shared-ref-00002'),
       ]);
-      const settled = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
 
-      // Distinct idempotency keys both claim; exactly one registers the provider
-      // event as a first delivery. The other sees a duplicate or loses the race
-      // on the unique index — either way there is one effect, never two.
-      const firstDeliveries = settled.filter((r) => r.outcome.kind === 'first_delivery');
-      expect(firstDeliveries).toHaveLength(1);
-      if (settled.length === 2) expect(settled[0]!.pid).not.toBe(settled[1]!.pid);
+      expect(a.pid).not.toBe(b.pid);
+      // Distinct idempotency keys both claim; the provider-event unique index
+      // decides, giving exactly one first delivery and one recognised duplicate.
+      expect([a.outcome.kind, b.outcome.kind].sort()).toEqual(['duplicate', 'first_delivery']);
+      const duplicate = (a.outcome.kind === 'duplicate' ? a : b).outcome;
+      // The duplicate is recognised as the same payload, not a reconciliation case.
+      expect(duplicate).toEqual({ kind: 'duplicate', payloadMatches: true });
 
       const stored = await withTenantTransaction(apiPool, ctx(), (uow) =>
         uow.query<{ count: string }>(
@@ -374,53 +445,95 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
   });
 
   it('leaves no audit or outbox orphan when the losing transaction rolls back', async () => {
-    const key = 'idem-rollback-00001';
+    // One transaction deliberately writes audit and outbox rows and then throws;
+    // the other does the same work and commits. Racing two *identical* attempts
+    // and catching whatever happens would prove nothing, because the loser's
+    // rollback would be indistinguishable from it never having written anything.
+    const committedKey = 'idem-rollback-commit1';
+    const rolledBackKey = 'idem-rollback-abort01';
+    const pools = [racerPool(), racerPool()];
+    const barrier = createBarrier(2);
+    // Collected inside the transaction, so the aborting side's backend is
+    // recorded even though its promise rejects.
+    const pids: number[] = [];
 
-    // Two racing attempts; the loser must leave nothing behind at all.
-    const attempts = await Promise.all(
-      [0, 1].map(async () =>
-        withTenantTransaction(apiPool, ctx(), async (uow) => {
-          const claim = await claimIdempotencyKey(uow, {
-            operation: 'kernel.probe.create',
-            key,
-            clientRef: 'client-synthetic',
-            payload: { amountMnt: '5000' },
-          });
-          if (claim.kind !== 'claimed') return claim.kind;
+    /** Claim, write an audit row and an outbox row, then either commit or throw. */
+    const attempt = async (pool: Pool, key: string, abort: boolean) =>
+      withTenantTransaction(pool, ctx(), async (uow) => {
+        const backend = await uow.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+        pids.push(backend.rows[0]!.pid);
+        const claim = await claimIdempotencyKey(uow, {
+          operation: 'kernel.probe.create',
+          key,
+          clientRef: 'client-synthetic',
+          payload: { amountMnt: '5000' },
+        });
+        if (claim.kind !== 'claimed') throw new Error(`expected a claim, got ${claim.kind}`);
+        await recordPlatformAudit(uow, {
+          action: 'kernel.rollback.probe',
+          outcome: 'allowed',
+          targetRef: key,
+        });
+        await appendOutboxEvent(uow, {
+          aggregateType: 'kernel_probe',
+          aggregateId: key,
+          eventType: 'kernel.probe.created',
+          payload: { key },
+        });
+        // Both sides have written every effect and are inside the critical
+        // section together before either resolves.
+        await barrier();
+        if (abort) throw new Error('deliberate-rollback');
+        await completeIdempotencyKey(uow, claim.idempotencyId, 201, { key });
+        return backend.rows[0]!.pid;
+      });
 
-          await recordPlatformAudit(uow, {
-            action: 'kernel.rollback.probe',
-            outcome: 'allowed',
-            targetRef: key,
-          });
-          await appendOutboxEvent(uow, {
-            aggregateType: 'kernel_probe',
-            aggregateId: key,
-            eventType: 'kernel.probe.created',
-            payload: { key },
-          });
-          await completeIdempotencyKey(uow, claim.idempotencyId, 201, { key });
-          return claim.kind;
-        }).catch(() => 'rolled_back'),
-      ),
-    );
+    try {
+      const [committed, aborted] = await Promise.allSettled([
+        attempt(pools[0]!, committedKey, false),
+        attempt(pools[1]!, rolledBackKey, true),
+      ]);
 
-    expect(attempts.filter((r) => r === 'claimed')).toHaveLength(1);
+      // The aborting transaction is reported rolled back, by its own error.
+      expect(aborted.status).toBe('rejected');
+      expect((aborted as PromiseRejectedResult).reason).toMatchObject({
+        message: 'deliberate-rollback',
+      });
+      // The other one commits.
+      expect(committed.status).toBe('fulfilled');
+      // Two real backends, not one connection reused.
+      expect(pids).toHaveLength(2);
+      expect(new Set(pids).size).toBe(2);
 
-    const events = await withTenantTransaction(apiPool, ctx(), (uow) =>
-      uow.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM platform.outbox_event WHERE aggregate_id = $1`,
-        [key],
-      ),
-    );
-    expect(events.rows[0]?.count).toBe('1');
+      const counts = await withTenantTransaction(apiPool, ctx(), async (uow) => {
+        const outbox = await uow.query<{ aggregate_id: string }>(
+          `SELECT aggregate_id FROM platform.outbox_event WHERE aggregate_id = ANY($1)`,
+          [[committedKey, rolledBackKey]],
+        );
+        const idem = await uow.query<{ idempotency_key: string; state: string }>(
+          `SELECT idempotency_key, state FROM platform.idempotency_key
+            WHERE idempotency_key = ANY($1)`,
+          [[committedKey, rolledBackKey]],
+        );
+        return { outbox: outbox.rows, idem: idem.rows };
+      });
+      const audits = await auditReader.query<{ target_ref: string }>(
+        `SELECT target_ref FROM audit.platform_event
+          WHERE action = 'kernel.rollback.probe' AND target_ref = ANY($1)`,
+        [[committedKey, rolledBackKey]],
+      );
 
-    const audits = await auditReader.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM audit.platform_event
-        WHERE action = 'kernel.rollback.probe' AND target_ref = $1`,
-      [key],
-    );
-    expect(audits.rows[0]?.count).toBe('1');
+      // Nothing the rolled-back transaction wrote survives — not the outbox row,
+      // not the audit row, not the idempotency claim.
+      expect(counts.outbox.map((r) => r.aggregate_id)).toEqual([committedKey]);
+      expect(audits.rows.map((r) => r.target_ref)).toEqual([committedKey]);
+      expect(counts.idem.map((r) => r.idempotency_key)).toEqual([committedKey]);
+
+      // The successful transaction committed exactly one coherent effect.
+      expect(counts.idem[0]?.state).toBe('succeeded');
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+    }
   });
 
   it('keeps the event when a worker crashes before sending', async () => {
@@ -551,4 +664,35 @@ describe('additional concurrency evidence (Phase 03 review)', () => {
     expect(first.appliedBefore).toBe(first.appliedAfter);
     expect(second.appliedBefore).toBe(second.appliedAfter);
   }, 60000);
+
+  it('lets exactly one of two concurrent runners populate an empty database', async () => {
+    // The already-migrated case above only proves two no-ops do not collide. The
+    // contended case is an empty ledger, where both runners have real work to do
+    // and the advisory lock must make exactly one of them do it.
+    const fresh = await createTestDatabase('kernel_conc_empty');
+    try {
+      await bootstrapCluster({
+        adminUrl: fresh.url,
+        database: fresh.name,
+        logins: (Object.keys(LOGIN_PRINCIPALS) as LoginPrincipal[]).map((principal) => ({
+          principal,
+          password: TEST_LOGIN_PASSWORD,
+        })),
+      });
+      const url = fresh.loginUrl(TEST_LOGIN_PRINCIPALS.migrate);
+
+      const [first, second] = await Promise.all([runMigrations(url), runMigrations(url)]);
+
+      // `appliedBefore` is read after the lock is held, so the runner that waits
+      // sees the journal already applied and applies nothing.
+      const applied = [first, second].map((r) => r.appliedAfter - r.appliedBefore);
+      expect(applied.filter((n) => n > 0)).toHaveLength(1);
+      expect(applied.filter((n) => n === 0)).toHaveLength(1);
+      // Both agree on the final ledger, and it is not empty.
+      expect(first.appliedAfter).toBe(second.appliedAfter);
+      expect(first.appliedAfter).toBeGreaterThan(0);
+    } finally {
+      await fresh.drop();
+    }
+  }, 180000);
 });

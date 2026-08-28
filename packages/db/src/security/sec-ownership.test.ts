@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TEST_LOGIN_PASSWORD, createTestDatabase } from '@prsystem/testing';
 import type { ProvisionedDatabase } from '../test-support/provision';
@@ -118,6 +119,21 @@ describe('object ownership', () => {
     expect(owned.rows[0]?.count).toBe('0');
   });
 
+  it('leaves the break-glass role with no standing grant of any kind', async () => {
+    // ADR-0017 §5. BYPASSRLS without USAGE reaches nothing; that is the design.
+    // A break-glass identity that permanently holds schema access is not
+    // break-glass, it is a second superuser.
+    const held = await env.admin.query<{ schema: string; privilege: string }>(
+      `SELECT n.nspname AS schema, p.privilege
+         FROM pg_namespace n
+    CROSS JOIN LATERAL (VALUES ('USAGE'), ('CREATE')) AS p(privilege)
+        WHERE n.nspname IN ('platform','audit','police_audit','police')
+          AND has_schema_privilege('prsystem_maintenance', n.nspname, p.privilege)
+        ORDER BY 1, 2`,
+    );
+    expect(held.rows).toEqual([]);
+  });
+
   it('leaves no unnecessary schema CREATE on a function owner', async () => {
     const create = await env.admin.query<{ role: string; schema: string }>(
       `SELECT r.rolname AS role, n.nspname AS schema
@@ -147,45 +163,132 @@ describe('object ownership', () => {
 });
 
 describe('concurrent bootstrap across independent processes', () => {
-  it('lets two separate processes bootstrap two databases without a catalog race', async () => {
-    const names = ['prsystem_test_boot_race_a', 'prsystem_test_boot_race_b'];
-    const script = resolve(__dirname, '..', 'test-support', 'bootstrap-once.ts');
+  it('lets two processes bootstrap two databases with observable overlap', async () => {
+    const cwd = resolve(__dirname, '..', '..');
+    // Plain node against a plain CommonJS child. No TypeScript loader: every
+    // loader wrapper re-spawns a grandchild, and the handshake below does not
+    // survive that hop.
+    const script = resolve(cwd, 'test-support', 'bootstrap-once.cjs');
+    if (!existsSync(script)) throw new Error(`bootstrap child is missing: ${script}`);
 
-    const dbs = await Promise.all(
-      names.map(async (name) => {
-        const db = await createTestDatabase(name.replace('prsystem_test_', ''));
-        return db;
-      }),
-    );
+    const dbs = await Promise.all([
+      createTestDatabase('boot_race_a'),
+      createTestDatabase('boot_race_b'),
+    ]);
+    let children: ReturnType<typeof spawn>[] = [];
 
     try {
-      // Two genuinely independent OS processes, started together, against the
-      // same cluster. Without the shared coordination lock they contend on
-      // pg_authid and fail with `tuple concurrently updated`.
-      const runs = dbs.map((db) =>
-        spawnSync('npx', ['tsx', script], {
-          cwd: resolve(__dirname, '..', '..'),
-          encoding: 'utf8',
+      // Spawned asynchronously and both started before either is awaited.
+      // `spawnSync` in a `.map()` runs them one after another, which proves
+      // nothing about contention on the cluster-wide role catalog.
+      children = dbs.map((db) =>
+        spawn(process.execPath, [script], {
+          cwd,
           env: {
             ...process.env,
             BOOTSTRAP_DATABASE_URL: db.url,
             BOOTSTRAP_TARGET_DATABASE: db.name,
             BOOTSTRAP_TEST_PASSWORD: TEST_LOGIN_PASSWORD,
+            BOOTSTRAP_WAIT_FOR_START: '1',
           },
+          stdio: ['pipe', 'pipe', 'pipe'],
         }),
       );
 
-      for (const [index, run] of runs.entries()) {
+      // A child that fails to start emits `error` and never `data`; without this
+      // listener the wait below would spin until the suite timed out, with no
+      // indication of why.
+      const startupErrors: string[] = [];
+      for (const child of children) {
+        child.on('error', (error) => startupErrors.push(error.message));
+      }
+
+      const collected = children.map((child) => {
+        const state = { out: '', err: '', ready: false };
+        child.stdout.on('data', (chunk: Buffer) => {
+          state.out += chunk.toString('utf8');
+          if (state.out.includes('READY')) state.ready = true;
+        });
+        child.stderr.on('data', (chunk: Buffer) => {
+          state.err += chunk.toString('utf8');
+        });
+        return state;
+      });
+
+      // Both must be up and waiting before either is released.
+      const deadline = Date.now() + 20_000;
+      while (!collected.every((c) => c.ready)) {
+        if (startupErrors.length > 0) {
+          throw new Error(`a bootstrap child failed to start: ${startupErrors.join('; ')}`);
+        }
+        if (Date.now() > deadline) {
+          throw new Error(
+            `a bootstrap child never signalled READY: ${JSON.stringify(
+              collected.map((c) => ({ out: c.out.slice(0, 200), err: c.err.slice(0, 200) })),
+            )}`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      for (const child of children) child.stdin.write('go\n');
+
+      const exits = await Promise.all(
+        children.map(
+          (child) =>
+            new Promise<number>((resolveExit) => {
+              // Bounded: a child that never exits must fail this test, not hang
+              // the suite until the runner is killed from outside.
+              const timer = setTimeout(() => {
+                child.kill('SIGKILL');
+                resolveExit(-2);
+              }, 30_000);
+              child.on('close', (code) => {
+                clearTimeout(timer);
+                resolveExit(code ?? -1);
+              });
+            }),
+        ),
+      );
+
+      for (const [index, code] of exits.entries()) {
+        expect({ child: index, code, stderr: collected[index]!.err.slice(0, 400) }).toEqual({
+          child: index,
+          code: 0,
+          stderr: '',
+        });
+      }
+
+      const reports = collected.map((c) => {
+        const line = c.out.split('\n').find((l) => l.startsWith('{'));
+        return JSON.parse(line ?? '{}') as { pid: number; enteredAt: number; leftAt: number };
+      });
+
+      // Two genuinely different OS processes…
+      expect(reports[0]!.pid).not.toBe(reports[1]!.pid);
+      // …whose bootstrap windows overlap in wall-clock time. Without overlap
+      // this is a sequential test wearing a concurrent name.
+      const [first, second] = reports.sort((a, b) => a.enteredAt - b.enteredAt);
+      expect(second!.enteredAt).toBeLessThanOrEqual(first!.leftAt);
+
+      // Both databases ended up correctly hardened.
+      for (const db of dbs) {
+        const acl = await db.pool.query<{ acl: string }>(
+          `SELECT coalesce(array_to_string(nspacl, ' '), '') AS acl
+             FROM pg_namespace WHERE nspname = 'public'`,
+        );
         expect({
-          process: index,
-          status: run.status,
-          stderr: (run.stderr ?? '').slice(0, 400),
-        }).toEqual({ process: index, status: 0, stderr: '' });
+          database: db.name,
+          hardened: acl.rows[0]?.acl.includes('prsystem_migrate=UC/'),
+        }).toEqual({ database: db.name, hardened: true });
       }
     } finally {
+      // Nothing may outlive the test: children first, then every pool, then the
+      // databases they were connected to.
+      for (const child of children ?? []) child.kill('SIGKILL');
       await Promise.all(dbs.map((db) => db.drop()));
     }
-  }, 180000);
+  }, 120000);
 });
 
 describe('the coordination database is shared by every runner', () => {

@@ -55,7 +55,7 @@ const SUB_GATES = [
     needsDatabase: true,
     artefacts: [
       'packages/db/bootstrap/cluster-roles.sql',
-      'packages/db/src/test-support/bootstrap-once.ts',
+      'packages/db/test-support/bootstrap-once.cjs',
     ],
   },
   {
@@ -68,14 +68,22 @@ const SUB_GATES = [
   },
   {
     id: 'SEC-STARTUP',
-    what: 'principal and key-management guards refuse before a port is bound',
+    what: 'real API startup refuses before a port is bound',
     filter: '@prsystem/api',
-    suite: 'src/security/startup-guard.test.ts',
+    suite: 'src/security',
     needsDatabase: true,
     artefacts: [
       'apps/api/src/observability/connection-guard.ts',
-      'apps/worker/src/observability/connection-guard.ts',
+      'apps/api/src/security/startup-order.test.ts',
     ],
+  },
+  {
+    id: 'SEC-STARTUP-WORKER',
+    what: 'worker startup never reaches Redis or BullMQ when a guard refuses',
+    filter: '@prsystem/worker',
+    suite: 'src/startup.test.ts',
+    needsDatabase: true,
+    artefacts: ['apps/worker/src/startup.ts', 'apps/worker/src/observability/connection-guard.ts'],
   },
   {
     id: 'SEC-REGRESSION',

@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.5 (Phase 03 security repair — bootstrap, classification and GATE-SEC obligations)
+**Version:** 1.6 (Phase 03 third security repair — startup ordering, migration equivalence and maintenance accountability)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -148,6 +148,9 @@ artefacts below are the traceable output.
 | 03 | API primitives: `/api/v1`, canonical error envelope, pagination, correlation | `packages/contracts/`, `apps/api/src/observability/` | `pnpm run test:unit` |
 | 03 | Projection checkpoint, `as_of` and lag; critical commands never read a projection ([ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md)) | `platform.projection_checkpoint`, `packages/db/src/kernel/projections.ts` | `pnpm run test:integration` |
 | 03 | No secret, key, identifier or provider payload in any durable record, at any nesting depth (CLAUDE.md §8) | `platform.contains_denied_key`, `packages/telemetry/` | `GATE-SEC` / `SEC-PII-LEAK` |
+| 03 | Startup refuses before a listener is bound and before Redis or BullMQ is reached: the API principal and key-management guards run first, and worker startup is an injectable orchestration boundary | `apps/api/src/bootstrap.ts`, `apps/worker/src/startup.ts` | `GATE-SEC` / `SEC-STARTUP` (`apps/api/src/security/startup-order.test.ts`), `GATE-SEC` / `SEC-STARTUP-WORKER` (`apps/worker/src/startup.test.ts`) |
+| 03 | Fresh migration and upgrade migration reach an equivalent schema, compared over a fingerprint sensitive to function bodies, view definitions and grants (CLAUDE.md §10) | `packages/db/migrations/`, `packages/db/src/test-support/frozen-baseline/` | `pnpm run test:migrations` (`schemaFingerprint`, `schema fingerprint sensitivity`) |
+| 03 | Cross-tenant maintenance runs as a `SECURITY DEFINER` function owned by `prsystem_maintenance_fn`; the break-glass role owns nothing and holds no standing grant ([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md) §§4–5, 7) | `platform.maintenance_expire_idempotency_keys`, `packages/db/bootstrap/cluster-roles.sql` | `GATE-SEC` / `SEC-MAINTENANCE`, `GATE-SEC` / `SEC-OWNERSHIP` |
 
 Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions remains `PENDING` after
 them. Phase 04 is the first phase to move a decision to `COVERED`.

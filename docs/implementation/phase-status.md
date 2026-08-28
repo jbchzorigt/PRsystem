@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 9, `GATE-INTEG` 51, `GATE-CONC` 16, `GATE-SEC` 13/13, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507`, `ed0a9a7` |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | `GATE-MIGR` 12, `GATE-INTEG` 46, `GATE-CONC` 17, `GATE-SEC` 14/14 (302 tests), `GATE-E2E` 15, `GATE-UNIT` 175, `GATE-GOV` 13/13, workspace 15/15 | `8a62b0b`, `b8a3507`, `ed0a9a7`, _third repair pending commit_ |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -548,6 +548,83 @@ deliberately not configured here. Eleven EXT gates are seeded closed in `platfor
 and block production release only. **Seventeen P1 items remain open**, including P1-10. No P0 product
 blocker. One documentation conflict was found and resolved as **D-05**; three scope questions were put
 to the customer and approved before any edit.
+
+### Third security repair (customer review 3) — `SECURITY_REPAIR_REQUIRED`
+
+The second repair was **not accepted**. Nine further defects were raised. All nine are now closed in
+code and tests. Phase 03 stays `SECURITY_REPAIR_REQUIRED` until customer acceptance; no acceptance is
+claimed here.
+
+#### Production defects fixed
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | `bootstrapCluster` opened its work pool with the raw `adminUrl`, so schema and database ACL work could harden the database named in the URL rather than `options.database` | Coordination stays on the configured coordination database; a separate target connection is derived, `current_database()` is verified against `options.database`, and every database-scoped grant, revoke and final invariant runs on the target. The database-scoped `REVOKE ALL ON SCHEMA public FROM PUBLIC` was removed from `cluster-roles.sql`, where it had been executing against the wrong database. The redundant transaction advisory lock was removed, and the stale comment naming `prsystem_maintenance` as the maintenance-function owner now names `prsystem_maintenance_fn`. |
+| 2 | `readPrincipalFacts` excluded all `pg_*` roles, tested `pg_has_role(..., 'USAGE')` only, missed `INHERIT FALSE, SET TRUE` memberships, and read attributes only for `session_user` | Replaced by a recursive closure over `pg_auth_members` following **both** `inherit_option` and `set_option`, with no predefined-role exclusion. Every reachable role returns its five privileged attributes, which are all rejected. Runtime closures are exact per realm; the migration closure is exactly `prsystem_migrate` plus its three approved function-owner roles. Bootstrap reconciles **all** direct membership edges read from `pg_auth_members`, not only those it intended to create. |
+| 3 | The bootstrap concurrency test used `dbs.map(() => spawnSync(...))` — sequential by construction | Two OS processes are spawned asynchronously and both are started before either is awaited, with a parent-controlled readiness and start barrier. The test asserts two distinct pids and proves observable overlap (`second.enteredAt <= first.leftAt`). Every pool and client is closed before the test databases are dropped. |
+| 4 | The maintenance audit-failure test inserted its target **inside** the transaction it rolled back, so "the row survived" was vacuous | The expired key and `job_run` are seeded and committed first; the audit partition is detached in a separate committed transaction; only then is maintenance invoked and rolled back. The function itself now requires the exact maintenance `job_name`, a `job_identity` matching the trusted transaction actor, the same hotel, and `running` state; on success it transitions the job to `succeeded` with `finished_at` in the same transaction. Wrong job type, wrong identity, replay and two concurrent invocations sharing one job are all rejected. |
+| 5 | The RLS/ACL matrix contained vacuous cells: false predicates, and early returns for `outbox_delivery` INSERT | The direct `INSERT` grant on `platform.outbox_delivery` was **revoked**; delivery rows are created only by `platform.enqueue_outbox_delivery()`, now `SECURITY DEFINER` with a fixed `search_path`, owned by `prsystem_migrate`, `REVOKE ALL ... FROM PUBLIC`. Every declared cell executes a real operation: same-tenant SELECT returns seeded rows for the active hotel only, and every allowed UPDATE/DELETE asserts the exact affected row count. |
+| 6 | Several `GATE-CONC` races shared one pool, had no barrier, and accepted any loser | Same-key idempotency, inbox deduplication, the provider-reference race and the rollback race each use dedicated single-connection pools with asserted-distinct `pg_backend_pid()`, an in-critical-section barrier, and an exact winner plus a **coherent** loser. |
+| 7 | The migration equivalence fingerprint listed function *names* but not bodies, and omitted schemas, default privileges, sequences, types and views | The fingerprint now covers `platform`, `audit`, `police_audit`, `police` and the migration ledger schema: schema ownership and ACLs, default privileges, relations with kind/owner/ACL/RLS flags/partition key and bound, columns, constraints, indexes, policies, sequence definitions with ownership and ACLs, enums/domains/composites, view and matview definitions, functions with identity arguments, return type, complete `pg_get_functiondef`, security mode, configuration, owner and ACL, triggers, inheritance, and extensions with versions. |
+| 8 | The startup test called guard helpers directly and probed an unused port, which proves nothing about `createApp` or worker startup | Worker startup was extracted into `apps/worker/src/startup.ts`, an orchestration boundary taking the Redis connection and consumer construction as injected factories. |
+| 9 | ADR-0017 stated `prsystem_maintenance` "owns nothing, grants nothing" while the migration granted it `USAGE` on four schemas | The grants were removed and replaced with an explicit `REVOKE`. ADR-0017 §7 also contradicted its own §4/§5 by naming `prsystem_maintenance` as the cross-tenant job role; corrected to the `prsystem_maintenance_fn`-owned `SECURITY DEFINER` function and recorded as drift resolution **D-08**. The approved shared `prsystem_audit_writer` is preserved, not split. |
+
+#### Previously vacuous tests, now non-vacuous
+
+| Test | Why it proved nothing | What it executes now |
+| --- | --- | --- |
+| Bootstrap concurrency | `spawnSync` in a `map` ran the two "concurrent" bootstraps one after the other | Two async processes with a start barrier, distinct pids, and asserted overlapping critical sections |
+| Maintenance audit failure | The target row was inserted in the transaction under test and rolled back with it | Target committed beforehand; failure forced from a separate transaction; the pre-existing row, the untouched job state and the unchanged telemetry count are all asserted |
+| `outbox_delivery` matrix cells | INSERT cells returned early; some cells used `AND false` predicates | The grant was redesigned away; INSERT is now a real forbidden case asserting `42501`, and every remaining cell asserts exact row counts |
+| Cross-tenant `outbox_delivery` insert (`sec-rls`) | Matched `/violates/`, which the **primary key** satisfied — the definer trigger had already created that event's delivery row | Split into a grant refusal (`42501`) for runtime logins, and a genuine cross-tenant policy refusal for the table owner under `FORCE ROW LEVEL SECURITY`, asserting SQLSTATE `42501` and `row-level security policy` |
+| Provider-reference race | `Promise.allSettled` with a conditional pid assertion accepted a **rejected** transaction as a valid loser | Both transactions must fulfil; outcomes are exactly one `first_delivery` and one `duplicate` with `payloadMatches: true`; pids are asserted distinct unconditionally |
+| Audit/outbox rollback race | Two identical attempts with a blanket `.catch(() => 'rolled_back')` | One transaction deliberately writes audit and outbox rows then throws; its rejection is asserted by its own error; none of its audit, outbox or idempotency effects survive; the other commits exactly one coherent effect |
+| Concurrent migration runners | Only the already-migrated no-op case | Adds an **empty** database where both runners have real work: exactly one applies the journal, the other applies none, and both agree on a non-empty final ledger |
+| Fingerprint equivalence | Could not have failed for a changed function body or view definition | Three sensitivity tests prove the fingerprint changes when a function body changes, when a view definition changes, and when a grant is revoked |
+| Startup ordering | Guard helpers called directly, then an unused port checked | Real `createApp` runs three times against a bootstrapped database: a positive control that **binds** the port (so the observation can fail), an invalid principal, and an unconfigured KMS — neither refusal creates a listener. The worker boundary proves the Redis and BullMQ factories are **never invoked** when either guard refuses, with a positive control that they are invoked when both pass. |
+
+#### Gates executed on the final tree
+
+PostgreSQL **17.6** on aarch64-unknown-linux-musl (Alpine), extensions `btree_gist` and `pgcrypto`.
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `pnpm run validate:workspace` | 0 | 15/15 |
+| `pnpm run validate:governance` | 0 | 13/13 |
+| `pnpm run scan:secrets` | 0 | 270 tracked text files, 0 findings |
+| `pnpm run format:check` | 0 | clean |
+| `pnpm run lint` | 0 | 16/16 tasks |
+| `pnpm run typecheck` | 0 | 25/25 tasks |
+| `pnpm run test:unit` | 0 | 175 tests |
+| `pnpm run build` | 0 | 16/16 tasks |
+| `pnpm run openapi` | 0 | document generated |
+| `pnpm run compose:config` | 0 | valid |
+| `pnpm run test:migrations` | 0 | 12 tests (`GATE-MIGR`) |
+| `pnpm run test:integration` | 0 | 46 tests (`GATE-INTEG`: 41 db + 5 api) |
+| `pnpm run test:regression` | 0 | 14 tests |
+| `pnpm run test:e2e` | 0 | 15 tests (`GATE-E2E`) |
+| `pnpm run audit:prod` | 0 | no advisory at moderate or above |
+| `pnpm run audit:tree` | 0 | no advisory at high or above |
+| `git diff --check` | 0 | no whitespace error |
+| `pnpm run test:security` ×3 | 0, 0, 0 | **14/14 sub-gates**, 302 tests, each run |
+| `pnpm run test:concurrency` ×3 | 0, 0, 0 | **17 tests**, each run (`GATE-CONC`) |
+
+`GATE-SEC` sub-gates (identical across all three runs): SEC-ROLE 12, SEC-RLS 31, SEC-ACL-MATRIX 114,
+SEC-OWNERSHIP 10, SEC-MAINTENANCE 13, SEC-STARTUP 13, **SEC-STARTUP-WORKER 4 (new)**, SEC-REGRESSION 9,
+SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7, SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6.
+
+No gate was skipped, and no sub-gate ran zero tests — `tools/gate-sec.mjs` fails on either condition.
+No result below is a static-regex-only or early-return case. The one remaining static source check,
+regression `R6`, is explicitly marked supplementary in its own comment; the executable startup
+evidence is `apps/api/src/security/startup-order.test.ts` and `apps/worker/src/startup.test.ts`.
+
+#### External and manual actions still pending
+
+- **Selecting `GATE-SEC` as a required GitHub status check.** Unchanged and still pending: the job
+  must run on GitHub at least once before it can be selected, and nothing has been pushed. Branch
+  protection remains a repository setting deliberately not configured here.
+- `DSR-01` remains **OPEN — contained** (dev-only, no compatible stable upgrade).
+- Eleven EXT gates remain seeded closed; seventeen P1 items remain open, including P1-10.
 
 ---
 
