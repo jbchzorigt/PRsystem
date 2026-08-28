@@ -976,7 +976,9 @@ Eleven group roles, seven canonical login principals. Corrections this repair ma
 ### Seventh security repair (customer review 7) — `SECURITY_REPAIR_REQUIRED`
 
 The sixth repair was **not accepted**. Eight defects were raised; all are closed. Phase 03 stays
-`SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts.**
+`SECURITY_REPAIR_REQUIRED` and no approval is claimed.
+
+> **Superseded by the eighth repair below**, which holds the current counts.
 
 | # | Defect | Repair |
 | --- | --- | --- |
@@ -1003,6 +1005,105 @@ SEC-ROLE 12, SEC-RLS 33, SEC-ACL-MATRIX 110, SEC-OWNERSHIP 10, SEC-LOCK-EVIDENCE
 SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 19, SEC-SCHEDULER 38, SEC-MAINTENANCE 24, SEC-STARTUP 21,
 SEC-STARTUP-WORKER 4, SEC-REGRESSION 51, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
 SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Identical across three consecutive runs.
+
+---
+
+### Eighth security repair (customer review 8) — `SECURITY_REPAIR_REQUIRED`
+
+The seventh repair was **not accepted**. Eight defects were raised; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts and
+supersedes the seventh.**
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| 1 | `SCHEDULER_ENABLED` was decorative: the Nest provider read `SCHEDULER_DATABASE_URL` straight from `process.env` and built the privileged pool whenever the variable existed, and the credential requirement applied only to `APP_ENV=production` | Configuration is service-specific. `loadApiEnv` owns the capability, its credential and the only default (on for production, off elsewhere) and returns a discriminated `SchedulerConfig`. Enabled with no URL is refused in **every** environment; disabled with a URL is refused as stale privileged configuration. `loadWorkerEnv` neither declares nor parses the scheduler variables and refuses to start if either is present. `MaintenanceModule` and `AppModule` take the resolved configuration by injection; disabled means no pool, no lifecycle hook and no service. OpenAPI generation states `enabled: false` explicitly |
+| 2 | `platform.assert_exact_role_closure` validated the calling login and took the expected group on trust. PostgreSQL does not inherit role attributes, so altering `prsystem_worker` or `prsystem_job_scheduler` itself changed what every member could do while each member's own catalogue row looked untouched | The function resolves the group and requires it to be NOLOGIN, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION and NOBYPASSRLS, and scans the whole reachable closure for a privileged attribute rather than relying on the reachability loop's set staying `{login, group}` |
+| 3 | Ownership accepted *any* of the four kernel owner roles for *any* kernel object, so `prsystem_maintenance_fn` owning `platform.job_run` passed — handing the owner of the maintenance functions the ability to rewrite the ledger constraining them. `PRSYSTEM_APPROVED_OPERATOR_OWNERS` was optional, so an unset deployment skipped the database-owner check entirely | `packages/db/src/ownership-manifest.ts` names one expected owner per object, covering the database, `public`, all five kernel schemas, every kernel table, partition parent, partition, view, sequence, the drizzle ledger and every kernel function including each `SECURITY DEFINER` one. Partitions resolve through `pg_inherits` and extension members are excluded through `pg_depend`. Every project role that is not a kernel owner must own nothing anywhere. The approved-owner list is mandatory in the runner and in `pnpm run migrate`, checked before a connection is opened |
+| 4 | The runbook claimed multiple deployment-managed Worker logins were supported; membership in `prsystem_worker` was the whole executor test, so any login granted the group became a schedulable executor and could create job rows under its own identity | Phase 03 supports exactly one login per runtime group, shared by every process of that runtime. `assert_exact_role_closure` requires the canonical login for the group; `begin_worker_job` validates the closure at all, which it previously did not. Bootstrap fails closed on any non-canonical login that is a member of a group role. Tests needing another job identity write a controlled `job_run` row |
+| 5 | `schema.ts` was consulted only for its list of table names, so an edit to a declared column's type, nullability, default or key changed nothing the gate looked at — the snapshot still matched the database and the run stayed green | `schema.ts` states defaults, identity, and simple, composite and unique keys, with defaults given as their exact PostgreSQL text. `schema-projection.ts` emits a machine-readable projection and diffs it against the snapshot; `compareSchema` runs that first. The snapshot keeps only genuinely SQL-only properties. Index scanning excludes partition children through `pg_inherits` instead of a `%_20%` name match |
+| 6 | Pool-error accounting was keyed by the database a pool connects to, but a `createTestDatabase` lifecycle owns a coordination pool that connects elsewhere; its errors were filed under a database no teardown asserted. Unattributed errors were likewise recorded and never read | Pools carry a logical scope, defaulting to their database and settable explicitly; the lifecycle claims its coordination pool and gives it an `application_name`. `drop()` asserts that scope together with the unattributed bucket. Resetting stays per scope |
+| 7 | A step-level `if:` was rejected and a job-level one was not, so `jobs.gate-sec.if: false` disabled the whole gate. The pnpm-job list was hard-coded, so a job added later went unchecked. Only install-before-first-use was ordered, so a setup placed after the install read as correct. Every root-script fixture was a hand-written string that had silently dropped the pool-error stage, so each mutated several properties at once | Required jobs are checked for a job-level condition; pnpm jobs are discovered from the workflow; the ordering asserted is setup < frozen install < first non-install pnpm command. Script fixtures are built from the real `test:security`, mutate exactly one stage, assert the mutation happened and that every untouched stage survived, and require the specific diagnostic |
+| 8 | Documentation contradicted the code in eleven current statements | Corrected; repository-wide searches for each superseded statement are clean, and what survives is inside blocks explicitly labelled historical |
+
+#### Failing-first evidence
+
+Every defect was reproduced before it was fixed. Where the fix changed a module, the previous
+version was restored temporarily and the new cases were run against it.
+
+| Item | Reproduction | Result before the fix |
+| --- | --- | --- |
+| 1 | 15 configuration cases, 5 API cases | module absent; disabled-API-with-a-credential started and served |
+| 2 | 6 cases mutating `prsystem_worker` and `prsystem_job_scheduler` with LOGIN, BYPASSRLS, CREATEROLE | 6 failed — scheduling and execution both succeeded |
+| 3 | 11 upgrade cases against a journal with one genuinely pending migration | 11 failed against the previous runner |
+| 4 | 3 cases — scheduling to, starting a job as, and bootstrapping with a non-canonical Worker login | 3 failed |
+| 5 | `schema.ts` drifted by dropping `.notNull()` from `job_run.job_name` | both declaration tests **passed** — the silent-pass defect, demonstrated. 13 of 76 cases failed against the previous comparator |
+| 6 | coordination-pool and unattributed-pool fixtures | both exited 0 with the error unread |
+| 7 | job-level `if: false`, setup-after-install, new pnpm job without setup | accepted by the previous validator (26/29 caught) |
+
+Two additions are recorded as **coverage, not defect fixes**: the four live mutations for identity
+and unique-constraint drift in item 5 pass against the previous comparator as well. They were
+required by the scope and are not claimed as repairs.
+
+#### Test gates on the final tree
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | 0 | 13/13 checks |
+| `node tools/validate-workspace.mjs` | 0 | 15/15 checks |
+| `node tools/scan-secrets.mjs` | 0 | 315 tracked text files, 0 findings |
+| `pnpm run format:check` | 0 | clean |
+| `pnpm run lint` | 0 | 16/16 tasks |
+| `pnpm run typecheck` | 0 | 25/25 tasks |
+| `pnpm run test:unit` | 0 | 19/19 tasks |
+| `pnpm run build` | 0 | 16/16 tasks |
+| `pnpm run openapi` | 0 | document generated |
+| `pnpm run compose:config` | 0 | valid |
+| `pnpm run test:migrations` | 0 | **76** tests |
+| `pnpm run test:integration` | 0 | **51** tests (db 41, outbox 5, api 5) |
+| `pnpm run test:concurrency` ×3 | 0, 0, 0 | **16** tests each run |
+| `pnpm run test:regression` | 0 | **51** tests |
+| `node tools/validate-regression-coverage.mjs` | 0 | **66/66** checks |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 0 | **30/30** bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 0 | **9/9** checks, 3 fixtures |
+| `pnpm run test:security` ×3 | 0, 0, 0 | **18/18 sub-gates, 458 tests**, each run |
+| `pnpm run test:e2e` | 0 | 15 tests |
+| `pnpm run audit:prod` | 0 | no known vulnerabilities |
+| `pnpm run audit:tree` | 0 | 0 high or critical (1 moderate: DSR-01) |
+| `git diff --check` | 0 | no whitespace error |
+
+#### GATE-SEC — 18 sub-gates, 458 tests
+
+SEC-ROLE 12, SEC-RLS 33, SEC-ACL-MATRIX 110, SEC-OWNERSHIP 10, SEC-LOCK-EVIDENCE 16,
+SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 21, SEC-SCHEDULER 49, SEC-MAINTENANCE 24, SEC-STARTUP 27,
+SEC-STARTUP-WORKER 4, SEC-REGRESSION 51, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
+SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Identical across three consecutive runs.
+
+
+#### The five CI jobs, reproduced in isolated clones
+
+Each job ran in its own clone of `8fc1b7d` with its own checkout, its own pnpm store, its own
+`node_modules`, its own Turborepo cache and its own docker compose project. No clone reused
+another's dependencies, build output or cache, and the host stack was stopped for the duration so a
+clone's compose was genuinely its own.
+
+| Job | Steps | Result |
+| --- | --- | --- |
+| governance | install, validate-governance, validate-workspace, validate-regression-coverage, validate-ci-bypass-fixtures, scan-secrets | all exit 0 |
+| verify | install, format:check, lint, typecheck, test:unit, build, openapi, audit:prod, audit:tree | all exit 0 — see the note below on format:check |
+| e2e | install, `playwright install --with-deps chromium`, test:e2e | all exit 0 |
+| compose | install, compose config, compose up, build, test:migrations, test:integration, test:concurrency, test:regression, validate:pool-error-fixture | all exit 0 |
+| gate-sec | install, compose up, build, test:security | all exit 0 — **18/18 sub-gates, 458 tests**, identical to the host run |
+
+`format:check` exited 2 on its first run in the `verify` clone. The cause was the reproduction
+harness, not the checkout: it had placed that clone's pnpm store *inside* the working copy, and
+prettier globbed the store's content-addressed files. The store was moved outside and the step re-run
+in the same clone: exit 0, "All matched files use Prettier code style!". The first result is recorded
+rather than replaced.
+
+The harness also aborted after the last job, before its own cleanup step: the script was edited while
+it was running, which shifted the byte offsets bash re-reads from. The five job results were
+unaffected — the loop had been parsed as one compound command before the edit — but the step that
+restarts the host compose stack never ran, and the stack was restarted by hand afterwards.
 
 ---
 
