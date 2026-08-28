@@ -12,7 +12,12 @@ blob-report/
 
 .env
 .env.*
+# Both templates are committed: they contain local placeholders only, and the
+# runtime/migration split is worthless if the migration template is ignored.
+# `.env.*` swallowed .env.migration.example, so `git add -A` skipped it and the
+# workspace check validated a file that was never committed.
 !.env.example
+!.env.migration.example
 
 .DS_Store
 *.log
