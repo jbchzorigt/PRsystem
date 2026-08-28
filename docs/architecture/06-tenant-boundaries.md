@@ -179,7 +179,7 @@ masked in listings by default (`OPS-DEC-011`, `OPS-DEC-012`).
 | Aggregated reporting joining across tenants | Financial and registry queries are scoped to the actor's hotel; only Operation KPI aggregates cross tenants, and it holds no guest or operational data | `GATE-INTEG` |
 | Object-storage path collision | Export object keys include `hotel_id` and a random component; buckets are private; URLs expire in five minutes | `GATE-INTEG` |
 | Pooled connection retains a previous request's tenant context | `SET LOCAL` only; context dies with the transaction; explicit leak test | `GATE-CONC` |
-| A maintenance job runs unscoped against all tenants | `prsystem_maintenance` restricted to named audited jobs; per-tenant transactions where possible | `GATE-INTEG` |
+| A maintenance job runs unscoped against all tenants | named maintenance functions owned by `prsystem_maintenance_fn`, which holds no `BYPASSRLS` and sets scope one tenant at a time; the break-glass `prsystem_maintenance` is used by nothing in normal operation | `GATE-INTEG` |
 
 ---
 

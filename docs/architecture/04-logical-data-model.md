@@ -329,4 +329,4 @@ Per ADR-0017 §8, three categories are exempt from tenant RLS and each has an ex
 | --- | --- | --- |
 | Public projection | Published listing, search index, published reviews, rating aggregate | Separate tables, no RLS, fed only from tenant-scoped sources, contain no C2/C3 data |
 | Global reference | Packages, permission catalog, config versions | No tenant column; read-only at runtime |
-| Cross-tenant system job | Operation KPI aggregation, retention sweep, projection rebuild | `prsystem_maintenance` under a named audited job identity, per-tenant transaction where possible |
+| Cross-tenant system job | Operation KPI aggregation, retention sweep, projection rebuild | a named `SECURITY DEFINER` maintenance function owned by `prsystem_maintenance_fn`, under an audited job identity, per-tenant transaction where possible. **Not** `prsystem_maintenance`, which is break-glass only and holds no standing grant |

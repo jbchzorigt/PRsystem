@@ -14,7 +14,7 @@ dependency is pinned to a pre-release to make a scanner quiet.
 | Audit | Command | Threshold | CI behaviour |
 | --- | --- | --- | --- |
 | Production dependency tree | `pnpm run audit:prod` | moderate and above | **Blocking** — a failure fails CI |
-| Full dependency tree | `pnpm run audit:tree` | high and above | Enabled, advisory (`continue-on-error`) |
+| Full dependency tree | `pnpm run audit:tree` | high and above | Enabled and **blocking**; `continue-on-error` was removed |
 
 The production audit is the release-relevant one: it covers exactly what a production install ships.
 The full-tree audit additionally covers build and test tooling that no runtime ever loads.

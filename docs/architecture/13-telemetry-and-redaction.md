@@ -39,7 +39,8 @@ Decided in [ADR-0018](adr/ADR-0018-audit-partitioning.md).
   every step-up-gated Operation action.
 - **Retention is configuration by data class**, with legal hold. **No Police retention duration is
   invented**: absent an approved ЦЕГ value (EXT-09), Police audit is retained and not purged.
-- **Removal is privileged**: partition detach and drop run as `prsystem_maintenance` under a named
+- **Removal is privileged**: partition detach and drop run through the partition functions owned by
+  `prsystem_partition_mgr`, not as the break-glass `prsystem_maintenance`, under a named
   audited job that checks legal hold first — never an application delete.
 
 ---

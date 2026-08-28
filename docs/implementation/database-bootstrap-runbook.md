@@ -65,7 +65,7 @@ separate credentials, separate sessions and separate deployment responsibilities
 | --- | --- | --- |
 | Creates a privileged maintenance job | **yes**, through `platform.schedule_maintenance_job` only | no — holds no `INSERT` on `job_run` at all |
 | Executes a privileged maintenance job | no — cannot execute `platform.maintenance_expire_idempotency_keys` | **yes**, and only a job whose executor identity equals its own `session_user` |
-| Direct table privilege on `platform.job_run` | **none** | `SELECT`, and `UPDATE` scoped to `(state, finished_at, error_name, as_of)` |
+| Direct table privilege on `platform.job_run` | **none** | `SELECT` only — no `UPDATE` of any kind |
 | Creates ordinary, non-privileged jobs | no | **yes**, through `platform.begin_worker_job`, which rejects the `platform.maintenance.%` namespace categorically |
 
 The scheduling function is `SECURITY DEFINER` with a fixed `search_path`, owned
@@ -290,6 +290,7 @@ The bootstrap is idempotent and asserts, on every run:
 
 ```bash
 MIGRATION_DATABASE_URL='postgresql://prsystem_migrate_login:…@<host>:<port>/prsystem' \
+PRSYSTEM_APPROVED_OPERATOR_OWNERS='<operator-identity>[,<operator-identity>…]' \
 pnpm run migrate
 ```
 
@@ -297,6 +298,38 @@ pnpm run migrate
 `DATABASE_URL`: that variable holds a runtime principal, and a migration must not
 run as one. A missing or malformed value fails before any connection is opened,
 and the value is never printed.
+
+`PRSYSTEM_APPROVED_OPERATOR_OWNERS` is **also required**, and has no default. It
+names the operator identities allowed to own the database and schema `public`.
+There is no honest default to infer: the migration principal never owns the
+database, so any value the runner could invent would either refuse every real
+deployment or approve every owner. It was previously optional, which made the
+check strictest exactly where somebody had configured it and silent everywhere
+else. Missing or empty now stops the run **before a connection is opened**.
+
+### The ownership manifest
+
+Ownership is validated against an exact manifest — one expected owner per object
+— before any new DDL and again afterwards. Being *one of* the kernel owner roles
+was never sufficient: `prsystem_maintenance_fn` owning `platform.job_run` would
+have passed that test, and would have handed the owner of the maintenance
+functions the ability to rewrite the very ledger constraining them.
+
+| Object | Expected owner |
+| --- | --- |
+| the database and schema `public` | an approved operator identity (or `pg_database_owner` for `public`) |
+| schemas `platform`, `audit`, `police_audit`, `police`, `drizzle` | `prsystem_migrate` |
+| ordinary kernel tables, views, sequences, `drizzle.__drizzle_migrations` | `prsystem_migrate` |
+| `audit.platform_event`, `police_audit.security_event` and their partitions | `prsystem_partition_mgr` |
+| the partition functions | `prsystem_partition_mgr` |
+| the two audit append functions | `prsystem_audit_writer` |
+| the scheduler and maintenance wrappers, including every `SECURITY DEFINER` one | `prsystem_maintenance_fn` |
+| every other kernel function | `prsystem_migrate` |
+| runtime, reader, scheduler, break-glass and every canonical login role | **nothing, anywhere in the database** |
+
+Partitions are matched through `pg_inherits` rather than by name, and extension
+members are excluded through `pg_depend` — both catalogue facts rather than name
+patterns that stop being true when something is renamed.
 
 Everything then happens on **one physical session**: verify the principal, take a
 database advisory lock, `SET ROLE prsystem_migrate`, apply the journal, reset. The

@@ -112,8 +112,10 @@ document. Each is resolved by precedence, not by choice.
   `prsystem_maintenance_fn`, no `PUBLIC` execute, `prsystem_job_scheduler` only, allow-listed job
   types, server-side authorisation columns, immutable scheduling audit in the same transaction);
   the `job_run_privileged_has_issuer` check constraint; `platform.job_run_transition_guard`
-  (identity and `issuer_ref` immutable, terminal states terminal); column-scoped worker `UPDATE`.
-  Covered by `GATE-SEC` / `SEC-SCHEDULER`.
+  (identity and `issuer_ref` immutable, terminal states terminal). The worker holds **`SELECT` only**
+  on `platform.job_run` — no `UPDATE` of any kind, column-scoped or otherwise. Ordinary transitions go
+  through `platform.finish_worker_job`, which requires `job_identity = session_user` and refuses the
+  `platform.maintenance.%` namespace. Covered by `GATE-SEC` / `SEC-SCHEDULER`.
 - **Status.** Approved by the customer as a design decision, not a discovered conflict. Recorded here
   because it changes the canonical role model that [[D-08]] and the runbook describe.
 

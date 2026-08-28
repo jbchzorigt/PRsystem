@@ -25,8 +25,12 @@ BEGIN
   -- Every role is NOLOGIN. A login principal is a separate, deployment-created
   -- role that is granted one of these groups.
   --
-  -- `bypassrls` is true for exactly one role: prsystem_maintenance, which owns
-  -- the cross-tenant SECURITY DEFINER functions. Nothing is ever a member of it.
+  -- `bypassrls` is true for exactly one role: prsystem_maintenance, which is
+  -- break-glass only. It owns nothing and holds no standing grant, and nothing
+  -- is ever a member of it. The cross-tenant SECURITY DEFINER functions are
+  -- owned by prsystem_maintenance_fn, a separate role that holds no BYPASSRLS
+  -- and establishes tenant scope one tenant at a time. The two names differ by
+  -- three characters and are easy to confuse; they are not interchangeable.
   FOR r IN
     SELECT * FROM (VALUES
       -- runtime groups

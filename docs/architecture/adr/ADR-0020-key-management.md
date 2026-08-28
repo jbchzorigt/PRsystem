@@ -33,7 +33,9 @@ Key management is tracked as the internal control `INT-KMS-01`.
 3. **Key version stored with ciphertext.** Every encrypted column stores `key_version` alongside the
    ciphertext, so rotation does not require a synchronous rewrite and old data stays readable.
 4. **Rotation and rewrapping supported.** A new version is introduced for new writes; a background
-   rewrapping job re-encrypts existing rows under `prsystem_maintenance`, resumable and audited.
+   rewrapping job re-encrypts existing rows through a named `SECURITY DEFINER` maintenance function
+   owned by `prsystem_maintenance_fn` — not as the break-glass `prsystem_maintenance` — resumable
+   and audited.
 5. **Separate key scopes per realm.** Hotel/Guest PII keys and Police keys are distinct scopes with
    distinct KEKs and distinct access grants. Compromise of one realm's key material does not expose
    the other. This is the cryptographic counterpart to ADR-0005 and ADR-0017.

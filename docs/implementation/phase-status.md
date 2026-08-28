@@ -369,7 +369,7 @@ It is **constrained, not silenced**: no audit ignore, no unstable Drizzle pre-re
 | `apps/api` and `apps/worker` never import it | 50 source files scanned, zero imports in any form | `validate-workspace` 13 |
 | No command runs the esbuild development server | no `--serve` / `--servedir` in any script or workflow | `validate-workspace` 14 |
 | CI blocks moderate-or-higher **production** advisories | `pnpm run audit:prod`, blocking | `validate-workspace` 15 |
-| The full-tree high audit remains enabled | `pnpm run audit:tree`, advisory | `validate-workspace` 15 |
+| The full-tree high audit remains enabled | `pnpm run audit:tree`, blocking | `validate-workspace` 15 |
 
 Full record, exploit condition, review owner and removal condition:
 [dependency-security-register.md](dependency-security-register.md) **DSR-01**, with mandatory review
@@ -422,7 +422,7 @@ authoritative table; this is the same content stated in terms of duties.
 | --- | --- | --- | --- |
 | `prsystem_migrate` | DDL owner; migrations only | owns the schemas and platform tables | no |
 | `prsystem_api` | request handling | DML on `platform`; audit only by executing the definer wrapper, with **no direct grant on either audit stream**; no `police_audit`; **nothing at all** on `outbox_delivery` | no |
-| `prsystem_worker` | jobs and the outbox relay | as API, plus `outbox_delivery` `SELECT, UPDATE`, export and projection tables, **column-scoped** `UPDATE (state, finished_at, error_name, as_of)` on `job_run`, and **no `INSERT`** on `job_run` | no |
+| `prsystem_worker` | jobs and the outbox relay | as API, plus `outbox_delivery` `SELECT, UPDATE`, export and projection tables, and **`SELECT` only** on `job_run` — no `INSERT` and no `UPDATE`; ordinary transitions go through `platform.finish_worker_job` | no |
 | `prsystem_police` | Police realm | `police` / `police_audit` only | no |
 | `prsystem_audit_writer` | function owner | owns both audit append functions (approved shared owner, ADR-0018) | no |
 | `prsystem_partition_mgr` | function owner | owns the audit streams, their partitions and the partition functions | no |
@@ -692,7 +692,7 @@ The third repair was **not accepted**. Eight further defects were raised; all ei
 | 4 | The empty-database migration race used `Promise.all`, which cannot show lock contention; the maintenance race had no barrier and a bare `catch` that accepted any error as a valid loser; cross-tenant maintenance was tested with a nonexistent UUID | The migration race runs two OS processes released together by the parent, asserting distinct pids and observable overlap — a sequential run now fails — plus exactly one application, one no-op, and identical fingerprints against a solo install. The maintenance race adds an in-critical-section barrier, overlap, and an exact loser SQLSTATE (`22023`). Cross-tenant maintenance now creates and commits a **real** tenant-B job and proves the refusal, the untouched row, and the absent audit event. |
 | 5 | `sec-rls.test.ts` inserted partial rows and accepted `null value ...` as isolation evidence, and converted arbitrary UPDATE/DELETE errors into `rowCount: 0` | Complete valid rows come from a shared fixture module that the ACL matrix also uses, so the two suites cannot drift. Structural SQLSTATEs are explicitly rejected. Where the API holds the verb the exact affected count must be zero, and where it does not the exact SQLSTATE must be `42501`; the two are no longer collapsed. Both tenants are seeded, so "zero rows affected" is no longer a statement about an empty table. |
 | 6 | The fingerprint omitted global and schema-local default ACLs, column ACLs, relation options, replica identity, access method, tablespace and sequence dependencies | All are covered, and each is sensitivity-tested. |
-| 7 | The API held `UPDATE` on `platform.outbox_delivery` with no code path needing it, and the worker held table-wide `UPDATE` on `platform.job_run` — the very fields the maintenance function authorises on | The API holds `SELECT` only. The worker's `job_run` grant is column-scoped to `(state, finished_at, error_name, as_of)`, and `platform.job_run_transition_guard` makes `job_run_id`, `hotel_id`, `job_name`, `job_identity` and `started_at` immutable and terminal states terminal. |
+| 7 | The API held `UPDATE` on `platform.outbox_delivery` with no code path needing it, and the worker held table-wide `UPDATE` on `platform.job_run` — the very fields the maintenance function authorises on | The API holds `SELECT` only. The worker's `job_run` grant is column-scoped to `(state, finished_at, error_name, as_of)`, and `platform.job_run_transition_guard` makes `job_run_id`, `hotel_id`, `job_name`, `job_identity` and `started_at` immutable and terminal states terminal. **Superseded by the seventh repair:** the column-scoped `UPDATE` was removed entirely and the worker now holds `SELECT` only. |
 | 8 | Governance documents disagreed on roles, counts and maintenance execution | Corrected below; superseded blocks are labelled as historical snapshots. |
 
 #### Defects the strengthened tests exposed
@@ -814,7 +814,7 @@ maintenance job and executing one are separate powers with separate credentials.
 | --- | --- | --- |
 | Issues a privileged maintenance job | **yes**, via `platform.schedule_maintenance_job` only | no — holds no `INSERT` on `job_run` |
 | Executes one | no | **yes**, only when its transaction actor is the named executor |
-| Direct privilege on `platform.job_run` | **none** | `SELECT`, `UPDATE (state, finished_at, error_name, as_of)` |
+| Direct privilege on `platform.job_run` | **none** | `SELECT` only — transitions go through `platform.finish_worker_job` |
 | Ordinary non-privileged jobs | no | **yes**, via `platform.begin_worker_job`, which refuses the `platform.maintenance.%` namespace categorically |
 
 The previous arrangement let the worker mint its own authorisation: it held unrestricted `INSERT` on
