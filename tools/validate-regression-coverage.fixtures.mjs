@@ -267,6 +267,69 @@ const FIXTURES = [
       ),
   },
   {
+    // The exact command is still there, on its own line, with an `exit 0` above
+    // it. The step succeeds without ever reaching the gate.
+    name: 'exit 0 before the exact command',
+    expect: /runs only its own command|exit 0/,
+    mutate: (yaml) =>
+      yaml.replace(
+        '        run: pnpm run test:regression',
+        '        run: |\n          exit 0\n          pnpm run test:regression',
+      ),
+  },
+  {
+    // A workflow-level default shell applies to every `run` step in every job,
+    // so one line at the top of the file disables all of them.
+    name: 'workflow-level default shell',
+    expect: /workflow.*default shell|defaults\.run\.shell/i,
+    mutate: (yaml) =>
+      yaml.replace(
+        'concurrency:',
+        "defaults:\n  run:\n    shell: bash -c 'true' {0}\n\nconcurrency:",
+      ),
+  },
+  {
+    // The same thing scoped to one required job.
+    name: 'job-level default shell on gate-sec',
+    expect: /gate-sec.*default shell|defaults\.run\.shell/i,
+    mutate: (yaml) =>
+      yaml.replace(
+        '  gate-sec:\n    name: GATE-SEC',
+        "  gate-sec:\n    defaults:\n      run:\n        shell: bash -c 'true' {0}\n    name: GATE-SEC",
+      ),
+  },
+  {
+    // Teardown that only runs when everything succeeded is teardown that never
+    // runs when it matters.
+    name: 'compose teardown loses its if: always()',
+    expect: /teardown that still runs after a failure/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Stop backing services
+        if: always()
+        run: docker compose down -v
+
+  # A distinct job`,
+        `      - name: Stop backing services
+        run: docker compose down -v
+
+  # A distinct job`,
+      ),
+  },
+  {
+    // A required step that is not teardown must not carry a condition at all.
+    name: 'a required gate gains an if: condition',
+    expect: /must not be conditional|if:/,
+    mutate: (yaml) =>
+      yaml.replace(
+        `      - name: Run the fail-closed security aggregator
+        run: pnpm run test:security`,
+        `      - name: Run the fail-closed security aggregator
+        if: \${{ github.event_name == 'push' }}
+        run: pnpm run test:security`,
+      ),
+  },
+  {
     name: 'build after the suite it must precede',
     mutate: (yaml) => {
       const build = `      - name: Build workspace packages from this checkout

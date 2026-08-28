@@ -125,14 +125,31 @@ const BYPASS_PATTERNS = [
 ];
 
 /**
- * True when some line of the step *is* `command`, alone, with nothing appended
- * that could discard its exit status.
+ * True when the step's executable lines are *exactly* `[command]`.
+ *
+ * "Some line is the command" accepted a block whose other lines did the damage:
+ *
+ *     run: |
+ *       exit 0
+ *       pnpm run test:regression
+ *
+ * The exact line is present and the gate never runs. A required step does one
+ * thing, so its non-comment lines must be that one thing and nothing else.
  */
 function runsExactly(step, command) {
-  return commandLines(step).some((line) => {
-    if (line !== command) return false;
-    return !BYPASS_PATTERNS.some((pattern) => pattern.re.test(line));
-  });
+  const lines = commandLines(step);
+  if (lines.length !== 1 || lines[0] !== command) return false;
+  return !BYPASS_PATTERNS.some((pattern) => pattern.re.test(lines[0]));
+}
+
+/**
+ * True when some line of the step is `command`, whatever else the step does.
+ *
+ * Used only to locate a step that was *meant* to be the required one, so the
+ * diagnostic can say what is wrong with it rather than "no such step".
+ */
+function mentionsExactly(step, command) {
+  return commandLines(step).some((line) => line === command);
 }
 
 /** Any bypass construct anywhere in the step, even on another line. */
@@ -164,9 +181,33 @@ function customShell(step) {
   return typeof shell === 'string' && shell.trim().length > 0 ? shell : undefined;
 }
 
+/** A `defaults.run.shell` on the workflow or on a job. */
+function defaultShell(node) {
+  const shell = node?.defaults?.run?.shell;
+  return typeof shell === 'string' && shell.trim().length > 0 ? shell : undefined;
+}
+
+// A workflow-level default shell applies to every `run` step in every job, so
+// one line at the top of the file disables all of them while every step still
+// reads as correct.
+const workflowShell = defaultShell(workflow);
+check(
+  'the workflow declares no default shell',
+  workflowShell === undefined,
+  workflowShell === undefined ? 'no defaults.run.shell' : `defaults.run.shell: ${workflowShell}`,
+);
+
 for (const required of REQUIRED_JOBS) {
   const steps = stepsOf(required.job);
   let previousIndex = -1;
+
+  // The same rule as the workflow default, scoped to one required job.
+  const jobShell = defaultShell(workflow?.jobs?.[required.job]);
+  check(
+    `the '${required.job}' job declares no default shell`,
+    jobShell === undefined,
+    jobShell === undefined ? 'no defaults.run.shell' : `defaults.run.shell: ${jobShell}`,
+  );
 
   for (const spec of required.steps) {
     const index = steps.findIndex(
@@ -175,13 +216,23 @@ for (const required of REQUIRED_JOBS) {
     const step = index >= 0 ? steps[index] : undefined;
     const label = `CI runs '${spec.run}' exactly, in the '${required.job}' job`;
 
+    // When a step mentions the command but is not exactly it, say so: "no such
+    // step" would send a reader looking for a missing step rather than at the
+    // extra line that disabled the one they have.
+    const impostor =
+      step === undefined
+        ? steps.find((candidate, at) => at > previousIndex && mentionsExactly(candidate, spec.run))
+        : undefined;
     check(
       label,
       step !== undefined,
-      step === undefined
-        ? `no step whose run line is exactly '${spec.run}'` +
-            (previousIndex >= 0 ? ' after the preceding required step' : '')
-        : `step ${String(index)}: ${step.name ?? '(unnamed)'}`,
+      step !== undefined
+        ? `step ${String(index)}: ${step.name ?? '(unnamed)'}`
+        : impostor !== undefined
+          ? `the step named '${impostor.name ?? '(unnamed)'}' runs more than its own command: ` +
+            commandLines(impostor).join(' ; ')
+          : `no step whose run line is exactly '${spec.run}'` +
+            (previousIndex >= 0 ? ' after the preceding required step' : ''),
     );
     if (step === undefined) continue;
     previousIndex = index;
@@ -205,6 +256,25 @@ for (const required of REQUIRED_JOBS) {
       shell === undefined,
       shell === undefined ? 'no custom shell' : `shell: ${shell}`,
     );
+
+    // `cleanup: true` is consumed, not decorative. Teardown must be
+    // unconditional-on-failure — `if: always()` — or it stops running exactly
+    // when it matters. Everything else must carry no condition at all.
+    const condition = step.if === undefined ? undefined : String(step.if).trim();
+    if (spec.cleanup === true) {
+      const isAlways = condition === 'always()' || condition === '${{ always() }}';
+      check(
+        `'${spec.run}' is teardown that still runs after a failure`,
+        isAlways,
+        isAlways ? `if: ${String(condition)}` : `if: ${String(condition ?? '(absent)')}`,
+      );
+    } else {
+      check(
+        `'${spec.run}' must not be conditional`,
+        condition === undefined,
+        condition === undefined ? 'no if:' : `if: ${condition}`,
+      );
+    }
 
     if (spec.needsDatabase === true) {
       const url = step.env?.DATABASE_URL;
