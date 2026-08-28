@@ -12,6 +12,14 @@ import { fileURLToPath } from 'node:url';
 import { SUB_GATES } from './gate-sec-config.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Overridable so the negative-fixture harness can point these two checks at a
+// mutated *copy* without touching the real document.
+const RUNBOOK_PATH =
+  process.env['PRSYSTEM_RUNBOOK'] ??
+  join(ROOT, 'docs', 'implementation', 'database-bootstrap-runbook.md');
+const PHASE_STATUS_PATH =
+  process.env['PRSYSTEM_PHASE_STATUS'] ?? join(ROOT, 'docs', 'implementation', 'phase-status.md');
 const DOCS = join(ROOT, 'docs');
 const IMPL = join(DOCS, 'implementation');
 
@@ -503,60 +511,81 @@ if (hasArch) {
 }
 
 check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', () => {
-  // A catalogue that listed eight of eighteen sub-gates read as a complete gate
-  // and was not one. The list is derived in one place and compared here, because
-  // prose and configuration drifting apart is exactly how that happened.
-  const runbook = readFileSync(
-    join(ROOT, 'docs', 'implementation', 'database-bootstrap-runbook.md'),
-    'utf8',
-  );
+  // Parsed from the catalogue section itself, not from every `SEC-*` mention in
+  // the file. Scanning the whole document let any passing mention elsewhere
+  // stand in for a catalogue entry, so a catalogue that had lost half its
+  // sub-gates could still look complete.
+  const runbook = readFileSync(RUNBOOK_PATH, 'utf8');
+  const marker = /aggregates \*\*([a-z]+)\*\* sub-gates:\n([\s\S]*?)\n\n/.exec(runbook);
+  assert(marker !== null, 'the runbook has no GATE-SEC catalogue section');
+
+  const [, stated, catalogue] = marker;
   const configured = SUB_GATES.map((gate) => gate.id).sort();
-  const listed = [...new Set([...runbook.matchAll(/`(SEC-[A-Z-]+)`/g)].map((m) => m[1]))].sort();
+  const listed = [...new Set([...catalogue.matchAll(/`(SEC-[A-Z-]+)`/g)].map((m) => m[1]))].sort();
+
   const missing = configured.filter((id) => !listed.includes(id));
   const extra = listed.filter((id) => !configured.includes(id));
-  assert(missing.length === 0, `runbook omits ${missing.join(', ')}`);
-  assert(extra.length === 0, `runbook lists unknown sub-gates ${extra.join(', ')}`);
-  const stated = /aggregates \*\*([a-z]+)\*\* sub-gates/.exec(runbook)?.[1];
-  const words = { eighteen: 18, seventeen: 17, nineteen: 19, twenty: 20 };
+  assert(missing.length === 0, `the catalogue omits ${missing.join(', ')}`);
+  assert(extra.length === 0, `the catalogue lists unknown sub-gates ${extra.join(', ')}`);
+
+  const words = {
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
+  };
   assert(
-    stated !== undefined && words[stated] === configured.length,
-    `runbook says "${String(stated)}" sub-gates, configuration has ${String(configured.length)}`,
+    words[stated] === configured.length,
+    `the catalogue says "${stated}" sub-gates, configuration has ${String(configured.length)}`,
   );
-  return `${configured.length} sub-gates, runbook and configuration agree`;
+  return `${configured.length} sub-gates, catalogue section and configuration agree`;
 });
 
-check('15', 'The Phase 03 ledger embeds no mutable gate counts', () => {
-  // The ledger carried its own copy of the counts and went stale: it still read
-  // 49 / 439 / 51 / 26 / 3 while the current section read 76 / 458 / 66 / 30 / 9.
-  // Two places holding the same mutable number is one place too many, so the
-  // ledger links to the canonical evidence section instead of restating it.
-  const text = readFileSync(join(ROOT, 'docs', 'implementation', 'phase-status.md'), 'utf8');
-  const firstSection = text.indexOf('\n### ');
-  assert(firstSection > 0, 'phase-status.md has no sections');
-  const ledger = text.slice(0, firstSection);
+check('15', 'The Phase 03 ledger and gate battery link to one canonical evidence section', () => {
+  // Both regions are located and parsed, rather than "everything before the
+  // first heading". The ledger carried its own copy of the counts and went
+  // stale against the section below it, so each region must link to the
+  // canonical section and restate nothing.
+  const text = readFileSync(PHASE_STATUS_PATH, 'utf8');
+
+  const ANCHOR = '#current-phase-03-evidence';
+  const HEADING = '## Current Phase 03 evidence';
+  const canonical = [...text.matchAll(/^## Current Phase 03 evidence$/gm)];
+  assert(
+    canonical.length === 1,
+    `expected exactly one "${HEADING}" section, found ${String(canonical.length)}`,
+  );
+
+  // Region 1: the Phase 03 row of the phase ledger.
+  const ledgerRow = text.split('\n').find((line) => line.startsWith('| 03 |'));
+  assert(ledgerRow !== undefined, 'the phase ledger has no Phase 03 row');
+  assert(ledgerRow.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
+
+  // Region 2: the gate-battery fenced block and the paragraph that follows it.
+  const battery = /```bash\n(node tools\/validate-governance[\s\S]*?)```\n([\s\S]{0,600})/.exec(
+    text,
+  );
+  assert(battery !== null, 'the Phase 03 gate-battery block is missing');
+  assert(battery[2].includes(ANCHOR), `the gate-battery block does not link to ${ANCHOR}`);
 
   const patterns = [
     /GATE-(?:SEC|MIGR|INTEG|CONC|UNIT|E2E)[^\n|]*\d/,
     /\b\d+\/\d+\s+sub-gates/,
+    /\b\d+\s+tests\b/,
     /bypass fixtures\s+\d/,
     /pool fixture\s+\d/,
   ];
-  // Only the phase still under change. A completed phase's counts are frozen
-  // with it and are a record, not a second copy of a moving number.
-  const offenders = ledger
-    .split('\n')
-    .filter((line) => /^\| 03 \|/.test(line) || line.includes('SECURITY_REPAIR_REQUIRED'))
-    .filter((line) => patterns.some((pattern) => pattern.test(line)));
+  const offenders = [ledgerRow, ...battery[1].split('\n')].filter((line) =>
+    patterns.some((pattern) => pattern.test(line)),
+  );
   assert(
     offenders.length === 0,
-    `ledger embeds counts: ${offenders.map((l) => l.trim().slice(0, 70)).join(' | ')}`,
+    `a mutable count is restated outside the canonical section: ` +
+      offenders.map((l) => l.trim().slice(0, 70)).join(' | '),
   );
 
-  assert(
-    text.includes('## Current Phase 03 evidence'),
-    'phase-status.md has no canonical "Current Phase 03 evidence" section',
-  );
-  return 'ledger links to the canonical evidence section and restates no counts';
+  return 'one canonical section; ledger row and gate battery link to it and restate no counts';
 });
 
 // ------------------------------------------------------------------- report

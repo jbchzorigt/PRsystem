@@ -18,6 +18,7 @@ export const REQUIRED_JOBS = [
       { run: 'node tools/validate-workspace.mjs' },
       { run: 'pnpm run validate:regression-coverage' },
       { run: 'pnpm run validate:ci-bypass-fixtures' },
+      { run: 'pnpm run validate:governance-fixtures' },
       { run: 'node tools/scan-secrets.mjs' },
     ],
   },

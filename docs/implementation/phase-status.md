@@ -26,7 +26,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | # | Phase | State | Migrations | Gates run | Commit |
 | --- | --- | --- | --- | --- | --- |
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
-| 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` 13/13 | `b0ec3f3`, repair pending |
+| 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the ninth repair; see the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
@@ -978,10 +978,13 @@ Eleven group roles, seven canonical login principals. Corrections this repair ma
 
 ### Seventh security repair (customer review 7) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The sixth repair was **not accepted**. Eight defects were raised; all are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED` and no approval is claimed.
 
-> **Superseded by the eighth repair below**, which holds the current counts.
+
 
 | # | Defect | Repair |
 | --- | --- | --- |
@@ -1012,6 +1015,9 @@ SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Identical across three consecutive r
 ---
 
 ### Eighth security repair (customer review 8) — `SECURITY_REPAIR_REQUIRED`
+
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
 
 The seventh repair was **not accepted**. Eight defects were raised; all are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED` and no approval is claimed. **This section holds the current counts and
@@ -1123,7 +1129,7 @@ gate-battery block above link here and restate no counts; `validate-governance`
 check 15 fails if either starts carrying its own copy again, which is how they
 came to read `49 / 439 / 51 / 26 / 3` while this section read something else.
 
-Measured on the ninth-repair tree. Every command exited 0.
+Measured on the tenth-repair tree. Every command exited 0.
 
 | Command | Result |
 | --- | --- |
@@ -1160,6 +1166,9 @@ SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Byte-identical across three consecut
 ---
 
 ### Ninth security repair (customer review 9) — `SECURITY_REPAIR_REQUIRED`
+
+> **Historical snapshot.** Superseded by the tenth repair. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
 
 The eighth repair was **not accepted**. Ten defects were raised; all are closed.
 Phase 03 stays `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting

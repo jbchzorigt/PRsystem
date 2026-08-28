@@ -431,6 +431,7 @@ const REQUIRED_SECURITY_STAGES = [
   'turbo run build',
   'node tools/validate-regression-coverage.mjs',
   'node tools/validate-regression-coverage.fixtures.mjs',
+  'node tools/validate-governance.fixtures.mjs',
   'node tools/validate-pool-error-fixture.mjs',
   'node tools/gate-sec.mjs',
 ];
