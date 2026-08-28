@@ -1105,6 +1105,12 @@ it was running, which shifted the byte offsets bash re-reads from. The five job 
 unaffected — the loop had been parsed as one compound command before the edit — but the step that
 restarts the host compose stack never ran, and the stack was restarted by hand afterwards.
 
+The five clones above ran against `8fc1b7d`, the final **code** commit. The final HEAD adds this
+documentation commit on top of it. Three of the jobs cannot be affected by a markdown-only change;
+the two that can — `governance`, whose validators read these documents, and `verify`, whose
+`format:check` globs them — were re-run in two further fresh, dependency-free clones of the final
+HEAD, and every step of both exited 0, `format:check` included.
+
 ---
 
 ## Update protocol
