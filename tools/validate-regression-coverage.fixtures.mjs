@@ -46,6 +46,29 @@ const FIXTURES = [
       ),
   },
   {
+    name: 'git index override at step level',
+    mutate: (yaml) =>
+      yaml.replace(
+        '      - name: Scan for committed secrets\n        run: node tools/scan-secrets.mjs',
+        '      - name: Scan for committed secrets\n        run: node tools/scan-secrets.mjs\n' +
+          '        env:\n          GIT_INDEX_FILE: /tmp/alt.index',
+      ),
+  },
+  {
+    name: 'git dir override at job level',
+    mutate: (yaml) =>
+      yaml.replace(
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n',
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n' +
+          '    env:\n      GIT_DIR: /tmp/decoy.git\n',
+      ),
+  },
+  {
+    name: 'git work tree override at workflow level',
+    mutate: (yaml) =>
+      yaml.replace('env:\n  NODE_VERSION:', 'env:\n  GIT_WORK_TREE: /tmp/decoy\n  NODE_VERSION:'),
+  },
+  {
     name: 'scan override at step level',
     mutate: (yaml) =>
       yaml.replace(

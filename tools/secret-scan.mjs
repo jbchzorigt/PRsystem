@@ -1,14 +1,26 @@
 // The committed-secret scanner's core — patterns, allowances and the scan
 // itself, with no I/O policy of its own.
 //
-// Split out from the CLI so the negative-fixture harness can call it directly
-// with an explicit inventory. The CLI used to accept PRSYSTEM_SCAN_ROOT and
-// PRSYSTEM_SCAN_FILES so the harness could point it at a probe tree, and that
-// made the production gate redirectable: one variable alone made it scan the
-// repository's file list against a different root, find nothing, and exit 0.
-// A test seam must not be reachable from the command the gate runs.
+// Split out from the CLI so the negative-fixture harness can call it directly,
+// against a repository it built itself. The CLI used to accept
+// PRSYSTEM_SCAN_ROOT and PRSYSTEM_SCAN_FILES so the harness could point it at a
+// probe tree, and that made the production gate redirectable. The seam is now a
+// function parameter — the root — and the CLI passes the one it resolves from
+// its own location, which nothing outside the process can influence.
+//
+// The inventory comes from git, and git reads its own environment: GIT_INDEX_FILE
+// alone pointed `git ls-files` at another index, so the gate scanned one
+// innocuous file and exited 0. Every GIT_* variable is stripped before the
+// subprocess runs, and the repository git resolves must be the root that was
+// asked for.
+//
+// Paths are not the whole inventory. A file's *mode* decides how it can be read:
+// a tracked symlink is stored as its link text, and following it read
+// /dev/null as an empty scanned file and hung on /dev/zero. Nothing is omitted
+// for its filename either — a credential in `leak.png` is still a credential.
 
-import { readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { closeSync, lstatSync, openSync, readSync, readlinkSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 // `value` is the capture group holding the credential itself. An allowance is
@@ -67,25 +79,28 @@ export const ALLOWED_VALUES = [
   'startup-log-probe-password', // apps/api — asserts no credential reaches the startup logger
 ];
 
-/** File extensions whose bytes are not text and cannot carry a credential line. */
-export const BINARY_EXT = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.ico',
-  '.pdf',
-  '.zip',
-  '.gz',
-  '.woff',
-  '.woff2',
-  '.ttf',
-]);
-
 /** Raised when the inventory itself is unusable. Never a silent empty scan. */
 export class SecretScanInventoryError extends Error {
   name = 'SecretScanInventoryError';
 }
+
+/** Git index modes this scanner knows how to read. */
+const REGULAR_MODES = new Set(['100644', '100755']);
+const SYMLINK_MODE = '120000';
+const GITLINK_MODE = '160000';
+
+/** Read in bounded chunks, so file size never decides whether content is seen. */
+const CHUNK_BYTES = 1 << 20;
+
+/**
+ * A single line longer than this fails the gate.
+ *
+ * Streaming keeps memory bounded per chunk, but a line is the unit the patterns
+ * match, so one unbroken line still has to be held. Refusing is the honest
+ * outcome: skipping the file is exactly the silent omission that let a
+ * credential on line 1 of an oversized file through.
+ */
+const MAX_LINE_BYTES = 8 << 20;
 
 /** Finds every credential a single line carries, minus the exact allowances. */
 export function findingsInLine(line) {
@@ -100,15 +115,134 @@ export function findingsInLine(line) {
   return found;
 }
 
+/** Every GIT_* variable removed, so a subprocess cannot be pointed elsewhere. */
+export function sanitisedGitEnv(env = process.env) {
+  const clean = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith('GIT_')) continue;
+    clean[key] = value;
+  }
+  return clean;
+}
+
+function git(root, args) {
+  return execFileSync('git', ['-C', root, ...args], {
+    encoding: 'latin1',
+    env: sanitisedGitEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 1 << 28,
+  });
+}
+
 /**
- * Scans an explicit inventory of repository-relative paths under `root`.
+ * The tracked inventory of `root`: repository-relative path plus index mode.
+ *
+ * The mode is part of the inventory because it decides how the entry may be
+ * read. `git ls-files` alone gave paths, and a path says nothing about whether
+ * the thing behind it is a regular file, a symlink or a submodule.
+ */
+export function gitInventory(root) {
+  if (typeof root !== 'string' || root === '' || !isAbsolute(root)) {
+    throw new SecretScanInventoryError(`the scan root must be an absolute path: ${String(root)}`);
+  }
+
+  let toplevel;
+  try {
+    toplevel = git(root, ['rev-parse', '--show-toplevel']).trim();
+  } catch (error) {
+    throw new SecretScanInventoryError(
+      'cannot enumerate tracked files. This gate needs a git working tree (CI uses ' +
+        'actions/checkout, which provides one); a `git archive` extraction does not have the ' +
+        'metadata to tell tracked files from stray ones. ' +
+        (error instanceof Error ? error.message.split('\n')[0] : String(error)),
+    );
+  }
+
+  // The repository git resolved must be the one that was asked for. Without
+  // this, a `.git` file or a stray configuration pointing elsewhere would supply
+  // a different inventory for the same root.
+  const resolvedRoot = realpathSync(root);
+  const resolvedTop = realpathSync(toplevel);
+  if (resolvedTop !== resolvedRoot) {
+    throw new SecretScanInventoryError(
+      `git resolved the repository to ${resolvedTop}, not the scan root ${resolvedRoot}`,
+    );
+  }
+
+  const listed = git(root, ['ls-files', '-s', '-z']);
+  const entries = [];
+  const seen = new Set();
+  for (const record of listed.split('\0')) {
+    if (record === '') continue;
+    // `<mode> <object> <stage>\t<path>`
+    const tab = record.indexOf('\t');
+    if (tab < 0) {
+      throw new SecretScanInventoryError(`cannot parse the index record ${JSON.stringify(record)}`);
+    }
+    const [mode, object] = record.slice(0, tab).split(' ');
+    const path = record.slice(tab + 1);
+    if (seen.has(path)) {
+      throw new SecretScanInventoryError(`the index lists ${path} more than once`);
+    }
+    seen.add(path);
+
+    if (mode === GITLINK_MODE) {
+      throw new SecretScanInventoryError(
+        `${path} is a gitlink (submodule). Its content lives in another repository and this ` +
+          'scan does not reach it: handle it deliberately rather than passing over it',
+      );
+    }
+    if (mode === SYMLINK_MODE) {
+      // The stored link text, read from the object rather than through the link.
+      // Following it read /dev/null as an empty file that counted as scanned and
+      // hung on /dev/zero, and pulled content from outside the repository.
+      entries.push({ path, mode, target: git(root, ['cat-file', 'blob', object]) });
+      continue;
+    }
+    if (!REGULAR_MODES.has(mode)) {
+      throw new SecretScanInventoryError(
+        `${path} has index mode ${mode}, which this scan does not classify`,
+      );
+    }
+    entries.push({ path, mode });
+  }
+  return entries;
+}
+
+/** Scans one open file descriptor line by line, without holding the whole file. */
+function scanDescriptor(fd, onLine) {
+  const buffer = Buffer.allocUnsafe(CHUNK_BYTES);
+  let carry = '';
+  let line = 1;
+  for (;;) {
+    const read = readSync(fd, buffer, 0, CHUNK_BYTES, null);
+    if (read === 0) break;
+    const text = carry + buffer.toString('latin1', 0, read);
+    const parts = text.split('\n');
+    carry = parts.pop() ?? '';
+    for (const part of parts) onLine(part, line++);
+    if (carry.length > MAX_LINE_BYTES) {
+      throw new SecretScanInventoryError(
+        `a single line exceeds ${String(MAX_LINE_BYTES)} bytes and cannot be scanned as one unit`,
+      );
+    }
+  }
+  if (carry !== '') onLine(carry, line);
+}
+
+/**
+ * Scans an explicit inventory of entries under `root`.
  *
  * Every failure mode of the inventory is an error, never a quieter scan. A scan
  * that reports zero findings because it read zero files is indistinguishable
  * from a clean tree in its exit status, and that is exactly how the overridable
  * CLI passed while scanning nothing.
+ *
+ * Content is read as latin1, so every byte maps to one character and the
+ * patterns match over the actual bytes. Nothing is skipped for its extension:
+ * a credential written in plain text into `leak.png` is a committed credential.
  */
-export function scanFiles({ root, files }) {
+export function scanEntries({ root, entries }) {
   if (typeof root !== 'string' || root === '') {
     throw new SecretScanInventoryError('a scan root is required');
   }
@@ -117,17 +251,17 @@ export function scanFiles({ root, files }) {
   }
   let rootStat;
   try {
-    rootStat = statSync(root);
+    rootStat = lstatSync(root);
   } catch {
     throw new SecretScanInventoryError(`the scan root does not exist: ${root}`);
   }
   if (!rootStat.isDirectory()) {
     throw new SecretScanInventoryError(`the scan root is not a directory: ${root}`);
   }
-  if (!Array.isArray(files)) {
+  if (!Array.isArray(entries)) {
     throw new SecretScanInventoryError('the file inventory must be an array');
   }
-  if (files.length === 0) {
+  if (entries.length === 0) {
     throw new SecretScanInventoryError(
       'the file inventory is empty. A scan of no files reports no findings and exits 0, which ' +
         'is indistinguishable from a clean tree',
@@ -135,7 +269,8 @@ export function scanFiles({ root, files }) {
   }
 
   const seen = new Set();
-  for (const rel of files) {
+  for (const entry of entries) {
+    const rel = entry?.path;
     if (typeof rel !== 'string' || rel === '') {
       throw new SecretScanInventoryError(
         `the inventory holds an empty path: ${JSON.stringify(rel)}`,
@@ -144,8 +279,7 @@ export function scanFiles({ root, files }) {
     if (isAbsolute(rel)) {
       throw new SecretScanInventoryError(`inventory paths must be relative to the root: ${rel}`);
     }
-    const abs = resolve(root, rel);
-    const inside = relative(root, abs);
+    const inside = relative(root, resolve(root, rel));
     if (inside.startsWith('..') || isAbsolute(inside)) {
       throw new SecretScanInventoryError(`inventory path escapes the scan root: ${rel}`);
     }
@@ -157,24 +291,77 @@ export function scanFiles({ root, files }) {
 
   const findings = [];
   let scanned = 0;
-  for (const rel of files) {
+  for (const entry of entries) {
+    const rel = entry.path;
     const abs = resolve(root, rel);
-    let text;
+    const report = (line, number) => {
+      for (const id of findingsInLine(line)) findings.push({ rel, line: number, id });
+    };
+
+    // `lstat`, never `stat`: the question is what the tracked entry *is*, not
+    // what it points at.
+    let stat;
     try {
-      text = readFileSync(abs, 'utf8');
+      stat = lstatSync(abs);
     } catch (error) {
       throw new SecretScanInventoryError(
         `cannot read ${rel}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
       );
     }
+
+    if (entry.mode === SYMLINK_MODE) {
+      if (!stat.isSymbolicLink()) {
+        throw new SecretScanInventoryError(`${rel} is recorded as a symlink but is not one`);
+      }
+      const onDisk = readlinkSync(abs);
+      if (typeof entry.target !== 'string') {
+        throw new SecretScanInventoryError(`${rel} is a symlink with no recorded link text`);
+      }
+      if (onDisk !== entry.target) {
+        throw new SecretScanInventoryError(
+          `${rel} points at ${onDisk} but the index records ${entry.target}`,
+        );
+      }
+      // The link text is the tracked content. The target is never opened.
+      scanned += 1;
+      report(entry.target, 1);
+      continue;
+    }
+
+    if (!REGULAR_MODES.has(entry.mode)) {
+      throw new SecretScanInventoryError(
+        `${rel} has inventory mode ${String(entry.mode)}, which this scan does not classify`,
+      );
+    }
+    if (!stat.isFile()) {
+      throw new SecretScanInventoryError(`${rel} is recorded as a regular file but is not one`);
+    }
+
+    let fd;
+    try {
+      fd = openSync(abs, 'r');
+    } catch (error) {
+      throw new SecretScanInventoryError(
+        `cannot read ${rel}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
+      );
+    }
+    try {
+      scanDescriptor(fd, report);
+    } catch (error) {
+      if (error instanceof SecretScanInventoryError) {
+        throw new SecretScanInventoryError(`${rel}: ${error.message}`);
+      }
+      throw error;
+    } finally {
+      closeSync(fd);
+    }
     scanned += 1;
-    text.split('\n').forEach((line, index) => {
-      // Detect first, then compare each detected value against the allow-list.
-      // Removing the allowed spans and scanning the remainder let an allowance
-      // suppress a different credential that merely contained it.
-      for (const id of findingsInLine(line)) findings.push({ rel, line: index + 1, id });
-    });
   }
 
   return { scanned, findings };
+}
+
+/** The whole gate for one repository: its tracked inventory, then the scan. */
+export function scanRepository(root) {
+  return scanEntries({ root, entries: gitInventory(root) });
 }

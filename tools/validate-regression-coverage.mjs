@@ -207,14 +207,24 @@ function workingDirectory(node) {
 /**
  * Environment variables that once redirected the committed-secret scan.
  *
- * `tools/scan-secrets.mjs` no longer reads them: it enumerates git-tracked files
- * and takes no configuration. They are still refused everywhere in the workflow,
- * because the seam is the sort of thing that gets reintroduced "just for the
- * fixtures" and one of these set on the scan step made a clean-looking gate scan
- * nothing at all. GitHub merges workflow, job and step `env`, so all three
- * levels are checked.
+ * `tools/scan-secrets.mjs` reads none of them: it resolves its own root and
+ * strips every GIT_* variable before enumerating. They are still refused
+ * everywhere in the workflow, because these seams are the sort of thing that get
+ * reintroduced "just for the fixtures", and either family set on the scan step
+ * made a clean-looking gate scan one file — or nothing at all. GitHub merges
+ * workflow, job and step `env`, so all three levels are checked.
  */
-const FORBIDDEN_ENV = ['PRSYSTEM_SCAN_ROOT', 'PRSYSTEM_SCAN_FILES'];
+const FORBIDDEN_ENV = [
+  'PRSYSTEM_SCAN_ROOT',
+  'PRSYSTEM_SCAN_FILES',
+  // Git's own inventory selectors. GIT_INDEX_FILE alone pointed `git ls-files`
+  // at a one-entry index, and the gate reported one clean tracked file and
+  // exited 0. The scanner strips every GIT_* variable before enumerating; the
+  // workflow declares none of them either, so a step cannot even try.
+  'GIT_INDEX_FILE',
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+];
 
 /** The forbidden variables an `env:` mapping declares, whatever their value. */
 function forbiddenEnvIn(node) {

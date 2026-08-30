@@ -10,20 +10,31 @@
 // cover the synthetic value and nothing else — never a substring of a different
 // value, and never a whole line or file.
 //
-// **The inventory fails closed.** These fixtures call `scanFiles` directly, with
-// an explicit temporary inventory. They used to drive the production CLI through
+// **The inventory fails closed.** These fixtures call `scanEntries` and
+// `scanRepository` directly, against inventories and whole git repositories they
+// build in a temporary directory. They used to drive the production CLI through
 // PRSYSTEM_SCAN_ROOT and PRSYSTEM_SCAN_FILES, and that seam made the gate itself
-// redirectable: setting the root alone pointed the repository's file list at
-// another directory, read nothing, and exited 0. The CLI now takes no
-// configuration at all, and a fixture below proves those variables no longer
-// change what it scans.
+// redirectable. The CLI now takes no configuration at all.
+//
+// **Git's own environment is not a way in.** GIT_INDEX_FILE alone pointed the
+// enumeration at a one-entry index, and the gate reported one clean tracked file
+// and exited 0 — while this harness, inheriting the same variable, computed the
+// same one-file expectation and reported every fixture correct. The scanner
+// strips GIT_* before enumerating, and the expectation below is computed with a
+// sanitised environment so the two cannot agree on a poisoned answer.
 
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BINARY_EXT, SecretScanInventoryError, scanFiles } from './secret-scan.mjs';
+import {
+  SecretScanInventoryError,
+  gitInventory,
+  sanitisedGitEnv,
+  scanEntries,
+  scanRepository,
+} from './secret-scan.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -116,7 +127,10 @@ for (const fixture of CONTENT_FIXTURES) {
   inTempDir((dir) => {
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'src', 'probe.ts'), fixture.content);
-    const { scanned, findings } = scanFiles({ root: dir, files: ['src/probe.ts'] });
+    const { scanned, findings } = scanEntries({
+      root: dir,
+      entries: [{ path: 'src/probe.ts', mode: '100644' }],
+    });
     const found = findings.length > 0;
     const ok = scanned === 1 && found === fixture.expectFinding;
     record(
@@ -137,12 +151,12 @@ for (const fixture of CONTENT_FIXTURES) {
 const INVENTORY_FIXTURES = [
   {
     name: 'inventory: an empty file list is refused',
-    build: (dir) => ({ root: dir, files: [] }),
+    build: (dir) => ({ root: dir, entries: [] }),
     expect: /inventory is empty/,
   },
   {
     name: 'inventory: a missing file is refused',
-    build: (dir) => ({ root: dir, files: ['src/absent.ts'] }),
+    build: (dir) => ({ root: dir, entries: [{ path: 'src/absent.ts', mode: '100644' }] }),
     expect: /cannot read src\/absent\.ts/,
   },
   {
@@ -152,18 +166,18 @@ const INVENTORY_FIXTURES = [
       const path = join(dir, 'src', 'locked.ts');
       writeFileSync(path, 'export const a = 1;\n');
       chmodSync(path, 0o000);
-      return { root: dir, files: ['src/locked.ts'] };
+      return { root: dir, entries: [{ path: 'src/locked.ts', mode: '100644' }] };
     },
     expect: /cannot read src\/locked\.ts/,
   },
   {
     name: 'inventory: an absolute path is refused',
-    build: (dir) => ({ root: dir, files: ['/etc/hosts'] }),
+    build: (dir) => ({ root: dir, entries: [{ path: '/etc/hosts', mode: '100644' }] }),
     expect: /must be relative to the root/,
   },
   {
     name: 'inventory: a path escaping the root is refused',
-    build: (dir) => ({ root: dir, files: ['../outside.ts'] }),
+    build: (dir) => ({ root: dir, entries: [{ path: '../outside.ts', mode: '100644' }] }),
     expect: /escapes the scan root/,
   },
   {
@@ -171,23 +185,29 @@ const INVENTORY_FIXTURES = [
     build: (dir) => {
       mkdirSync(join(dir, 'src'), { recursive: true });
       writeFileSync(join(dir, 'src', 'probe.ts'), 'export const a = 1;\n');
-      return { root: dir, files: ['src/probe.ts', 'src/probe.ts'] };
+      return {
+        root: dir,
+        entries: [
+          { path: 'src/probe.ts', mode: '100644' },
+          { path: 'src/probe.ts', mode: '100644' },
+        ],
+      };
     },
     expect: /more than once/,
   },
   {
     name: 'inventory: an empty path entry is refused',
-    build: (dir) => ({ root: dir, files: [''] }),
+    build: (dir) => ({ root: dir, entries: [{ path: '', mode: '100644' }] }),
     expect: /holds an empty path/,
   },
   {
     name: 'inventory: a missing root is refused',
-    build: () => ({ root: undefined, files: ['src/probe.ts'] }),
+    build: () => ({ root: undefined, entries: [{ path: 'src/probe.ts', mode: '100644' }] }),
     expect: /a scan root is required/,
   },
   {
     name: 'inventory: a relative root is refused',
-    build: () => ({ root: 'tools', files: ['src/probe.ts'] }),
+    build: () => ({ root: 'tools', entries: [{ path: 'src/probe.ts', mode: '100644' }] }),
     expect: /scan root must be absolute/,
   },
   {
@@ -195,14 +215,39 @@ const INVENTORY_FIXTURES = [
     build: (dir) => {
       const path = join(dir, 'not-a-dir');
       writeFileSync(path, '');
-      return { root: path, files: ['probe.ts'] };
+      return { root: path, entries: [{ path: 'probe.ts', mode: '100644' }] };
     },
     expect: /not a directory/,
   },
   {
-    name: 'inventory: a file list that is not an array is refused',
-    build: (dir) => ({ root: dir, files: 'src/probe.ts' }),
+    name: 'inventory: an entry list that is not an array is refused',
+    build: (dir) => ({ root: dir, entries: 'src/probe.ts' }),
     expect: /must be an array/,
+  },
+  {
+    name: 'inventory: an unclassified index mode is refused',
+    build: (dir) => {
+      writeFileSync(join(dir, 'probe.ts'), 'export const a = 1;\n');
+      return { root: dir, entries: [{ path: 'probe.ts', mode: '160000' }] };
+    },
+    expect: /does not classify/,
+  },
+  {
+    name: 'inventory: a regular entry that is really a symlink is refused',
+    build: (dir) => {
+      writeFileSync(join(dir, 'real.ts'), 'export const a = 1;\n');
+      symlinkSync(join(dir, 'real.ts'), join(dir, 'link.ts'));
+      return { root: dir, entries: [{ path: 'link.ts', mode: '100644' }] };
+    },
+    expect: /recorded as a regular file but is not one/,
+  },
+  {
+    name: 'inventory: a symlink whose link text no longer matches is refused',
+    build: (dir) => {
+      symlinkSync('/dev/null', join(dir, 'link.ts'));
+      return { root: dir, entries: [{ path: 'link.ts', mode: '120000', target: '/dev/urandom' }] };
+    },
+    expect: /points at \/dev\/null but the index records \/dev\/urandom/,
   },
 ];
 
@@ -210,7 +255,7 @@ for (const fixture of INVENTORY_FIXTURES) {
   inTempDir((dir) => {
     let raised;
     try {
-      scanFiles(fixture.build(dir));
+      scanEntries(fixture.build(dir));
     } catch (error) {
       raised = error;
     } finally {
@@ -235,7 +280,13 @@ inTempDir((dir) => {
   mkdirSync(join(dir, 'src'), { recursive: true });
   writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
   writeFileSync(join(dir, 'src', 'b.ts'), 'export const b = 2;\n');
-  const { scanned, findings } = scanFiles({ root: dir, files: ['src/a.ts', 'src/b.ts'] });
+  const { scanned, findings } = scanEntries({
+    root: dir,
+    entries: [
+      { path: 'src/a.ts', mode: '100644' },
+      { path: 'src/b.ts', mode: '100644' },
+    ],
+  });
   const ok = scanned === 2 && findings.length === 0;
   record(
     'inventory: a valid two-file inventory is scanned',
@@ -244,18 +295,156 @@ inTempDir((dir) => {
   );
 });
 
-// ---------------------------------------------------------------------- CLI
-/** Every tracked text file the CLI is required to scan. */
-function trackedTextFiles() {
-  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' });
-  if (listed.status !== 0) throw new Error('git ls-files failed');
-  return listed.stdout
-    .split('\0')
-    .filter(Boolean)
-    .filter((f) => !BINARY_EXT.has(extname(f)));
+// ------------------------------------------------------ whole-repository
+/** Builds a throwaway git repository and returns its root. */
+function repository(dir, build) {
+  const run = (args) =>
+    execFileSync('git', ['-C', dir, ...args], { env: sanitisedGitEnv(), stdio: 'ignore' });
+  run(['init', '-q']);
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['config', 'user.name', 'fixture']);
+  build(dir);
+  run(['add', '-A']);
+  return dir;
 }
 
-const expectedInventory = trackedTextFiles().length;
+/** A credential shape, assembled so this file is not itself a finding. */
+const LEAK = `const ${KEY} = "an-actual-looking-credential-1234";\n`;
+
+const REPOSITORY_FIXTURES = [
+  {
+    name: 'repository: a plaintext credential in leak.png is still reported',
+    build: (dir) => writeFileSync(join(dir, 'leak.png'), LEAK),
+    expectFindings: 1,
+  },
+  {
+    name: 'repository: a credential in an oversized text file is still reported',
+    // Larger than the 2,000,000-byte limit that used to skip the file whole,
+    // with the credential on the first line the old scan never read.
+    build: (dir) => writeFileSync(join(dir, 'big.ts'), LEAK + 'a'.repeat(2_100_000) + '\n'),
+    expectFindings: 1,
+  },
+  {
+    name: 'repository: a symlink to /dev/null is scanned as its link text',
+    build: (dir) => symlinkSync('/dev/null', join(dir, 'devnull.ts')),
+    expectFindings: 0,
+    expectScanned: 1,
+  },
+  {
+    name: 'repository: a symlink to /dev/zero terminates instead of hanging',
+    build: (dir) => symlinkSync('/dev/zero', join(dir, 'zero.ts')),
+    expectFindings: 0,
+    expectScanned: 1,
+    maxMillis: 10_000,
+  },
+  {
+    name: 'repository: a symlink out of the tree does not pull in outside content',
+    build: (dir) => {
+      const outside = join(dir, '..', 'outside-secret.ts');
+      writeFileSync(outside, LEAK);
+      symlinkSync(outside, join(dir, 'outside.ts'));
+    },
+    expectFindings: 0,
+    expectScanned: 1,
+  },
+  {
+    name: 'repository: an ordinary clean repository scans every tracked file',
+    build: (dir) => {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
+      writeFileSync(join(dir, 'src', 'b.ts'), 'export const b = 2;\n');
+      writeFileSync(join(dir, 'README.md'), '# fixture\n');
+    },
+    expectFindings: 0,
+    expectScanned: 3,
+  },
+];
+
+for (const fixture of REPOSITORY_FIXTURES) {
+  inTempDir((dir) => {
+    const root = repository(join(dir, 'repo'), fixture.build, mkdirSync(join(dir, 'repo')));
+    const started = Date.now();
+    let result;
+    let raised;
+    try {
+      result = scanRepository(root);
+    } catch (error) {
+      raised = error;
+    }
+    const elapsed = Date.now() - started;
+    const findings = result?.findings.length ?? -1;
+    const scannedOk =
+      fixture.expectScanned === undefined || result?.scanned === fixture.expectScanned;
+    const timeOk = fixture.maxMillis === undefined || elapsed < fixture.maxMillis;
+    const ok = raised === undefined && findings === fixture.expectFindings && scannedOk && timeOk;
+    record(
+      fixture.name,
+      ok,
+      raised !== undefined
+        ? `raised ${String(raised)}`
+        : `scanned ${String(result?.scanned)}, ${String(findings)} finding(s), ${String(elapsed)}ms`,
+    );
+  });
+}
+
+// A submodule is content this scan cannot reach, and is refused rather than
+// passed over.
+inTempDir((dir) => {
+  mkdirSync(join(dir, 'inner'), { recursive: true });
+  const inner = repository(join(dir, 'inner'), (at) =>
+    writeFileSync(join(at, 'a.ts'), 'export const a = 1;\n'),
+  );
+  execFileSync('git', ['-C', inner, 'commit', '-qm', 'inner'], {
+    env: sanitisedGitEnv(),
+    stdio: 'ignore',
+  });
+  mkdirSync(join(dir, 'outer'), { recursive: true });
+  const outer = join(dir, 'outer');
+  const run = (args) =>
+    execFileSync('git', ['-C', outer, ...args], { env: sanitisedGitEnv(), stdio: 'ignore' });
+  run(['init', '-q']);
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['config', 'user.name', 'fixture']);
+  run(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'vendor']);
+  let raised;
+  try {
+    scanRepository(outer);
+  } catch (error) {
+    raised = error;
+  }
+  const ok =
+    raised instanceof SecretScanInventoryError && /gitlink \(submodule\)/.test(raised.message);
+  record(
+    'repository: a submodule gitlink is refused, not passed over',
+    ok,
+    ok ? 'refused' : `NOT REFUSED — ${raised === undefined ? 'accepted' : String(raised)}`,
+  );
+});
+
+// ---------------------------------------------------------------------- CLI
+/**
+ * The inventory the CLI is required to scan, computed with a clean environment.
+ *
+ * Deliberately not `process.env`: this harness once inherited the same
+ * GIT_INDEX_FILE that redirected the scanner, computed the same one-file
+ * expectation, and reported every fixture correct.
+ */
+function trackedFileCount() {
+  const listed = spawnSync('git', ['ls-files', '-z'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: sanitisedGitEnv(),
+  });
+  if (listed.status !== 0) throw new Error('git ls-files failed');
+  return listed.stdout.split('\0').filter(Boolean).length;
+}
+
+const expectedInventory = trackedFileCount();
+record(
+  'control: the inventory helper agrees with the scanner core',
+  gitInventory(ROOT).length === expectedInventory,
+  `${String(gitInventory(ROOT).length)} of ${String(expectedInventory)} tracked entries`,
+);
 
 function runCli(env) {
   return spawnSync(process.execPath, [join(ROOT, 'tools', 'scan-secrets.mjs')], {
@@ -266,26 +455,51 @@ function runCli(env) {
 }
 
 const control = runCli({});
-const reported = /secret scan — (\d+) tracked text files/.exec(control.stdout)?.[1];
+const reported = /secret scan — (\d+) tracked files/.exec(control.stdout)?.[1];
 record(
-  'control: the CLI scans every tracked text file and the repository is clean',
+  'control: the CLI scans every tracked file and the repository is clean',
   control.status === 0 && Number(reported) === expectedInventory,
   control.status === 0
-    ? `scanned ${String(reported)} of ${String(expectedInventory)} tracked text files`
+    ? `scanned ${String(reported)} of ${String(expectedInventory)} tracked files`
     : `reported (exit ${String(control.status)})`,
 );
 
-// The override variables the CLI used to honour. Each of these once produced a
-// zero-file scan that exited 0.
+// Every environment variable that once chose the inventory for the scanner.
+// `PRSYSTEM_*` were the CLI's own; `GIT_*` are git's, and reached it through the
+// subprocess it runs.
+const alternateIndex = join(mkdtempSync(join(tmpdir(), 'prsystem-alt-index-')), 'alt.index');
+execFileSync('git', ['-C', ROOT, 'read-tree', '--empty'], {
+  env: { ...sanitisedGitEnv(), GIT_INDEX_FILE: alternateIndex },
+  stdio: 'ignore',
+});
+execFileSync('git', ['-C', ROOT, 'add', '--', 'package.json'], {
+  env: { ...sanitisedGitEnv(), GIT_INDEX_FILE: alternateIndex },
+  stdio: 'ignore',
+});
+const decoyGitDir = join(mkdtempSync(join(tmpdir(), 'prsystem-alt-gitdir-')), 'decoy.git');
+execFileSync('git', ['init', '-q', '--bare', decoyGitDir], {
+  env: sanitisedGitEnv(),
+  stdio: 'ignore',
+});
+execFileSync('git', ['add', '--', 'package.json'], {
+  cwd: ROOT,
+  env: { ...sanitisedGitEnv(), GIT_DIR: decoyGitDir, GIT_WORK_TREE: ROOT },
+  stdio: 'ignore',
+});
+
 const IGNORED_OVERRIDES = [
   { PRSYSTEM_SCAN_ROOT: tmpdir() },
   { PRSYSTEM_SCAN_ROOT: tmpdir(), PRSYSTEM_SCAN_FILES: '' },
-  { PRSYSTEM_SCAN_ROOT: tmpdir(), PRSYSTEM_SCAN_FILES: 'does/not/exist.ts' },
   { PRSYSTEM_SCAN_FILES: '/etc/hosts' },
+  { GIT_INDEX_FILE: alternateIndex },
+  { GIT_DIR: decoyGitDir, GIT_WORK_TREE: ROOT },
+  { GIT_DIR: decoyGitDir },
+  { GIT_WORK_TREE: tmpdir() },
+  { GIT_CEILING_DIRECTORIES: ROOT },
 ];
 for (const env of IGNORED_OVERRIDES) {
   const run = runCli(env);
-  const scanned = /secret scan — (\d+) tracked text files/.exec(run.stdout)?.[1];
+  const scanned = /secret scan — (\d+) tracked files/.exec(run.stdout)?.[1];
   const ok = run.status === 0 && Number(scanned) === expectedInventory;
   record(
     `CLI: ${Object.keys(env).join(' + ')} does not redirect the scan`,
@@ -295,6 +509,8 @@ for (const env of IGNORED_OVERRIDES) {
       : `scanned ${String(scanned)} (exit ${String(run.status)})`,
   );
 }
+rmSync(dirname(alternateIndex), { recursive: true, force: true });
+rmSync(dirname(decoyGitDir), { recursive: true, force: true });
 
 const width = Math.max(...results.map((r) => r.name.length));
 for (const r of results) {
