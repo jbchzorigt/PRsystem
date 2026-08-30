@@ -15,8 +15,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
 | Phase state | `SECURITY_REPAIR_REQUIRED` |
-| Customer review number | 15 |
-| Latest implemented repair number | 15 |
+| Customer review number | 16 |
+| Latest implemented repair number | 16 |
 | Customer acceptance | `NOT_ACCEPTED` |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
@@ -1159,13 +1159,13 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 <!-- phase-03-evidence:begin -->
 
-Measured on the fifteenth-repair tree. Every command exited 0.
+Measured on the sixteenth-repair tree. Every command exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
 | `node tools/validate-governance.mjs` | PASS | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | PASS | 44 of 44 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 50 of 50 correct |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 55 of 55 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 55 of 55 correct |
 | `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
 | `node tools/scan-secrets.mjs` | PASS | 330 indexed files, none reported |
 | `pnpm run format:check` | PASS | clean |
@@ -1438,6 +1438,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Fifteenth security repair (customer review 15) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The fourteenth repair was **not accepted**. Two defects were raised, both
 independently reproduced; both are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
@@ -1454,6 +1457,33 @@ review, and **no acceptance is claimed**. G1 and G2 are unchanged.
 | --- | --- | --- |
 | H1 | a credential staged into a tracked file, then the working-tree file overwritten with clean text | the real repository scan reported **331 tracked files, 0 findings** and exit 0. Running the new fixture harness against the 8fb172b scanner core gives **30 of 50** correct: the four index validations, the unmerged path and all six staged fixtures fail. Nine of the twenty failures are the CLI rows, which fail only because the mixed state pairs the new CLI with the old core, and are not independent evidence |
 | H2 | the eight mutations listed above, each asserted to have changed the document | governance passed **15 of 15** on every one |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Sixteenth security repair (customer review 16) — `SECURITY_REPAIR_REQUIRED`
+
+The fifteenth repair was **not accepted**. Two defects were raised, both
+independently reproduced; both are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**. G1, G2, H1 and H2 are unchanged except
+where I2 supersedes H2's parsing.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| I1 | `git replace` substitutes one object for another, repository-locally, and `cat-file --batch` honours the substitution while still printing the OID that was asked for. Staging a credential, pointing a replace ref at a clean blob and tidying the working tree gave a clean scan: the header said the recorded object, the bytes said something else, and nothing compared them | Both layers, each proved to hold on its own. Replacement processing is disabled explicitly — `--no-replace-objects` on every git invocation and `GIT_NO_REPLACE_OBJECTS=1` in the environment those subprocesses inherit, after every other `GIT_*` variable has been stripped. And every returned object is hashed back to a git object name — `blob <size>\0` then the content, in the repository's own object format — and required to equal the OID the index recorded. The hash is computed incrementally from the chunks the scan already reads, so bounded processing is unchanged |
+| I2 | Eight governance mutations passed 15 of 15, each shaped so that no pattern was looking at it: swapped `Status`/`Result` headers; a duplicate row without backticks; a one-space-indented duplicate row; `PASS` beside a Result saying the command was not run; a blank Result; a malformed `####` record behind an empty canonical `###` decoy; an `##` repair heading; and an indented `###` repair heading | The evidence table is parsed as a table: exactly one inside the region, an exact ordered header, every row Markdown would render including up to three leading spaces, exactly three cells, exactly one backticked battery command, `Status` exactly `PASS`, and a non-empty Result that does not claim failure, a skip, a command not run or a non-zero exit. The current position is four structured rows — phase state, customer review number, latest implemented repair number, customer acceptance — with unique keys and exact values, compared with the ledger, the repair history and the evidence label. Headings are read at every ATX level and at up to three spaces of indentation; any heading describing a repair or a customer review must be a canonical, unindented H3 record inside the bounded history |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| I1 | a staged credential, a clean blob, `git replace`, a tidied working tree | `scanRepository` reported **`scanned 1, findings 0`** while `--no-replace-objects cat-file` showed the credential still in the blob. The three replacement fixtures each report **0 findings** against the ab9c69d scanner core. With the flag removed, the hash check alone refuses the substitution — measured, restored, not committed |
+| I2 | the eight mutations listed above, each asserted to have changed the document | governance passed **15 of 15** on every one |
 
 #### Standing items, unchanged
 
