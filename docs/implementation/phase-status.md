@@ -14,7 +14,10 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | **`SECURITY_REPAIR_REQUIRED`** — fifteen customer reviews completed; the fifteenth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
+| Phase state | `SECURITY_REPAIR_REQUIRED` |
+| Customer review number | 15 |
+| Latest implemented repair number | 15 |
+| Customer acceptance | `NOT_ACCEPTED` |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -70,10 +73,10 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
   exceptions carried by the Police module.
 - Recorded **17 P1 configuration items** and **four documentation drift resolutions**.
 
-### Repair applied after review
+### Corrections applied after governance intake
 
 The first submission drifted from the approved plan: it contained 21 phases and altered the approved
-ordering. The repair restored the approved structure without touching any requirement document.
+ordering. The correction restored the approved structure without touching any requirement document.
 
 - Restored the exact approved 23-phase structure, numbering and titles (01–23).
 - Phase 01 is now architecture and threat-model documentation only; Phase 02 is the monorepo

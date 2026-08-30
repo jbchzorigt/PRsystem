@@ -174,7 +174,7 @@ const FIXTURES = [
     // satisfied; the region's contents were never checked.
     name: 'evidence: the markers wrap a decoy label and nothing else',
     file: 'phase-status',
-    expect: /canonical evidence results have no row for/,
+    expect: /results hold 0 tables; there must be exactly one/,
     mutate: (text) => {
       const begin = '<!-- phase-03-evidence:begin -->';
       const end = '<!-- phase-03-evidence:end -->';
@@ -192,40 +192,37 @@ const FIXTURES = [
     },
   },
   {
-    // Correct-looking prose above the table, while the table's own row goes
-    // stale. Searching the section for the first matching sentence found the
-    // decoy.
-    name: 'current position: decoy prose above a stale Phase state row',
+    // A second row for the same key. The position is now four explicit rows
+    // with unique keys, so a contradicting copy is a duplicate, not prose to be
+    // shadowed by the first regex match.
+    name: 'current position: a duplicate review-number row',
     file: 'phase-status',
-    expect: /names review \d+; the history runs to review \d+/,
+    expect: /states "Customer review number" twice/,
     mutate: (text) => {
-      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
-      if (row === undefined) throw new Error('no Phase state row');
-      const cardinal = /([a-z]+) customer reviews completed/.exec(row)?.[1];
-      const ordinal = /the ([a-z]+) repair is implemented/.exec(row)?.[1];
-      if (cardinal === undefined || ordinal === undefined) throw new Error('unparsable row');
-      const decoy =
-        `${cardinal} customer reviews completed; the ${ordinal} repair is implemented and ` +
-        'committed.\n\n';
-      return text
-        .replace('## Current position\n\n', `## Current position\n\n${decoy}`)
-        .replace(
-          row,
-          row
-            .replace(`${cardinal} customer reviews completed`, 'two customer reviews completed')
-            .replace(`the ${ordinal} repair is implemented`, 'the second repair is implemented'),
-        );
+      const row = /^\|\s*Customer review number\s*\|[^\n]*$/m.exec(text)?.[0];
+      if (row === undefined) throw new Error('no review-number row');
+      return text.replace(row, `${row}\n| Customer review number | 9 |`);
     },
   },
   {
-    name: 'current position: a second Phase state row',
+    name: 'current position: a duplicate phase-state row',
     file: 'phase-status',
-    expect: /exactly one "Phase state" row/,
+    expect: /states "Phase state" twice/,
     mutate: (text) => {
       const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
       if (row === undefined) throw new Error('no Phase state row');
-      return text.replace(row, `${row}\n${row}`);
+      return text.replace(row, `${row}\n| Phase state | \`DONE\` |`);
     },
+  },
+  {
+    name: 'current position: acceptance claimed',
+    file: 'phase-status',
+    expect: /states customer acceptance "ACCEPTED"/,
+    mutate: (text) =>
+      text.replace(
+        '| Customer acceptance | `NOT_ACCEPTED` |',
+        '| Customer acceptance | `ACCEPTED` |',
+      ),
   },
   {
     name: 'history: the latest heading duplicated',
@@ -243,7 +240,7 @@ const FIXTURES = [
   {
     name: 'history: a malformed near-match heading',
     file: 'phase-status',
-    expect: /neither a canonical repair heading nor a declared section heading/,
+    expect: /describes a repair or a customer review but is not a canonical, unindented H3/,
     mutate: (text) => {
       const heading = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       if (heading === undefined) throw new Error('no ninth repair heading');
@@ -304,7 +301,7 @@ const FIXTURES = [
   {
     name: 'evidence: a result row for a command the battery does not list',
     file: 'phase-status',
-    expect: /report commands the battery does not list/,
+    expect: /report a command the battery does not list/,
     mutate: (text) =>
       inEvidenceRegion(text, (region) => {
         const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
@@ -328,15 +325,15 @@ const FIXTURES = [
     },
   },
   {
-    name: 'current position: a second review-count statement in the row',
+    name: 'current position: the review and repair numbers disagree',
     file: 'phase-status',
-    expect: /makes 2 review-count statements/,
+    expect: /says review \d+ and repair \d+/,
     mutate: (text) => {
-      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
-      if (row === undefined) throw new Error('no Phase state row');
+      const row = /^\|\s*Latest implemented repair number\s*\|\s*(\d+)\s*\|$/m.exec(text);
+      if (row === null) throw new Error('no repair-number row');
       return text.replace(
-        row,
-        `${row.replace(/\s*\|\s*$/, '')} Also two customer reviews completed; the second repair is implemented. |`,
+        row[0],
+        `| Latest implemented repair number | ${String(Number(row[1]) - 1)} |`,
       );
     },
   },
@@ -344,11 +341,8 @@ const FIXTURES = [
     name: 'current position: the state disagrees with the ledger',
     file: 'phase-status',
     expect: /the current position says DONE and the Phase 03 ledger row says/,
-    mutate: (text) => {
-      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
-      if (row === undefined) throw new Error('no Phase state row');
-      return text.replace(row, row.replace(/`[A-Z_]+`/, '`DONE`'));
-    },
+    mutate: (text) =>
+      text.replace('| Phase state | `SECURITY_REPAIR_REQUIRED` |', '| Phase state | `DONE` |'),
   },
   {
     // The ledger used to keep its own copy of the repair ordinal, and it went
@@ -367,8 +361,7 @@ const FIXTURES = [
     // sequence intact.
     name: 'history: a malformed record heading behind an empty canonical decoy',
     file: 'phase-status',
-    expect:
-      /neither a canonical repair heading nor a declared section heading: ### Ninth repair notes/,
+    expect: /unindented H3 repair heading: ### Ninth repair notes/,
     mutate: (text) => {
       const real = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       if (real === undefined) throw new Error('no ninth repair heading');
@@ -378,8 +371,7 @@ const FIXTURES = [
   {
     name: 'history: an extra noncanonical record appended after the newest',
     file: 'phase-status',
-    expect:
-      /neither a canonical repair heading nor a declared section heading: ### Fifteenth repair notes/,
+    expect: /unindented H3 repair heading: ### Fifteenth repair notes/,
     mutate: (text) =>
       text.replace(
         '## Update protocol',
@@ -395,6 +387,126 @@ const FIXTURES = [
         '<!-- phase-03-repair-history:begin -->',
         '### Fifteenth security repair (customer review 15) — `SECURITY_REPAIR_REQUIRED`\n\n' +
           '<!-- phase-03-repair-history:begin -->',
+      ),
+  },
+  {
+    // The header row is the table's contract. Swapping two columns kept every
+    // cell in place while every value moved to a field that means something
+    // else.
+    name: 'evidence: the Status and Result headers swapped',
+    file: 'phase-status',
+    expect: /table header is "Command \| Result \| Status"/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace('| Command | Status | Result |', '| Command | Result | Status |'),
+      ),
+  },
+  {
+    // A row that names the command without backticks read as prose to a pattern
+    // anchored on "| `command` |", so it sat beside the real row saying the
+    // opposite.
+    name: 'evidence: a duplicate row without backticks',
+    file: 'phase-status',
+    expect: /a result row names 0 backticked commands/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) => {
+        const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
+        if (row === undefined) throw new Error('no test:e2e result row');
+        return region.replace(row, `${row}\n| pnpm run test:e2e | FAILED — not run | 0 |`);
+      }),
+  },
+  {
+    // Markdown renders a row indented by up to three spaces as part of the same
+    // table. A pattern anchored at the start of the line did not see it.
+    name: 'evidence: a one-space-indented duplicate row',
+    file: 'phase-status',
+    expect: /carry two rows for pnpm run test:e2e/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) => {
+        const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
+        if (row === undefined) throw new Error('no test:e2e result row');
+        return region.replace(row, `${row}\n | \`pnpm run test:e2e\` | FAILED — not run | 0 |`);
+      }),
+  },
+  {
+    name: 'evidence: PASS beside a result that says the command was not run',
+    file: 'phase-status',
+    expect: /records a result that claims failure for pnpm run test:e2e/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace(
+          /^\| `pnpm run test:e2e` \|[^\n]*$/m,
+          '| `pnpm run test:e2e` | PASS | FAILED — command was not run |',
+        ),
+      ),
+  },
+  {
+    name: 'evidence: a blank result',
+    file: 'phase-status',
+    expect: /records an empty result for pnpm run test:e2e/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace(/^\| `pnpm run test:e2e` \|[^\n]*$/m, '| `pnpm run test:e2e` | PASS |  |'),
+      ),
+  },
+  {
+    name: 'evidence: a row with the wrong number of cells',
+    file: 'phase-status',
+    expect: /does not have exactly three cells/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace(
+          /^\| `pnpm run test:e2e` \|[^\n]*$/m,
+          '| `pnpm run test:e2e` | PASS | 15 | extra |',
+        ),
+      ),
+  },
+  {
+    name: 'evidence: a second table inside the region',
+    file: 'phase-status',
+    expect: /hold 2 tables; there must be exactly one/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace(
+          '### GATE-SEC sub-gate counts',
+          '| Command | Status | Result |\n| --- | --- | --- |\n\n### GATE-SEC sub-gate counts',
+        ),
+      ),
+  },
+  {
+    // The exact reproduction: the real record hidden below a malformed H4 while
+    // an empty canonical H3 keeps the sequence intact.
+    name: 'history: an empty H3 decoy above a malformed H4 record',
+    file: 'phase-status',
+    expect: /unindented H3 repair heading: #### Ninth security repair/,
+    mutate: (text) => {
+      const real = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
+      if (real === undefined) throw new Error('no ninth repair heading');
+      return text.replace(
+        real,
+        `${real}\n\n(empty decoy)\n\n#### Ninth security repair (customer review 9)\n`,
+      );
+    },
+  },
+  {
+    name: 'history: an H2 repair heading',
+    file: 'phase-status',
+    expect: /unindented H3 repair heading: ## Sixteenth security repair/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '## Sixteenth security repair (customer review 16)\n\n(h2 record)\n\n## Update protocol',
+      ),
+  },
+  {
+    name: 'history: an indented H3 repair heading',
+    file: 'phase-status',
+    expect: /unindented H3 repair heading: ### Sixteenth security repair/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '   ### Sixteenth security repair (customer review 16) — `SECURITY_REPAIR_REQUIRED`\n\n' +
+          '(indented h3)\n\n## Update protocol',
       ),
   },
   {
@@ -520,31 +632,50 @@ const FIXTURES = [
     // advanced — a negative fixture that changes nothing proves nothing.
     name: 'current position: a stale review number',
     file: 'phase-status',
-    expect: /says "[a-z]+" reviews and "[a-z]+" repair/,
+    expect: /says review \d+ and repair \d+/,
     mutate: (text) => {
-      const cardinal = /([a-z]+) customer reviews completed/.exec(text)?.[1];
-      if (cardinal === undefined) throw new Error('no "… customer reviews completed" phrase');
-      const other = cardinal === 'nine' ? 'eight' : 'nine';
-      return text.replace(
-        `${cardinal} customer reviews completed`,
-        `${other} customer reviews completed`,
-      );
+      const row = /^\|\s*Customer review number\s*\|\s*(\d+)\s*\|$/m.exec(text);
+      if (row === null) throw new Error('no review-number row');
+      return text.replace(row[0], `| Customer review number | ${String(Number(row[1]) - 1)} |`);
     },
   },
   {
-    name: 'current position: a stale repair ordinal',
+    name: 'current position: the history runs past the stated repair number',
     file: 'phase-status',
-    expect: /names review \d+; the history runs to review \d+/,
+    expect: /the history runs to review \d+/,
     mutate: (text) => {
-      const cardinal = /([a-z]+) customer reviews completed/.exec(text)?.[1];
-      const ordinal = /the ([a-z]+) repair is implemented/.exec(text)?.[1];
-      if (cardinal === undefined || ordinal === undefined) {
-        throw new Error('the current position does not carry a cardinal/ordinal pair');
+      const review = /^\|\s*Customer review number\s*\|\s*(\d+)\s*\|$/m.exec(text);
+      const repair = /^\|\s*Latest implemented repair number\s*\|\s*(\d+)\s*\|$/m.exec(text);
+      const label = /^Measured on the ([a-z]+)-repair tree/m.exec(text);
+      if (review === null || repair === null || label === null) {
+        throw new Error('the current position or the measured-on label is missing');
       }
-      const pair = cardinal === 'nine' ? ['eight', 'eighth'] : ['nine', 'ninth'];
+      // The label moves with the numbers, so the *history length* is the one
+      // thing left disagreeing.
+      const ORDINALS = [
+        'first',
+        'second',
+        'third',
+        'fourth',
+        'fifth',
+        'sixth',
+        'seventh',
+        'eighth',
+        'ninth',
+        'tenth',
+        'eleventh',
+        'twelfth',
+        'thirteenth',
+        'fourteenth',
+        'fifteenth',
+        'sixteenth',
+        'seventeenth',
+      ];
+      const lower = Number(review[1]) - 1;
       return text
-        .replace(`${cardinal} customer reviews completed`, `${pair[0]} customer reviews completed`)
-        .replace(`the ${ordinal} repair is implemented`, `the ${pair[1]} repair is implemented`);
+        .replace(review[0], `| Customer review number | ${String(lower)} |`)
+        .replace(repair[0], `| Latest implemented repair number | ${String(lower)} |`)
+        .replace(label[0], `Measured on the ${ORDINALS[lower - 1]}-repair tree`);
     },
   },
   {

@@ -630,55 +630,160 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   assert(ledgerRow !== undefined, 'the phase ledger has no Phase 03 row');
   assert(ledgerRow.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
 
-  // The current-position table must name the current review, not an older one.
+  const measuredRegion = markedRegion(text, 'phase-03-evidence');
+  within(measuredRegion, 'the canonical evidence results');
+
+  // The region must contain the results, not merely a correct-looking label.
+  // Marker geometry alone was satisfied by a pair wrapping one true sentence
+  // while the real table sat outside them carrying a stale one.
   //
-  // From the table's own `Phase state` row, not from the first prose in the
-  // section that happens to match: correct-looking sentences placed above the
-  // table satisfied the search while the row itself had gone stale.
-  const position = section(text, '## Current position');
-  assert(position !== undefined, 'there is no "## Current position" section');
-  const stateRows = position
-    .split('\n')
-    .filter((line) => /^\|\s*Phase state\s*\|/.test(line))
-    .map((line) => line.split('|').slice(2).join('|'));
+  // Occurrences, not matching lines: two labels written on one line counted as
+  // one, and the second could name any tree at all.
+  const labels = [...measuredRegion.body.matchAll(/Measured on the ([a-z]+)-repair tree/g)];
   assert(
-    stateRows.length === 1,
-    `expected exactly one "Phase state" row in the current-position table, found ` +
-      `${String(stateRows.length)}`,
+    labels.length === 1,
+    `the canonical evidence results carry ${String(labels.length)} measured-on labels; ` +
+      'there must be exactly one',
   );
-  const phaseState = stateRows[0];
-  // One number, four independent statements of it. The cardinal, the ordinal,
-  // the heading's numeral and the measured-evidence label each said which review
-  // this is, and only two of them were ever compared: renumbering the newest
-  // heading from `(customer review 12)` to `(customer review 11)` passed,
-  // because the numeral was captured and then discarded.
+  const measured = labels[0][1];
+
+  // ------------------------------------------------------------- the battery
+  const fences = [...battery.body.matchAll(/^```bash\n([\s\S]*?)^```$/gm)];
+  assert(
+    fences.length === 1,
+    `the Phase 03 gate battery holds ${String(fences.length)} bash blocks; there must be one`,
+  );
+  const batteryCommands = fences[0][1]
+    .split('\n')
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter((line) => line !== '');
+  assert(batteryCommands.length > 0, 'the Phase 03 gate battery lists no commands');
+  const batterySet = new Set(batteryCommands);
+  assert(
+    batterySet.size === batteryCommands.length,
+    `the Phase 03 gate battery lists a command twice: ${batteryCommands.join('; ')}`,
+  );
+
+  // ------------------------------------------------------- the results table
   //
-  // Nothing here names the current review. The words are mapped to numbers, so
-  // the check keeps working as the count advances.
-  const CARDINALS = {
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-    eleven: 11,
-    twelve: 12,
-    thirteen: 13,
-    fourteen: 14,
-    fifteen: 15,
+  // Every line that looks like a table row is parsed, not the ones a narrow
+  // pattern recognised. A row without backticks, a row indented by one space and
+  // a row whose cells were swapped all read as prose to a pattern anchored on
+  // "| `command` |", and each of them sat beside the real row saying something
+  // else.
+  const TABLE_LINE = /^ {0,3}\|/;
+  const evidenceLines = measuredRegion.body.split('\n');
+  const tables = [];
+  let current = null;
+  for (const line of evidenceLines) {
+    if (TABLE_LINE.test(line)) {
+      if (current === null) {
+        current = [];
+        tables.push(current);
+      }
+      current.push(line);
+    } else {
+      // Any non-row line ends the table, blank ones included: Markdown needs a
+      // blank line between blocks, so two tables separated by one are two
+      // tables and not a longer one.
+      current = null;
+    }
+  }
+  assert(
+    tables.length === 1,
+    `the canonical evidence results hold ${String(tables.length)} tables; there must be exactly ` +
+      'one',
+  );
+
+  /** A table row's cells, or undefined when the line is not a well-formed row. */
+  const cellsOf = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return undefined;
+    return trimmed.slice(1, -1).split('|');
   };
-  const ORDINALS = {
-    first: 1,
-    second: 2,
-    third: 3,
-    fourth: 4,
-    fifth: 5,
-    sixth: 6,
+
+  const [header, separator, ...dataRows] = tables[0];
+  const headerCells = cellsOf(header)?.map((cell) => cell.trim());
+  assert(
+    headerCells !== undefined && headerCells.join(' | ') === 'Command | Status | Result',
+    `the canonical evidence table header is "${String(headerCells?.join(' | '))}"; it must be ` +
+      '"Command | Status | Result"',
+  );
+  const separatorCells = cellsOf(separator ?? '')?.map((cell) => cell.trim());
+  assert(
+    separatorCells !== undefined &&
+      separatorCells.length === 3 &&
+      separatorCells.every((cell) => /^-{3,}$/.test(cell)),
+    'the canonical evidence table has no three-column separator row',
+  );
+
+  const FAILURE_WORDS = /\b(fail|failed|failing|skip|skipped|not run|non-?zero|error)\b/i;
+  const byCommand = new Map();
+  for (const row of dataRows) {
+    const cells = cellsOf(row);
+    assert(
+      cells !== undefined && cells.length === 3,
+      `a result row does not have exactly three cells: ${row.trim().slice(0, 70)}`,
+    );
+    const [commandCell, statusCell, resultCell] = cells.map((cell) => cell.trim());
+
+    // Exactly one backticked command, and it must be one the battery lists. A
+    // row that named the command without backticks was invisible.
+    const quoted = [...commandCell.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    assert(
+      quoted.length === 1,
+      `a result row names ${String(quoted.length)} backticked commands: ` +
+        `${row.trim().slice(0, 70)}`,
+    );
+    const command = quoted[0];
+    assert(
+      batterySet.has(command),
+      `the canonical evidence results report a command the battery does not list: ${command}`,
+    );
+    assert(!byCommand.has(command), `the canonical evidence results carry two rows for ${command}`);
+
+    assert(
+      statusCell === 'PASS',
+      `the canonical evidence records a status other than PASS: ${command} → ${statusCell}`,
+    );
+    assert(resultCell !== '', `the canonical evidence records an empty result for ${command}`);
+    assert(
+      !FAILURE_WORDS.test(resultCell),
+      `the canonical evidence records a result that claims failure for ${command}: ${resultCell}`,
+    );
+    byCommand.set(command, resultCell);
+  }
+
+  const unreported = batteryCommands.filter((command) => !byCommand.has(command));
+  assert(
+    unreported.length === 0,
+    `the canonical evidence results have no row for: ${unreported.join('; ')}`,
+  );
+
+  // ------------------------------------------------- the current position
+  //
+  // Explicit rows with unique keys and exact values. The row used to carry
+  // prose, and a second contradicting sentence appended to it was shadowed by
+  // the first regex match.
+  const position = sectionBounds(text, '## Current position');
+  assert(position !== undefined, 'there is no "## Current position" section');
+  const positionRows = new Map();
+  for (const line of text.slice(position.start, position.end).split('\n')) {
+    const cells = cellsOf(line);
+    if (cells === undefined || cells.length !== 2) continue;
+    const key = cells[0].trim();
+    if (key === 'Field' || /^-{3,}$/.test(key)) continue;
+    assert(!positionRows.has(key), `the current position states "${key}" twice`);
+    positionRows.set(key, cells[1].trim());
+  }
+
+  const positionValue = (key) => {
+    const value = positionRows.get(key);
+    assert(value !== undefined, `the current position has no "${key}" row`);
+    return value;
+  };
+
+  const CARDINALS = {
     seventh: 7,
     eighth: 8,
     ninth: 9,
@@ -688,45 +793,54 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
     thirteenth: 13,
     fourteenth: 14,
     fifteenth: 15,
+    sixteenth: 16,
+    seventeenth: 17,
   };
-  // Exactly one of each statement in the row. A second, contradicting sentence
-  // could be appended and the first match still answered the question.
-  const reviewStatements = [...phaseState.matchAll(/([a-z]+) customer reviews completed/g)];
-  const repairStatements = [...phaseState.matchAll(/the ([a-z]+) repair is implemented/g)];
-  const stateTokens = [...phaseState.matchAll(/`([A-Z_]+)`/g)];
+  const ORDINALS = {
+    first: 1,
+    second: 2,
+    third: 3,
+    fourth: 4,
+    fifth: 5,
+    sixth: 6,
+    ...CARDINALS,
+  };
+
+  const positionState = /^`([A-Z_]+)`$/.exec(positionValue('Phase state'))?.[1];
   assert(
-    reviewStatements.length === 1,
-    `the Phase state row makes ${String(reviewStatements.length)} review-count statements; ` +
-      'there must be exactly one',
+    positionState !== undefined,
+    `the current position phase state is "${positionValue('Phase state')}"; it must be one ` +
+      'backticked state and nothing else',
   );
+  const acceptance = /^`([A-Z_]+)`$/.exec(positionValue('Customer acceptance'))?.[1];
   assert(
-    repairStatements.length === 1,
-    `the Phase state row makes ${String(repairStatements.length)} repair-ordinal statements; ` +
-      'there must be exactly one',
+    acceptance === 'NOT_ACCEPTED',
+    `the current position states customer acceptance "${String(acceptance)}"; Phase 03 is not ` +
+      'accepted and this document does not claim otherwise',
   );
+  const reviewNumber = /^(\d+)$/.exec(positionValue('Customer review number'))?.[1];
+  const repairNumberText = /^(\d+)$/.exec(positionValue('Latest implemented repair number'))?.[1];
   assert(
-    stateTokens.length === 1,
-    `the Phase state row names ${String(stateTokens.length)} phase states; there must be ` +
-      'exactly one',
+    reviewNumber !== undefined && repairNumberText !== undefined,
+    'the current position review and repair numbers must each be a bare number',
   );
-  const reviews = reviewStatements[0][1];
-  const repair = repairStatements[0][1];
-  const positionState = stateTokens[0][1];
-  const reviewNumber = CARDINALS[reviews];
-  const repairNumber = ORDINALS[repair];
+  const repairNumber = Number(repairNumberText);
   assert(
-    reviewNumber !== undefined && repairNumber !== undefined && reviewNumber === repairNumber,
-    `current position says "${String(reviews)}" reviews and "${String(repair)}" repair`,
+    Number(reviewNumber) === repairNumber,
+    `the current position says review ${reviewNumber} and repair ${repairNumberText}`,
   );
 
-  // The position, the ledger and the newest repair heading are three statements
-  // of one phase state. The position could be changed to DONE while the ledger
-  // still read SECURITY_REPAIR_REQUIRED, and nothing compared them.
+  // One phase state, stated in three places, compared.
   const ledgerState = /^\|\s*03\s*\|[^|]*\|\s*`([A-Z_]+)`/.exec(ledgerRow)?.[1];
   assert(
     ledgerState === positionState,
     `the current position says ${positionState} and the Phase 03 ledger row says ` +
       `${String(ledgerState)}`,
+  );
+  assert(
+    positionState === 'SECURITY_REPAIR_REQUIRED',
+    `every repair heading states SECURITY_REPAIR_REQUIRED; the current position says ` +
+      `${positionState}`,
   );
 
   // And the ledger keeps no copy of the review ordinal. Another copy of a moving
@@ -740,58 +854,66 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
       'canonical section is the one place that number is written',
   );
 
-  // The repair history, read as a bounded sequence rather than as a last entry.
+  assert(
+    ORDINALS[measured] === repairNumber,
+    `the canonical evidence was "measured on the ${measured}-repair tree" (` +
+      `${String(ORDINALS[measured])}); the current position names review ` +
+      `${String(repairNumber)}`,
+  );
+
+  // ------------------------------------------------------- the repair history
   //
-  // Bounded, because "a heading that mentions a repair" is a rule a heading can
-  // simply decline to trigger: `### Ninth repair notes` mentions neither
-  // "security repair" nor "(customer review", so a malformed historical record
-  // and an extra fifteenth section were both invisible while an empty canonical
-  // decoy kept the sequence intact.
-  //
-  // The region runs from the first record to the end of the document, so a
-  // section appended after the newest record is inside it too. Within it every
-  // `###` heading must be a canonical repair heading or one of the few declared
-  // section headings; a `####` sub-heading belongs to a record and is not a
-  // record itself.
+  // Every ATX heading at every level, including headings indented by up to three
+  // spaces, which Markdown still renders as headings. A malformed `####` record
+  // behind an empty canonical `###` decoy, an `##` record and an indented `###`
+  // record were each invisible to a rule that only looked at unindented `### `.
   const CANONICAL_HEADING =
     /^### ([A-Za-z]+) security repair \(customer review (\d+)\) — `SECURITY_REPAIR_REQUIRED`$/;
   const DECLARED_SECTION_HEADINGS = new Set([
     '### Remaining blockers',
     '### GATE-SEC sub-gate counts',
   ]);
+  const DESCRIBES_A_REPAIR = /\brepair\b|\bcustomer review\b/i;
 
   const history = markedRegion(text, 'phase-03-repair-history');
-  // By position, not by text. A heading placed outside the region is often a
-  // *copy* of one inside it, so "is this line among the region's lines" answers
-  // yes for the very case the check exists to catch.
-  const allHeadings = [...text.matchAll(/^### [^\n]*$/gm)].map((match) => ({
+  const headings = [...text.matchAll(/^ {0,3}#{1,6} [^\n]*$/gm)].map((match) => ({
     heading: match[0],
     inside: match.index >= history.start && match.index < history.end,
   }));
 
   const sections = [];
-  for (const entry of allHeadings) {
-    if (!entry.inside) {
+  for (const entry of headings) {
+    const canonical = CANONICAL_HEADING.test(entry.heading);
+    if (canonical) {
       assert(
-        !CANONICAL_HEADING.test(entry.heading),
+        entry.inside,
         `a repair heading sits outside the bounded repair history: ${entry.heading.trim()}`,
       );
+      const parsed = CANONICAL_HEADING.exec(entry.heading);
+      sections.push({
+        heading: entry.heading,
+        word: parsed[1].toLowerCase(),
+        number: Number(parsed[2]),
+      });
       continue;
     }
-    if (DECLARED_SECTION_HEADINGS.has(entry.heading.trim())) continue;
-    const parsed = CANONICAL_HEADING.exec(entry.heading);
+    // Not canonical. It may not describe a repair record at any level, indented
+    // or not, inside the history region or outside it.
     assert(
-      parsed !== null,
+      !DESCRIBES_A_REPAIR.test(entry.heading),
+      `a heading describes a repair or a customer review but is not a canonical, unindented ` +
+        `H3 repair heading: ${entry.heading.trim()}`,
+    );
+    if (!entry.inside) continue;
+    if (!entry.heading.startsWith('### ')) continue; // a sub-heading of a record
+    assert(
+      DECLARED_SECTION_HEADINGS.has(entry.heading.trim()),
       `a heading in the repair history is neither a canonical repair heading nor a declared ` +
         `section heading: ${entry.heading.trim()}`,
     );
-    sections.push({
-      heading: entry.heading,
-      word: parsed[1].toLowerCase(),
-      number: Number(parsed[2]),
-    });
   }
   assert(sections.length > 0, 'there are no numbered repair sections');
+
   for (const entry of sections) {
     assert(
       ORDINALS[entry.word] === entry.number,
@@ -803,135 +925,18 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   // duplicate latest heading, a gap, or a reordered history each passed while
   // only the last entry was read.
   const numbers = sections.map((entry) => entry.number);
-  const expectedSequence = numbers.map((_, index) => index + 1);
   assert(
     numbers.length === new Set(numbers).size,
     `the repair history repeats a review number: ${numbers.join(', ')}`,
   );
   assert(
-    numbers.every((value, index) => value === expectedSequence[index]),
+    numbers.every((value, index) => value === index + 1),
     `the repair history is not 1..${String(numbers.length)} in order: ${numbers.join(', ')}`,
   );
-  // Every canonical heading carries `SECURITY_REPAIR_REQUIRED` by construction,
-  // so the newest one is the third statement of the phase state and must agree
-  // with the other two.
   assert(
-    positionState === 'SECURITY_REPAIR_REQUIRED',
-    `the newest repair heading states SECURITY_REPAIR_REQUIRED; the current position says ` +
-      `${positionState}`,
-  );
-
-  const newestNumber = numbers[numbers.length - 1];
-  assert(
-    newestNumber === repairNumber,
+    numbers[numbers.length - 1] === repairNumber,
     `the current position names review ${String(repairNumber)}; the history runs to review ` +
-      `${String(newestNumber)}`,
-  );
-
-  // The measured results are bounded by their own markers, for the same reason
-  // the battery is: a `##` section runs to the next `##`, so the canonical
-  // section swallows every `###` repair record below it and a phrase quoted in
-  // one of those would be read as the label. The region must sit inside the
-  // canonical section, and the label is parsed from the region alone.
-  const measuredRegion = markedRegion(text, 'phase-03-evidence');
-  within(measuredRegion, 'the canonical evidence results');
-
-  // The region must contain the results, not merely a correct-looking label.
-  // Marker geometry alone was satisfied by a pair wrapping one true sentence
-  // while the real table sat outside them carrying a stale one.
-  const measuredLines = measuredRegion.body.split('\n');
-  // Occurrences, not matching lines. Two labels written on one line counted as
-  // one, and the second could name any tree at all.
-  const labels = [...measuredRegion.body.matchAll(/Measured on the ([a-z]+)-repair tree/g)];
-  assert(
-    labels.length === 1,
-    `the canonical evidence results carry ${String(labels.length)} measured-on labels; ` +
-      'there must be exactly one',
-  );
-
-  // Every command the gate battery lists must have a result row inside the
-  // region. The two halves are bound to each other, so neither can be a decoy:
-  // the battery cannot list a command the results omit, and the results cannot
-  // be replaced by prose.
-  const fences = [...battery.body.matchAll(/^```bash\n([\s\S]*?)^```$/gm)];
-  assert(
-    fences.length === 1,
-    `the Phase 03 gate battery holds ${String(fences.length)} bash blocks; there must be one`,
-  );
-  const batteryCommands = fences[0][1]
-    .split('\n')
-    .map((line) => line.replace(/#.*$/, '').trim())
-    .filter((line) => line !== '');
-  assert(batteryCommands.length > 0, 'the Phase 03 gate battery lists no commands');
-
-  // One row per battery command, and no row for anything else. A result could be
-  // changed to "FAILED — not run" and a second, contradicting row could be added
-  // beside the first: the check only asked whether *a* row mentioned the command.
-  const resultRows = measuredLines
-    .filter((line) => /^\|\s*`/.test(line))
-    .map((line) => {
-      const cells = line.split('|').slice(1, -1);
-      return {
-        line,
-        command: /^\s*`([^`]+)`/.exec(cells[0] ?? '')?.[1],
-        status: (cells[1] ?? '').trim(),
-      };
-    });
-
-  const byCommand = new Map();
-  for (const row of resultRows) {
-    assert(
-      row.command !== undefined,
-      `a result row does not name a command: ${row.line.trim().slice(0, 70)}`,
-    );
-    assert(
-      !byCommand.has(row.command),
-      `the canonical evidence results carry two rows for ${row.command}`,
-    );
-    byCommand.set(row.command, row);
-  }
-
-  const batterySet = new Set(batteryCommands);
-  assert(
-    batterySet.size === batteryCommands.length,
-    `the Phase 03 gate battery lists a command twice: ${batteryCommands.join('; ')}`,
-  );
-  const unreported = batteryCommands.filter((command) => !byCommand.has(command));
-  assert(
-    unreported.length === 0,
-    `the canonical evidence results have no row for: ${unreported.join('; ')}`,
-  );
-  const unknown = [...byCommand.keys()].filter((command) => !batterySet.has(command));
-  assert(
-    unknown.length === 0,
-    `the canonical evidence results report commands the battery does not list: ` +
-      `${unknown.join('; ')}`,
-  );
-
-  // The status is a field with one accepted value, not prose. "FAILED — not
-  // run" read as a result like any other.
-  const notPassing = [...byCommand.values()].filter((row) => row.status !== 'PASS');
-  assert(
-    notPassing.length === 0,
-    `the canonical evidence records a status other than PASS: ` +
-      notPassing.map((row) => `${String(row.command)} → ${row.status}`).join('; '),
-  );
-
-  // The canonical evidence must say which repair tree it was measured on, and
-  // that ordinal is compared against the two derived above rather than against a
-  // fixed value. The label read "the tenth-repair tree" while the position and
-  // the newest section both said eleventh, and nothing looked: the counts under
-  // it were then attributed to a tree they were not measured on.
-  const measured = /^Measured on the ([a-z]+)-repair tree/m.exec(measuredRegion.body)?.[1];
-  assert(
-    measured !== undefined,
-    'the canonical evidence does not say which repair tree it was measured on',
-  );
-  assert(
-    ORDINALS[measured] === repairNumber,
-    `the canonical evidence was "measured on the ${String(measured)}-repair tree" (` +
-      `${String(ORDINALS[measured])}); the current position and the newest repair section both ` +
-      `name review ${String(repairNumber)}`,
+      `${String(numbers[numbers.length - 1])}`,
   );
 
   // Every mutable result form, in every region that is not the canonical
@@ -970,8 +975,8 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   );
 
   return (
-    `one canonical section for review ${String(repairNumber)}; position, newest heading, ` +
-    'evidence label, ledger row and battery all agree and restate nothing'
+    `one canonical section for review ${String(repairNumber)}; position, history, evidence ` +
+    'label, ledger row and battery all agree and restate nothing'
   );
 });
 
