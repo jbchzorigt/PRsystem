@@ -165,7 +165,9 @@ export const SUB_GATES = [
     filter: '@prsystem/db',
     suite: 'src/security/sec-ext-register.test.ts',
     needsDatabase: true,
-    artefacts: ['tools/scan-secrets.mjs'],
+    // Both halves: the CLI that the gate runs, and the module that holds the
+    // patterns and the exact-value allowances it runs with.
+    artefacts: ['tools/scan-secrets.mjs', 'tools/secret-scan.mjs'],
     also: ['node', ['tools/scan-secrets.mjs']],
   },
 ];

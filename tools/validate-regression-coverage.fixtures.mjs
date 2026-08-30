@@ -25,6 +25,36 @@ const REGRESSION_STEP = `      - name: Complete regression suite against real Po
 /** Each fixture returns a mutated workflow, and names the bypass it introduces. */
 const FIXTURES = [
   {
+    // The scan CLI no longer reads these, but the seam is the sort of thing that
+    // returns "just for the fixtures", and one of them on the scan step made a
+    // green-looking gate scan nothing at all. GitHub merges env from all three
+    // levels, so all three are refused.
+    name: 'scan override at workflow level',
+    mutate: (yaml) =>
+      yaml.replace(
+        'env:\n  NODE_VERSION:',
+        'env:\n  PRSYSTEM_SCAN_ROOT: /tmp/empty\n  NODE_VERSION:',
+      ),
+  },
+  {
+    name: 'scan override at job level',
+    mutate: (yaml) =>
+      yaml.replace(
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n',
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n' +
+          "    env:\n      PRSYSTEM_SCAN_FILES: ''\n",
+      ),
+  },
+  {
+    name: 'scan override at step level',
+    mutate: (yaml) =>
+      yaml.replace(
+        '      - name: Scan for committed secrets\n        run: node tools/scan-secrets.mjs',
+        '      - name: Scan for committed secrets\n        run: node tools/scan-secrets.mjs\n' +
+          '        env:\n          PRSYSTEM_SCAN_ROOT: /tmp/empty',
+      ),
+  },
+  {
     name: 'commented-out command',
     mutate: (yaml) =>
       yaml.replace(

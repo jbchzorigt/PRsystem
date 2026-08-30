@@ -204,6 +204,34 @@ function workingDirectory(node) {
     : undefined;
 }
 
+/**
+ * Environment variables that once redirected the committed-secret scan.
+ *
+ * `tools/scan-secrets.mjs` no longer reads them: it enumerates git-tracked files
+ * and takes no configuration. They are still refused everywhere in the workflow,
+ * because the seam is the sort of thing that gets reintroduced "just for the
+ * fixtures" and one of these set on the scan step made a clean-looking gate scan
+ * nothing at all. GitHub merges workflow, job and step `env`, so all three
+ * levels are checked.
+ */
+const FORBIDDEN_ENV = ['PRSYSTEM_SCAN_ROOT', 'PRSYSTEM_SCAN_FILES'];
+
+/** The forbidden variables an `env:` mapping declares, whatever their value. */
+function forbiddenEnvIn(node) {
+  const env = node?.env;
+  if (typeof env !== 'object' || env === null) return [];
+  return FORBIDDEN_ENV.filter((name) => Object.prototype.hasOwnProperty.call(env, name));
+}
+
+for (const name of FORBIDDEN_ENV) {
+  const declared = forbiddenEnvIn(workflow).includes(name);
+  check(
+    `the workflow declares no ${name}`,
+    !declared,
+    declared ? `env.${name} is set at workflow level` : 'absent',
+  );
+}
+
 // A workflow-level default shell applies to every `run` step in every job, so
 // one line at the top of the file disables all of them while every step still
 // reads as correct.
@@ -235,6 +263,15 @@ for (const required of REQUIRED_JOBS) {
     jobShell === undefined,
     jobShell === undefined ? 'no defaults.run.shell' : `defaults.run.shell: ${jobShell}`,
   );
+
+  for (const name of FORBIDDEN_ENV) {
+    const declared = forbiddenEnvIn(job).includes(name);
+    check(
+      `the '${required.job}' job declares no ${name}`,
+      !declared,
+      declared ? `env.${name} is set at job level` : 'absent',
+    );
+  }
 
   const jobDirectory = workingDirectory(job);
   check(
@@ -286,6 +323,15 @@ for (const required of REQUIRED_JOBS) {
     );
     if (step === undefined) continue;
     previousIndex = index;
+
+    for (const name of FORBIDDEN_ENV) {
+      const declared = forbiddenEnvIn(step).includes(name);
+      check(
+        `'${spec.run}' declares no ${name}`,
+        !declared,
+        declared ? `env.${name} is set on the step` : 'absent',
+      );
+    }
 
     const bypass = bypassIn(step);
     check(
