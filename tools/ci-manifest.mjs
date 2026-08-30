@@ -14,6 +14,29 @@
 // so the first look at HEAD and the index has to happen while nothing from the
 // dependency tree has executed.
 
+/**
+ * The exact environment the workflow may declare, per level.
+ *
+ * A deny-list of dangerous variables is endless and was wrong: with
+ * `NODE_OPTIONS: --require=./tools/bypass-scan.cjs` on the scan step, a preload
+ * called `process.exit(0)` and a repository with a committed credential went
+ * from exit 1 to exit 0 with no output, while coverage validation still reported
+ * 657 of 657. Process startup, module resolution and executable resolution are
+ * all reachable through the environment, so what may be set is listed instead of
+ * what may not.
+ *
+ * Job level is empty on purpose: a job-level variable reaches every step in it,
+ * including the scan.
+ */
+export const ALLOWED_ENV = {
+  workflow: ['NODE_VERSION', 'PNPM_VERSION'],
+  job: [],
+  /** Steps that talk to PostgreSQL carry its URL and nothing else. */
+  step: ['DATABASE_URL'],
+  /** The pre-install scan carries nothing at all. */
+  scanStep: [],
+};
+
 export const REQUIRED_JOBS = [
   {
     job: 'governance',

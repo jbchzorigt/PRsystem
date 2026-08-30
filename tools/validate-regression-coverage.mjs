@@ -13,7 +13,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import { SUB_GATES } from './gate-sec-config.mjs';
-import { REQUIRED_JOBS, REQUIRED_JOB_NAMES } from './ci-manifest.mjs';
+import { ALLOWED_ENV, REQUIRED_JOBS, REQUIRED_JOB_NAMES } from './ci-manifest.mjs';
 import { REGRESSION_DIR, REGRESSION_SUITES } from './regression-manifest.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -248,6 +248,33 @@ for (const name of FORBIDDEN_ENV) {
   );
 }
 
+/**
+ * An allow-list, because the deny-list was the wrong shape.
+ *
+ * `NODE_OPTIONS`, `NODE_PATH`, `BASH_ENV`, `ENV`, `PATH`, `LD_PRELOAD` and their
+ * relatives all reach process startup, module resolution or executable
+ * resolution, and there is no end to the list. What a level may declare is named
+ * instead; everything else is refused.
+ */
+function envKeysOf(node) {
+  const env = node?.env;
+  if (typeof env !== 'object' || env === null) return [];
+  return Object.keys(env);
+}
+
+function checkEnvAllowList(label, node, allowed) {
+  const extra = envKeysOf(node).filter((key) => !allowed.includes(key));
+  check(
+    `${label} declares only its allowed environment`,
+    extra.length === 0,
+    extra.length === 0
+      ? `allowed: ${allowed.length === 0 ? 'nothing' : allowed.join(', ')}`
+      : `unexpected: ${extra.join(', ')}`,
+  );
+}
+
+checkEnvAllowList('the workflow', workflow, ALLOWED_ENV.workflow);
+
 // A workflow-level default shell applies to every `run` step in every job, so
 // one line at the top of the file disables all of them while every step still
 // reads as correct.
@@ -291,6 +318,11 @@ for (const required of REQUIRED_JOBS) {
       !declared,
       declared ? `env.${name} is set at job level` : 'absent',
     );
+  }
+  // A job-level variable reaches every step in the job, the scan included.
+  checkEnvAllowList(`the '${required.job}' job`, job, ALLOWED_ENV.job);
+  for (const [index, step] of steps.entries()) {
+    checkEnvAllowList(`step ${String(index)} of '${required.job}'`, step, ALLOWED_ENV.step);
   }
 
   const jobDirectory = workingDirectory(job);
@@ -345,6 +377,10 @@ for (const required of REQUIRED_JOBS) {
     previousIndex = index;
 
     if (spec.beforeInstall === true) {
+      // The scan step itself declares no environment at all: a preload set here
+      // ends the process before it reads anything.
+      checkEnvAllowList(`'${spec.run}' in '${required.job}'`, step, ALLOWED_ENV.scanStep);
+
       // "Before the install" was the wrong property, because it only ordered the
       // scan against one exact command line. `pnpm/action-setup` with
       // `run_install: true`, an `npm ci`, a `corepack pnpm install`, a local

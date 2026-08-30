@@ -28,7 +28,87 @@ const PRE_INSTALL =
 
 const CHECKOUT = '      - uses: actions/checkout@v4\n';
 
+const SCAN_STEP =
+  '      - name: Scan for committed secrets before install\n        run: node tools/scan-secrets.mjs\n';
+
 const FIXTURES = [
+  {
+    // A preload ends the process before the scan reads anything. Measured: on a
+    // repository with a committed credential the scanner exits 1 plainly and 0
+    // under this variable, with no output at all.
+    name: 'NODE_OPTIONS --require on the scan step',
+    mutate: (yaml) =>
+      yaml.replace(
+        SCAN_STEP,
+        `${SCAN_STEP}        env:\n          NODE_OPTIONS: --require=./tools/bypass-scan.cjs\n`,
+      ),
+  },
+  {
+    name: 'NODE_OPTIONS --import on the scan step',
+    mutate: (yaml) =>
+      yaml.replace(
+        SCAN_STEP,
+        `${SCAN_STEP}        env:\n          NODE_OPTIONS: --import=./tools/bypass-scan.mjs\n`,
+      ),
+  },
+  {
+    name: 'BASH_ENV on the scan step',
+    mutate: (yaml) =>
+      yaml.replace(SCAN_STEP, `${SCAN_STEP}        env:\n          BASH_ENV: ./tools/bypass.sh\n`),
+  },
+  {
+    // `node` resolved from a committed directory is a different program.
+    name: 'PATH pointing node at a committed fake executable',
+    mutate: (yaml) =>
+      yaml.replace(
+        SCAN_STEP,
+        `${SCAN_STEP}        env:\n          PATH: ./tools/fakebin:/usr/bin:/bin\n`,
+      ),
+  },
+  {
+    name: 'NODE_PATH on the scan step',
+    mutate: (yaml) =>
+      yaml.replace(
+        SCAN_STEP,
+        `${SCAN_STEP}        env:\n          NODE_PATH: ./tools/fakemodules\n`,
+      ),
+  },
+  {
+    name: 'workflow-level NODE_OPTIONS reaches every step',
+    mutate: (yaml) =>
+      yaml.replace(
+        'env:\n  NODE_VERSION:',
+        'env:\n  NODE_OPTIONS: --require=./tools/bypass-scan.cjs\n  NODE_VERSION:',
+      ),
+  },
+  {
+    name: 'job-level LD_PRELOAD reaches every step',
+    mutate: (yaml) =>
+      yaml.replace(
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n',
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n' +
+          '    env:\n      LD_PRELOAD: ./tools/bypass.so\n',
+      ),
+  },
+  {
+    name: 'job-level ENV reaches every step',
+    mutate: (yaml) =>
+      yaml.replace(
+        '  verify:\n    name: format, lint, typecheck, test, build\n    runs-on: ubuntu-latest\n',
+        '  verify:\n    name: format, lint, typecheck, test, build\n    runs-on: ubuntu-latest\n' +
+          '    env:\n      ENV: ./tools/bypass.sh\n',
+      ),
+  },
+  {
+    // An unexpected variable is refused whether or not anyone has named it as
+    // dangerous — the point of an allow-list.
+    name: 'an unlisted variable on an ordinary step',
+    mutate: (yaml) =>
+      yaml.replace(
+        '      - name: Lint\n        run: pnpm run lint\n',
+        '      - name: Lint\n        run: pnpm run lint\n        env:\n          ANYTHING: 1\n',
+      ),
+  },
   {
     // Anything that executes before the scan has already had the checkout in
     // its hands. Ordering against one exact install command line was not the
