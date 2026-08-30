@@ -22,6 +22,23 @@ const PHASE_STATUS = join(ROOT, 'docs', 'implementation', 'phase-status.md');
 const originalRunbook = readFileSync(RUNBOOK, 'utf8');
 const originalPhaseStatus = readFileSync(PHASE_STATUS, 'utf8');
 
+/**
+ * Applies `change` only inside the canonical evidence region.
+ *
+ * Historical repair records carry their own result tables, and a document-wide
+ * `replace` lands in the first of them — which is not the table under test.
+ */
+function inEvidenceRegion(text, change) {
+  const begin = text.indexOf('<!-- phase-03-evidence:begin -->');
+  const endMarker = '<!-- phase-03-evidence:end -->';
+  const end = text.indexOf(endMarker);
+  if (begin < 0 || end < 0) throw new Error('the evidence markers are missing');
+  const region = text.slice(begin, end + endMarker.length);
+  const changed = change(region);
+  if (changed === region) throw new Error('the change did not alter the evidence region');
+  return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
+}
+
 const FIXTURES = [
   {
     name: 'catalogue: a sub-gate removed',
@@ -226,7 +243,7 @@ const FIXTURES = [
   {
     name: 'history: a malformed near-match heading',
     file: 'phase-status',
-    expect: /does not match the canonical form/,
+    expect: /neither a canonical repair heading nor a declared section heading/,
     mutate: (text) => {
       const heading = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       if (heading === undefined) throw new Error('no ninth repair heading');
@@ -234,9 +251,10 @@ const FIXTURES = [
     },
   },
   {
-    name: 'history: a gap in the numbering',
+    name: 'history: a record replaced by an undeclared heading',
     file: 'phase-status',
-    expect: /is not 1\.\.\d+ in order/,
+    expect:
+      /neither a canonical repair heading nor a declared section heading: ### Ninth pass notes/,
     mutate: (text) => {
       const heading = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       if (heading === undefined) throw new Error('no ninth repair heading');
@@ -257,6 +275,127 @@ const FIXTURES = [
         .replace('@@NINTH@@', tenth)
         .replace('@@TENTH@@', ninth);
     },
+  },
+  {
+    // A result changed to prose that reads like an outcome. The status was not a
+    // field, so "FAILED — not run" was a result like any other.
+    name: 'evidence: a result recorded as failed',
+    file: 'phase-status',
+    expect: /records a status other than PASS/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace(
+          '| `pnpm run test:e2e` | PASS |',
+          '| `pnpm run test:e2e` | FAILED — not run |',
+        ),
+      ),
+  },
+  {
+    name: 'evidence: two conflicting rows for one command',
+    file: 'phase-status',
+    expect: /carry two rows for pnpm run test:e2e/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) => {
+        const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
+        if (row === undefined) throw new Error('no test:e2e result row');
+        return region.replace(row, `${row}\n| \`pnpm run test:e2e\` | PASS | 3 |`);
+      }),
+  },
+  {
+    name: 'evidence: a result row for a command the battery does not list',
+    file: 'phase-status',
+    expect: /report commands the battery does not list/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) => {
+        const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
+        if (row === undefined) throw new Error('no test:e2e result row');
+        return region.replace(row, `${row}\n| \`pnpm run invented\` | PASS | 1 |`);
+      }),
+  },
+  {
+    // Two labels on one line counted as one matching line, and the second could
+    // name any tree at all.
+    name: 'evidence: two measured-on labels on one line',
+    file: 'phase-status',
+    expect: /carry 2 measured-on labels/,
+    mutate: (text) => {
+      const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
+      if (label === undefined) throw new Error('no measured-on label');
+      return text.replace(
+        label,
+        `${label} Measured on the first-repair tree. Every command exited 0.`,
+      );
+    },
+  },
+  {
+    name: 'current position: a second review-count statement in the row',
+    file: 'phase-status',
+    expect: /makes 2 review-count statements/,
+    mutate: (text) => {
+      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
+      if (row === undefined) throw new Error('no Phase state row');
+      return text.replace(
+        row,
+        `${row.replace(/\s*\|\s*$/, '')} Also two customer reviews completed; the second repair is implemented. |`,
+      );
+    },
+  },
+  {
+    name: 'current position: the state disagrees with the ledger',
+    file: 'phase-status',
+    expect: /the current position says DONE and the Phase 03 ledger row says/,
+    mutate: (text) => {
+      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
+      if (row === undefined) throw new Error('no Phase state row');
+      return text.replace(row, row.replace(/`[A-Z_]+`/, '`DONE`'));
+    },
+  },
+  {
+    // The ledger used to keep its own copy of the repair ordinal, and it went
+    // stale. The copy is gone; restoring one is refused.
+    name: 'ledger: the repair ordinal restated',
+    file: 'phase-status',
+    expect: /ledger row restates the repair ordinal/,
+    mutate: (text) =>
+      text.replace(/^(\| 03 \| Platform kernel \|[^\n]*)$/m, (row) =>
+        row.replace('every repair is listed', 'the ninth repair is listed'),
+      ),
+  },
+  {
+    // Neither "security repair" nor "(customer review" appears, so a rule keyed
+    // on those words could not see it. An empty canonical decoy kept the
+    // sequence intact.
+    name: 'history: a malformed record heading behind an empty canonical decoy',
+    file: 'phase-status',
+    expect:
+      /neither a canonical repair heading nor a declared section heading: ### Ninth repair notes/,
+    mutate: (text) => {
+      const real = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
+      if (real === undefined) throw new Error('no ninth repair heading');
+      return text.replace(real, `${real}\n\n(empty decoy)\n\n### Ninth repair notes\n`);
+    },
+  },
+  {
+    name: 'history: an extra noncanonical record appended after the newest',
+    file: 'phase-status',
+    expect:
+      /neither a canonical repair heading nor a declared section heading: ### Fifteenth repair notes/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '### Fifteenth repair notes\n\n(placeholder)\n\n## Update protocol',
+      ),
+  },
+  {
+    name: 'history: a canonical record outside the bounded region',
+    file: 'phase-status',
+    expect: /sits outside the bounded repair history/,
+    mutate: (text) =>
+      text.replace(
+        '<!-- phase-03-repair-history:begin -->',
+        '### Fifteenth security repair (customer review 15) — `SECURITY_REPAIR_REQUIRED`\n\n' +
+          '<!-- phase-03-repair-history:begin -->',
+      ),
   },
   {
     name: 'evidence: the results markers removed',

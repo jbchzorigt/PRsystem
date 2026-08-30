@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the fourteenth repair; see the same section |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -506,6 +506,8 @@ nor "partially exercised": it is complete for what Phase 03 owns.
   AAD binding across row/column/table, cross-scope refusal, key versioning, rewrap and resumability.
 - Lookup tokens differ across identity type, country, realm scope and a namespace-boundary shift.
 - The local KMS refuses to construct outside `local`, `ci` or `test`, and its error names no key.
+
+<!-- phase-03-repair-history:begin -->
 
 ### First security repair (customer review 1) — `SECURITY_REPAIR_REQUIRED`
 
@@ -1119,6 +1121,8 @@ copies of a moving number is how the ledger came to disagree with this section.
 
 ```bash
 node tools/validate-governance.mjs                       # GATE-GOV
+node tools/validate-governance.fixtures.mjs              # documentation drift fixtures
+node tools/validate-secret-scan.fixtures.mjs             # secret-scan fixtures
 node tools/validate-workspace.mjs                        # workspace structure
 node tools/validate-regression-coverage.mjs              # structural CI checks
 node tools/validate-regression-coverage.fixtures.mjs     # CI bypass fixtures
@@ -1138,6 +1142,7 @@ pnpm run audit:prod
 pnpm run audit:tree                                      # blocking
 pnpm run build
 pnpm run openapi
+pnpm run compose:config
 git diff --check
 ```
 
@@ -1153,32 +1158,32 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 Measured on the fourteenth-repair tree. Every command exited 0.
 
-| Command | Result |
-| --- | --- |
-| `node tools/validate-governance.mjs` | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | 34 of 34 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | 42 of 42 correct |
-| `node tools/validate-workspace.mjs` | 15 of 15 |
-| `node tools/scan-secrets.mjs` | 330 tracked files, none reported |
-| `pnpm run format:check` | clean |
-| `pnpm run lint` | 16 of 16 projects |
-| `pnpm run typecheck` | 25 of 25 graphs |
-| `pnpm run test:unit` | 19 of 19 projects |
-| `pnpm run build` | 16 of 16 projects |
-| `pnpm run openapi` | document generated |
-| `pnpm run compose:config` | valid |
-| `pnpm run test:migrations` | 138 |
-| `pnpm run test:integration` | 51 — db 41, outbox 5, api 5 |
-| `pnpm run test:concurrency` (three runs) | 16 each run |
-| `pnpm run test:regression` | 51 |
-| `node tools/validate-regression-coverage.mjs` | 429 of 429 |
-| `node tools/validate-regression-coverage.fixtures.mjs` | 50 of 50 bypasses caught |
-| `node tools/validate-pool-error-fixture.mjs` | 12 of 12, four fixtures |
-| `pnpm run test:security` (three runs) | 18 of 18 sub-gates, 488, each run |
-| `pnpm run test:e2e` | 15 |
-| `pnpm run audit:prod` | no known vulnerabilities |
-| `pnpm run audit:tree` | none at high or critical; one moderate, DSR-01 |
-| `git diff --check` | clean |
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 34 of 34 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 42 of 42 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/scan-secrets.mjs` | PASS | 330 tracked files, none reported |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 16 of 16 projects |
+| `pnpm run typecheck` | PASS | 25 of 25 graphs |
+| `pnpm run test:unit` | PASS | 19 of 19 projects |
+| `pnpm run build` | PASS | 16 of 16 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `pnpm run test:migrations` | PASS | 138 |
+| `pnpm run test:integration` | PASS | 51 — db 41, outbox 5, api 5 |
+| `pnpm run test:concurrency` (three runs) | PASS | 16 each run |
+| `pnpm run test:regression` | PASS | 51 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 429 of 429 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 50 of 50 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12, four fixtures |
+| `pnpm run test:security` (three runs) | PASS | 18 of 18 sub-gates, 488, each run |
+| `pnpm run test:e2e` | PASS | 15 |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `git diff --check` | PASS | clean |
 
 ### GATE-SEC sub-gate counts
 
@@ -1437,3 +1442,5 @@ At the end of every phase, append to the phase ledger:
 4. Commit SHA.
 
 Never mark a phase `DONE` on the strength of a command that was not run.
+
+<!-- phase-03-repair-history:end -->
