@@ -2,7 +2,11 @@ import type { Pool } from 'pg';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { DECLARED_TABLES } from './schema';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
-import { compareDeclarationToSnapshot } from './schema-projection';
+import {
+  compareDeclarationToSnapshot,
+  serialiseLabels,
+  serialisePolicy,
+} from './schema-projection';
 import type { SchemaDifference } from './schema-difference';
 
 /**
@@ -275,10 +279,13 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   // Labels and their order are persistent: they decide which values a column of
   // the type accepts and how it sorts. Read straight from `pg_enum` in
   // `enumsortorder`, which is the order PostgreSQL itself uses.
+  // `array_agg`, not `string_agg`: a label may contain any character, so joining
+  // with a delimiter cannot say where one label ends. The driver returns a real
+  // array and the comparison serialises it the same way both declarations do.
   const liveEnums = (
-    await pool.query<{ name: string; labels: string }>(
+    await pool.query<{ name: string; labels: string[] }>(
       `SELECT n.nspname || '.' || t.typname AS name,
-              string_agg(e.enumlabel, ', ' ORDER BY e.enumsortorder) AS labels
+              array_agg(e.enumlabel::text ORDER BY e.enumsortorder) AS labels
          FROM pg_type t
          JOIN pg_namespace n ON n.oid = t.typnamespace
          JOIN pg_enum e ON e.enumtypid = t.oid
@@ -291,18 +298,31 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   compareSets(
     differences,
     'enum',
-    EXPECTED_SCHEMA_SNAPSHOT.enums.map((entry) => ({ key: entry.name, value: entry.labels })),
-    liveEnums.map((entry) => ({ key: entry.name, value: entry.labels })),
+    EXPECTED_SCHEMA_SNAPSHOT.enums.map((entry) => ({
+      key: entry.name,
+      value: serialiseLabels(entry.labels),
+    })),
+    liveEnums.map((entry) => ({ key: entry.name, value: serialiseLabels(entry.labels) })),
   );
 
   // -------------------------------------------------------------- policies
+  // `roles` stays an array. `array_to_string(roles, ', ')` made one role named
+  // `a, b` indistinguishable from the two roles `a` and `b`, and those grant
+  // different things.
   const livePolicies = (
-    await pool.query<{ table: string; name: string; definition: string }>(
+    await pool.query<{
+      table: string;
+      name: string;
+      as: string;
+      command: string;
+      to: string[];
+      using: string | null;
+      with_check: string | null;
+    }>(
       `SELECT schemaname || '.' || tablename AS table, policyname AS name,
-              'AS ' || permissive || ' FOR ' || cmd ||
-              ' TO ' || array_to_string(roles, ', ') ||
-              coalesce(' USING (' || qual || ')', '') ||
-              coalesce(' WITH CHECK (' || with_check || ')', '') AS definition
+              permissive AS as, cmd AS command,
+              array(SELECT r::text FROM unnest(roles) AS r) AS to,
+              qual AS using, with_check
          FROM pg_policies WHERE schemaname = ANY($1)
         ORDER BY 1, 2`,
       [schemas],
@@ -313,9 +333,18 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     'policy',
     EXPECTED_SCHEMA_SNAPSHOT.policies.map((entry) => ({
       key: `${entry.table}.${entry.name}`,
-      value: entry.definition,
+      value: serialisePolicy(entry),
     })),
-    livePolicies.map((entry) => ({ key: `${entry.table}.${entry.name}`, value: entry.definition })),
+    livePolicies.map((entry) => ({
+      key: `${entry.table}.${entry.name}`,
+      value: serialisePolicy({
+        as: entry.as,
+        command: entry.command,
+        to: entry.to,
+        using: entry.using,
+        withCheck: entry.with_check,
+      }),
+    })),
   );
 
   return differences;

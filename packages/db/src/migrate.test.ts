@@ -1082,6 +1082,62 @@ describe('schema comparator mutations', () => {
     expect(await compareSchema(comparatorPool)).toEqual([]);
   }, 60000);
 
+  it('reads comma, quote and Unicode labels losslessly from the catalogue', async () => {
+    // Joined text could not say where one label ended. These two types differ
+    // only in where the boundaries fall, and both joined to the same string.
+    const readLabels = async (definition: string): Promise<string | undefined> => {
+      await comparatorPool.query(`CREATE TYPE platform.comparator_labels AS ENUM (${definition})`);
+      try {
+        return (await compareSchema(comparatorPool)).find(
+          (difference) => difference.subject === 'platform.comparator_labels',
+        )?.actual;
+      } finally {
+        await comparatorPool.query(`DROP TYPE platform.comparator_labels`);
+      }
+    };
+
+    const oneCommaLabel = await readLabels(`'a, b'`);
+    const twoLabels = await readLabels(`'a', 'b'`);
+    expect(oneCommaLabel).toBe('["a, b"]');
+    expect(twoLabels).toBe('["a","b"]');
+    expect(oneCommaLabel).not.toBe(twoLabels);
+
+    expect(await readLabels(`'a"b', 'c''d'`)).toBe('["a\\"b","c\'d"]');
+    expect(await readLabels(`'ᠮᠣᠩᠭᠣᠯ', 'улс'`)).toBe('["ᠮᠣᠩᠭᠣᠯ","улс"]');
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('tells one comma-containing policy role from two roles', async () => {
+    // `array_to_string(roles, ', ')` made `TO "probe_x, probe_y"` and
+    // `TO probe_x, probe_y` the same text. They grant different things.
+    const reportedFor = async (target: string): Promise<string | undefined> => {
+      await comparatorPool.query(`ALTER POLICY tenant_isolation ON platform.job_run TO ${target}`);
+      try {
+        return (await compareSchema(comparatorPool)).find(
+          (difference) => difference.subject === 'platform.job_run.tenant_isolation',
+        )?.actual;
+      } finally {
+        await comparatorPool.query(`ALTER POLICY tenant_isolation ON platform.job_run TO public`);
+      }
+    };
+
+    await comparatorPool.query(`CREATE ROLE "probe_x, probe_y" NOLOGIN`);
+    await comparatorPool.query(`CREATE ROLE probe_x NOLOGIN`);
+    await comparatorPool.query(`CREATE ROLE probe_y NOLOGIN`);
+    try {
+      const oneRole = await reportedFor('"probe_x, probe_y"');
+      const twoRoles = await reportedFor('probe_x, probe_y');
+      expect(oneRole).toContain('["probe_x, probe_y"]');
+      expect(twoRoles).toContain('["probe_x","probe_y"]');
+      expect(oneRole).not.toBe(twoRoles);
+    } finally {
+      for (const role of ['"probe_x, probe_y"', 'probe_x', 'probe_y']) {
+        await comparatorPool.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+      }
+    }
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
   it('reads enum labels in PostgreSQL sort order, not insertion order', async () => {
     // `enumsortorder`, not `oid`: `ALTER TYPE ... ADD VALUE ... BEFORE` gives a
     // later-created label an earlier position, and the position is what decides
@@ -1092,7 +1148,7 @@ describe('schema comparator mutations', () => {
       const reported = (await compareSchema(comparatorPool)).find(
         (difference) => difference.subject === 'platform.comparator_mood',
       );
-      expect(reported?.actual).toBe('a, b, c');
+      expect(reported?.actual).toBe('["a","b","c"]');
     } finally {
       await comparatorPool.query(`DROP TYPE platform.comparator_mood`);
     }
@@ -2086,31 +2142,74 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
     const projection = drizzleProjection();
     const withEnum = {
       ...projection,
-      enums: [{ name: 'platform.mood', labels: 'sad, happy' }],
+      enums: [{ name: 'platform.mood', labels: ['sad', 'happy'] }],
     };
     expect(diffDeclarations(withEnum, EXPECTED_SCHEMA_SNAPSHOT)).toEqual([
       {
         kind: 'declaration-enum',
         subject: 'platform.mood',
         expected: 'present in the snapshot',
-        actual: 'sad, happy',
+        actual: '["sad","happy"]',
       },
     ]);
   });
 
-  it('reports a reordered enum label list', () => {
+  it('tells one comma-containing label from two labels, against the snapshot', () => {
+    // The two declarations below are different PostgreSQL types. Joined with a
+    // delimiter they were the same text, so this comparison reported nothing.
     const projection = drizzleProjection();
-    const declared = { ...projection, enums: [{ name: 'platform.mood', labels: 'happy, sad' }] };
+    const declared = { ...projection, enums: [{ name: 'platform.mood', labels: ['a, b'] }] };
     const snapshot = {
       ...EXPECTED_SCHEMA_SNAPSHOT,
-      enums: [{ name: 'platform.mood', labels: 'sad, happy' }],
+      enums: [{ name: 'platform.mood', labels: ['a', 'b'] }],
     };
     expect(diffDeclarations(declared, snapshot)).toEqual([
       {
         kind: 'declaration-enum',
         subject: 'platform.mood',
-        expected: 'sad, happy',
-        actual: 'happy, sad',
+        expected: '["a","b"]',
+        actual: '["a, b"]',
+      },
+    ]);
+  });
+
+  it('tells one comma-containing policy target from two, against the snapshot', () => {
+    const projection = drizzleProjection();
+    const one = projection.policies[0];
+    if (one === undefined) throw new Error('the declaration projects no policy');
+    const declared = {
+      ...projection,
+      policies: [{ ...one, to: ['probe_x, probe_y'] }, ...projection.policies.slice(1)],
+    };
+    const snapshot = {
+      ...EXPECTED_SCHEMA_SNAPSHOT,
+      policies: EXPECTED_SCHEMA_SNAPSHOT.policies.map((policy) =>
+        policy.table === one.table && policy.name === one.name
+          ? { ...policy, to: ['probe_x', 'probe_y'] }
+          : policy,
+      ),
+    };
+    const reported = diffDeclarations(declared, snapshot);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.subject).toBe(`${one.table}.${one.name}`);
+  });
+
+  it('reports a reordered enum label list', () => {
+    const projection = drizzleProjection();
+    const declared = {
+      ...projection,
+      enums: [{ name: 'platform.mood', labels: ['happy', 'sad'] }],
+    };
+    const snapshot = {
+      ...EXPECTED_SCHEMA_SNAPSHOT,
+      enums: [{ name: 'platform.mood', labels: ['sad', 'happy'] }],
+    };
+    expect(diffDeclarations(declared, snapshot)).toEqual([
+      {
+        kind: 'declaration-enum',
+        subject: 'platform.mood',
+        expected: '["sad","happy"]',
+        actual: '["happy","sad"]',
       },
     ]);
   });

@@ -68,11 +68,23 @@ export interface RlsSnapshot {
   readonly forced: boolean;
 }
 
+/**
+ * A policy in parts, never as one rendered sentence.
+ *
+ * The target list stays a list: one role named `a, b` and the two roles `a` and
+ * `b` grant different things and joined to the same text.
+ */
 export interface PolicySnapshot {
   readonly table: string;
   readonly name: string;
-  /** `AS … FOR … TO … USING (…) WITH CHECK (…)` */
-  readonly definition: string;
+  /** `PERMISSIVE` or `RESTRICTIVE`. */
+  readonly as: string;
+  /** `ALL`, `SELECT`, `INSERT`, `UPDATE` or `DELETE`. */
+  readonly command: string;
+  /** Exact role names, in the order PostgreSQL reports them. */
+  readonly to: readonly string[];
+  readonly using: string | null;
+  readonly withCheck: string | null;
 }
 
 /**
@@ -85,8 +97,13 @@ export interface PolicySnapshot {
  */
 export interface EnumSnapshot {
   readonly name: string;
-  /** Labels joined in order: `sad, ok, happy`. */
-  readonly labels: string;
+  /**
+   * Labels in `enumsortorder`, as a list.
+   *
+   * Joined text was lossy: a label may contain any character, so `['a, b']` and
+   * `['a', 'b']` — different types — rendered identically.
+   */
+  readonly labels: readonly string[];
 }
 
 export interface SchemaSnapshot {
@@ -1158,44 +1175,65 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       table: 'platform.export_artifact',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
     {
       table: 'platform.idempotency_key',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
     {
       table: 'platform.inbox_consumption',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
     {
       table: 'platform.job_run',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
     {
       table: 'platform.outbox_delivery',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
     {
       table: 'platform.outbox_event',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
     {
       table: 'platform.provider_event',
       name: 'tenant_isolation',
-      definition:
-        'AS PERMISSIVE FOR ALL TO public USING ((hotel_id = platform.current_hotel_id())) WITH CHECK ((hotel_id = platform.current_hotel_id()))',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
   ],
 };

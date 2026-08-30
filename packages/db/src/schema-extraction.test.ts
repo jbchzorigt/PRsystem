@@ -15,7 +15,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { diffDeclarations, drizzleProjection } from './schema-projection';
+import { diffDeclarations, drizzleProjection, exportedEnums } from './schema-projection';
 import type { ProjectableTable } from './schema-projection';
 
 /**
@@ -407,25 +407,31 @@ describe('row level security and policies', () => {
   });
 
   it('projects the policy predicate, so weakening it is not an empty diff', () => {
-    const strict = drizzleProjection([policied]).policies[0]?.definition;
-    const weak = drizzleProjection([widened]).policies[0]?.definition;
-    expect(strict).toContain('USING ((hotel_id = platform.current_hotel_id()))');
-    expect(weak).toContain('USING ((true))');
+    const strict = drizzleProjection([policied]).policies[0]?.using;
+    const weak = drizzleProjection([widened]).policies[0]?.using;
+    expect(strict).toBe('(hotel_id = platform.current_hotel_id())');
+    expect(weak).toBe('(true)');
     expect(strict).not.toBe(weak);
   });
 
   it('projects permissiveness, command and roles, with PostgreSQL defaults', () => {
-    expect(drizzleProjection([policied]).policies[0]?.definition).toContain(
-      'AS PERMISSIVE FOR ALL TO public',
-    );
-    expect(drizzleProjection([restrictive]).policies[0]?.definition).toContain(
-      'AS RESTRICTIVE FOR SELECT TO prsystem_api',
-    );
+    const permissive = drizzleProjection([policied]).policies[0];
+    expect([permissive?.as, permissive?.command, permissive?.to]).toEqual([
+      'PERMISSIVE',
+      'ALL',
+      ['public'],
+    ]);
+    const strict = drizzleProjection([restrictive]).policies[0];
+    expect([strict?.as, strict?.command, strict?.to]).toEqual([
+      'RESTRICTIVE',
+      'SELECT',
+      ['prsystem_api'],
+    ]);
   });
 
   it('projects WITH CHECK separately from USING', () => {
-    expect(drizzleProjection([policied]).policies[0]?.definition).toContain('WITH CHECK');
-    expect(drizzleProjection([widened]).policies[0]?.definition).not.toContain('WITH CHECK');
+    expect(drizzleProjection([policied]).policies[0]?.withCheck).not.toBeNull();
+    expect(drizzleProjection([widened]).policies[0]?.withCheck).toBeNull();
   });
 });
 
@@ -496,23 +502,19 @@ describe('policy role targets', () => {
     .enableRLS();
 
   it('renders a single role target by name', () => {
-    expect(drizzleProjection([toA]).policies[0]?.definition).toContain('TO probe_role_a');
+    expect(drizzleProjection([toA]).policies[0]?.to).toEqual(['probe_role_a']);
   });
 
   it('tells two different role targets apart', () => {
-    const a = drizzleProjection([toA]).policies[0]?.definition;
-    const b = drizzleProjection([toB]).policies[0]?.definition;
-    expect(a).not.toBe(b);
-    expect(b).toContain('TO probe_role_b');
+    const a = drizzleProjection([toA]).policies[0]?.to;
+    const b = drizzleProjection([toB]).policies[0]?.to;
+    expect(a).not.toEqual(b);
+    expect(b).toEqual(['probe_role_b']);
   });
 
   it('renders an array target as its role names', () => {
-    expect(drizzleProjection([toBoth]).policies[0]?.definition).toContain(
-      'TO probe_role_a, probe_role_b',
-    );
-    expect(drizzleProjection([toMixed]).policies[0]?.definition).toContain(
-      'TO probe_role_a, public',
-    );
+    expect(drizzleProjection([toBoth]).policies[0]?.to).toEqual(['probe_role_a', 'probe_role_b']);
+    expect(drizzleProjection([toMixed]).policies[0]?.to).toEqual(['probe_role_a', 'public']);
   });
 
   it('refuses a target representation it cannot name', () => {
@@ -557,7 +559,7 @@ describe('PostgreSQL enum types', () => {
 
   it('projects the enum type with its ordered labels', () => {
     expect(drizzleProjection([withTwo]).enums).toEqual([
-      { name: 'extraction_probe.probe_mood', labels: 'sad, happy' },
+      { name: 'extraction_probe.probe_mood', labels: ['sad', 'happy'] },
     ]);
   });
 
@@ -624,5 +626,189 @@ describe('a declared table with no columns', () => {
   it('still reports a declared column the snapshot lacks', () => {
     const populated = probe.table('empty_a', { gone: integer('gone').notNull() });
     expect(diffDeclarations(drizzleProjection([populated]), snapshot)).toEqual([]);
+  });
+});
+
+/**
+ * Enum labels, kept as an ordered structure rather than joined text.
+ *
+ * `labels: values.join(', ')` is not injective: `['a, b']` and `['a', 'b']` are
+ * different PostgreSQL types — one label containing a comma against two labels —
+ * and both rendered `a, b`. A label is arbitrary text, so any delimiter can
+ * appear inside one.
+ */
+describe('enum label serialisation is lossless', () => {
+  const oneCommaLabel = probe.table('label_a', { m: probe.enum('probe_labels', ['a, b'])('m') });
+  const twoLabels = probe.table('label_b', { m: probe.enum('probe_labels', ['a', 'b'])('m') });
+  const joinedLabel = probe.table('label_c', { m: probe.enum('probe_labels', ['ab'])('m') });
+  const quoted = probe.table('label_d', {
+    m: probe.enum('probe_labels', ['a"b', "c'd"])('m'),
+  });
+  const unicode = probe.table('label_e', {
+    m: probe.enum('probe_labels', ['ᠮᠣᠩᠭᠣᠯ', 'улс'])('m'),
+  });
+  const reordered = probe.table('label_f', { m: probe.enum('probe_labels', ['b', 'a'])('m') });
+
+  const labelsOf = (table: ProjectableTable) => drizzleProjection([table]).enums[0]?.labels;
+
+  it('keeps the labels as an ordered list', () => {
+    expect(labelsOf(twoLabels)).toEqual(['a', 'b']);
+  });
+
+  it('tells one comma-containing label from two labels', () => {
+    expect(labelsOf(oneCommaLabel)).not.toEqual(labelsOf(twoLabels));
+    expect(labelsOf(oneCommaLabel)).toEqual(['a, b']);
+  });
+
+  it('tells a label boundary apart from a concatenation', () => {
+    expect(labelsOf(joinedLabel)).not.toEqual(labelsOf(twoLabels));
+  });
+
+  it('preserves quotes and Unicode exactly', () => {
+    expect(labelsOf(quoted)).toEqual(['a"b', "c'd"]);
+    expect(labelsOf(unicode)).toEqual(['ᠮᠣᠩᠭᠣᠯ', 'улс']);
+  });
+
+  it('preserves order', () => {
+    expect(labelsOf(reordered)).toEqual(['b', 'a']);
+    expect(labelsOf(reordered)).not.toEqual(labelsOf(twoLabels));
+  });
+});
+
+/**
+ * Policy targets, kept as an ordered list of exact role names.
+ *
+ * `to.join(', ')` collapses one role named `a, b` and the two roles `a` and `b`
+ * into the same text, and those grant different things. A role name is an
+ * identifier that may contain any character, so no delimiter is safe.
+ */
+describe('policy target serialisation is lossless', () => {
+  const commaRole = pgRole('probe_x, probe_y');
+  const roleX = pgRole('probe_x');
+  const roleY = pgRole('probe_y');
+
+  const policyTo = (to: unknown) =>
+    drizzleProjection([
+      probe
+        .table('target_probe', { a: text('a') }, () => [
+          pgPolicy('probe_policy', { for: 'select', to: to as string, using: sql`(true)` }),
+        ])
+        .enableRLS(),
+    ]).policies[0];
+
+  it('keeps a single target as a one-element list', () => {
+    expect(policyTo(roleX)?.to).toEqual(['probe_x']);
+  });
+
+  it('tells one comma-containing role from two roles', () => {
+    expect(policyTo(commaRole)?.to).toEqual(['probe_x, probe_y']);
+    expect(policyTo([roleX, roleY])?.to).toEqual(['probe_x', 'probe_y']);
+    expect(policyTo(commaRole)?.to).not.toEqual(policyTo([roleX, roleY])?.to);
+  });
+
+  it('accepts a plain role name', () => {
+    expect(policyTo('prsystem_api')?.to).toEqual(['prsystem_api']);
+  });
+
+  it('defaults to public when no target is declared', () => {
+    const table = probe
+      .table('target_default', { a: text('a') }, () => [
+        pgPolicy('probe_policy', { using: sql`(true)` }),
+      ])
+      .enableRLS();
+    expect(drizzleProjection([table]).policies[0]?.to).toEqual(['public']);
+  });
+
+  it('refuses an object that merely looks like a role', () => {
+    // Structural acceptance took any `{ name: string }`. Drizzle's own identity
+    // check is the only thing that says this is a role rather than a shape.
+    expect(() => policyTo({ name: 'not_a_pg_role' })).toThrow(/policy target/);
+    expect(() => policyTo([roleX, { name: 'not_a_pg_role' }])).toThrow(/policy target/);
+  });
+});
+
+/**
+ * Enums declared but not used by any column.
+ *
+ * Discovery ran over table columns only, so an exported `pgEnum` nothing
+ * references projected nothing at all — while `CREATE TYPE` still puts it in the
+ * database and Drizzle Kit still loads it from the schema module. The
+ * declaration and the database disagreed and the diff was empty.
+ */
+describe('standalone enum declarations', () => {
+  const standalone = probe.enum('probe_standalone', ['x', 'y']);
+  const referenced = probe.enum('probe_referenced', ['p', 'q']);
+  const table = probe.table('enum_holder', {
+    id: integer('id').primaryKey(),
+    m: referenced('m'),
+  });
+
+  it('projects an enum no column references', () => {
+    expect(drizzleProjection([], [standalone]).enums).toEqual([
+      { name: 'extraction_probe.probe_standalone', labels: ['x', 'y'] },
+    ]);
+  });
+
+  it('projects referenced and standalone enums together, each once', () => {
+    const names = drizzleProjection([table], [standalone, referenced]).enums.map((e) => e.name);
+    expect(names.sort()).toEqual([
+      'extraction_probe.probe_referenced',
+      'extraction_probe.probe_standalone',
+    ]);
+  });
+
+  it('refuses two conflicting declarations of the same qualified enum', () => {
+    const other = probe.enum('probe_standalone', ['x', 'z']);
+    expect(() => drizzleProjection([], [standalone, other])).toThrow(/declared twice/);
+  });
+
+  it('accepts the same enum declared twice with identical labels', () => {
+    expect(drizzleProjection([table], [referenced, referenced]).enums).toHaveLength(1);
+  });
+
+  it('reports every exported enum of a module', () => {
+    const module = { mood: standalone, other: referenced, table, count: 3 };
+    expect(
+      exportedEnums(module)
+        .map((e) => e.enumName)
+        .sort(),
+    ).toEqual(['probe_referenced', 'probe_standalone']);
+  });
+});
+
+/**
+ * The same qualified table declared twice.
+ *
+ * The projection appended each declaration's columns, so two partial
+ * declarations of `platform.job_run` were unioned into one apparent table that
+ * matched the snapshot while neither declaration described it. Two declarations
+ * of one table are a contradiction, not a merge.
+ */
+describe('duplicate qualified table declarations', () => {
+  const partA = probe.table('dup', { a: integer('a') });
+  const partB = probe.table('dup', { b: integer('b') });
+  const conflicting = probe.table('dup', { a: text('a') });
+
+  it('refuses two partial declarations of the same qualified table', () => {
+    expect(() => drizzleProjection([partA, partB])).toThrow(/declared twice/);
+  });
+
+  it('refuses two conflicting declarations of the same qualified table', () => {
+    expect(() => drizzleProjection([partA, conflicting])).toThrow(/declared twice/);
+  });
+
+  it('refuses the same table object listed twice', () => {
+    expect(() => drizzleProjection([partA, partA])).toThrow(/declared twice/);
+  });
+
+  it('leaves a foreign key to a table outside the list alone', () => {
+    // The positive control: `parent` is referenced but not projected, which is
+    // the ordinary case and must keep working.
+    const child = probe.table(
+      'dup_child',
+      { id: integer('id').primaryKey(), pid: integer('pid') },
+      (t) => [foreignKey({ name: 'dup_fk', columns: [t.pid], foreignColumns: [parent.id] })],
+    );
+    expect(drizzleProjection([child]).constraints.some((c) => c.name === 'dup_fk')).toBe(true);
   });
 });

@@ -530,6 +530,21 @@ export const securityEvent = policeAudit.table(
   ],
 );
 
+/**
+ * The PostgreSQL enum types this declaration covers.
+ *
+ * An explicit inventory, not something derived from the columns that happen to
+ * use one. An exported `pgEnum` nothing references is still a type Drizzle Kit
+ * creates, so discovering enums through table columns alone left the declaration
+ * and the database disagreeing with an empty diff.
+ *
+ * Empty on purpose: every kernel state column is `text` with a check
+ * constraint, so the allowed values live in a constraint the comparator already
+ * reads. `schema-inventory.test.ts` holds this list to every enum the module
+ * exports, so adding one without registering it fails.
+ */
+export const DECLARED_ENUMS = [] as const;
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,

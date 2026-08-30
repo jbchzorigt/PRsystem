@@ -1,5 +1,6 @@
-import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
-import { DECLARED_TABLES } from './schema';
+import { is } from 'drizzle-orm';
+import { PgDialect, PgRole, getTableConfig } from 'drizzle-orm/pg-core';
+import { DECLARED_ENUMS, DECLARED_TABLES } from './schema';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
 import type { SchemaSnapshot } from './schema-snapshot';
 import type { SchemaDifference } from './schema-difference';
@@ -72,10 +73,25 @@ export interface ProjectedRls {
   readonly enabled: boolean;
 }
 
+/**
+ * A policy, kept in parts rather than as one rendered sentence.
+ *
+ * `TO ${roles.join(', ')}` is not injective: one role named `a, b` and the two
+ * roles `a` and `b` produced the same text and grant different things. A role
+ * name is an identifier and may contain any character, so no delimiter is safe —
+ * the targets stay an ordered list and are compared as one.
+ */
 export interface ProjectedPolicy {
   readonly table: string;
   readonly name: string;
-  readonly definition: string;
+  /** `PERMISSIVE` or `RESTRICTIVE`. */
+  readonly as: string;
+  /** `ALL`, `SELECT`, `INSERT`, `UPDATE` or `DELETE`. */
+  readonly command: string;
+  /** Exact role names, in declaration order. */
+  readonly to: readonly string[];
+  readonly using: string | null;
+  readonly withCheck: string | null;
 }
 
 /**
@@ -90,8 +106,14 @@ export interface ProjectedPolicy {
  */
 export interface ProjectedEnum {
   readonly name: string;
-  /** Labels in declaration order, which is the order PostgreSQL sorts by. */
-  readonly labels: string;
+  /**
+   * Labels in declaration order, which is the order PostgreSQL sorts by.
+   *
+   * A list, not joined text. A label is arbitrary text, so `['a, b']` and
+   * `['a', 'b']` — one label containing a comma against two labels — joined to
+   * the same string and were indistinguishable while being different types.
+   */
+  readonly labels: readonly string[];
 }
 
 export interface SchemaProjection {
@@ -154,33 +176,59 @@ function render(fragment: unknown): string {
 }
 
 /**
- * The role names a policy is granted to.
+ * The exact role names a policy is granted to, in order.
  *
- * `to` is either a role name, a `PgRole` object, or an array of those.
+ * `to` is either a role name, a `PgRole`, or an array of those.
  * `String(pgRole('role_a'))` is `[object Object]`, so stringifying the value
- * generically made every `PgRole` target render identically: two policies
- * granted to genuinely different roles produced the same text and a change of
- * grantee was an empty diff. Anything that is neither a name nor a `PgRole` is
- * refused rather than stringified, because a target nothing can name is a target
- * nothing can compare.
+ * generically made every `PgRole` target render identically.
+ *
+ * Membership is decided by Drizzle's own `is(value, PgRole)`, not by the value
+ * happening to carry a string `name`. A structural test accepts any
+ * `{ name: string }` — a plain object, a table configuration, anything — and
+ * silently reads a field that means something else, which is the same class of
+ * mistake as reading `enumValues` off a text column.
  */
-function renderPolicyRoles(to: unknown): string {
+function policyRoleNames(to: unknown): string[] {
   const one = (target: unknown): string => {
     if (typeof target === 'string') return target;
-    if (
-      typeof target === 'object' &&
-      target !== null &&
-      'name' in target &&
-      typeof (target as { name: unknown }).name === 'string'
-    ) {
-      return (target as { name: string }).name;
-    }
+    if (is(target, PgRole)) return (target as unknown as { name: string }).name;
     throw new Error(
       `policy target ${JSON.stringify(target)} is neither a role name nor a pgRole: a target ` +
         'that cannot be named cannot be compared, so it is refused rather than stringified',
     );
   };
-  return Array.isArray(to) ? to.map(one).join(', ') : one(to);
+  return Array.isArray(to) ? to.map(one) : [one(to)];
+}
+
+/** Anything shaped like a Drizzle `pgEnum`. */
+export interface DeclaredEnum {
+  readonly enumName: string;
+  readonly enumValues: readonly string[];
+  readonly schema?: string | undefined;
+}
+
+/** True for a Drizzle `pgEnum`, which is a callable carrying its own metadata. */
+function isDeclaredEnum(value: unknown): value is DeclaredEnum {
+  if (typeof value !== 'function' && (typeof value !== 'object' || value === null)) return false;
+  const candidate = value as { enumName?: unknown; enumValues?: unknown };
+  return typeof candidate.enumName === 'string' && Array.isArray(candidate.enumValues);
+}
+
+/**
+ * Every PostgreSQL enum a module exports.
+ *
+ * The declared-enum inventory has to be checkable against the schema module
+ * itself, or "every exported enum is registered" is a comment. Drizzle Kit reads
+ * the module the same way, so an exported enum it would create is one this
+ * projection must know about.
+ */
+export function exportedEnums(module: Record<string, unknown>): DeclaredEnum[] {
+  return Object.values(module).filter(isDeclaredEnum);
+}
+
+/** `schema.name` for a declared enum; `public` when it names no schema. */
+function qualifiedEnumName(declared: DeclaredEnum): string {
+  return `${declared.schema ?? 'public'}.${declared.enumName}`;
 }
 
 /** The parts of Drizzle's index configuration this projection reads. */
@@ -253,6 +301,7 @@ export type ProjectableTable = Parameters<typeof getTableConfig>[0];
  */
 export function drizzleProjection(
   tables: readonly ProjectableTable[] = DECLARED_TABLES,
+  declaredEnums: readonly DeclaredEnum[] = DECLARED_ENUMS,
 ): SchemaProjection {
   const columns: ProjectedColumn[] = [];
   const constraints: ProjectedConstraint[] = [];
@@ -261,11 +310,48 @@ export function drizzleProjection(
   const rls: ProjectedRls[] = [];
   const policies: ProjectedPolicy[] = [];
   const declaredTables: string[] = [];
-  const enums = new Map<string, string>();
+  const enums = new Map<string, readonly string[]>();
+
+  /**
+   * Registers one enum type, refusing a second declaration with other labels.
+   *
+   * PostgreSQL holds one label list per type, so two declarations that disagree
+   * are a contradiction rather than something to merge — and merging is exactly
+   * what let two partial declarations of one object look like a whole one.
+   */
+  const registerEnum = (declared: DeclaredEnum): void => {
+    const name = qualifiedEnumName(declared);
+    const labels = [...declared.enumValues];
+    const seen = enums.get(name);
+    if (seen !== undefined && JSON.stringify(seen) !== JSON.stringify(labels)) {
+      throw new Error(
+        `enum type ${name} is declared twice with different labels (` +
+          `${JSON.stringify(seen)} and ${JSON.stringify(labels)}): PostgreSQL holds one label ` +
+          'list per type, so the declaration contradicts itself',
+      );
+    }
+    enums.set(name, labels);
+  };
+
+  // The declared inventory first. Discovery through table columns alone missed
+  // an exported enum nothing references — which `CREATE TYPE` still creates and
+  // Drizzle Kit still loads, so the declaration and the database disagreed with
+  // an empty diff.
+  for (const declared of declaredEnums) registerEnum(declared);
 
   for (const table of tables) {
     const config = getTableConfig(table);
     const qualified = `${config.schema ?? 'public'}.${config.name}`;
+    // Two declarations of one qualified table are a contradiction, not a merge.
+    // Appending each declaration's columns unioned them into one apparent table
+    // that could match the snapshot while neither declaration described it.
+    if (declaredTables.includes(qualified)) {
+      throw new Error(
+        `table ${qualified} is declared twice. PostgreSQL holds one definition per qualified ` +
+          'table, so two declarations contradict each other: unioning their columns would ' +
+          'describe a table neither of them declares',
+      );
+    }
     declaredTables.push(qualified);
     const simplePrimary: string[] = [];
 
@@ -311,30 +397,8 @@ export function drizzleProjection(
       // column carries only `enumValues`. The first is a PostgreSQL type whose
       // labels and their order are persistent; the second is a TypeScript hint
       // that leaves no trace in the catalogue.
-      const declaredEnum = (
-        column as unknown as {
-          enum?: { enumName?: unknown; enumValues?: unknown; schema?: unknown };
-        }
-      ).enum;
-      if (
-        declaredEnum !== undefined &&
-        typeof declaredEnum.enumName === 'string' &&
-        Array.isArray(declaredEnum.enumValues)
-      ) {
-        const name =
-          `${typeof declaredEnum.schema === 'string' ? declaredEnum.schema : 'public'}.` +
-          declaredEnum.enumName;
-        const labels = (declaredEnum.enumValues as unknown[]).map(String).join(', ');
-        const seen = enums.get(name);
-        if (seen !== undefined && seen !== labels) {
-          throw new Error(
-            `enum type ${name} is declared twice with different labels ([${seen}] and ` +
-              `[${labels}]): PostgreSQL holds one label list per type, so the declaration ` +
-              'contradicts itself',
-          );
-        }
-        enums.set(name, labels);
-      }
+      const declaredEnum = (column as unknown as { enum?: unknown }).enum;
+      if (isDeclaredEnum(declaredEnum)) registerEnum(declaredEnum);
 
       // The identity's backing sequence. `attidentity` says a column is an
       // identity; it says nothing about the sequence's start, step or bounds,
@@ -506,16 +570,14 @@ export function drizzleProjection(
         using?: unknown;
         withCheck?: unknown;
       };
-      const roles = declared.to === undefined ? 'public' : renderPolicyRoles(declared.to);
       policies.push({
         table: qualified,
         name: declared.name ?? '',
-        definition:
-          `AS ${(declared.as ?? 'permissive').toUpperCase()} ` +
-          `FOR ${(declared.for ?? 'all').toUpperCase()} ` +
-          `TO ${roles}` +
-          (declared.using === undefined ? '' : ` USING (${render(declared.using)})`) +
-          (declared.withCheck === undefined ? '' : ` WITH CHECK (${render(declared.withCheck)})`),
+        as: (declared.as ?? 'permissive').toUpperCase(),
+        command: (declared.for ?? 'all').toUpperCase(),
+        to: declared.to === undefined ? ['public'] : policyRoleNames(declared.to),
+        using: declared.using === undefined ? null : render(declared.using),
+        withCheck: declared.withCheck === undefined ? null : render(declared.withCheck),
       });
     }
   }
@@ -713,20 +775,53 @@ export function diffDeclarations(
   compareKeyed(
     differences,
     'declaration-enum',
-    projection.enums.map((entry) => [entry.name, entry.labels]),
-    snapshot.enums.map((entry) => [entry.name, entry.labels]),
+    projection.enums.map((entry) => [entry.name, serialiseLabels(entry.labels)]),
+    snapshot.enums.map((entry) => [entry.name, serialiseLabels(entry.labels)]),
   );
 
   compareKeyed(
     differences,
     'declaration-policy',
-    projection.policies.map((entry) => [`${entry.table}.${entry.name}`, entry.definition]),
+    projection.policies.map((entry) => [`${entry.table}.${entry.name}`, serialisePolicy(entry)]),
     snapshot.policies
       .filter((entry) => declaredTables.has(entry.table))
-      .map((entry) => [`${entry.table}.${entry.name}`, entry.definition]),
+      .map((entry) => [`${entry.table}.${entry.name}`, serialisePolicy(entry)]),
   );
 
   return differences;
+}
+
+/**
+ * The canonical text for an ordered label list.
+ *
+ * JSON, so it round-trips: every label's boundaries and order survive, and no
+ * character inside a label can forge one. Joining with a delimiter could not
+ * say that — `['a, b']` and `['a', 'b']` produced the same string.
+ */
+export function serialiseLabels(labels: readonly string[]): string {
+  return JSON.stringify(labels);
+}
+
+/**
+ * The canonical text for a policy.
+ *
+ * Same reason as the labels: the target list is JSON rather than joined, so one
+ * role named `a, b` and the two roles `a` and `b` are different values.
+ */
+export function serialisePolicy(policy: {
+  readonly as: string;
+  readonly command: string;
+  readonly to: readonly string[];
+  readonly using: string | null;
+  readonly withCheck: string | null;
+}): string {
+  return JSON.stringify({
+    as: policy.as,
+    command: policy.command,
+    to: policy.to,
+    using: policy.using,
+    withCheck: policy.withCheck,
+  });
 }
 
 /** Compares two keyed sets in both directions. */

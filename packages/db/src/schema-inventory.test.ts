@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { getTableConfig, integer, pgSchema, text } from 'drizzle-orm/pg-core';
-import { DECLARED_TABLES } from './schema';
-import { compareDeclarationToSnapshot, drizzleProjection } from './schema-projection';
+import * as schemaModule from './schema';
+import { DECLARED_ENUMS, DECLARED_TABLES } from './schema';
+import {
+  compareDeclarationToSnapshot,
+  drizzleProjection,
+  exportedEnums,
+} from './schema-projection';
 
 /**
  * A version-pinned inventory of what the extractor reads.
@@ -156,8 +161,23 @@ describe('extraction property inventory', () => {
     expect(unclassified).toEqual([]);
     // And the classification is honest in both directions.
     expect(drizzleProjection([table]).enums).toEqual([
-      { name: 'inventory_probe.inventory_mood', labels: 'sad, happy' },
+      { name: 'inventory_probe.inventory_mood', labels: ['sad', 'happy'] },
     ]);
+  });
+
+  it('registers every PostgreSQL enum the schema module exports', () => {
+    // The declared inventory is only a contract if something holds it to the
+    // module. Drizzle Kit creates an exported `pgEnum` whether or not a column
+    // uses it, so one missing from DECLARED_ENUMS is a type the database would
+    // hold and the declaration would not.
+    const exported = exportedEnums(schemaModule as unknown as Record<string, unknown>)
+      .map((declared) => `${declared.schema ?? 'public'}.${declared.enumName}`)
+      .sort();
+    const registered = DECLARED_ENUMS.map(
+      (declared: { schema?: string | undefined; enumName: string }) =>
+        `${declared.schema ?? 'public'}.${declared.enumName}`,
+    ).sort();
+    expect(exported).toEqual(registered);
   });
 
   it('projects something for every key classified as projected', () => {
