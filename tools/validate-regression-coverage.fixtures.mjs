@@ -23,7 +23,40 @@ const REGRESSION_STEP = `      - name: Complete regression suite against real Po
         run: pnpm run test:regression`;
 
 /** Each fixture returns a mutated workflow, and names the bypass it introduces. */
+const PRE_INSTALL =
+  '      - name: Scan for committed secrets before install\n        run: node tools/scan-secrets.mjs\n';
+
 const FIXTURES = [
+  {
+    // The pre-install scan is the one look at HEAD and the index taken before a
+    // dependency lifecycle script can run code against the checkout.
+    name: 'pre-install scan removed',
+    mutate: (yaml) => yaml.replace(PRE_INSTALL, ''),
+  },
+  {
+    name: 'pre-install scan moved after the install',
+    mutate: (yaml) =>
+      yaml
+        .replace(PRE_INSTALL, '')
+        .replace(
+          '      - name: Install (frozen lockfile)\n        run: pnpm install --frozen-lockfile\n',
+          '      - name: Install (frozen lockfile)\n        run: pnpm install --frozen-lockfile\n' +
+            PRE_INSTALL,
+        ),
+  },
+  {
+    name: 'pre-install scan made conditional',
+    mutate: (yaml) =>
+      yaml.replace(
+        PRE_INSTALL,
+        `${PRE_INSTALL.trimEnd()}\n        if: github.event_name == 'push'\n`,
+      ),
+  },
+  {
+    name: 'pre-install scan made advisory',
+    mutate: (yaml) =>
+      yaml.replace(PRE_INSTALL, `${PRE_INSTALL.trimEnd()}\n        continue-on-error: true\n`),
+  },
   {
     // The scan CLI no longer reads these, but the seam is the sort of thing that
     // returns "just for the fixtures", and one of them on the scan step made a

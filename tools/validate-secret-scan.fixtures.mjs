@@ -59,7 +59,14 @@ function git(dir, args, options = {}) {
   });
 }
 
-/** Builds a throwaway git repository and returns its root. */
+/**
+ * Builds a throwaway git repository and returns its root.
+ *
+ * It commits, because the scan reads the checked-out commit as well as the
+ * index, and an unborn HEAD is refused: one of its two mandatory sources would
+ * be missing. Fixtures that want HEAD and the index to disagree stage their
+ * divergence after this returns.
+ */
 function repository(dir, build) {
   mkdirSync(dir, { recursive: true });
   git(dir, ['init', '-q']);
@@ -67,6 +74,7 @@ function repository(dir, build) {
   git(dir, ['config', 'user.name', 'fixture']);
   build(dir);
   git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '--allow-empty', '-m', 'fixture']);
   return dir;
 }
 
@@ -300,7 +308,6 @@ const INVENTORY_FIXTURES = [
       const root = repository(join(dir, 'repo'), (at) =>
         writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
       );
-      git(root, ['commit', '-qm', 'one']);
       const tree = git(root, ['rev-parse', 'HEAD^{tree}']).trim();
       return { root, entries: [{ path: 'a.ts', mode: '100644', object: tree, stage: '0' }] };
     },
@@ -344,7 +351,6 @@ inTempDir((dir) => {
 // A real unmerged index, through the production enumeration.
 inTempDir((dir) => {
   const root = repository(join(dir, 'repo'), (at) => writeFileSync(join(at, 'a.ts'), 'base\n'));
-  git(root, ['commit', '-qm', 'base']);
   git(root, ['checkout', '-qb', 'other']);
   writeFileSync(join(root, 'a.ts'), 'theirs\n');
   git(root, ['commit', '-qam', 'theirs']);
@@ -539,6 +545,153 @@ for (const fixture of STAGED_FIXTURES) {
   });
 }
 
+// ------------------------------------------------------- HEAD and the index
+/**
+ * The checked-out commit and the index are two independent mandatory sources.
+ *
+ * Reading the index alone let a committed credential be hidden behind clean
+ * staged content: the secret was already in history, named by `HEAD:<path>`,
+ * while `:<path>` named the replacement, and the scan reported nothing.
+ */
+const HEAD_FIXTURES = [
+  {
+    name: 'HEAD: a committed secret behind clean staged content',
+    build: (dir) => writeFileSync(join(dir, 'leak.ts'), LEAK),
+    after: (root) => {
+      writeFileSync(join(root, 'leak.ts'), 'export const clean = 1;\n');
+      git(root, ['add', 'leak.ts']);
+    },
+    expectFindings: 1,
+    expectSources: ['HEAD'],
+    expectScanned: 2,
+  },
+  {
+    name: 'HEAD: a clean commit with a staged secret',
+    build: (dir) => writeFileSync(join(dir, 'leak.ts'), 'export const clean = 1;\n'),
+    after: (root) => {
+      writeFileSync(join(root, 'leak.ts'), LEAK);
+      git(root, ['add', 'leak.ts']);
+    },
+    expectFindings: 1,
+    expectSources: ['index'],
+    expectScanned: 2,
+  },
+  {
+    name: 'HEAD: a committed secret with the path staged for deletion',
+    build: (dir) => writeFileSync(join(dir, 'leak.ts'), LEAK),
+    after: (root) => git(root, ['rm', '-q', 'leak.ts']),
+    expectFindings: 1,
+    expectSources: ['HEAD'],
+    expectScanned: 1,
+  },
+  {
+    name: 'HEAD: a committed secret staged under a new name',
+    build: (dir) => writeFileSync(join(dir, 'leak.ts'), LEAK),
+    after: (root) => git(root, ['mv', 'leak.ts', 'renamed.ts']),
+    // One blob, two paths: a finding is about a path, so both are reported.
+    expectFindings: 2,
+    expectSources: ['HEAD', 'index'],
+    expectScanned: 2,
+  },
+  {
+    name: 'HEAD: different clean blobs in HEAD and the index are both scanned',
+    build: (dir) => writeFileSync(join(dir, 'a.ts'), 'export const a = 1;\n'),
+    after: (root) => {
+      writeFileSync(join(root, 'a.ts'), 'export const a = 2;\n');
+      git(root, ['add', 'a.ts']);
+    },
+    expectFindings: 0,
+    expectSources: [],
+    expectScanned: 2,
+  },
+  {
+    name: 'HEAD: an identical blob in HEAD and the index is scanned once',
+    build: (dir) => writeFileSync(join(dir, 'leak.ts'), LEAK),
+    after: () => undefined,
+    expectFindings: 1,
+    expectSources: ['HEAD+index'],
+    expectScanned: 1,
+  },
+];
+
+for (const fixture of HEAD_FIXTURES) {
+  inTempDir((dir) => {
+    const root = repository(join(dir, 'repo'), fixture.build);
+    fixture.after(root);
+    let result;
+    let raised;
+    try {
+      result = scanRepository(root);
+    } catch (error) {
+      raised = error;
+    }
+    const findings = result?.findings ?? [];
+    const sources = [...new Set(findings.map((finding) => finding.source))].sort();
+    const ok =
+      raised === undefined &&
+      findings.length === fixture.expectFindings &&
+      result?.scanned === fixture.expectScanned &&
+      sources.join(',') === [...fixture.expectSources].sort().join(',');
+    record(
+      fixture.name,
+      ok,
+      raised !== undefined
+        ? `raised ${String(raised)}`
+        : `scanned ${String(result?.scanned)}, ${String(findings.length)} finding(s) from ` +
+            `[${sources.join(', ')}]`,
+    );
+  });
+}
+
+// An unborn HEAD is one of the two mandatory sources missing, and is refused.
+inTempDir((dir) => {
+  const root = join(dir, 'repo');
+  mkdirSync(root, { recursive: true });
+  git(root, ['init', '-q']);
+  git(root, ['config', 'user.email', 'fixture@example.invalid']);
+  git(root, ['config', 'user.name', 'fixture']);
+  writeFileSync(join(root, 'a.ts'), 'export const a = 1;\n');
+  git(root, ['add', '-A']);
+  let raised;
+  try {
+    scanRepository(root);
+  } catch (error) {
+    raised = error;
+  }
+  const ok =
+    raised instanceof SecretScanInventoryError &&
+    /cannot resolve HEAD to a commit/.test(raised.message);
+  record(
+    'HEAD: an unborn HEAD is refused, not skipped',
+    ok,
+    ok ? 'refused' : `NOT REFUSED — ${raised === undefined ? 'accepted' : String(raised)}`,
+  );
+});
+
+// A tree where a blob is expected is an unsupported entry, not something to
+// pass over.
+inTempDir((dir) => {
+  const root = repository(join(dir, 'repo'), (at) =>
+    writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
+  );
+  const tree = git(root, ['rev-parse', 'HEAD^{tree}']).trim();
+  let raised;
+  try {
+    scanEntries({
+      root,
+      entries: [{ path: 'a.ts', mode: '040000', object: tree, stage: '0', sources: ['HEAD'] }],
+    });
+  } catch (error) {
+    raised = error;
+  }
+  const ok = raised instanceof SecretScanInventoryError && /does not classify/.test(raised.message);
+  record(
+    'HEAD: an entry mode the scan does not classify is refused',
+    ok,
+    ok ? 'refused' : `NOT REFUSED — ${raised === undefined ? 'accepted' : String(raised)}`,
+  );
+});
+
 // ------------------------------------------------------------- replace refs
 /**
  * `git replace` substitutes one object for another, repository-locally.
@@ -666,7 +819,6 @@ inTempDir((dir) => {
   const inner = repository(join(dir, 'inner'), (at) =>
     writeFileSync(join(at, 'a.ts'), 'export const a = 1;\n'),
   );
-  git(inner, ['commit', '-qm', 'inner']);
   const outer = repository(join(dir, 'outer'), () => undefined);
   git(outer, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'vendor'], {
     stdio: 'ignore',

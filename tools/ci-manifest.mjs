@@ -8,12 +8,17 @@
 //
 // `run` is matched as an exact executable line. `needsDatabase` requires a
 // DATABASE_URL on that step. `cleanup` marks a step that legitimately carries
-// `if: always()`, so a teardown still runs after a failure.
+// `if: always()`, so a teardown still runs after a failure. `beforeInstall`
+// marks a step that must run before `pnpm install --frozen-lockfile`: a
+// dependency lifecycle script runs arbitrary code with the checkout in place,
+// so the first look at HEAD and the index has to happen while nothing from the
+// dependency tree has executed.
 
 export const REQUIRED_JOBS = [
   {
     job: 'governance',
     steps: [
+      { run: 'node tools/scan-secrets.mjs', beforeInstall: true },
       { run: 'node tools/validate-governance.mjs' },
       { run: 'node tools/validate-workspace.mjs' },
       { run: 'pnpm run validate:regression-coverage' },
@@ -26,6 +31,7 @@ export const REQUIRED_JOBS = [
   {
     job: 'verify',
     steps: [
+      { run: 'node tools/scan-secrets.mjs', beforeInstall: true },
       { run: 'pnpm run format:check' },
       { run: 'pnpm run lint' },
       { run: 'pnpm run typecheck' },
@@ -39,6 +45,7 @@ export const REQUIRED_JOBS = [
   {
     job: 'e2e',
     steps: [
+      { run: 'node tools/scan-secrets.mjs', beforeInstall: true },
       { run: 'pnpm exec playwright install --with-deps chromium' },
       { run: 'pnpm run test:e2e' },
     ],
@@ -46,6 +53,7 @@ export const REQUIRED_JOBS = [
   {
     job: 'compose',
     steps: [
+      { run: 'node tools/scan-secrets.mjs', beforeInstall: true },
       { run: 'docker compose config --quiet' },
       { run: 'docker compose up -d --wait' },
       { run: 'pnpm run build' },
@@ -60,6 +68,7 @@ export const REQUIRED_JOBS = [
   {
     job: 'gate-sec',
     steps: [
+      { run: 'node tools/scan-secrets.mjs', beforeInstall: true },
       { run: 'docker compose up -d --wait' },
       { run: 'pnpm run build' },
       { run: 'pnpm run test:security', needsDatabase: true },

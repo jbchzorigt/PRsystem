@@ -264,6 +264,10 @@ check(
 for (const required of REQUIRED_JOBS) {
   const steps = stepsOf(required.job);
   let previousIndex = -1;
+  // Where the dependency tree first gets to run code in this job.
+  const jobInstallIndex = steps.findIndex((step) =>
+    runsExactly(step, 'pnpm install --frozen-lockfile'),
+  );
 
   // The same rule as the workflow default, scoped to one required job.
   const job = workflow?.jobs?.[required.job];
@@ -333,6 +337,17 @@ for (const required of REQUIRED_JOBS) {
     );
     if (step === undefined) continue;
     previousIndex = index;
+
+    if (spec.beforeInstall === true) {
+      // A lifecycle script runs arbitrary code with the checkout in place, so a
+      // scan placed after the install has already given away the one thing it
+      // is looking at. Ordering it is the whole point of the step.
+      check(
+        `'${spec.run}' runs before the install in '${required.job}'`,
+        jobInstallIndex >= 0 && index < jobInstallIndex,
+        `step ${String(index)}, install ${String(jobInstallIndex)}`,
+      );
+    }
 
     for (const name of FORBIDDEN_ENV) {
       const declared = forbiddenEnvIn(step).includes(name);

@@ -233,8 +233,98 @@ export function gitInventory(root) {
     );
   }
 
-  const listed = git(root, ['ls-files', '-s', '-z']);
+  // Two sources, both mandatory: the commit that is checked out and the index.
+  //
+  // The index alone was the inventory, so committing a credential and then
+  // staging clean content over it reported nothing — the secret was already in
+  // history, named by `HEAD:<path>`, while `:<path>` named the replacement.
+  // Neither source may stand in for the other; where they name the same blob for
+  // the same path there is nothing to scan twice, and that is the only case
+  // deduplicated.
   const entries = [];
+  const byIdentity = new Map();
+  const add = (entry, source) => {
+    const key = JSON.stringify([entry.path, entry.object]);
+    const seenEntry = byIdentity.get(key);
+    if (seenEntry !== undefined) {
+      if (!seenEntry.sources.includes(source)) seenEntry.sources.push(source);
+      return;
+    }
+    const recorded = { ...entry, sources: [source] };
+    byIdentity.set(key, recorded);
+    entries.push(recorded);
+  };
+
+  const classify = (path, mode, object, stage, where) => {
+    if (mode === GITLINK_MODE) {
+      throw new SecretScanInventoryError(
+        `${path} is a gitlink (submodule) in ${where}. Its content lives in another repository ` +
+          'and this scan does not reach it: handle it deliberately rather than passing over it',
+      );
+    }
+    if (mode !== SYMLINK_MODE && !REGULAR_MODES.has(mode)) {
+      throw new SecretScanInventoryError(
+        `${path} has ${where} mode ${String(mode)}, which this scan does not classify`,
+      );
+    }
+    if (!OBJECT_ID.test(object ?? '')) {
+      throw new SecretScanInventoryError(
+        `${path} has ${where} object ${String(object)}, which is not a git object name`,
+      );
+    }
+    if (stage !== MERGED_STAGE) {
+      throw new SecretScanInventoryError(
+        `${path} is at index stage ${String(stage)}, not ${MERGED_STAGE}: an unmerged path has ` +
+          'no single indexed content, so this scan refuses it rather than picking a side',
+      );
+    }
+  };
+
+  // ------------------------------------------------------------------- HEAD
+  let headCommit;
+  try {
+    headCommit = git(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).trim();
+  } catch (error) {
+    throw new SecretScanInventoryError(
+      'cannot resolve HEAD to a commit. The checked-out commit is one of the two mandatory ' +
+        'sources this scan reads, so an unborn, detached-to-a-non-commit or unreadable HEAD is ' +
+        `refused rather than skipped. ${messageOf(error)}`,
+    );
+  }
+  if (!OBJECT_ID.test(headCommit)) {
+    throw new SecretScanInventoryError(
+      `HEAD resolved to ${JSON.stringify(headCommit)}, which is not a git object name`,
+    );
+  }
+
+  const tree = git(root, ['ls-tree', '-r', '-z', headCommit]);
+  const headPaths = new Set();
+  for (const record of tree.split('\0')) {
+    if (record === '') continue;
+    // `<mode> <type> <object>\t<path>`
+    const tab = record.indexOf('\t');
+    if (tab < 0) {
+      throw new SecretScanInventoryError(
+        `cannot parse the HEAD tree record ${JSON.stringify(record)}`,
+      );
+    }
+    const [mode, type, object] = record.slice(0, tab).split(' ');
+    const path = record.slice(tab + 1);
+    if (headPaths.has(path)) {
+      throw new SecretScanInventoryError(`the HEAD tree lists ${path} more than once`);
+    }
+    headPaths.add(path);
+    if (type !== 'blob') {
+      throw new SecretScanInventoryError(
+        `${path} is a ${String(type)} in the HEAD tree, which this scan does not classify`,
+      );
+    }
+    classify(path, mode, object, MERGED_STAGE, 'HEAD');
+    add({ path, mode, object, stage: MERGED_STAGE }, 'HEAD');
+  }
+
+  // ------------------------------------------------------------------ index
+  const listed = git(root, ['ls-files', '-s', '-z']);
   const seen = new Set();
   for (const record of listed.split('\0')) {
     if (record === '') continue;
@@ -250,34 +340,13 @@ export function gitInventory(root) {
     }
     seen.add(path);
 
-    if (mode === GITLINK_MODE) {
-      throw new SecretScanInventoryError(
-        `${path} is a gitlink (submodule). Its content lives in another repository and this ` +
-          'scan does not reach it: handle it deliberately rather than passing over it',
-      );
-    }
-    if (mode !== SYMLINK_MODE && !REGULAR_MODES.has(mode)) {
-      throw new SecretScanInventoryError(
-        `${path} has index mode ${mode}, which this scan does not classify`,
-      );
-    }
     // The blob name and the index stage are the entry, not decoration. The OID
     // was read and thrown away, and the working-tree path was scanned in its
     // place — so a staged credential overwritten with clean text reported
     // nothing. A non-zero stage means an unmerged path, whose content is a
     // conflict rather than one blob, and is refused rather than guessed at.
-    if (!OBJECT_ID.test(object ?? '')) {
-      throw new SecretScanInventoryError(
-        `${path} has index object ${String(object)}, which is not a git object name`,
-      );
-    }
-    if (stage !== MERGED_STAGE) {
-      throw new SecretScanInventoryError(
-        `${path} is at index stage ${String(stage)}, not ${MERGED_STAGE}: an unmerged path has ` +
-          'no single indexed content, so this scan refuses it rather than picking a side',
-      );
-    }
-    entries.push({ path, mode, object, stage });
+    classify(path, mode, object, stage, 'index');
+    add({ path, mode, object, stage }, 'index');
   }
   return entries;
 }
@@ -449,10 +518,16 @@ export function scanEntries({ root, entries }) {
     if (inside.startsWith('..') || isAbsolute(inside)) {
       throw new SecretScanInventoryError(`inventory path escapes the scan root: ${rel}`);
     }
-    if (seen.has(inside)) {
-      throw new SecretScanInventoryError(`the inventory lists ${rel} more than once`);
+    // Keyed on path *and* object: one path legitimately appears twice when HEAD
+    // and the index name different blobs for it, and that is the case this scan
+    // exists to see. The same blob at the same path twice is still a duplicate.
+    const identity = JSON.stringify([inside, entry.object]);
+    if (seen.has(identity)) {
+      throw new SecretScanInventoryError(
+        `the inventory lists ${rel} at object ${String(entry.object)} more than once`,
+      );
     }
-    seen.add(inside);
+    seen.add(identity);
   }
 
   const findings = [];
@@ -557,7 +632,11 @@ export function scanEntries({ root, entries }) {
         const digest = createHash(algorithm);
         digest.update(`blob ${String(length)}\0`, 'latin1');
         try {
-          reader.scanBytes(length, record(entry.path, 'index'), (chunk) => digest.update(chunk));
+          reader.scanBytes(
+            length,
+            record(entry.path, (entry.sources ?? ['index']).join('+')),
+            (chunk) => digest.update(chunk),
+          );
         } catch (error) {
           if (error instanceof SecretScanInventoryError) {
             throw new SecretScanInventoryError(`${entry.path}: ${error.message}`);
@@ -584,9 +663,13 @@ export function scanEntries({ root, entries }) {
 
   // The working tree, additionally. It cannot mask the indexed content — that
   // has already been scanned — so an entry that is absent or of another kind is
-  // noted rather than fatal. The fail-closed obligation sits on the index side
+  // noted rather than fatal. The fail-closed obligation sits on the object side
   // above, where the authoritative content is.
   for (const entry of entries) {
+    // Only where the index names this blob. A path that is in HEAD and not in
+    // the index — a staged deletion — has no working-tree counterpart to read,
+    // and its committed content has already been scanned.
+    if (entry.sources !== undefined && !entry.sources.includes('index')) continue;
     const rel = entry.path;
     const abs = resolve(root, rel);
     let stat;

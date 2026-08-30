@@ -29,6 +29,12 @@ jobs:
       # The validators below are pnpm scripts that import js-yaml. Without an
       # install this job passes only on a machine that already has node_modules,
       # which a clean runner does not.
+      # Before any dependency is installed. A lifecycle script runs arbitrary
+      # code with the checkout in place, so the first look at HEAD and the index
+      # must happen while nothing from the dependency tree has executed yet.
+      # This scan reads git and Node only, so it needs no install.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Validate governance documents
@@ -58,6 +64,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # Before any dependency is installed. A lifecycle script runs arbitrary
+      # code with the checkout in place, so the first look at HEAD and the index
+      # must happen while nothing from the dependency tree has executed yet.
+      # This scan reads git and Node only, so it needs no install.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Format check
@@ -94,6 +106,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # Before any dependency is installed. A lifecycle script runs arbitrary
+      # code with the checkout in place, so the first look at HEAD and the index
+      # must happen while nothing from the dependency tree has executed yet.
+      # This scan reads git and Node only, so it needs no install.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Install Playwright browser
@@ -113,6 +131,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # Before any dependency is installed. A lifecycle script runs arbitrary
+      # code with the checkout in place, so the first look at HEAD and the index
+      # must happen while nothing from the dependency tree has executed yet.
+      # This scan reads git and Node only, so it needs no install.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Validate compose configuration
@@ -170,6 +194,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # Before any dependency is installed. A lifecycle script runs arbitrary
+      # code with the checkout in place, so the first look at HEAD and the index
+      # must happen while nothing from the dependency tree has executed yet.
+      # This scan reads git and Node only, so it needs no install.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Start backing services
