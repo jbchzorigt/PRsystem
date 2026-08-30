@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | **`SECURITY_REPAIR_REQUIRED`** — eleven customer reviews completed; the eleventh repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
+| Phase state | **`SECURITY_REPAIR_REQUIRED`** — twelve customer reviews completed; the twelfth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the eleventh repair; see the same section |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the twelfth repair; see the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -1149,13 +1149,15 @@ the gate-battery block above link here and restate no counts;
 carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 /
 3` while this section read something else.
 
-Measured on the eleventh-repair tree. Every command exited 0.
+<!-- phase-03-evidence:begin -->
+
+Measured on the twelfth-repair tree. Every command exited 0.
 
 | Command | Result |
 | --- | --- |
 | `node tools/validate-governance.mjs` | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | 18 of 18 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | 6 of 6 correct |
+| `node tools/validate-governance.fixtures.mjs` | 22 of 22 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 11 of 11 correct |
 | `node tools/validate-workspace.mjs` | 15 of 15 |
 | `node tools/scan-secrets.mjs` | 328 tracked text files, none reported |
 | `pnpm run format:check` | clean |
@@ -1165,7 +1167,7 @@ Measured on the eleventh-repair tree. Every command exited 0.
 | `pnpm run build` | 16 of 16 projects |
 | `pnpm run openapi` | document generated |
 | `pnpm run compose:config` | valid |
-| `pnpm run test:migrations` | 120 |
+| `pnpm run test:migrations` | 134 |
 | `pnpm run test:integration` | 51 — db 41, outbox 5, api 5 |
 | `pnpm run test:concurrency` (three runs) | 16 each run |
 | `pnpm run test:regression` | 51 |
@@ -1184,6 +1186,8 @@ SEC-ROLE 21, SEC-RLS 33, SEC-ACL-MATRIX 110, SEC-OWNERSHIP 10, SEC-LOCK-EVIDENCE
 SEC-POOL-ERRORS 5, SEC-BOOTSTRAP 21, SEC-SCHEDULER 55, SEC-MAINTENANCE 24, SEC-STARTUP 38,
 SEC-STARTUP-WORKER 8, SEC-REGRESSION 51, SEC-AUDIT 42, SEC-PARTITION 14, SEC-POLICE-ISOLATION 7,
 SEC-KMS 17, SEC-PII-LEAK 10, SEC-SECRETS 6. Byte-identical across three consecutive runs.
+
+<!-- phase-03-evidence:end -->
 
 ---
 
@@ -1274,6 +1278,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Eleventh security repair (customer review 11) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The tenth repair was **not accepted**: the exact-final-HEAD clone proof was
 valid, and the remaining defects were false-green coverage *inside* the gates it
 executed. Five defects were raised; all are closed. Phase 03 stays
@@ -1298,6 +1305,46 @@ unchanged.
 | D3 | `working-directory` on the step and at both default levels; `gate-sec` made to depend on a skipped job | four accepted |
 | D4 | a decoy catalogue before the real one; a ratio inserted into the ledger row; the battery moved out of its markers; a stale review number; a historical section reclaiming "current counts" | the previous checks accepted them |
 | D5 | the reported line, tracked | reported nothing |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Twelfth security repair (customer review 12) — `SECURITY_REPAIR_REQUIRED`
+
+The eleventh repair was **not accepted**. Seven further false-negatives were
+raised, each independently reproduced; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**. D3, C1 and C6 were accepted and are
+unchanged.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| E1 | The kernel-object census derived its inventory from `pg_shdepend`. PostgreSQL records no ownership row there for an object owned by a *pinned* role, and the bootstrap superuser initdb creates (OID 10) is pinned — so an enum, a domain, a composite type or extended statistics in a kernel schema could be reassigned to the bootstrap operator and stay invisible | The census is generated from the catalogues themselves. Every schema-contained ownable class is classified in `OWNABLE_SCHEMA_CATALOGUES`, the query is built from that map, and the owner is read from the catalogue's own owner column, which has no pinned-role gap. Derived types and indexes are excluded with their reason — PostgreSQL refuses to reassign them independently. Fail-closed on an unclassified `relkind` or `typtype`, on an object it cannot name, and — through a coverage guard read from the running server — on a schema-contained catalogue in neither classification map |
+| E2 | `column.default` went straight to `sqlToQuery(...).sql` instead of through `render()`, so a parameterised default projected as `default $1` and two genuinely different defaults were indistinguishable | Defaults go through the same refusal that checks, generated expressions and predicates already used |
+| E3 | Policy role targets were stringified generically, and `String(pgRole('role_a'))` is `[object Object]`, so two policies granted to different roles projected identically | Single and array targets render by their canonical role names; a representation that cannot be named is refused rather than stringified |
+| E4 | `enumValues` was classified as non-persistent. PostgreSQL enum labels and their order are stored in `pg_enum` and decide what the column accepts and how it sorts; same-named declarations with different labels projected identically | Enum type identity and ordered labels are projected, carried in the canonical snapshot and compared against `pg_enum` in `enumsortorder`. A `pgEnum` column is told apart from a `text({ enum })` hint by carrying a `PgEnum` object, not by having `enumValues` |
+| E5 | `diffDeclarations` derived its declared-table set from the projected columns, so a zero-column table was absent from it — and every reverse comparison is scoped by that set, so removing a table's last column returned an empty difference | The projection carries an explicit declared-table inventory, independent of column count |
+| E6 | The canonical evidence read "Measured on the tenth-repair tree" while the position and the newest section both said eleventh, and governance passed 15 of 15 | Check 15 parses the label and compares its ordinal with the current-position pair and the newest repair section. All three ordinals are read from the document; none is hard-coded. Two drift fixtures cover it |
+| E7 | The scanner removed every occurrence of an allow-listed value from the line and scanned the remainder, so an allowance suppressed any credential that merely contained it — suffix, prefix and both | Detection runs first and each detected value must equal an allowance exactly. `generic-assignment` captures the quoted value; every match on a line is examined. No line-level or file-level exemption is reintroduced. The truncated PEM allowance is removed and the telemetry fixture assembles the header at runtime |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| E1 | an enum, a domain, a composite type and extended statistics created in `platform` by the admin connection, which is the pinned bootstrap superuser | four accepted, and the upgrade applied its pending DDL. A companion case asserts the premise directly: `pg_shdepend` holds zero ownership rows for such an object |
+| E2 | two different parameterised defaults, and the equivalent literal | both projected as `default $1`; the literal was already accepted |
+| E3 | `pgRole('probe_role_a')` and `pgRole('probe_role_b')` on otherwise identical policies | both projected `TO [object Object]` |
+| E4 | same-named `pgEnum` declarations differing by an added label and by order, and a `text({ enum })` control | no enum was projected at all, so all three compared equal |
+| E5 | a declared table with no columns, against a snapshot holding one column for it | an empty difference |
+| E6 | the label alone, against the position and the newest section | the previous check accepted it; the new check fails on the unmodified document |
+| E7 | allowed-value-plus-suffix, prefix-plus-allowed-value, and both | each reported 0 findings |
+
+Twelve of the 42 extraction cases and all four bootstrap-ownership cases were
+observed failing on `d63da9f` before any fix was written.
 
 #### Standing items, unchanged
 

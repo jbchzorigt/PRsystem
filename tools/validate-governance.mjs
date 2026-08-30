@@ -613,12 +613,24 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
     `current position names the ${String(repair)} repair; the last section is the ${String(newest)}`,
   );
 
+  // The measured results are bounded by their own markers, for the same reason
+  // the battery is: a `##` section runs to the next `##`, so the canonical
+  // section swallows every `###` repair record below it and a phrase quoted in
+  // one of those would be read as the label. The region must sit inside the
+  // canonical section, and the label is parsed from the region alone.
+  const measuredRegion = marked(text, 'phase-03-evidence');
+  assert(measuredRegion !== undefined, 'the canonical evidence results have no bounding markers');
+  assert(
+    evidence.includes('<!-- phase-03-evidence:begin -->'),
+    'the canonical evidence results are outside the canonical evidence section',
+  );
+
   // The canonical evidence must say which repair tree it was measured on, and
   // that ordinal is compared against the two derived above rather than against a
   // fixed value. The label read "the tenth-repair tree" while the position and
   // the newest section both said eleventh, and nothing looked: the counts under
   // it were then attributed to a tree they were not measured on.
-  const measured = /Measured on the ([a-z]+)-repair tree/.exec(evidence)?.[1];
+  const measured = /^Measured on the ([a-z]+)-repair tree/m.exec(measuredRegion)?.[1];
   assert(
     measured !== undefined,
     'the canonical evidence does not say which repair tree it was measured on',

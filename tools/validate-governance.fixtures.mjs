@@ -84,6 +84,31 @@ const FIXTURES = [
     },
   },
   {
+    name: 'evidence: the results markers removed',
+    file: 'phase-status',
+    expect: /canonical evidence results have no bounding markers/,
+    mutate: (text) =>
+      text
+        .replace('<!-- phase-03-evidence:begin -->\n\n', '')
+        .replace('\n<!-- phase-03-evidence:end -->\n', ''),
+  },
+  {
+    // The whole marked block moved out of the canonical section. A `##` section
+    // runs to the next `##`, so "inside the section" has to be asserted rather
+    // than assumed from where the text happens to sit.
+    name: 'evidence: the results moved outside the canonical section',
+    file: 'phase-status',
+    expect: /canonical evidence results are outside the canonical evidence section/,
+    mutate: (text) => {
+      const begin = text.indexOf('<!-- phase-03-evidence:begin -->');
+      const endMarker = '<!-- phase-03-evidence:end -->';
+      const end = text.indexOf(endMarker);
+      if (begin < 0 || end < 0) throw new Error('the evidence markers are missing');
+      const block = text.slice(begin, end + endMarker.length);
+      return `${text.slice(0, begin)}${text.slice(end + endMarker.length)}\n\n${block}\n`;
+    },
+  },
+  {
     name: 'evidence: the measured-on label removed entirely',
     file: 'phase-status',
     expect: /does not say which repair tree it was measured on/,
@@ -173,20 +198,38 @@ const FIXTURES = [
     mutate: (text) => text.replace(/^## Current Phase 03 evidence$/m, '## Evidence'),
   },
   {
+    // Derived from the document, not written against whichever repair happens to
+    // be current. Two of these fixtures used to name `eleven`/`eleventh`
+    // literally and silently stopped mutating anything the moment the count
+    // advanced — a negative fixture that changes nothing proves nothing.
     name: 'current position: a stale review number',
     file: 'phase-status',
-    expect: /says "nine" reviews and "eleventh" repair/,
-    mutate: (text) =>
-      text.replace('eleven customer reviews completed', 'nine customer reviews completed'),
+    expect: /says "[a-z]+" reviews and "[a-z]+" repair/,
+    mutate: (text) => {
+      const cardinal = /([a-z]+) customer reviews completed/.exec(text)?.[1];
+      if (cardinal === undefined) throw new Error('no "… customer reviews completed" phrase');
+      const other = cardinal === 'nine' ? 'eight' : 'nine';
+      return text.replace(
+        `${cardinal} customer reviews completed`,
+        `${other} customer reviews completed`,
+      );
+    },
   },
   {
     name: 'current position: a stale repair ordinal',
     file: 'phase-status',
-    expect: /names the ninth repair; the last section is the eleventh/,
-    mutate: (text) =>
-      text
-        .replace('eleven customer reviews completed', 'nine customer reviews completed')
-        .replace('the eleventh repair is implemented', 'the ninth repair is implemented'),
+    expect: /names the [a-z]+ repair; the last section is the [a-z]+/,
+    mutate: (text) => {
+      const cardinal = /([a-z]+) customer reviews completed/.exec(text)?.[1];
+      const ordinal = /the ([a-z]+) repair is implemented/.exec(text)?.[1];
+      if (cardinal === undefined || ordinal === undefined) {
+        throw new Error('the current position does not carry a cardinal/ordinal pair');
+      }
+      const pair = cardinal === 'nine' ? ['eight', 'eighth'] : ['nine', 'ninth'];
+      return text
+        .replace(`${cardinal} customer reviews completed`, `${pair[0]} customer reviews completed`)
+        .replace(`the ${ordinal} repair is implemented`, `the ${pair[1]} repair is implemented`);
+    },
   },
   {
     name: 'a historical section reclaims the current counts',
