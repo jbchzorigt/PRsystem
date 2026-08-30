@@ -152,6 +152,113 @@ const FIXTURES = [
     },
   },
   {
+    // The marker pair wraps one correct-looking label while the real result
+    // table sits outside it carrying a stale one. Marker geometry alone was
+    // satisfied; the region's contents were never checked.
+    name: 'evidence: the markers wrap a decoy label and nothing else',
+    file: 'phase-status',
+    expect: /canonical evidence results have no row for/,
+    mutate: (text) => {
+      const begin = '<!-- phase-03-evidence:begin -->';
+      const end = '<!-- phase-03-evidence:end -->';
+      const from = text.indexOf(begin);
+      const to = text.indexOf(end) + end.length;
+      if (from < 0 || to < end.length) throw new Error('the evidence markers are missing');
+      const inner = text.slice(from + begin.length, to - end.length);
+      const label = /^Measured on the [a-z]+-repair tree[^\n]*/m.exec(inner)?.[0];
+      if (label === undefined) throw new Error('no measured-on label');
+      const stale = inner.replace(
+        label,
+        'Measured on the first-repair tree. Every command exited 0.',
+      );
+      return `${text.slice(0, from)}${begin}\n\n${label}\n\n${end}\n${stale}${text.slice(to)}`;
+    },
+  },
+  {
+    // Correct-looking prose above the table, while the table's own row goes
+    // stale. Searching the section for the first matching sentence found the
+    // decoy.
+    name: 'current position: decoy prose above a stale Phase state row',
+    file: 'phase-status',
+    expect: /names review \d+; the history runs to review \d+/,
+    mutate: (text) => {
+      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
+      if (row === undefined) throw new Error('no Phase state row');
+      const cardinal = /([a-z]+) customer reviews completed/.exec(row)?.[1];
+      const ordinal = /the ([a-z]+) repair is implemented/.exec(row)?.[1];
+      if (cardinal === undefined || ordinal === undefined) throw new Error('unparsable row');
+      const decoy =
+        `${cardinal} customer reviews completed; the ${ordinal} repair is implemented and ` +
+        'committed.\n\n';
+      return text
+        .replace('## Current position\n\n', `## Current position\n\n${decoy}`)
+        .replace(
+          row,
+          row
+            .replace(`${cardinal} customer reviews completed`, 'two customer reviews completed')
+            .replace(`the ${ordinal} repair is implemented`, 'the second repair is implemented'),
+        );
+    },
+  },
+  {
+    name: 'current position: a second Phase state row',
+    file: 'phase-status',
+    expect: /exactly one "Phase state" row/,
+    mutate: (text) => {
+      const row = /^\|\s*Phase state\s*\|[^\n]*$/m.exec(text)?.[0];
+      if (row === undefined) throw new Error('no Phase state row');
+      return text.replace(row, `${row}\n${row}`);
+    },
+  },
+  {
+    name: 'history: the latest heading duplicated',
+    file: 'phase-status',
+    expect: /repeats a review number/,
+    mutate: (text) => {
+      const headings = [
+        ...text.matchAll(/^### [A-Za-z]+ security repair \(customer review \d+\)[^\n]*$/gm),
+      ];
+      const newest = headings[headings.length - 1]?.[0];
+      if (newest === undefined) throw new Error('no repair heading');
+      return text.replace(newest, `${newest}\n\n(duplicate)\n\n${newest}`);
+    },
+  },
+  {
+    name: 'history: a malformed near-match heading',
+    file: 'phase-status',
+    expect: /does not match the canonical form/,
+    mutate: (text) => {
+      const heading = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
+      if (heading === undefined) throw new Error('no ninth repair heading');
+      return text.replace(heading, '### Ninth security repair — legacy format');
+    },
+  },
+  {
+    name: 'history: a gap in the numbering',
+    file: 'phase-status',
+    expect: /is not 1\.\.\d+ in order/,
+    mutate: (text) => {
+      const heading = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
+      if (heading === undefined) throw new Error('no ninth repair heading');
+      return text.replace(heading, '### Ninth pass notes');
+    },
+  },
+  {
+    name: 'history: two sections transposed',
+    file: 'phase-status',
+    expect: /is not 1\.\.\d+ in order/,
+    mutate: (text) => {
+      const ninth = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
+      const tenth = /^### Tenth security repair \(customer review 10\)[^\n]*$/m.exec(text)?.[0];
+      if (ninth === undefined || tenth === undefined) throw new Error('missing repair headings');
+      return text
+        .replace(ninth, '@@NINTH@@')
+        .replace(tenth, '@@TENTH@@')
+        .replace('@@NINTH@@', tenth)
+        .replace('@@TENTH@@', ninth);
+    },
+  },
+  {
     name: 'evidence: the results markers removed',
     file: 'phase-status',
     expect:
@@ -180,7 +287,7 @@ const FIXTURES = [
   {
     name: 'evidence: the measured-on label removed entirely',
     file: 'phase-status',
-    expect: /does not say which repair tree it was measured on/,
+    expect: /carry 0 measured-on labels; there must be exactly one/,
     mutate: (text) =>
       text.replace(/Measured on the [a-z]+-repair tree\./, 'Measured on the final tree.'),
   },
@@ -288,7 +395,7 @@ const FIXTURES = [
   {
     name: 'current position: a stale repair ordinal',
     file: 'phase-status',
-    expect: /names review \d+; the last section is review \d+/,
+    expect: /names review \d+; the history runs to review \d+/,
     mutate: (text) => {
       const cardinal = /([a-z]+) customer reviews completed/.exec(text)?.[1];
       const ordinal = /the ([a-z]+) repair is implemented/.exec(text)?.[1];

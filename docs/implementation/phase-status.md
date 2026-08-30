@@ -507,7 +507,7 @@ nor "partially exercised": it is complete for what Phase 03 owns.
 - Lookup tokens differ across identity type, country, realm scope and a namespace-boundary shift.
 - The local KMS refuses to construct outside `local`, `ci` or `test`, and its error names no key.
 
-### Security repair after customer review (Phase 03)
+### First security repair (customer review 1) — `SECURITY_REPAIR_REQUIRED`
 
 > **Historical snapshot.** Records the first repair as it stood. Role counts, gate counts and test counts here are those of that pass, not the current ones; the current model is 11 group roles and 7 login principals, and the current gate table is in *Fifth security repair* below.
 
@@ -535,7 +535,7 @@ editing: the remote has exactly one ref, `refs/heads/main` at `c1c2abc`, and zer
 `0001_kernel.sql` is absent from `origin/main`; and commit `8a62b0b` is an ancestor of no remote ref.
 The migration has never been pushed, tagged or released.
 
-### Second repair after review (Phase 03)
+### Second security repair (customer review 2) — `SECURITY_REPAIR_REQUIRED`
 
 > **Historical snapshot.** Counts and role descriptions are those of the second pass.
 
