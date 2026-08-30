@@ -244,7 +244,12 @@ export function gitInventory(root) {
   const entries = [];
   const byIdentity = new Map();
   const add = (entry, source) => {
-    const key = JSON.stringify([entry.path, entry.object]);
+    // Path, object *and* mode. The mode is what decides how the entry is read,
+    // and it belongs to the source that recorded it: with the mode left out of
+    // the key, a regular file in HEAD and a symlink in the index naming the same
+    // blob collapsed into one entry carrying HEAD's mode, and the working-tree
+    // symlink was then skipped as "not a regular file" without ever being read.
+    const key = JSON.stringify([entry.path, entry.object, entry.mode]);
     const seenEntry = byIdentity.get(key);
     if (seenEntry !== undefined) {
       if (!seenEntry.sources.includes(source)) seenEntry.sources.push(source);
@@ -518,13 +523,16 @@ export function scanEntries({ root, entries }) {
     if (inside.startsWith('..') || isAbsolute(inside)) {
       throw new SecretScanInventoryError(`inventory path escapes the scan root: ${rel}`);
     }
-    // Keyed on path *and* object: one path legitimately appears twice when HEAD
-    // and the index name different blobs for it, and that is the case this scan
-    // exists to see. The same blob at the same path twice is still a duplicate.
-    const identity = JSON.stringify([inside, entry.object]);
+    // Keyed on path, object *and* mode. One path legitimately appears twice when
+    // HEAD and the index name different blobs for it, and again when they name
+    // the same blob under different modes — a regular file replaced by a symlink
+    // with the same text. Both are cases this scan exists to see. The same blob
+    // at the same path under the same mode is still a duplicate.
+    const identity = JSON.stringify([inside, entry.object, entry.mode]);
     if (seen.has(identity)) {
       throw new SecretScanInventoryError(
-        `the inventory lists ${rel} at object ${String(entry.object)} more than once`,
+        `the inventory lists ${rel} at object ${String(entry.object)} with mode ` +
+          `${String(entry.mode)} more than once`,
       );
     }
     seen.add(identity);
@@ -666,9 +674,10 @@ export function scanEntries({ root, entries }) {
   // noted rather than fatal. The fail-closed obligation sits on the object side
   // above, where the authoritative content is.
   for (const entry of entries) {
-    // Only where the index names this blob. A path that is in HEAD and not in
-    // the index — a staged deletion — has no working-tree counterpart to read,
-    // and its committed content has already been scanned.
+    // Only the index entry, and only with the index entry's own mode. A path
+    // that is in HEAD and not in the index — a staged deletion — has no
+    // working-tree counterpart to read, and its committed content has already
+    // been scanned.
     if (entry.sources !== undefined && !entry.sources.includes('index')) continue;
     const rel = entry.path;
     const abs = resolve(root, rel);

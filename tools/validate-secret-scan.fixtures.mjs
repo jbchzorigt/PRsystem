@@ -692,6 +692,100 @@ inTempDir((dir) => {
   );
 });
 
+// ------------------------------------------------------------ mode changes
+/**
+ * The same blob under two modes is two entries, not one.
+ *
+ * Deduplicating on `[path, object]` alone let a regular file in HEAD and a
+ * symlink in the index — the same text, so the same blob — collapse into one
+ * entry carrying HEAD's mode. The working-tree symlink was then skipped as "not
+ * a regular file" and its link text, which is where the credential was, went
+ * unread.
+ */
+const MODE_FIXTURES = [
+  {
+    name: 'mode: regular file in HEAD, symlink in the index, secret link target',
+    build: (dir) => writeFileSync(join(dir, 'probe.ts'), 'clean-target'),
+    after: (root) => {
+      rmSync(join(root, 'probe.ts'));
+      symlinkSync('clean-target', join(root, 'probe.ts'));
+      git(root, ['add', 'probe.ts']);
+      rmSync(join(root, 'probe.ts'));
+      symlinkSync(`${KEY}="an-actual-looking-credential-1234"`, join(root, 'probe.ts'));
+    },
+    expectFindings: 1,
+    expectSources: ['worktree'],
+    expectScanned: 2,
+    expectNotes: 0,
+  },
+  {
+    name: 'mode: symlink in HEAD, regular file in the index, secret file content',
+    build: (dir) => symlinkSync('clean-target', join(dir, 'probe.ts')),
+    after: (root) => {
+      rmSync(join(root, 'probe.ts'));
+      writeFileSync(join(root, 'probe.ts'), 'clean-target');
+      git(root, ['add', 'probe.ts']);
+      writeFileSync(join(root, 'probe.ts'), LEAK);
+    },
+    expectFindings: 1,
+    expectSources: ['worktree'],
+    expectScanned: 2,
+    expectNotes: 0,
+  },
+  {
+    name: 'mode: identical path, object and mode is one entry',
+    build: (dir) => writeFileSync(join(dir, 'probe.ts'), 'clean-target'),
+    after: () => undefined,
+    expectFindings: 0,
+    expectSources: [],
+    expectScanned: 1,
+    expectNotes: 0,
+  },
+  {
+    name: 'mode: a mode change with a clean working tree reports nothing',
+    build: (dir) => writeFileSync(join(dir, 'probe.ts'), 'clean-target'),
+    after: (root) => {
+      rmSync(join(root, 'probe.ts'));
+      symlinkSync('clean-target', join(root, 'probe.ts'));
+      git(root, ['add', 'probe.ts']);
+    },
+    expectFindings: 0,
+    expectSources: [],
+    expectScanned: 2,
+    expectNotes: 0,
+  },
+];
+
+for (const fixture of MODE_FIXTURES) {
+  inTempDir((dir) => {
+    const root = repository(join(dir, 'repo'), fixture.build);
+    fixture.after(root);
+    let result;
+    let raised;
+    try {
+      result = scanRepository(root);
+    } catch (error) {
+      raised = error;
+    }
+    const findings = result?.findings ?? [];
+    const sources = [...new Set(findings.map((finding) => finding.source))].sort();
+    const ok =
+      raised === undefined &&
+      findings.length === fixture.expectFindings &&
+      result?.scanned === fixture.expectScanned &&
+      (result?.notes.length ?? -1) === fixture.expectNotes &&
+      sources.join(',') === [...fixture.expectSources].sort().join(',');
+    record(
+      fixture.name,
+      ok,
+      raised !== undefined
+        ? `raised ${String(raised)}`
+        : `scanned ${String(result?.scanned)}, ${String(findings.length)} finding(s) from ` +
+            `[${sources.join(', ')}], ${String(result?.notes.length)} note(s)`,
+    );
+  });
+}
+
 // ------------------------------------------------------------- replace refs
 /**
  * `git replace` substitutes one object for another, repository-locally.
