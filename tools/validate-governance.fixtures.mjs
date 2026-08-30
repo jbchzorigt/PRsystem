@@ -611,7 +611,7 @@ const FIXTURES = [
     // a stale label beside it is what a reader would actually see.
     name: 'evidence: the correct label hidden in a comment beside a stale one',
     file: 'phase-status',
-    expect: /raw HTML in a governed region is not an approved boundary marker/,
+    expect: /raw HTML is not an approved boundary marker/,
     mutate: (text) => {
       const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
       if (label === undefined) throw new Error('no measured-on label');
@@ -635,7 +635,7 @@ const FIXTURES = [
   {
     name: 'history: a raw <h3> repair heading',
     file: 'phase-status',
-    expect: /raw HTML in a governed region is not an approved boundary marker: <h3>/,
+    expect: /raw HTML is not an approved boundary marker: <h3>/,
     mutate: (text) =>
       text.replace(
         '## Update protocol',
@@ -655,7 +655,7 @@ const FIXTURES = [
   {
     name: 'history: a canonical heading hidden in a comment beside a visible record',
     file: 'phase-status',
-    expect: /raw HTML in a governed region is not an approved boundary marker: <!-- ###/,
+    expect: /raw HTML is not an approved boundary marker: <!-- ###/,
     mutate: (text) => {
       const real = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       if (real === undefined) throw new Error('no ninth repair heading');
@@ -838,7 +838,7 @@ const FIXTURES = [
   {
     name: 'nested: a blockquoted raw HTML heading',
     file: 'phase-status',
-    expect: /raw HTML in a governed region is not an approved boundary marker: <h3>/,
+    expect: /raw HTML is not an approved boundary marker: <h3>/,
     mutate: (text) =>
       text.replace(
         '## Update protocol',
@@ -922,7 +922,7 @@ const FIXTURES = [
   {
     name: 'nested: raw HTML inside the Current position section',
     file: 'phase-status',
-    expect: /raw HTML in a governed region is not an approved boundary marker: <div>/,
+    expect: /raw HTML is not an approved boundary marker: <div>/,
     mutate: (text) =>
       text.replace(
         '| Current phase | 03 — Platform kernel |',
@@ -1103,6 +1103,73 @@ const FIXTURES = [
         manifest: `${JSON.stringify(manifest, null, 2)}\n`,
       };
     },
+  },
+  {
+    // The section span was derived from whatever contained the heading, so a
+    // blockquoted H2 governed the blockquote and every containment test then
+    // answered about the wrong span.
+    name: 'rendered: the Current position H2 blockquoted',
+    file: 'phase-status',
+    expect: /the "Current position" H2 is nested inside another block/,
+    mutate: (text) => text.replace('## Current position', '> ## Current position'),
+  },
+  {
+    name: 'rendered: the Current Phase 03 evidence H2 blockquoted',
+    file: 'phase-status',
+    expect: /the "Current Phase 03 evidence" H2 is nested inside another block/,
+    mutate: (text) =>
+      text.replace('## Current Phase 03 evidence', '> ## Current Phase 03 evidence'),
+  },
+  {
+    // A list item's text lives in `items[].tokens`, which the visible-text walk
+    // did not reach.
+    name: 'rendered: a conflicting measured-on label inside a list',
+    file: 'phase-status',
+    expect: /carry 2 visible measured-on labels/,
+    mutate: (text) => {
+      const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
+      if (label === undefined) throw new Error('no measured-on label');
+      return text.replace(
+        label,
+        `${label}\n\n- Measured on the first-repair tree. Every command exited 0.`,
+      );
+    },
+  },
+  {
+    name: 'rendered: a second blockquoted ledger declaring Phase 03 DONE',
+    file: 'phase-status',
+    expect: /there are 2 rendered phase ledger tables/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '> | # | Phase | State | Migrations | Gates run | Commit |\n' +
+          '> | --- | --- | --- | --- | --- | --- |\n' +
+          '> | 03 | Platform kernel | `DONE` | — | — | — |\n\n## Update protocol',
+      ),
+  },
+  {
+    // `<h3 >…</h3 >` renders as a heading and matches no pattern written for
+    // `<h3>…</h3>`. Rather than chase HTML semantics with regexes, the document
+    // carries no raw HTML beyond its six boundary comments.
+    name: 'rendered: a raw HTML heading with closing-tag whitespace',
+    file: 'phase-status',
+    expect: /raw HTML is not an approved boundary marker: <h3 >/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '<h3 >Nineteenth security repair (customer review 19)</h3 >\n\n## Update protocol',
+      ),
+  },
+  {
+    name: 'rendered: a raw HTML heading whose words are split by inline tags',
+    file: 'phase-status',
+    expect: /raw HTML is not an approved boundary marker: <h3>/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '<h3>Nineteenth security re<span></span>pair (customer review 19)</h3>\n\n' +
+          '## Update protocol',
+      ),
   },
   {
     name: 'evidence: the results markers removed',

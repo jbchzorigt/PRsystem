@@ -768,9 +768,12 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       if (token === undefined || token === null) return '';
       if (token.type === 'html' || token.type === 'code' || token.type === 'codespan') return '';
       if (token.type === 'def' || token.type === 'image') return '';
-      if (Array.isArray(token.tokens) && token.tokens.length > 0) {
-        return token.tokens.map(visibleText).join('');
+      const children = [];
+      for (const key of ['tokens', 'items', 'header']) {
+        if (Array.isArray(token[key])) children.push(...token[key]);
       }
+      if (Array.isArray(token.rows)) for (const row of token.rows) children.push(...row);
+      if (children.length > 0) return children.map(visibleText).join('\n');
       if (token.type === 'text' || token.type === 'escape' || token.type === undefined) {
         return decodeEntities(String(token.text ?? ''));
       }
@@ -894,7 +897,15 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       `there are ${String(evidenceHeadings.length)} visible "Current Phase 03 evidence" H2 ` +
         'headings; there must be exactly one',
     );
-    const evidenceHeading = evidenceHeadings[0].entry.top;
+    // The heading itself, not whatever contains it. Deriving the section span
+    // from a descendant's top-level container made a blockquoted H2 govern the
+    // blockquote rather than the section, and every containment test then
+    // answered about the wrong span.
+    assert(
+      evidenceHeadings[0].entry.top === evidenceHeadings[0].entry.token,
+      'the "Current Phase 03 evidence" H2 is nested inside another block',
+    );
+    const evidenceHeading = evidenceHeadings[0].entry.token;
     const nextTop = tokens.find(
       (token) =>
         token.start > evidenceHeading.start && token.type === 'heading' && token.depth <= 2,
@@ -925,7 +936,11 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       `there are ${String(positionHeadings.length)} visible "Current position" H2 headings; there ` +
         'must be exactly one',
     );
-    const positionHeading = positionHeadings[0].entry.top;
+    assert(
+      positionHeadings[0].entry.top === positionHeadings[0].entry.token,
+      'the "Current position" H2 is nested inside another block',
+    );
+    const positionHeading = positionHeadings[0].entry.token;
     const afterPosition = tokens.find(
       (token) =>
         token.start > positionHeading.start && token.type === 'heading' && token.depth <= 2,
@@ -936,12 +951,31 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     };
 
     // The phase ledger's own span, so raw HTML inside it is governed too.
-    const ledgerTable = allTokens.find(
+    // Exactly one ledger table, and exactly one Phase 03 and one Phase 04 row in
+    // the whole document. A second, blockquoted ledger declaring Phase 03 `DONE`
+    // rendered beside the real one and was never counted.
+    const ledgerTables_ = allTokens.filter(
       (entry) =>
         entry.token.type === 'table' &&
-        (entry.token.rows ?? []).some((row) => row[0]?.text.trim() === '03'),
+        (entry.token.rows ?? []).some((row) => ['03', '04'].includes(row[0]?.text.trim())),
     );
-    assert(ledgerTable !== undefined, 'the phase ledger is not one table');
+    assert(
+      ledgerTables_.length === 1,
+      `there are ${String(ledgerTables_.length)} rendered phase ledger tables; there must be ` +
+        'exactly one',
+    );
+    const ledgerTable = ledgerTables_[0];
+    for (const phase of ['03', '04']) {
+      const rows = allTokens
+        .filter((entry) => entry.token.type === 'table')
+        .flatMap((entry) => entry.token.rows ?? [])
+        .filter((row) => row[0]?.text.trim() === phase);
+      assert(
+        rows.length === 1,
+        `there are ${String(rows.length)} Phase ${phase} rows in the document; there must be ` +
+          'exactly one',
+      );
+    }
 
     // Raw HTML, governed.
     //
@@ -949,19 +983,18 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // the repair history, and to nested tokens as well as top-level ones. An HTML
     // comment renders as nothing, so anything written inside one is invisible to a
     // reader and must be invisible to this check too.
-    const governedSpans = [
-      evidenceSpan,
-      history,
-      positionSpan,
-      { start: ledgerTable.top.start, end: ledgerTable.top.end },
-    ];
+    // Everywhere in the document, not only inside the governed regions.
+    //
+    // Implementing HTML semantics with heading regexes is a losing game —
+    // `<h3 >…</h3 >` and `re<span></span>pair` both render as headings and
+    // neither matches a pattern written for `<h3>…</h3>`. The document has no
+    // need for raw HTML at all beyond its six boundary comments, so everything
+    // else is refused and there is nothing left to parse.
     for (const entry of allTokens) {
       if (entry.token.type !== 'html') continue;
-      if (!governedSpans.some((span) => nestedInSpan(entry, span))) continue;
       assert(
         APPROVED_HTML.has(entry.token.raw.trim()),
-        'raw HTML in a governed region is not an approved boundary marker: ' +
-          `${entry.token.raw.trim().slice(0, 70)}`,
+        'raw HTML is not an approved boundary marker: ' + `${entry.token.raw.trim().slice(0, 70)}`,
       );
     }
 
