@@ -1149,7 +1149,7 @@ the gate-battery block above link here and restate no counts;
 carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 /
 3` while this section read something else.
 
-Measured on the tenth-repair tree. Every command exited 0.
+Measured on the eleventh-repair tree. Every command exited 0.
 
 | Command | Result |
 | --- | --- |

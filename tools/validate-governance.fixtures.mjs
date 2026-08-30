@@ -66,6 +66,31 @@ const FIXTURES = [
     },
   },
   {
+    // The canonical evidence label naming a different repair from the one the
+    // current position and the newest section name. The check derives both
+    // ordinals from the document, so this fixture mutates the label alone and
+    // does not depend on which repair happens to be current.
+    name: 'evidence: the measured-on label names an older repair',
+    file: 'phase-status',
+    expect: /measured on the [a-z]+-repair tree"; the current position/,
+    mutate: (text) => {
+      const current = /Measured on the ([a-z]+)-repair tree/.exec(text)?.[1];
+      if (current === undefined) throw new Error('no "Measured on the …-repair tree" label');
+      const older = current === 'ninth' ? 'eighth' : 'ninth';
+      return text.replace(
+        `Measured on the ${current}-repair tree`,
+        `Measured on the ${older}-repair tree`,
+      );
+    },
+  },
+  {
+    name: 'evidence: the measured-on label removed entirely',
+    file: 'phase-status',
+    expect: /does not say which repair tree it was measured on/,
+    mutate: (text) =>
+      text.replace(/Measured on the [a-z]+-repair tree\./, 'Measured on the final tree.'),
+  },
+  {
     name: 'ledger: an N/N ratio restated',
     file: 'phase-status',
     expect: /ledger row restates an N\/N ratio/,

@@ -613,6 +613,22 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
     `current position names the ${String(repair)} repair; the last section is the ${String(newest)}`,
   );
 
+  // The canonical evidence must say which repair tree it was measured on, and
+  // that ordinal is compared against the two derived above rather than against a
+  // fixed value. The label read "the tenth-repair tree" while the position and
+  // the newest section both said eleventh, and nothing looked: the counts under
+  // it were then attributed to a tree they were not measured on.
+  const measured = /Measured on the ([a-z]+)-repair tree/.exec(evidence)?.[1];
+  assert(
+    measured !== undefined,
+    'the canonical evidence does not say which repair tree it was measured on',
+  );
+  assert(
+    measured === repair,
+    `the canonical evidence was "measured on the ${String(measured)}-repair tree"; the current ` +
+      `position and the newest repair section both name the ${String(repair)} repair`,
+  );
+
   // Every mutable result form, in every region that is not the canonical
   // section. `15/15 checks` slipped through a pattern that only knew about
   // gate names and sub-gate counts.
@@ -648,7 +664,10 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
     `a superseded section still claims to be current: ${stale[0]?.trim().slice(0, 70) ?? ''}`,
   );
 
-  return 'one canonical section; ledger row, battery and current position agree and restate nothing';
+  return (
+    `one canonical section, measured on the ${repair}-repair tree; ledger row, battery and ` +
+    'current position agree and restate nothing'
+  );
 });
 
 // ------------------------------------------------------------------- report
