@@ -72,7 +72,7 @@ const FIXTURES = [
     // does not depend on which repair happens to be current.
     name: 'evidence: the measured-on label names an older repair',
     file: 'phase-status',
-    expect: /measured on the [a-z]+-repair tree"; the current position/,
+    expect: /measured on the [a-z]+-repair tree" \(\d+\); the current position/,
     mutate: (text) => {
       const current = /Measured on the ([a-z]+)-repair tree/.exec(text)?.[1];
       if (current === undefined) throw new Error('no "Measured on the …-repair tree" label');
@@ -84,9 +84,78 @@ const FIXTURES = [
     },
   },
   {
+    // A correct-looking marker pair placed *before* the canonical section, while
+    // the real block inside it carries a stale label. `indexOf` took the first
+    // begin and the first end, so the decoy supplied the region and the real
+    // block went unread.
+    name: 'evidence: a decoy marker pair before the canonical section',
+    file: 'phase-status',
+    expect: /expected exactly one begin marker and one end marker, found 2 and 2/,
+    mutate: (text) => {
+      const label = /Measured on the ([a-z]+)-repair tree/.exec(text)?.[1];
+      if (label === undefined) throw new Error('no measured-on label');
+      const decoy =
+        `<!-- phase-03-evidence:begin -->\n\nMeasured on the ${label}-repair tree. ` +
+        'Every command exited 0.\n\n<!-- phase-03-evidence:end -->\n\n';
+      return text
+        .replace('## Current position', `${decoy}## Current position`)
+        .replace(
+          `Measured on the ${label}-repair tree. Every command exited 0.\n\n| Command |`,
+          'Measured on the first-repair tree. Every command exited 0.\n\n| Command |',
+        );
+    },
+  },
+  {
+    name: 'evidence: a decoy marker pair after the canonical section',
+    file: 'phase-status',
+    expect: /expected exactly one begin marker and one end marker, found 2 and 2/,
+    mutate: (text) =>
+      `${text}\n<!-- phase-03-evidence:begin -->\n\nMeasured on the first-repair tree.\n\n` +
+      '<!-- phase-03-evidence:end -->\n',
+  },
+  {
+    name: 'evidence: a duplicate begin marker',
+    file: 'phase-status',
+    expect: /expected exactly one begin marker and one end marker, found 2 and 1/,
+    mutate: (text) =>
+      text.replace(
+        '<!-- phase-03-evidence:begin -->',
+        '<!-- phase-03-evidence:begin -->\n<!-- phase-03-evidence:begin -->',
+      ),
+  },
+  {
+    name: 'evidence: the markers reversed',
+    file: 'phase-status',
+    expect: /the end marker precedes the begin marker/,
+    mutate: (text) =>
+      text
+        .replace('<!-- phase-03-evidence:begin -->', '<!-- phase-03-evidence:PLACEHOLDER -->')
+        .replace('<!-- phase-03-evidence:end -->', '<!-- phase-03-evidence:begin -->')
+        .replace('<!-- phase-03-evidence:PLACEHOLDER -->', '<!-- phase-03-evidence:end -->'),
+  },
+  {
+    // The newest heading renumbered. The numeral was captured and never
+    // compared, so `(customer review 12)` could become `(customer review 11)`.
+    name: 'current position: the newest heading carries the wrong review number',
+    file: 'phase-status',
+    expect: /the last section is review \d+|disagrees with its own number/,
+    mutate: (text) => {
+      const headings = [
+        ...text.matchAll(/### ([A-Za-z]+) security repair \(customer review (\d+)\)/g),
+      ];
+      const newest = headings[headings.length - 1];
+      if (newest === undefined) throw new Error('no numbered repair section');
+      return text.replace(
+        newest[0],
+        `### ${newest[1]} security repair (customer review ${String(Number(newest[2]) - 1)})`,
+      );
+    },
+  },
+  {
     name: 'evidence: the results markers removed',
     file: 'phase-status',
-    expect: /canonical evidence results have no bounding markers/,
+    expect:
+      /phase-03-evidence: expected exactly one begin marker and one end marker, found 0 and 0/,
     mutate: (text) =>
       text
         .replace('<!-- phase-03-evidence:begin -->\n\n', '')
@@ -98,7 +167,7 @@ const FIXTURES = [
     // than assumed from where the text happens to sit.
     name: 'evidence: the results moved outside the canonical section',
     file: 'phase-status',
-    expect: /canonical evidence results are outside the canonical evidence section/,
+    expect: /canonical evidence results is not inside the canonical evidence section/,
     mutate: (text) => {
       const begin = text.indexOf('<!-- phase-03-evidence:begin -->');
       const endMarker = '<!-- phase-03-evidence:end -->';
@@ -148,7 +217,7 @@ const FIXTURES = [
   {
     name: 'gate battery: moved outside its markers',
     file: 'phase-status',
-    expect: /gate battery is outside the canonical evidence section/,
+    expect: /gate battery is not inside the canonical evidence section/,
     mutate: (text) => {
       const open = '<!-- phase-03-gate-battery:begin -->';
       const close = '<!-- phase-03-gate-battery:end -->';
@@ -166,7 +235,8 @@ const FIXTURES = [
   {
     name: 'gate battery: markers removed',
     file: 'phase-status',
-    expect: /gate battery has no bounding markers/,
+    expect:
+      /phase-03-gate-battery: expected exactly one begin marker and one end marker, found 0 and 1/,
     mutate: (text) => text.replace('<!-- phase-03-gate-battery:begin -->', ''),
   },
   {
@@ -218,7 +288,7 @@ const FIXTURES = [
   {
     name: 'current position: a stale repair ordinal',
     file: 'phase-status',
-    expect: /names the [a-z]+ repair; the last section is the [a-z]+/,
+    expect: /names review \d+; the last section is review \d+/,
     mutate: (text) => {
       const cardinal = /([a-z]+) customer reviews completed/.exec(text)?.[1];
       const ordinal = /the ([a-z]+) repair is implemented/.exec(text)?.[1];

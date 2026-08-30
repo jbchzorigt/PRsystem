@@ -524,13 +524,50 @@ function section(text, heading) {
 }
 
 /** The text between two exact HTML comment markers. */
-function marked(text, name) {
+/**
+ * The one region bounded by `name`'s markers, with its exact bounds.
+ *
+ * `indexOf` took the *first* begin and the *first* end, so a correct-looking
+ * decoy pair placed earlier in the file supplied the region while the real block
+ * inside the canonical section went unread — the same failure as taking the
+ * first `aggregates **n** sub-gates` in the runbook. Exactly one of each marker
+ * must exist, and the end must follow the begin.
+ */
+function markedRegion(text, name) {
   const open = `<!-- ${name}:begin -->`;
   const close = `<!-- ${name}:end -->`;
-  const from = text.indexOf(open);
-  const to = text.indexOf(close);
-  if (from < 0 || to < 0 || to < from) return undefined;
-  return text.slice(from + open.length, to);
+  const at = (marker) => {
+    const found = [];
+    for (let i = text.indexOf(marker); i >= 0; i = text.indexOf(marker, i + 1)) found.push(i);
+    return found;
+  };
+  const opens = at(open);
+  const closes = at(close);
+  assert(
+    opens.length === 1 && closes.length === 1,
+    `${name}: expected exactly one begin marker and one end marker, found ` +
+      `${String(opens.length)} and ${String(closes.length)}`,
+  );
+  assert(closes[0] > opens[0], `${name}: the end marker precedes the begin marker`);
+  return {
+    body: text.slice(opens[0] + open.length, closes[0]),
+    start: opens[0],
+    end: closes[0] + close.length,
+  };
+}
+
+/** The exact character bounds of a section, so containment can be checked. */
+function sectionBounds(text, heading) {
+  const lines = text.split('\n');
+  const level = /^#+/.exec(heading)?.[0].length ?? 0;
+  const index = lines.indexOf(heading);
+  if (index < 0) return undefined;
+  const boundary = new RegExp(`^#{1,${String(level)}} `);
+  const offsetOf = (n) => lines.slice(0, n).reduce((sum, line) => sum + line.length + 1, 0);
+  for (let i = index + 1; i < lines.length; i += 1) {
+    if (boundary.test(lines[i])) return { start: offsetOf(index), end: offsetOf(i) };
+  }
+  return { start: offsetOf(index), end: text.length };
 }
 
 check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', () => {
@@ -569,16 +606,24 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   );
   const evidence = section(text, '## Current Phase 03 evidence');
   assert(evidence !== undefined, 'the canonical evidence section is empty');
+  const evidenceBounds = sectionBounds(text, '## Current Phase 03 evidence');
+  assert(evidenceBounds !== undefined, 'the canonical evidence section has no bounds');
+
+  // Containment is asserted on the region's exact character bounds, not on the
+  // section text merely mentioning a marker. A decoy pair anywhere in the file
+  // is refused by `markedRegion`, which requires exactly one of each.
+  const within = (region, what) => {
+    assert(
+      region.start >= evidenceBounds.start && region.end <= evidenceBounds.end,
+      `${what} is not inside the canonical evidence section`,
+    );
+  };
 
   // The gate battery is bounded by explicit markers and must sit inside the
   // canonical section. Selecting "the first bash block starting with
   // node tools/validate-governance" found one inside the Phase 00 record.
-  const battery = marked(text, 'phase-03-gate-battery');
-  assert(battery !== undefined, 'the Phase 03 gate battery has no bounding markers');
-  assert(
-    evidence.includes('<!-- phase-03-gate-battery:begin -->'),
-    'the Phase 03 gate battery is outside the canonical evidence section',
-  );
+  const battery = markedRegion(text, 'phase-03-gate-battery');
+  within(battery, 'the Phase 03 gate battery');
 
   // The Phase 03 ledger row links to the canonical section and restates nothing.
   const ledgerRow = text.split('\n').find((line) => line.startsWith('| 03 |'));
@@ -588,29 +633,76 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   // The current-position table must name the current review, not an older one.
   const position = section(text, '## Current position');
   assert(position !== undefined, 'there is no "## Current position" section');
-  // The cardinal and the ordinal must describe the same review: "nine reviews
-  // completed; the ninth repair" is the shape, and it went stale as a pair.
+  // One number, four independent statements of it. The cardinal, the ordinal,
+  // the heading's numeral and the measured-evidence label each said which review
+  // this is, and only two of them were ever compared: renumbering the newest
+  // heading from `(customer review 12)` to `(customer review 11)` passed,
+  // because the numeral was captured and then discarded.
+  //
+  // Nothing here names the current review. The words are mapped to numbers, so
+  // the check keeps working as the count advances.
+  const CARDINALS = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+  };
   const ORDINALS = {
-    seven: 'seventh',
-    eight: 'eighth',
-    nine: 'ninth',
-    ten: 'tenth',
-    eleven: 'eleventh',
-    twelve: 'twelfth',
+    first: 1,
+    second: 2,
+    third: 3,
+    fourth: 4,
+    fifth: 5,
+    sixth: 6,
+    seventh: 7,
+    eighth: 8,
+    ninth: 9,
+    tenth: 10,
+    eleventh: 11,
+    twelfth: 12,
+    thirteenth: 13,
+    fourteenth: 14,
+    fifteenth: 15,
   };
   const reviews = /([a-z]+) customer reviews completed/.exec(position)?.[1];
   const repair = /the ([a-z]+) repair is implemented/.exec(position)?.[1];
+  const reviewNumber = CARDINALS[reviews];
+  const repairNumber = ORDINALS[repair];
   assert(
-    reviews !== undefined && repair !== undefined && ORDINALS[reviews] === repair,
+    reviewNumber !== undefined && repairNumber !== undefined && reviewNumber === repairNumber,
     `current position says "${String(reviews)}" reviews and "${String(repair)}" repair`,
   );
 
-  // And the newest repair section must be the one the position names.
-  const sections = [...text.matchAll(/^### ([A-Za-z]+) security repair \(customer review \d+\)/gm)];
-  const newest = sections[sections.length - 1]?.[1]?.toLowerCase();
+  // Every repair heading must spell its own number consistently, and the newest
+  // must be the one the position names.
+  const sections = [
+    ...text.matchAll(/^### ([A-Za-z]+) security repair \(customer review (\d+)\)/gm),
+  ];
+  assert(sections.length > 0, 'there are no numbered repair sections');
+  for (const [heading, word, numeral] of sections) {
+    const spelled = ORDINALS[word.toLowerCase()];
+    assert(
+      spelled !== undefined && spelled === Number(numeral),
+      `a repair heading disagrees with its own number: ${heading.trim()}`,
+    );
+  }
+  const newest = sections[sections.length - 1];
+  const newestNumber = Number(newest[2]);
   assert(
-    newest === repair,
-    `current position names the ${String(repair)} repair; the last section is the ${String(newest)}`,
+    newestNumber === repairNumber,
+    `the current position names review ${String(repairNumber)}; the last section is review ` +
+      `${String(newestNumber)} (${newest[1]})`,
   );
 
   // The measured results are bounded by their own markers, for the same reason
@@ -618,27 +710,24 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   // section swallows every `###` repair record below it and a phrase quoted in
   // one of those would be read as the label. The region must sit inside the
   // canonical section, and the label is parsed from the region alone.
-  const measuredRegion = marked(text, 'phase-03-evidence');
-  assert(measuredRegion !== undefined, 'the canonical evidence results have no bounding markers');
-  assert(
-    evidence.includes('<!-- phase-03-evidence:begin -->'),
-    'the canonical evidence results are outside the canonical evidence section',
-  );
+  const measuredRegion = markedRegion(text, 'phase-03-evidence');
+  within(measuredRegion, 'the canonical evidence results');
 
   // The canonical evidence must say which repair tree it was measured on, and
   // that ordinal is compared against the two derived above rather than against a
   // fixed value. The label read "the tenth-repair tree" while the position and
   // the newest section both said eleventh, and nothing looked: the counts under
   // it were then attributed to a tree they were not measured on.
-  const measured = /^Measured on the ([a-z]+)-repair tree/m.exec(measuredRegion)?.[1];
+  const measured = /^Measured on the ([a-z]+)-repair tree/m.exec(measuredRegion.body)?.[1];
   assert(
     measured !== undefined,
     'the canonical evidence does not say which repair tree it was measured on',
   );
   assert(
-    measured === repair,
-    `the canonical evidence was "measured on the ${String(measured)}-repair tree"; the current ` +
-      `position and the newest repair section both name the ${String(repair)} repair`,
+    ORDINALS[measured] === repairNumber,
+    `the canonical evidence was "measured on the ${String(measured)}-repair tree" (` +
+      `${String(ORDINALS[measured])}); the current position and the newest repair section both ` +
+      `name review ${String(repairNumber)}`,
   );
 
   // Every mutable result form, in every region that is not the canonical
@@ -655,7 +744,7 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   ];
   const forbidden = [
     ['the Phase 03 ledger row', [ledgerRow]],
-    ['the Phase 03 gate battery', battery.split('\n')],
+    ['the Phase 03 gate battery', battery.body.split('\n')],
   ];
   for (const [where, lines] of forbidden) {
     for (const line of lines) {
@@ -677,8 +766,8 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   );
 
   return (
-    `one canonical section, measured on the ${repair}-repair tree; ledger row, battery and ` +
-    'current position agree and restate nothing'
+    `one canonical section for review ${String(repairNumber)}; position, newest heading, ` +
+    'evidence label, ledger row and battery all agree and restate nothing'
   );
 });
 
