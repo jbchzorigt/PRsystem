@@ -23,6 +23,56 @@ import {
 import { SUB_GATES } from './gate-sec-config.mjs';
 
 /**
+ * Refuses a JSON document that names one member twice in the same object.
+ *
+ * A character scan, because the defect is invisible after parsing: `JSON.parse`
+ * keeps the last of two members with the same name and reports nothing.
+ */
+function assertNoDuplicateJsonKeys(text) {
+  const stack = [];
+  let index = 0;
+  let expectKey = false;
+  while (index < text.length) {
+    const ch = text[index];
+    if (ch === '"') {
+      let end = index + 1;
+      let value = '';
+      while (end < text.length && text[end] !== '"') {
+        if (text[end] === '\\') {
+          value += text[end + 1];
+          end += 2;
+          continue;
+        }
+        value += text[end];
+        end += 1;
+      }
+      if (expectKey && stack.length > 0) {
+        const seen = stack[stack.length - 1];
+        if (seen.has(value)) {
+          throw new Error(`the JSON document names "${value}" twice in the same object`);
+        }
+        seen.add(value);
+        expectKey = false;
+      }
+      index = end + 1;
+      continue;
+    }
+    if (ch === '{') {
+      stack.push(new Set());
+      expectKey = true;
+    } else if (ch === '}') {
+      stack.pop();
+      expectKey = false;
+    } else if (ch === ',') {
+      expectKey = stack.length > 0;
+    } else if (ch === ':' || ch === '[') {
+      expectKey = false;
+    }
+    index += 1;
+  }
+}
+
+/**
  * Runs every governance check against the three named documents.
  *
  * @param {{ root: string, runbookPath: string, phaseStatusPath: string,
@@ -91,7 +141,11 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
   const statusLedgerPhases = [
     // The state vocabulary includes underscored states such as
     // SECURITY_REPAIR_REQUIRED, so the class is not letters and spaces alone.
-    ...phaseStatus.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*\*{0,2}`[A-Z_ ]+`\*{0,2}\s*\|/gm),
+    // The state cell may carry more than the token; check 15 is where it must be
+    // exact. Here the row only has to be recognisable as a phase row, or a stray
+    // addition would hide the phase from the enumeration instead of being
+    // reported as the extra claim it is.
+    ...phaseStatus.matchAll(/^\|\s*(\d{2})\s*\|\s*[^|]+\|\s*\*{0,2}`[A-Z_ ]+`[^|]*\|/gm),
   ].map((m) => Number(m[1]));
 
   const dupes = (arr) => {
@@ -643,7 +697,12 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // number is written down once and the prose is checked against it rather than
     // parsed for meaning.
     const text = readFileSync(PHASE_STATUS_PATH, 'utf8');
-    const manifest = JSON.parse(readFileSync(EVIDENCE_MANIFEST_PATH, 'utf8'));
+    const manifestText = readFileSync(EVIDENCE_MANIFEST_PATH, 'utf8');
+    // `JSON.parse` keeps the last of two members with the same name, silently.
+    // A manifest carrying `"phaseState": "DONE"` above the governed value parses
+    // to the governed value and reads as the other one.
+    assertNoDuplicateJsonKeys(manifestText);
+    const manifest = JSON.parse(manifestText);
     const ANCHOR = '#current-phase-03-evidence';
 
     // Top-level tokens with their exact character bounds. marked's `raw` values
@@ -963,8 +1022,12 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       `the Phase 03 gate battery lists commands the requirement does not: ${blockExtra.join('; ')}`,
     );
     assert(
-      batteryCommands.join('\n') === declared.join('\n'),
-      'the gate battery block and the evidence manifest list the commands in different orders',
+      declared.join('\n') === required.join('\n'),
+      'the evidence manifest lists the required commands in a different order',
+    );
+    assert(
+      batteryCommands.join('\n') === required.join('\n'),
+      'the Phase 03 gate battery lists the required commands in a different order',
     );
 
     for (const wanted of REQUIRED_BATTERY) {
@@ -1006,12 +1069,23 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // accepted transition is a customer decision, so it is a change to
     // `phase-03-battery.mjs` and not something the manifest can declare about
     // itself.
-    for (const [key, want] of Object.entries(GOVERNED_STATE)) {
-      if (key === 'nextPhaseState') continue;
+    for (const key of ['currentPhase', 'phaseState', 'customerAcceptance']) {
       assert(
-        manifest[key] === want,
+        manifest[key] === GOVERNED_STATE[key],
         `the evidence manifest declares ${key} = ${JSON.stringify(manifest[key])}; the governed ` +
-          `state is ${JSON.stringify(want)}`,
+          `state is ${JSON.stringify(GOVERNED_STATE[key])}`,
+      );
+    }
+
+    // One review number, stated four times, and the fourth is governed outside
+    // the document. Every mutable pointer agreed only with the others, so
+    // rolling all of them back — or deleting the newest record and rolling every
+    // pointer back with it — left nothing to disagree with.
+    for (const key of ['customerReviewNumber', 'latestRepairNumber', 'measuredOnRepairNumber']) {
+      assert(
+        manifest[key] === GOVERNED_STATE.governedReviewNumber,
+        `the evidence manifest declares ${key} = ${JSON.stringify(manifest[key])}; the governed ` +
+          `review number is ${String(GOVERNED_STATE.governedReviewNumber)}`,
       );
     }
 
@@ -1033,6 +1107,13 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       assert(
         entry.exits.every((code) => code === 0),
         `${entry.command} records a non-zero exit code: ${JSON.stringify(entry.exits)}`,
+      );
+      // And the prose beside the exit codes may not contradict them. Success is
+      // the exit code; a result that says the command failed is either wrong
+      // about the exit code or wrong about itself, and either way it is refused.
+      assert(
+        !/\b(fail|failed|failing|skip|skipped|not run|non-?zero|error)\b/i.test(entry.result),
+        `${entry.command} exited zero but its recorded result claims otherwise: ${entry.result}`,
       );
     }
 
@@ -1176,6 +1257,22 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
           `declares "${want}"`,
       );
     }
+    assert(
+      positionRows.get('Next phase') === GOVERNED_STATE.nextPhase,
+      'the current position states Next phase = ' +
+        `${JSON.stringify(positionRows.get('Next phase'))}; the governed state is ` +
+        `${JSON.stringify(GOVERNED_STATE.nextPhase)}`,
+    );
+    // Exactly one state token in the cell, and it is the governed one. The row
+    // could say `IN PROGRESS` while the ledger still said NOT STARTED.
+    const nextStateCell = positionRows.get('Next phase state') ?? '';
+    const nextStateTokens = [...nextStateCell.matchAll(/`([A-Z_ ]+)`/g)].map((m) => m[1]);
+    assert(
+      nextStateTokens.length === 1 && nextStateTokens[0] === GOVERNED_STATE.nextPhaseState,
+      `the current position states Next phase state = ${JSON.stringify(nextStateCell)}; it must ` +
+        `name exactly one state and it must be ${GOVERNED_STATE.nextPhaseState}`,
+    );
+
     const NARRATIVE_ROWS = new Set(['Next phase', 'Next phase state', 'Blocking conflicts']);
     for (const key of positionRows.keys()) {
       assert(
@@ -1204,15 +1301,21 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     const ledgerRow = ledgerRows[0];
     assertRowShapes(ledgerTables[0], 'phase ledger');
     const ledgerText = ledgerRow.map((cell) => cell.text).join(' | ');
-    const stateTokens = [...ledgerText.matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]);
+    // The state cell, exactly. A `**DONE**` appended beside the required token
+    // left the token in place and the row saying two things.
+    const STATE_COLUMN = ledgerTables[0].header.findIndex((cell) => cell.text.trim() === 'State');
+    assert(STATE_COLUMN >= 0, 'the phase ledger has no State column');
+    const phase03State = ledgerRow[STATE_COLUMN].text.trim();
+    assert(
+      phase03State === `\`${manifest.phaseState}\``,
+      `the Phase 03 ledger state cell renders ${JSON.stringify(phase03State)}; it must render ` +
+        `exactly \`${manifest.phaseState}\``,
+    );
+    const stateTokens = [...ledgerText.matchAll(/`([A-Z_ ]+)`/g)].map((m) => m[1]);
     assert(
       stateTokens.length === 1,
       `the Phase 03 ledger row names ${String(stateTokens.length)} state tokens; there must be ` +
         'exactly one',
-    );
-    assert(
-      stateTokens[0] === manifest.phaseState,
-      `the Phase 03 ledger row says ${stateTokens[0]}; the manifest declares ${manifest.phaseState}`,
     );
     // The link's own destination, not the anchor appearing somewhere in the cell.
     // A link to elsewhere carrying the correct anchor in its *title* read as
@@ -1238,11 +1341,11 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       nextRows.length === 1,
       `the phase ledger holds ${String(nextRows.length)} Phase 04 rows; there must be exactly one`,
     );
-    const nextState = /`([A-Z_ ]+)`/.exec(nextRows[0].map((cell) => cell.text).join(' | '))?.[1];
+    const phase04State = nextRows[0][STATE_COLUMN].text.trim();
     assert(
-      nextState === GOVERNED_STATE.nextPhaseState,
-      `the Phase 04 ledger row says ${String(nextState)}; the governed state is ` +
-        `${GOVERNED_STATE.nextPhaseState}`,
+      phase04State === `\`${GOVERNED_STATE.nextPhaseState}\``,
+      `the Phase 04 ledger state cell renders ${JSON.stringify(phase04State)}; it must render ` +
+        `exactly \`${GOVERNED_STATE.nextPhaseState}\``,
     );
 
     const ledgerOrdinal = new RegExp(`\\b(${ORDINALS.join('|')})\\b`, 'i').exec(ledgerText);
@@ -1317,7 +1420,7 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       new Set(numbers).size === numbers.length,
       `the repair history repeats a review number: ${numbers.join(', ')}`,
     );
-    const contiguous = Array.from({ length: manifest.latestRepairNumber }, (_, i) => i + 1);
+    const contiguous = Array.from({ length: GOVERNED_STATE.governedReviewNumber }, (_, i) => i + 1);
     assert(
       JSON.stringify(numbers) === JSON.stringify(contiguous),
       `the repair history is ${JSON.stringify(numbers)}; it must be 1..` +

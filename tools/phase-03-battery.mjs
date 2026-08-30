@@ -38,12 +38,23 @@ export const REQUIRED_BATTERY = [
   { command: 'git diff --check', runs: 1 },
 ];
 
-/** The state Phase 03 is in, and the only state this document may claim. */
+/**
+ * The state Phase 03 is in, and the only state this document may claim.
+ *
+ * `governedReviewNumber` is the review this repair answers, declared here rather
+ * than read from the document. Every mutable pointer to it — the current review
+ * number, the latest repair number, the measured-on label — had to agree only
+ * with each other, so rolling all of them back together, or deleting the newest
+ * record and rolling every pointer back with it, left nothing to disagree with.
+ * Advancing it is a customer-issued change to this module.
+ */
 export const GOVERNED_STATE = {
   currentPhase: '03 — Platform kernel',
   phaseState: 'SECURITY_REPAIR_REQUIRED',
   customerAcceptance: 'NOT_ACCEPTED',
+  nextPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
   nextPhaseState: 'NOT STARTED',
+  governedReviewNumber: 18,
 };
 
 /** The manifest's exact key set. Anything else is an unreviewed addition. */

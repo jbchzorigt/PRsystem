@@ -738,7 +738,7 @@ const FIXTURES = [
   {
     name: 'coordinated: Phase 04 no longer NOT STARTED in the ledger',
     file: 'phase-status',
-    expect: /the Phase 04 ledger row says [A-Z_ ]+; the governed state is NOT STARTED/,
+    expect: /Phase 04 ledger state cell renders "`IN PROGRESS`"/,
     mutate: (text) => text.replace(/^(\| 04 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
   },
   {
@@ -938,6 +938,171 @@ const FIXTURES = [
     file: 'phase-status',
     expect: /phase-status\.md ledger: missing phases 22/,
     mutate: (text) => text.replace(/^\| 22 \|[^\n]*\n/m, ''),
+  },
+  {
+    // Every mutable pointer rolled back together. They agreed only with each
+    // other, so there was nothing left to disagree with.
+    name: 'governed: the measured-on label and its manifest number rolled back',
+    files: ['phase-status', 'manifest'],
+    expect: /declares measuredOnRepairNumber = \d+; the governed review number is/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      const previous = manifest.measuredOnRepairNumber - 1;
+      manifest.measuredOnRepairNumber = previous;
+      const ORDINALS = [
+        'first',
+        'second',
+        'third',
+        'fourth',
+        'fifth',
+        'sixth',
+        'seventh',
+        'eighth',
+        'ninth',
+        'tenth',
+        'eleventh',
+        'twelfth',
+        'thirteenth',
+        'fourteenth',
+        'fifteenth',
+        'sixteenth',
+        'seventeenth',
+        'eighteenth',
+        'nineteenth',
+        'twentieth',
+      ];
+      const label = /^Measured on the ([a-z]+)-repair tree/m.exec(sources['phase-status']);
+      if (label === null) throw new Error('no measured-on label');
+      return {
+        'phase-status': sources['phase-status'].replace(
+          label[0],
+          `Measured on the ${ORDINALS[previous - 1]}-repair tree`,
+        ),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    name: 'governed: the newest review removed and every pointer rolled back',
+    files: ['phase-status', 'manifest'],
+    expect: /declares customerReviewNumber = \d+; the governed review number is/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      const previous = manifest.latestRepairNumber - 1;
+      const ORDINALS = [
+        'first',
+        'second',
+        'third',
+        'fourth',
+        'fifth',
+        'sixth',
+        'seventh',
+        'eighth',
+        'ninth',
+        'tenth',
+        'eleventh',
+        'twelfth',
+        'thirteenth',
+        'fourteenth',
+        'fifteenth',
+        'sixteenth',
+        'seventeenth',
+        'eighteenth',
+        'nineteenth',
+        'twentieth',
+      ];
+      const newest = String(manifest.latestRepairNumber);
+      manifest.customerReviewNumber = previous;
+      manifest.latestRepairNumber = previous;
+      manifest.measuredOnRepairNumber = previous;
+      manifest.repairHistory = manifest.repairHistory.filter((n) => n !== previous + 1);
+      let text = sources['phase-status']
+        .replace(
+          `| Customer review number | ${newest} |`,
+          `| Customer review number | ${String(previous)} |`,
+        )
+        .replace(
+          `| Latest implemented repair number | ${newest} |`,
+          `| Latest implemented repair number | ${String(previous)} |`,
+        )
+        .replace(
+          /^Measured on the [a-z]+-repair tree/m,
+          `Measured on the ${ORDINALS[previous - 1]}-repair tree`,
+        );
+      const heading = new RegExp(
+        '^### [A-Za-z]+ security repair \\(customer review ' + newest + '\\)[^\n]*$',
+        'm',
+      ).exec(text)?.[0];
+      if (heading === undefined) throw new Error('no newest repair heading');
+      const from = text.indexOf(heading);
+      const to = text.indexOf('## Update protocol');
+      text = text.slice(0, from) + text.slice(to);
+      return { 'phase-status': text, manifest: `${JSON.stringify(manifest, null, 2)}\n` };
+    },
+  },
+  {
+    name: 'governed: Next phase state changed while the ledger stays NOT STARTED',
+    file: 'phase-status',
+    expect: /states Next phase state = "`IN PROGRESS`/,
+    mutate: (text) =>
+      text.replace('| Next phase state | `NOT STARTED`', '| Next phase state | `IN PROGRESS`'),
+  },
+  {
+    // The required token stays in place and the row says two things.
+    name: 'governed: a bold DONE appended beside the ledger state token',
+    file: 'phase-status',
+    expect: /ledger state cell renders "`SECURITY_REPAIR_REQUIRED` \*\*DONE\*\*"/,
+    mutate: (text) =>
+      text.replace(/^(\| 03 \| Platform kernel \| `SECURITY_REPAIR_REQUIRED`)/m, '$1 **DONE**'),
+  },
+  {
+    name: 'governed: the required battery reordered in both sources',
+    files: ['phase-status', 'manifest'],
+    expect: /lists the required commands in a different order/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      manifest.battery = [...manifest.battery].reverse();
+      const text = sources['phase-status'];
+      const open = text.indexOf('```bash\n');
+      const close = text.indexOf('```', open + 8);
+      const lines = text
+        .slice(open + 8, close)
+        .split('\n')
+        .filter((line) => line.trim() !== '');
+      return {
+        'phase-status': `${text.slice(0, open + 8)}${[...lines].reverse().join('\n')}\n${text.slice(close)}`,
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    // `JSON.parse` keeps the last member of a duplicated name and says nothing.
+    name: 'manifest: a duplicated conflicting member name',
+    file: 'manifest',
+    expect: /names "phaseState" twice in the same object/,
+    mutate: (json) =>
+      json.replace(
+        '"phaseState": "SECURITY_REPAIR_REQUIRED",',
+        '"phaseState": "DONE",\n  "phaseState": "SECURITY_REPAIR_REQUIRED",',
+      ),
+  },
+  {
+    name: 'governed: result prose contradicting the recorded zero exits',
+    files: ['phase-status', 'manifest'],
+    expect: /exited zero but its recorded result claims otherwise/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      for (const entry of manifest.battery) {
+        if (entry.command === 'pnpm run test:e2e') entry.result = 'FAILED — command was not run';
+      }
+      return {
+        'phase-status': sources['phase-status'].replace(
+          /^\| `pnpm run test:e2e` \| PASS \| [^|]*\|$/m,
+          '| `pnpm run test:e2e` | PASS | FAILED — command was not run |',
+        ),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
   },
   {
     name: 'evidence: the results markers removed',
