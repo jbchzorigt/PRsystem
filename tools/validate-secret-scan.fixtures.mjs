@@ -5,8 +5,10 @@
 //
 // The scanner carries an allow-list of synthetic fixture values so tests can
 // assert a credential is redacted. An allowance must cover the synthetic value
-// and nothing else: skipping the whole line because it mentions an allowed
-// literal turns every allowance into a way to hide a real credential beside it.
+// and nothing else — never a substring of a different value, and never a whole
+// line or file. Skipping the line hid a real credential written beside an
+// allowed one; removing the allowed span from the line hid every credential that
+// merely contained an allowed one, prefix, suffix or both.
 //
 // Each fixture writes one probe file into a temporary directory, points the
 // scanner at it, and requires the intended verdict. The repository is never
@@ -47,6 +49,35 @@ const FIXTURES = [
       `const a = "super-${SECRET_KEY}-scheduler-${KEY}"; ` +
       `const ${SECRET_KEY} = "another-actual-${SECRET_KEY}-value";\n`,
     expectFinding: true,
+  },
+  {
+    name: 'an allowed value with a suffix is a different credential',
+    // The reported bypass. Cutting the allowed span out of the line left a
+    // remainder too short for the pattern, so this reported nothing at all.
+    content: `export const one = { ${KEY}: "startup-log-probe-${KEY}X" };\n`,
+    expectFinding: true,
+  },
+  {
+    name: 'an allowed value with a prefix is a different credential',
+    content: `export const two = { ${KEY}: "Xstartup-log-probe-${KEY}" };\n`,
+    expectFinding: true,
+  },
+  {
+    name: 'an allowed value with a prefix and a suffix is a different credential',
+    content: `export const three = { ${KEY}: "Xstartup-log-probe-${KEY}Y" };\n`,
+    expectFinding: true,
+  },
+  {
+    name: 'an allowed value does not shadow another secret beside it',
+    content:
+      `export const four = { ${KEY}: "startup-log-probe-${KEY}", ` +
+      `${SECRET_KEY}: "another-actual-${SECRET_KEY}-value" };\n`,
+    expectFinding: true,
+  },
+  {
+    name: 'the exact synthetic allowed credential stays clean',
+    content: `export const five = { ${KEY}: "startup-log-probe-${KEY}" };\n`,
+    expectFinding: false,
   },
   {
     name: 'a credential-shaped assignment on its own is still found',

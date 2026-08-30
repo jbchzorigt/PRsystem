@@ -14,21 +14,37 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+// `value` is the capture group holding the credential itself. An allowance is
+// compared against that value, so `generic-assignment` captures what is inside
+// the quotes rather than the whole assignment.
 const PATTERNS = [
-  { id: 'aws-access-key', re: /\bAKIA[0-9A-Z]{16}\b/ },
-  { id: 'private-key', re: /-{5}BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-{5}/ },
-  { id: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
-  { id: 'github-token', re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
-  { id: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-  { id: 'stripe-key', re: /\bsk_live_[A-Za-z0-9]{16,}\b/ },
-  { id: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { id: 'aws-access-key', re: /\bAKIA[0-9A-Z]{16}\b/g, value: 0 },
+  { id: 'private-key', re: /-{5}BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-{5}/g, value: 0 },
+  { id: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, value: 0 },
+  { id: 'github-token', re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g, value: 0 },
+  { id: 'slack-token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, value: 0 },
+  { id: 'stripe-key', re: /\bsk_live_[A-Za-z0-9]{16,}\b/g, value: 0 },
+  { id: 'google-api-key', re: /\bAIza[0-9A-Za-z_-]{35}\b/g, value: 0 },
   {
     id: 'generic-assignment',
-    re: /\b(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*['"][^'"\s]{12,}['"]/i,
+    re: /\b(?:password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*['"]([^'"\s]{12,})['"]/gi,
+    value: 1,
   },
 ];
 
-/** Local-development placeholders that are non-secret by construction. */
+/**
+ * Local-development placeholders that are non-secret by construction.
+ *
+ * An entry suppresses a finding only when the detected credential value is
+ * **exactly** that string. It is not a substring allowance and not a line or
+ * file exemption: `startup-log-probe-passwordX` is a different credential that
+ * happens to begin with an allowed one, and removing every occurrence of the
+ * allowed text before scanning made all three of prefix, suffix and both report
+ * nothing at all.
+ *
+ * Each value must therefore be spelled as the scanner detects it — the quoted
+ * value for `generic-assignment`, the matched token for every shape pattern.
+ */
 const ALLOWED_VALUES = [
   'prsystem_local_dev',
   'prsystem_local',
@@ -47,7 +63,6 @@ const ALLOWED_VALUES = [
   'super-secret-value-should-not-appear', // packages/config — asserts the error never echoes a secret
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.SflKxwRJSMeKKF2QT4', // packages/telemetry — logger value-shape test
   'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K', // packages/telemetry — redaction test
-  '-----BEGIN PRIVATE KEY-----MIIEvQ', // packages/telemetry — PEM header shape, truncated, not a key
   'must-never-be-recorded', // packages/db — audit payload the constraint must refuse
   'super-secret-scheduler-password', // packages/config — asserts the scheduler credential is never echoed
   'startup-log-probe-password', // apps/api — asserts no credential reaches the startup logger
@@ -122,26 +137,25 @@ for (const rel of files) {
   scanned += 1;
 
   text.split('\n').forEach((line, index) => {
-    // Remove the allowed spans, then scan what is left.
+    // Detect first, then compare each detected value against the allow-list.
     //
-    // Skipping the whole line because it mentioned an allowed literal turned
-    // every allowance into a way to hide a real credential beside it:
+    // Removing the allowed spans and scanning the remainder let an allowance
+    // suppress a *different* credential that merely contained it: with
+    // `startup-log-probe-password` allowed,
     //
-    //     password = "this-is-a-real-looking-password" # startup-log-probe-password
+    //     { password: "startup-log-probe-passwordX" }
     //
-    // passed with zero findings. An allowance covers its own value and nothing
-    // else, so each occurrence is cut out and the remainder of the line is
-    // scanned normally. Cut out entirely rather than replaced with a
-    // same-length placeholder: a placeholder preserves the length, and length
-    // is exactly what `generic-assignment` keys on, so every allowed line would
-    // then report itself.
-    let remainder = line;
-    for (const allowed of ALLOWED_VALUES) {
-      if (!remainder.includes(allowed)) continue;
-      remainder = remainder.split(allowed).join('');
-    }
-    for (const { id, re } of PATTERNS) {
-      if (re.test(remainder)) {
+    // lost its allowed span and what was left was too short for the pattern, so
+    // it reported nothing — and so did the prefix and prefix-and-suffix forms.
+    // Matching first and requiring exact equality makes an allowance cover its
+    // own value and only its own value.
+    //
+    // Every match on the line is examined, not just the first: an allowed value
+    // must not shadow a real credential sitting beside it.
+    for (const { id, re, value } of PATTERNS) {
+      for (const match of line.matchAll(re)) {
+        const detected = match[value] ?? match[0];
+        if (ALLOWED_VALUES.includes(detected)) continue;
         findings.push({ rel, line: index + 1, id });
       }
     }

@@ -46,7 +46,14 @@ describe('isDeniedValueShape', () => {
   });
 
   it('detects a PEM private key header', () => {
-    expect(isDeniedValueShape('-----BEGIN PRIVATE KEY-----MIIEvQ')).toBe(true);
+    // Assembled rather than written out. An allowance in the committed-secret
+    // scanner suppresses a credential value only when the detected value matches
+    // it exactly, and the value this pattern detects is the bare header — which
+    // is the one thing that must never be allow-listed, or a real key committed
+    // beside it would be suppressed too. The bytes the assertion sees are
+    // unchanged.
+    const header = `${'-'.repeat(5)}BEGIN PRIVATE KEY${'-'.repeat(5)}`;
+    expect(isDeniedValueShape(`${header}MIIEvQ`)).toBe(true);
   });
 
   it('detects a registration-number shape', () => {
