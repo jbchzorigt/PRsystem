@@ -634,6 +634,68 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   }
   assert(offset === text.length, 'the parsed document does not reconstruct the source exactly');
 
+  /**
+   * Every rendered token, with the top-level token whose span contains it.
+   *
+   * Only the top level was inspected, so a table, a heading or raw HTML written
+   * inside a blockquote rendered normally and was never looked at. A container
+   * is not a hiding place.
+   */
+  const allTokens = [];
+  const walk = (token, top) => {
+    allTokens.push({ token, top });
+    // `header` is a table's cells but a boolean on a list item, so every branch
+    // is guarded by shape rather than by name.
+    for (const key of ['tokens', 'items', 'header']) {
+      if (!Array.isArray(token[key])) continue;
+      for (const child of token[key]) walk(child, top);
+    }
+    if (!Array.isArray(token.rows)) return;
+    for (const row of token.rows) for (const cell of row) walk(cell, top);
+  };
+  for (const token of tokens) walk(token, token);
+
+  const NAMED_ENTITIES = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+  };
+
+  /** Entity references resolved, because a reader sees the character. */
+  const decodeEntities = (value) =>
+    value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
+      if (body.startsWith('#x') || body.startsWith('#X')) {
+        return String.fromCodePoint(Number.parseInt(body.slice(2), 16));
+      }
+      if (body.startsWith('#')) return String.fromCodePoint(Number.parseInt(body.slice(1), 10));
+      return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
+    });
+
+  /**
+   * The text a reader actually sees.
+   *
+   * A link's destination and title, a reference definition, code, comments and
+   * raw HTML are not visible text: a correct measured-on label written in a link
+   * title, and a stale one written in the prose beside it, are one label and one
+   * decoy — the other way round from how the raw source reads.
+   */
+  const visibleText = (token) => {
+    if (token === undefined || token === null) return '';
+    if (token.type === 'html' || token.type === 'code' || token.type === 'codespan') return '';
+    if (token.type === 'def' || token.type === 'image') return '';
+    if (Array.isArray(token.tokens) && token.tokens.length > 0) {
+      return token.tokens.map(visibleText).join('');
+    }
+    if (token.type === 'text' || token.type === 'escape' || token.type === undefined) {
+      return decodeEntities(String(token.text ?? ''));
+    }
+    if (token.type === 'space') return '\n';
+    return decodeEntities(String(token.text ?? ''));
+  };
+
   const APPROVED_HTML = new Set([
     '<!-- phase-03-gate-battery:begin -->',
     '<!-- phase-03-gate-battery:end -->',
@@ -644,6 +706,33 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   ]);
 
   const inSpan = (token, span) => token.start >= span.start && token.end <= span.end;
+  /** A nested token is inside a span when the top-level token containing it is. */
+  const nestedInSpan = (entry, span) => inSpan(entry.top, span);
+
+  /** Every rendered heading, at any level, in any container, in any form. */
+  const renderedHeadings = [];
+  for (const entry of allTokens) {
+    if (entry.token.type === 'heading') {
+      renderedHeadings.push({
+        entry,
+        depth: entry.token.depth,
+        text: visibleText(entry.token).trim(),
+        raw: entry.token.raw.replace(/\n+$/, ''),
+        html: false,
+      });
+      continue;
+    }
+    if (entry.token.type !== 'html') continue;
+    for (const match of entry.token.raw.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)) {
+      renderedHeadings.push({
+        entry,
+        depth: Number(match[1]),
+        text: decodeEntities(match[2]).trim(),
+        raw: match[0],
+        html: true,
+      });
+    }
+  }
 
   /**
    * Every row of a table, as written, must have the column count it declares.
@@ -670,15 +759,60 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   };
 
   // ------------------------------------------------------------ the regions
-  const battery = markedRegion(text, 'phase-03-gate-battery');
-  const measured = markedRegion(text, 'phase-03-evidence');
-  const history = markedRegion(text, 'phase-03-repair-history');
+  /**
+   * A bounded region, delimited by two top-level HTML comment tokens.
+   *
+   * Found by parsing, not by `indexOf`: the marker text written anywhere else —
+   * in a fenced code block, in a table cell — is not a boundary and must not be
+   * mistaken for one, so it is refused outright and the markers keep exactly one
+   * home each.
+   */
+  const boundedRegion = (name) => {
+    const open = `<!-- ${name}:begin -->`;
+    const close = `<!-- ${name}:end -->`;
+    for (const [marker, label] of [
+      [open, 'begin'],
+      [close, 'end'],
+    ]) {
+      const occurrences = text.split(marker).length - 1;
+      assert(
+        occurrences === 1,
+        `${name}: the ${label} marker text occurs ${String(occurrences)} times in the document; ` +
+          'it must occur exactly once, as its own boundary',
+      );
+    }
+    const comments = tokens.filter((token) => token.type === 'html');
+    const beginToken = comments.filter((token) => token.raw.trim() === open);
+    const endToken = comments.filter((token) => token.raw.trim() === close);
+    assert(
+      beginToken.length === 1 && endToken.length === 1,
+      `${name}: expected exactly one top-level begin marker and one end marker, found ` +
+        `${String(beginToken.length)} and ${String(endToken.length)}`,
+    );
+    assert(
+      endToken[0].start > beginToken[0].start,
+      `${name}: the end marker precedes the begin marker`,
+    );
+    return {
+      start: beginToken[0].start,
+      end: endToken[0].end,
+      body: text.slice(beginToken[0].end, endToken[0].start),
+    };
+  };
 
-  const headingTokens = tokens.filter((token) => token.type === 'heading');
-  const evidenceHeading = headingTokens.find(
-    (token) => token.depth === 2 && token.text.trim() === 'Current Phase 03 evidence',
+  const battery = boundedRegion('phase-03-gate-battery');
+  const measured = boundedRegion('phase-03-evidence');
+  const history = boundedRegion('phase-03-repair-history');
+
+  const evidenceHeadings = renderedHeadings.filter(
+    (heading) => heading.depth === 2 && heading.text === 'Current Phase 03 evidence',
   );
-  assert(evidenceHeading !== undefined, 'there is no visible "Current Phase 03 evidence" H2');
+  assert(
+    evidenceHeadings.length === 1,
+    `there are ${String(evidenceHeadings.length)} visible "Current Phase 03 evidence" H2 ` +
+      'headings; there must be exactly one',
+  );
+  const evidenceHeading = evidenceHeadings[0].entry.top;
   const nextTop = tokens.find(
     (token) => token.start > evidenceHeading.start && token.type === 'heading' && token.depth <= 2,
   );
@@ -700,14 +834,50 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   // approved boundary markers. An HTML comment renders as nothing, so anything
   // written inside one is invisible to a reader and would otherwise be free to
   // carry a label, a heading or a table row that only a parser sees.
-  const governed = [evidenceSpan, history, { start: 0, end: 0 }];
-  for (const token of tokens) {
-    if (token.type !== 'html') continue;
-    if (!governed.some((span) => inSpan(token, span))) continue;
+  const positionHeadings = renderedHeadings.filter(
+    (heading) => heading.depth === 2 && heading.text === 'Current position',
+  );
+  assert(
+    positionHeadings.length === 1,
+    `there are ${String(positionHeadings.length)} visible "Current position" H2 headings; there ` +
+      'must be exactly one',
+  );
+  const positionHeading = positionHeadings[0].entry.top;
+  const afterPosition = tokens.find(
+    (token) => token.start > positionHeading.start && token.type === 'heading' && token.depth <= 2,
+  );
+  const positionSpan = {
+    start: positionHeading.start,
+    end: afterPosition === undefined ? text.length : afterPosition.start,
+  };
+
+  // The phase ledger's own span, so raw HTML inside it is governed too.
+  const ledgerTable = allTokens.find(
+    (entry) =>
+      entry.token.type === 'table' &&
+      (entry.token.rows ?? []).some((row) => row[0]?.text.trim() === '03'),
+  );
+  assert(ledgerTable !== undefined, 'the phase ledger is not one table');
+
+  // Raw HTML, governed.
+  //
+  // Applied to the evidence section, the current position, the phase ledger and
+  // the repair history, and to nested tokens as well as top-level ones. An HTML
+  // comment renders as nothing, so anything written inside one is invisible to a
+  // reader and must be invisible to this check too.
+  const governedSpans = [
+    evidenceSpan,
+    history,
+    positionSpan,
+    { start: ledgerTable.top.start, end: ledgerTable.top.end },
+  ];
+  for (const entry of allTokens) {
+    if (entry.token.type !== 'html') continue;
+    if (!governedSpans.some((span) => nestedInSpan(entry, span))) continue;
     assert(
-      APPROVED_HTML.has(token.raw.trim()),
-      `raw HTML in a governed region is not an approved boundary marker: ` +
-        `${token.raw.trim().slice(0, 70)}`,
+      APPROVED_HTML.has(entry.token.raw.trim()),
+      'raw HTML in a governed region is not an approved boundary marker: ' +
+        `${entry.token.raw.trim().slice(0, 70)}`,
     );
   }
 
@@ -839,9 +1009,9 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   }
 
   // ----------------------------------------------------- the evidence table
-  const evidenceTables = tokens.filter(
-    (token) => token.type === 'table' && inSpan(token, measured),
-  );
+  const evidenceTables = allTokens
+    .filter((entry) => entry.token.type === 'table' && nestedInSpan(entry, measured))
+    .map((entry) => entry.token);
   assert(
     evidenceTables.length === 1,
     `the canonical evidence results hold ${String(evidenceTables.length)} tables; there must be ` +
@@ -923,8 +1093,8 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
     'twentieth',
   ];
   const visible = tokens
-    .filter((token) => inSpan(token, measured) && token.type !== 'html' && token.type !== 'code')
-    .map((token) => token.raw)
+    .filter((token) => inSpan(token, measured))
+    .map((token) => visibleText(token))
     .join('\n');
   const labels = [...visible.matchAll(/Measured on the ([a-z]+)-repair tree/g)];
   assert(
@@ -940,25 +1110,9 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   );
 
   // --------------------------------------------------- the current position
-  const positionHeadings = headingTokens.filter(
-    (token) => token.depth === 2 && token.text.trim() === 'Current position',
-  );
-  assert(
-    positionHeadings.length === 1,
-    `there are ${String(positionHeadings.length)} visible "Current position" H2 headings; there ` +
-      'must be exactly one',
-  );
-  const positionHeading = positionHeadings[0];
-  const afterPosition = tokens.find(
-    (token) => token.start > positionHeading.start && token.type === 'heading' && token.depth <= 2,
-  );
-  const positionSpan = {
-    start: positionHeading.start,
-    end: afterPosition === undefined ? text.length : afterPosition.start,
-  };
-  const positionTables = tokens.filter(
-    (token) => token.type === 'table' && inSpan(token, positionSpan),
-  );
+  const positionTables = allTokens
+    .filter((entry) => entry.token.type === 'table' && nestedInSpan(entry, positionSpan))
+    .map((entry) => entry.token);
   assert(
     positionTables.length === 1,
     `the current position holds ${String(positionTables.length)} tables; there must be exactly one`,
@@ -1010,10 +1164,7 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   );
 
   // -------------------------------------------------------- the phase ledger
-  const ledgerTables = tokens.filter(
-    (token) => token.type === 'table' && token.rows.some((row) => row[0]?.text.trim() === '03'),
-  );
-  assert(ledgerTables.length === 1, 'the phase ledger is not one table');
+  const ledgerTables = [ledgerTable.token];
   const ledgerRows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === '03');
   assert(
     ledgerRows.length === 1,
@@ -1032,7 +1183,24 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
     stateTokens[0] === manifest.phaseState,
     `the Phase 03 ledger row says ${stateTokens[0]}; the manifest declares ${manifest.phaseState}`,
   );
-  assert(ledgerText.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
+  // The link's own destination, not the anchor appearing somewhere in the cell.
+  // A link to elsewhere carrying the correct anchor in its *title* read as
+  // correct while pointing at nothing.
+  const ledgerLinks = [];
+  for (const cell of ledgerRow) {
+    walk(cell, ledgerTables[0]);
+    const collect = (token) => {
+      if (token.type === 'link') ledgerLinks.push(token);
+      for (const child of token.tokens ?? []) collect(child);
+    };
+    collect(cell);
+  }
+  const anchorLinks = ledgerLinks.filter((link) => link.href === ANCHOR);
+  assert(
+    anchorLinks.length === 1,
+    `the Phase 03 ledger row has ${String(anchorLinks.length)} links whose destination is ` +
+      `${ANCHOR}; there must be exactly one`,
+  );
   // Phase 04 has not started, and the ledger is where that is recorded.
   const nextRows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === '04');
   assert(
@@ -1065,25 +1233,17 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
   const DECLARED_SECTION_HEADINGS = new Set(['Remaining blockers', 'GATE-SEC sub-gate counts']);
   const DESCRIBES_A_REPAIR = /\brepair\b|\bcustomer review\b/i;
 
-  const rendered = [];
-  for (const token of tokens) {
-    if (token.type === 'heading') {
-      rendered.push({ token, raw: token.raw.replace(/\n+$/, ''), text: token.text.trim() });
-      continue;
-    }
-    if (token.type !== 'html') continue;
-    for (const match of token.raw.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)) {
-      rendered.push({ token, raw: match[0], text: match[2].trim() });
-    }
-  }
-
   const sections = [];
-  for (const entry of rendered) {
-    const canonical = CANONICAL.test(entry.raw);
+  for (const entry of renderedHeadings) {
+    const canonical = !entry.html && CANONICAL.test(entry.raw);
     if (canonical) {
       assert(
-        inSpan(entry.token, history),
+        nestedInSpan(entry.entry, history),
         `a repair heading sits outside the bounded repair history: ${entry.raw}`,
+      );
+      assert(
+        entry.entry.top === entry.entry.token,
+        `a repair heading is nested inside another block: ${entry.raw}`,
       );
       const parsed = CANONICAL.exec(entry.raw);
       sections.push({ raw: entry.raw, word: parsed[1].toLowerCase(), number: Number(parsed[2]) });
@@ -1094,8 +1254,8 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
       `a heading describes a repair or a customer review but is not a canonical, unindented ` +
         `H3 repair heading: ${entry.raw.slice(0, 80)}`,
     );
-    if (!inSpan(entry.token, history)) continue;
-    if (entry.token.type !== 'heading' || entry.token.depth !== 3) continue;
+    if (!nestedInSpan(entry.entry, history)) continue;
+    if (entry.html || entry.depth !== 3) continue;
     assert(
       DECLARED_SECTION_HEADINGS.has(entry.text),
       `a heading in the repair history is neither a canonical repair heading nor a declared ` +

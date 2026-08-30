@@ -132,7 +132,7 @@ const FIXTURES = [
     // block went unread.
     name: 'evidence: a decoy marker pair before the canonical section',
     file: 'phase-status',
-    expect: /expected exactly one begin marker and one end marker, found 2 and 2/,
+    expect: /the begin marker text occurs 2 times in the document/,
     mutate: (text) => {
       const label = /Measured on the ([a-z]+)-repair tree/.exec(text)?.[1];
       if (label === undefined) throw new Error('no measured-on label');
@@ -150,7 +150,7 @@ const FIXTURES = [
   {
     name: 'evidence: a decoy marker pair after the canonical section',
     file: 'phase-status',
-    expect: /expected exactly one begin marker and one end marker, found 2 and 2/,
+    expect: /the begin marker text occurs 2 times in the document/,
     mutate: (text) =>
       `${text}\n<!-- phase-03-evidence:begin -->\n\nMeasured on the first-repair tree.\n\n` +
       '<!-- phase-03-evidence:end -->\n',
@@ -158,7 +158,7 @@ const FIXTURES = [
   {
     name: 'evidence: a duplicate begin marker',
     file: 'phase-status',
-    expect: /expected exactly one begin marker and one end marker, found 2 and 1/,
+    expect: /the begin marker text occurs 2 times in the document/,
     mutate: (text) =>
       text.replace(
         '<!-- phase-03-evidence:begin -->',
@@ -800,10 +800,138 @@ const FIXTURES = [
       ),
   },
   {
+    // A container is not a hiding place. Only top-level tokens were inspected,
+    // so a table, a heading or raw HTML inside a blockquote rendered normally
+    // and was never looked at.
+    name: 'nested: a blockquoted conflicting evidence table',
+    file: 'phase-status',
+    expect: /results hold 2 tables; there must be exactly one/,
+    mutate: (text) =>
+      text.replace(
+        '<!-- phase-03-evidence:end -->',
+        '> | Command | Status | Result |\n> | --- | --- | --- |\n' +
+          '> | `pnpm run test:e2e` | PASS | 0 |\n\n<!-- phase-03-evidence:end -->',
+      ),
+  },
+  {
+    name: 'nested: a blockquoted duplicate Current position table',
+    file: 'phase-status',
+    expect: /current position holds 2 tables; there must be exactly one/,
+    mutate: (text) =>
+      text.replace(
+        '## Current position',
+        '## Current position\n\n> | Field | Value |\n> | --- | --- |\n> | Phase state | `DONE` |',
+      ),
+  },
+  {
+    name: 'nested: a blockquoted repair heading',
+    file: 'phase-status',
+    expect: /a repair heading is nested inside another block/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '> ### Eighteenth security repair (customer review 18) — `SECURITY_REPAIR_REQUIRED`\n\n' +
+          '## Update protocol',
+      ),
+  },
+  {
+    name: 'nested: a blockquoted raw HTML heading',
+    file: 'phase-status',
+    expect: /raw HTML in a governed region is not an approved boundary marker: <h3>/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '> <h3>Eighteenth security repair (customer review 18)</h3>\n\n## Update protocol',
+      ),
+  },
+  {
+    // A marker has exactly one home. Found by `indexOf`, the same text written
+    // in a fenced code block was a second boundary.
+    name: 'markers: the marker literal inside a fenced code block',
+    file: 'phase-status',
+    expect: /the begin marker text occurs 2 times in the document/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '```\n<!-- phase-03-evidence:begin -->\n<!-- phase-03-evidence:end -->\n```\n\n' +
+          '## Update protocol',
+      ),
+  },
+  {
+    // A link title is not visible text. The correct label written there and a
+    // stale one in the prose is one label and one decoy, the other way round
+    // from how the raw source reads.
+    name: 'visible: the correct label only in a link title',
+    file: 'phase-status',
+    expect: /measured on the first-repair tree \(1\); the manifest declares/,
+    mutate: (text) => {
+      const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
+      if (label === undefined) throw new Error('no measured-on label');
+      return text.replace(
+        label,
+        `See [the tree](https://example.invalid "${label}") for details.\n` +
+          'Measured on the first-repair tree. Every command exited 0.',
+      );
+    },
+  },
+  {
+    name: 'visible: an entity-encoded stale label beside the correct one',
+    file: 'phase-status',
+    expect: /carry 2 visible measured-on labels/,
+    mutate: (text) => {
+      const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
+      if (label === undefined) throw new Error('no measured-on label');
+      return text.replace(
+        label,
+        `Measured on the &#102;irst-repair tree. Every command exited 0.\n${label}`,
+      );
+    },
+  },
+  {
+    name: 'visible: an entity-encoded duplicate Current position heading',
+    file: 'phase-status',
+    expect: /there are 2 visible "Current position" H2 headings/,
+    mutate: (text) =>
+      text.replace(
+        '## Current position',
+        '## Current &#112;osition\n\n(decoy)\n\n## Current position',
+      ),
+  },
+  {
+    // The link's destination, not the anchor appearing somewhere in the cell.
+    name: 'ledger: the anchor only in a link title, pointing elsewhere',
+    file: 'phase-status',
+    expect: /links whose destination is #current-phase-03-evidence; there must be exactly one/,
+    mutate: (text) =>
+      text.replace(
+        '[Current Phase 03 evidence](#current-phase-03-evidence)',
+        '[Current Phase 03 evidence](#elsewhere "#current-phase-03-evidence")',
+      ),
+  },
+  {
+    name: 'nested: a second canonical evidence H2 after the measured block',
+    file: 'phase-status',
+    expect: /there are 2 visible "Current Phase 03 evidence" H2 headings/,
+    mutate: (text) =>
+      text.replace(
+        '<!-- phase-03-evidence:end -->',
+        '<!-- phase-03-evidence:end -->\n\n## Current Phase 03 evidence\n\n(second)\n',
+      ),
+  },
+  {
+    name: 'nested: raw HTML inside the Current position section',
+    file: 'phase-status',
+    expect: /raw HTML in a governed region is not an approved boundary marker: <div>/,
+    mutate: (text) =>
+      text.replace(
+        '| Current phase | 03 — Platform kernel |',
+        '| Current phase | 03 — Platform kernel |\n\n<div>raw</div>\n',
+      ),
+  },
+  {
     name: 'evidence: the results markers removed',
     file: 'phase-status',
-    expect:
-      /phase-03-evidence: expected exactly one begin marker and one end marker, found 0 and 0/,
+    expect: /phase-03-evidence: the begin marker text occurs 0 times in the document/,
     mutate: (text) =>
       text
         .replace('<!-- phase-03-evidence:begin -->\n\n', '')
@@ -883,14 +1011,13 @@ const FIXTURES = [
   {
     name: 'gate battery: markers removed',
     file: 'phase-status',
-    expect:
-      /phase-03-gate-battery: expected exactly one begin marker and one end marker, found 0 and 1/,
+    expect: /phase-03-gate-battery: the begin marker text occurs 0 times in the document/,
     mutate: (text) => text.replace('<!-- phase-03-gate-battery:begin -->', ''),
   },
   {
     name: 'ledger: the canonical link removed',
     file: 'phase-status',
-    expect: /ledger row does not link/,
+    expect: /links whose destination is #current-phase-03-evidence; there must be exactly one/,
     mutate: (text) =>
       text.replace(/^(\| 03 \| Platform kernel \|[^\n]*)$/m, (row) =>
         row.replace(
@@ -902,7 +1029,7 @@ const FIXTURES = [
   {
     name: 'canonical section: duplicated',
     file: 'phase-status',
-    expect: /gate battery is not inside the canonical evidence section/,
+    expect: /there are 2 visible "Current Phase 03 evidence" H2 headings/,
     mutate: (text) =>
       text.replace(
         '## Current Phase 03 evidence',
@@ -912,7 +1039,7 @@ const FIXTURES = [
   {
     name: 'canonical section: removed',
     file: 'phase-status',
-    expect: /no visible "Current Phase 03 evidence" H2/,
+    expect: /there are 0 visible "Current Phase 03 evidence" H2 headings/,
     mutate: (text) => text.replace(/^## Current Phase 03 evidence$/m, '## Evidence'),
   },
   {
