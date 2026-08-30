@@ -13,6 +13,11 @@
 // with every GIT_* variable stripped, and git's answer is required to be the
 // same repository — GIT_INDEX_FILE alone once pointed the enumeration at another
 // index, and the gate reported one clean tracked file and exited 0.
+//
+// What it scans is the *indexed* content: the blob each entry names, which is
+// what a commit would carry. The working tree is scanned as well, never instead
+// — staging a credential and then overwriting the file with clean text reported
+// zero findings while the credential sat in the index.
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,10 +36,14 @@ try {
   throw error;
 }
 
+// Working-tree divergences are printed, never swallowed: the indexed blob was
+// scanned either way, but a reader should know the file on disk was not.
+for (const note of result.notes) console.error(`scan-secrets: ${note}`);
+
 if (result.findings.length > 0) {
   console.error(`[FAIL] secret scan — ${result.findings.length} finding(s):`);
-  for (const f of result.findings) console.error(`  ${f.rel}:${f.line}  ${f.id}`);
+  for (const f of result.findings) console.error(`  ${f.rel}:${f.line}  ${f.id} (${f.source})`);
   process.exit(1);
 }
 
-console.log(`[PASS] secret scan — ${result.scanned} tracked files, 0 findings`);
+console.log(`[PASS] secret scan — ${result.scanned} indexed files, 0 findings`);

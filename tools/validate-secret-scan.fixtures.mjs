@@ -10,6 +10,13 @@
 // cover the synthetic value and nothing else — never a substring of a different
 // value, and never a whole line or file.
 //
+// **Indexed content is what is scanned.** The inventory read each entry's blob
+// name and then scanned the working-tree path instead, so staging a credential
+// and overwriting the file with clean text reported zero findings while the
+// credential sat in the index. Every content fixture below builds a real
+// repository and scans it through `scanRepository`, and several of them make the
+// index and the working tree disagree on purpose.
+//
 // **The inventory fails closed.** These fixtures call `scanEntries` and
 // `scanRepository` directly, against inventories and whole git repositories they
 // build in a temporary directory. They used to drive the production CLI through
@@ -35,6 +42,27 @@ import {
   scanEntries,
   scanRepository,
 } from './secret-scan.mjs';
+
+/** Runs git in `dir` with a sanitised environment, returning stdout. */
+function git(dir, args, options = {}) {
+  return execFileSync('git', ['-C', dir, ...args], {
+    encoding: 'utf8',
+    env: sanitisedGitEnv(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...options,
+  });
+}
+
+/** Builds a throwaway git repository and returns its root. */
+function repository(dir, build) {
+  mkdirSync(dir, { recursive: true });
+  git(dir, ['init', '-q']);
+  git(dir, ['config', 'user.email', 'fixture@example.invalid']);
+  git(dir, ['config', 'user.name', 'fixture']);
+  build(dir);
+  git(dir, ['add', '-A']);
+  return dir;
+}
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -125,12 +153,11 @@ const CONTENT_FIXTURES = [
 
 for (const fixture of CONTENT_FIXTURES) {
   inTempDir((dir) => {
-    mkdirSync(join(dir, 'src'), { recursive: true });
-    writeFileSync(join(dir, 'src', 'probe.ts'), fixture.content);
-    const { scanned, findings } = scanEntries({
-      root: dir,
-      entries: [{ path: 'src/probe.ts', mode: '100644' }],
+    const root = repository(join(dir, 'repo'), (at) => {
+      mkdirSync(join(at, 'src'), { recursive: true });
+      writeFileSync(join(at, 'src', 'probe.ts'), fixture.content);
     });
+    const { scanned, findings } = scanRepository(root);
     const found = findings.length > 0;
     const ok = scanned === 1 && found === fixture.expectFinding;
     record(
@@ -148,27 +175,16 @@ for (const fixture of CONTENT_FIXTURES) {
 }
 
 // ---------------------------------------------------------------- inventory
+/** A blob that really exists, so a fixture can isolate the field it is testing. */
+function blobOf(dir, text) {
+  return git(dir, ['hash-object', '-w', '--stdin'], { input: text }).trim();
+}
+
 const INVENTORY_FIXTURES = [
   {
     name: 'inventory: an empty file list is refused',
     build: (dir) => ({ root: dir, entries: [] }),
     expect: /inventory is empty/,
-  },
-  {
-    name: 'inventory: a missing file is refused',
-    build: (dir) => ({ root: dir, entries: [{ path: 'src/absent.ts', mode: '100644' }] }),
-    expect: /cannot read src\/absent\.ts/,
-  },
-  {
-    name: 'inventory: an unreadable file is refused',
-    build: (dir) => {
-      mkdirSync(join(dir, 'src'), { recursive: true });
-      const path = join(dir, 'src', 'locked.ts');
-      writeFileSync(path, 'export const a = 1;\n');
-      chmodSync(path, 0o000);
-      return { root: dir, entries: [{ path: 'src/locked.ts', mode: '100644' }] };
-    },
-    expect: /cannot read src\/locked\.ts/,
   },
   {
     name: 'inventory: an absolute path is refused',
@@ -182,17 +198,13 @@ const INVENTORY_FIXTURES = [
   },
   {
     name: 'inventory: a duplicate path is refused',
-    build: (dir) => {
-      mkdirSync(join(dir, 'src'), { recursive: true });
-      writeFileSync(join(dir, 'src', 'probe.ts'), 'export const a = 1;\n');
-      return {
-        root: dir,
-        entries: [
-          { path: 'src/probe.ts', mode: '100644' },
-          { path: 'src/probe.ts', mode: '100644' },
-        ],
-      };
-    },
+    build: (dir) => ({
+      root: dir,
+      entries: [
+        { path: 'probe.ts', mode: '100644' },
+        { path: 'probe.ts', mode: '100644' },
+      ],
+    }),
     expect: /more than once/,
   },
   {
@@ -202,12 +214,12 @@ const INVENTORY_FIXTURES = [
   },
   {
     name: 'inventory: a missing root is refused',
-    build: () => ({ root: undefined, entries: [{ path: 'src/probe.ts', mode: '100644' }] }),
+    build: () => ({ root: undefined, entries: [{ path: 'probe.ts', mode: '100644' }] }),
     expect: /a scan root is required/,
   },
   {
     name: 'inventory: a relative root is refused',
-    build: () => ({ root: 'tools', entries: [{ path: 'src/probe.ts', mode: '100644' }] }),
+    build: () => ({ root: 'tools', entries: [{ path: 'probe.ts', mode: '100644' }] }),
     expect: /scan root must be absolute/,
   },
   {
@@ -221,33 +233,72 @@ const INVENTORY_FIXTURES = [
   },
   {
     name: 'inventory: an entry list that is not an array is refused',
-    build: (dir) => ({ root: dir, entries: 'src/probe.ts' }),
+    build: (dir) => ({ root: dir, entries: 'probe.ts' }),
     expect: /must be an array/,
   },
   {
     name: 'inventory: an unclassified index mode is refused',
     build: (dir) => {
-      writeFileSync(join(dir, 'probe.ts'), 'export const a = 1;\n');
-      return { root: dir, entries: [{ path: 'probe.ts', mode: '160000' }] };
+      const root = repository(join(dir, 'repo'), (at) =>
+        writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
+      );
+      return {
+        root,
+        entries: [{ path: 'a.ts', mode: '160000', object: blobOf(root, 'x'), stage: '0' }],
+      };
     },
     expect: /does not classify/,
   },
   {
-    name: 'inventory: a regular entry that is really a symlink is refused',
+    name: 'inventory: an entry with no git object name is refused',
     build: (dir) => {
-      writeFileSync(join(dir, 'real.ts'), 'export const a = 1;\n');
-      symlinkSync(join(dir, 'real.ts'), join(dir, 'link.ts'));
-      return { root: dir, entries: [{ path: 'link.ts', mode: '100644' }] };
+      const root = repository(join(dir, 'repo'), (at) =>
+        writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
+      );
+      return {
+        root,
+        entries: [{ path: 'a.ts', mode: '100644', object: 'not-an-oid', stage: '0' }],
+      };
     },
-    expect: /recorded as a regular file but is not one/,
+    expect: /is not a git object name/,
   },
   {
-    name: 'inventory: a symlink whose link text no longer matches is refused',
+    name: 'inventory: an entry at a non-zero index stage is refused',
     build: (dir) => {
-      symlinkSync('/dev/null', join(dir, 'link.ts'));
-      return { root: dir, entries: [{ path: 'link.ts', mode: '120000', target: '/dev/urandom' }] };
+      const root = repository(join(dir, 'repo'), (at) =>
+        writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
+      );
+      return {
+        root,
+        entries: [{ path: 'a.ts', mode: '100644', object: blobOf(root, 'x'), stage: '2' }],
+      };
     },
-    expect: /points at \/dev\/null but the index records \/dev\/urandom/,
+    expect: /index stage 2, not 0/,
+  },
+  {
+    name: 'inventory: an object this repository does not hold is refused',
+    build: (dir) => {
+      const root = repository(join(dir, 'repo'), (at) =>
+        writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
+      );
+      return {
+        root,
+        entries: [{ path: 'a.ts', mode: '100644', object: '0'.repeat(40), stage: '0' }],
+      };
+    },
+    expect: /does not hold: indexed content that cannot be read is refused/,
+  },
+  {
+    name: 'inventory: an object that is not a blob is refused',
+    build: (dir) => {
+      const root = repository(join(dir, 'repo'), (at) =>
+        writeFileSync(join(at, 'a.ts'), 'const a = 1;\n'),
+      );
+      git(root, ['commit', '-qm', 'one']);
+      const tree = git(root, ['rev-parse', 'HEAD^{tree}']).trim();
+      return { root, entries: [{ path: 'a.ts', mode: '100644', object: tree, stage: '0' }] };
+    },
+    expect: /is a tree and not a blob/,
   },
 ];
 
@@ -258,13 +309,6 @@ for (const fixture of INVENTORY_FIXTURES) {
       scanEntries(fixture.build(dir));
     } catch (error) {
       raised = error;
-    } finally {
-      // The unreadable-file fixture leaves a mode that would defeat removal.
-      try {
-        chmodSync(join(dir, 'src', 'locked.ts'), 0o600);
-      } catch {
-        /* not that fixture */
-      }
     }
     const ok = raised instanceof SecretScanInventoryError && fixture.expect.test(raised.message);
     record(
@@ -277,16 +321,12 @@ for (const fixture of INVENTORY_FIXTURES) {
 
 // A valid inventory still scans, so the refusals above are not blanket.
 inTempDir((dir) => {
-  mkdirSync(join(dir, 'src'), { recursive: true });
-  writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
-  writeFileSync(join(dir, 'src', 'b.ts'), 'export const b = 2;\n');
-  const { scanned, findings } = scanEntries({
-    root: dir,
-    entries: [
-      { path: 'src/a.ts', mode: '100644' },
-      { path: 'src/b.ts', mode: '100644' },
-    ],
+  const root = repository(join(dir, 'repo'), (at) => {
+    mkdirSync(join(at, 'src'), { recursive: true });
+    writeFileSync(join(at, 'src', 'a.ts'), 'export const a = 1;\n');
+    writeFileSync(join(at, 'src', 'b.ts'), 'export const b = 2;\n');
   });
+  const { scanned, findings } = scanEntries({ root, entries: gitInventory(root) });
   const ok = scanned === 2 && findings.length === 0;
   record(
     'inventory: a valid two-file inventory is scanned',
@@ -295,19 +335,36 @@ inTempDir((dir) => {
   );
 });
 
-// ------------------------------------------------------ whole-repository
-/** Builds a throwaway git repository and returns its root. */
-function repository(dir, build) {
-  const run = (args) =>
-    execFileSync('git', ['-C', dir, ...args], { env: sanitisedGitEnv(), stdio: 'ignore' });
-  run(['init', '-q']);
-  run(['config', 'user.email', 'fixture@example.invalid']);
-  run(['config', 'user.name', 'fixture']);
-  build(dir);
-  run(['add', '-A']);
-  return dir;
-}
+// A real unmerged index, through the production enumeration.
+inTempDir((dir) => {
+  const root = repository(join(dir, 'repo'), (at) => writeFileSync(join(at, 'a.ts'), 'base\n'));
+  git(root, ['commit', '-qm', 'base']);
+  git(root, ['checkout', '-qb', 'other']);
+  writeFileSync(join(root, 'a.ts'), 'theirs\n');
+  git(root, ['commit', '-qam', 'theirs']);
+  git(root, ['checkout', '-q', '-']);
+  writeFileSync(join(root, 'a.ts'), 'ours\n');
+  git(root, ['commit', '-qam', 'ours']);
+  try {
+    git(root, ['merge', 'other'], { stdio: 'ignore' });
+  } catch {
+    /* the conflict is the point */
+  }
+  let raised;
+  try {
+    scanRepository(root);
+  } catch (error) {
+    raised = error;
+  }
+  const ok = raised instanceof SecretScanInventoryError && /index stage/.test(raised.message);
+  record(
+    'inventory: a genuinely unmerged path is refused',
+    ok,
+    ok ? 'refused' : `NOT REFUSED — ${raised === undefined ? 'accepted' : String(raised)}`,
+  );
+});
 
+// ------------------------------------------------------ whole-repository
 /** A credential shape, assembled so this file is not itself a finding. */
 const LEAK = `const ${KEY} = "an-actual-looking-credential-1234";\n`;
 
@@ -348,6 +405,14 @@ const REPOSITORY_FIXTURES = [
     expectScanned: 1,
   },
   {
+    name: 'repository: an indexed symlink is scanned as its stored link text',
+    // The link text itself carries the credential shape, so a finding here can
+    // only come from reading the indexed blob.
+    build: (dir) => symlinkSync(`${KEY}="an-actual-looking-credential-1234"`, join(dir, 'link.ts')),
+    expectFindings: 1,
+    expectScanned: 1,
+  },
+  {
     name: 'repository: an ordinary clean repository scans every tracked file',
     build: (dir) => {
       mkdirSync(join(dir, 'src'), { recursive: true });
@@ -362,7 +427,7 @@ const REPOSITORY_FIXTURES = [
 
 for (const fixture of REPOSITORY_FIXTURES) {
   inTempDir((dir) => {
-    const root = repository(join(dir, 'repo'), fixture.build, mkdirSync(join(dir, 'repo')));
+    const root = repository(join(dir, 'repo'), fixture.build);
     const started = Date.now();
     let result;
     let raised;
@@ -387,25 +452,98 @@ for (const fixture of REPOSITORY_FIXTURES) {
   });
 }
 
+// ------------------------------------------------- index against working tree
+/**
+ * The staged content is what a commit would carry, so it is what is scanned.
+ *
+ * Each of these stages a credential and then makes the working tree disagree.
+ * The old scan read the working-tree path and reported nothing at all.
+ */
+const STAGED_FIXTURES = [
+  {
+    name: 'staged: a credential overwritten with clean text is still reported',
+    after: (dir) => writeFileSync(join(dir, 'leak.ts'), 'export const clean = 1;\n'),
+    expectFindings: 1,
+    expectNotes: 0,
+  },
+  {
+    name: 'staged: a credential whose working-tree file was deleted is still reported',
+    after: (dir) => rmSync(join(dir, 'leak.ts')),
+    expectFindings: 1,
+    expectNotes: 1,
+  },
+  {
+    name: 'staged: a credential whose working-tree file became a directory is still reported',
+    after: (dir) => {
+      rmSync(join(dir, 'leak.ts'));
+      mkdirSync(join(dir, 'leak.ts'));
+    },
+    expectFindings: 1,
+    expectNotes: 1,
+  },
+  {
+    name: 'staged: a working-tree credential the index does not carry is still reported',
+    // The other direction: the index is clean and the file on disk is not.
+    // Scanning the index must not become a way to miss what is on disk.
+    staged: 'export const clean = 1;\n',
+    after: (dir) => writeFileSync(join(dir, 'leak.ts'), LEAK),
+    expectFindings: 1,
+    expectNotes: 0,
+  },
+  {
+    name: 'staged: a large indexed blob is scanned even when the file is replaced',
+    staged: LEAK + 'a'.repeat(2_100_000) + '\n',
+    after: (dir) => writeFileSync(join(dir, 'leak.ts'), 'export const clean = 1;\n'),
+    expectFindings: 1,
+    expectNotes: 0,
+  },
+  {
+    name: 'staged: identical index and working tree report one finding, not two',
+    after: () => undefined,
+    expectFindings: 1,
+    expectNotes: 0,
+  },
+];
+
+for (const fixture of STAGED_FIXTURES) {
+  inTempDir((dir) => {
+    const root = repository(join(dir, 'repo'), (at) =>
+      writeFileSync(join(at, 'leak.ts'), fixture.staged ?? LEAK),
+    );
+    fixture.after(root);
+    let result;
+    let raised;
+    try {
+      result = scanRepository(root);
+    } catch (error) {
+      raised = error;
+    }
+    const findings = result?.findings.length ?? -1;
+    const notes = result?.notes?.length ?? -1;
+    const ok =
+      raised === undefined && findings === fixture.expectFindings && notes === fixture.expectNotes;
+    record(
+      fixture.name,
+      ok,
+      raised !== undefined
+        ? `raised ${String(raised)}`
+        : `${String(findings)} finding(s) from ${String(result?.findings[0]?.source)}, ` +
+            `${String(notes)} note(s)`,
+    );
+  });
+}
+
 // A submodule is content this scan cannot reach, and is refused rather than
 // passed over.
 inTempDir((dir) => {
-  mkdirSync(join(dir, 'inner'), { recursive: true });
   const inner = repository(join(dir, 'inner'), (at) =>
     writeFileSync(join(at, 'a.ts'), 'export const a = 1;\n'),
   );
-  execFileSync('git', ['-C', inner, 'commit', '-qm', 'inner'], {
-    env: sanitisedGitEnv(),
+  git(inner, ['commit', '-qm', 'inner']);
+  const outer = repository(join(dir, 'outer'), () => undefined);
+  git(outer, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'vendor'], {
     stdio: 'ignore',
   });
-  mkdirSync(join(dir, 'outer'), { recursive: true });
-  const outer = join(dir, 'outer');
-  const run = (args) =>
-    execFileSync('git', ['-C', outer, ...args], { env: sanitisedGitEnv(), stdio: 'ignore' });
-  run(['init', '-q']);
-  run(['config', 'user.email', 'fixture@example.invalid']);
-  run(['config', 'user.name', 'fixture']);
-  run(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'vendor']);
   let raised;
   try {
     scanRepository(outer);
@@ -455,12 +593,12 @@ function runCli(env) {
 }
 
 const control = runCli({});
-const reported = /secret scan — (\d+) tracked files/.exec(control.stdout)?.[1];
+const reported = /secret scan — (\d+) indexed files/.exec(control.stdout)?.[1];
 record(
-  'control: the CLI scans every tracked file and the repository is clean',
+  'control: the CLI scans every indexed file and the repository is clean',
   control.status === 0 && Number(reported) === expectedInventory,
   control.status === 0
-    ? `scanned ${String(reported)} of ${String(expectedInventory)} tracked files`
+    ? `scanned ${String(reported)} of ${String(expectedInventory)} indexed files`
     : `reported (exit ${String(control.status)})`,
 );
 
@@ -499,7 +637,7 @@ const IGNORED_OVERRIDES = [
 ];
 for (const env of IGNORED_OVERRIDES) {
   const run = runCli(env);
-  const scanned = /secret scan — (\d+) tracked files/.exec(run.stdout)?.[1];
+  const scanned = /secret scan — (\d+) indexed files/.exec(run.stdout)?.[1];
   const ok = run.status === 0 && Number(scanned) === expectedInventory;
   record(
     `CLI: ${Object.keys(env).join(' + ')} does not redirect the scan`,
