@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { marked } from 'marked';
 import { SUB_GATES } from './gate-sec-config.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +21,9 @@ const RUNBOOK_PATH =
   join(ROOT, 'docs', 'implementation', 'database-bootstrap-runbook.md');
 const PHASE_STATUS_PATH =
   process.env['PRSYSTEM_PHASE_STATUS'] ?? join(ROOT, 'docs', 'implementation', 'phase-status.md');
+const EVIDENCE_MANIFEST_PATH =
+  process.env['PRSYSTEM_EVIDENCE_MANIFEST'] ??
+  join(ROOT, 'docs', 'implementation', 'phase-03-evidence.json');
 const DOCS = join(ROOT, 'docs');
 const IMPL = join(DOCS, 'implementation');
 
@@ -594,354 +598,425 @@ check('14', 'The runbook GATE-SEC catalogue matches tools/gate-sec-config.mjs', 
   );
   return `${configured.length} sub-gates, catalogue section and configuration agree`;
 });
-
-check('15', 'Phase 03 results live in exactly one canonical section', () => {
+check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
+  // Rendered structure, not lines.
+  //
+  // Every previous version of this check read `phase-status.md` with regular
+  // expressions over lines, and every round found another construct the patterns
+  // did not model: a row without pipes, a Setext heading, a raw `<h3>`, a tab
+  // after the `#`, a correct label inside an HTML comment. Those are not gaps in
+  // the patterns; they are the difference between text that looks like Markdown
+  // and Markdown as it renders. The document is parsed with a pinned CommonMark
+  // and GFM parser and this check reads the tree.
+  //
+  // What the document must say is declared separately, in
+  // `phase-03-evidence.json`. The tree has to match that manifest exactly, so a
+  // number is written down once and the prose is checked against it rather than
+  // parsed for meaning.
   const text = readFileSync(PHASE_STATUS_PATH, 'utf8');
+  const manifest = JSON.parse(readFileSync(EVIDENCE_MANIFEST_PATH, 'utf8'));
   const ANCHOR = '#current-phase-03-evidence';
 
-  const canonical = [...text.matchAll(/^## Current Phase 03 evidence$/gm)];
-  assert(
-    canonical.length === 1,
-    `expected exactly one canonical evidence section, found ${String(canonical.length)}`,
-  );
-  const evidence = section(text, '## Current Phase 03 evidence');
-  assert(evidence !== undefined, 'the canonical evidence section is empty');
-  const evidenceBounds = sectionBounds(text, '## Current Phase 03 evidence');
-  assert(evidenceBounds !== undefined, 'the canonical evidence section has no bounds');
+  // Top-level tokens with their exact character bounds. marked's `raw` values
+  // concatenate to the source, so accumulating them gives every token a span,
+  // which is what the bounded regions are expressed in.
+  const tokens = [];
+  let offset = 0;
+  for (const token of marked.lexer(text)) {
+    tokens.push({ ...token, start: offset, end: offset + token.raw.length });
+    offset += token.raw.length;
+  }
+  assert(offset === text.length, 'the parsed document does not reconstruct the source exactly');
 
-  // Containment is asserted on the region's exact character bounds, not on the
-  // section text merely mentioning a marker. A decoy pair anywhere in the file
-  // is refused by `markedRegion`, which requires exactly one of each.
-  const within = (region, what) => {
-    assert(
-      region.start >= evidenceBounds.start && region.end <= evidenceBounds.end,
-      `${what} is not inside the canonical evidence section`,
-    );
+  const APPROVED_HTML = new Set([
+    '<!-- phase-03-gate-battery:begin -->',
+    '<!-- phase-03-gate-battery:end -->',
+    '<!-- phase-03-evidence:begin -->',
+    '<!-- phase-03-evidence:end -->',
+    '<!-- phase-03-repair-history:begin -->',
+    '<!-- phase-03-repair-history:end -->',
+  ]);
+
+  const inSpan = (token, span) => token.start >= span.start && token.end <= span.end;
+
+  /**
+   * Every row of a table, as written, must have the column count it declares.
+   *
+   * GFM truncates a row with too many cells and pads one with too few, so the
+   * parsed rows are always the header's width and a malformed row reads as
+   * well-formed. The written shape is the only place the mistake is visible.
+   */
+  const assertRowShapes = (table, what) => {
+    const width = table.header.length;
+    const lines = table.raw.split('\n').filter((line) => line.trim() !== '');
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      const inner = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+      const cells = inner.split(/(?<!\\)\|/).length;
+      assert(
+        cells === width,
+        `a ${what} row has ${String(cells)} cells; the table declares ${String(width)}: ` +
+          `${trimmed.slice(0, 70)}`,
+      );
+      // The delimiter row is row 1 and is shaped like any other.
+      void index;
+    });
   };
 
-  // The gate battery is bounded by explicit markers and must sit inside the
-  // canonical section. Selecting "the first bash block starting with
-  // node tools/validate-governance" found one inside the Phase 00 record.
+  // ------------------------------------------------------------ the regions
   const battery = markedRegion(text, 'phase-03-gate-battery');
-  within(battery, 'the Phase 03 gate battery');
+  const measured = markedRegion(text, 'phase-03-evidence');
+  const history = markedRegion(text, 'phase-03-repair-history');
 
-  // The Phase 03 ledger row links to the canonical section and restates nothing.
-  const ledgerRow = text.split('\n').find((line) => line.startsWith('| 03 |'));
-  assert(ledgerRow !== undefined, 'the phase ledger has no Phase 03 row');
-  assert(ledgerRow.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
-
-  const measuredRegion = markedRegion(text, 'phase-03-evidence');
-  within(measuredRegion, 'the canonical evidence results');
-
-  // The region must contain the results, not merely a correct-looking label.
-  // Marker geometry alone was satisfied by a pair wrapping one true sentence
-  // while the real table sat outside them carrying a stale one.
-  //
-  // Occurrences, not matching lines: two labels written on one line counted as
-  // one, and the second could name any tree at all.
-  const labels = [...measuredRegion.body.matchAll(/Measured on the ([a-z]+)-repair tree/g)];
-  assert(
-    labels.length === 1,
-    `the canonical evidence results carry ${String(labels.length)} measured-on labels; ` +
-      'there must be exactly one',
+  const headingTokens = tokens.filter((token) => token.type === 'heading');
+  const evidenceHeading = headingTokens.find(
+    (token) => token.depth === 2 && token.text.trim() === 'Current Phase 03 evidence',
   );
-  const measured = labels[0][1];
-
-  // ------------------------------------------------------------- the battery
-  const fences = [...battery.body.matchAll(/^```bash\n([\s\S]*?)^```$/gm)];
-  assert(
-    fences.length === 1,
-    `the Phase 03 gate battery holds ${String(fences.length)} bash blocks; there must be one`,
+  assert(evidenceHeading !== undefined, 'there is no visible "Current Phase 03 evidence" H2');
+  const nextTop = tokens.find(
+    (token) => token.start > evidenceHeading.start && token.type === 'heading' && token.depth <= 2,
   );
-  const batteryCommands = fences[0][1]
+  const evidenceSpan = {
+    start: evidenceHeading.start,
+    end: nextTop === undefined ? text.length : nextTop.start,
+  };
+  for (const [region, what] of [
+    [battery, 'the Phase 03 gate battery'],
+    [measured, 'the canonical evidence results'],
+  ]) {
+    assert(
+      region.start >= evidenceSpan.start && region.end <= evidenceSpan.end,
+      `${what} is not inside the canonical evidence section`,
+    );
+  }
+
+  // Raw HTML inside a governed region is refused unless it is one of the six
+  // approved boundary markers. An HTML comment renders as nothing, so anything
+  // written inside one is invisible to a reader and would otherwise be free to
+  // carry a label, a heading or a table row that only a parser sees.
+  const governed = [evidenceSpan, history, { start: 0, end: 0 }];
+  for (const token of tokens) {
+    if (token.type !== 'html') continue;
+    if (!governed.some((span) => inSpan(token, span))) continue;
+    assert(
+      APPROVED_HTML.has(token.raw.trim()),
+      `raw HTML in a governed region is not an approved boundary marker: ` +
+        `${token.raw.trim().slice(0, 70)}`,
+    );
+  }
+
+  // ------------------------------------------------------- the gate battery
+  const batteryCode = tokens.filter(
+    (token) => token.type === 'code' && inSpan(token, battery) && token.lang === 'bash',
+  );
+  assert(
+    batteryCode.length === 1,
+    `the Phase 03 gate battery holds ${String(batteryCode.length)} bash blocks; there must be one`,
+  );
+  const batteryCommands = batteryCode[0].text
     .split('\n')
     .map((line) => line.replace(/#.*$/, '').trim())
     .filter((line) => line !== '');
-  assert(batteryCommands.length > 0, 'the Phase 03 gate battery lists no commands');
-  const batterySet = new Set(batteryCommands);
+  const declared = manifest.battery.map((entry) => entry.command);
   assert(
-    batterySet.size === batteryCommands.length,
-    `the Phase 03 gate battery lists a command twice: ${batteryCommands.join('; ')}`,
+    batteryCommands.join('\n') === declared.join('\n'),
+    'the gate battery block and the evidence manifest list different commands',
   );
 
-  // ------------------------------------------------------- the results table
+  // -------------------------------------------------------- the exit codes
   //
-  // Every line that looks like a table row is parsed, not the ones a narrow
-  // pattern recognised. A row without backticks, a row indented by one space and
-  // a row whose cells were swapped all read as prose to a pattern anchored on
-  // "| `command` |", and each of them sat beside the real row saying something
-  // else.
-  const TABLE_LINE = /^ {0,3}\|/;
-  const evidenceLines = measuredRegion.body.split('\n');
-  const tables = [];
-  let current = null;
-  for (const line of evidenceLines) {
-    if (TABLE_LINE.test(line)) {
-      if (current === null) {
-        current = [];
-        tables.push(current);
-      }
-      current.push(line);
-    } else {
-      // Any non-row line ends the table, blank ones included: Markdown needs a
-      // blank line between blocks, so two tables separated by one are two
-      // tables and not a longer one.
-      current = null;
-    }
+  // Success is decided here, by the recorded exit codes, and never by the free
+  // text beside them. "PASS" next to "exit 1" was accepted because the Result
+  // cell was prose nobody parsed and nobody had to.
+  for (const entry of manifest.battery) {
+    assert(
+      Number.isInteger(entry.executions) && entry.executions >= 1,
+      `${entry.command} declares an execution count that is not a positive integer`,
+    );
+    assert(
+      Array.isArray(entry.exits) && entry.exits.length === entry.executions,
+      `${entry.command} declares ${String(entry.executions)} executions and ` +
+        `${String(entry.exits?.length)} exit codes`,
+    );
+    assert(
+      entry.exits.every((code) => code === 0),
+      `${entry.command} records a non-zero exit code: ${JSON.stringify(entry.exits)}`,
+    );
   }
-  assert(
-    tables.length === 1,
-    `the canonical evidence results hold ${String(tables.length)} tables; there must be exactly ` +
-      'one',
+
+  // ----------------------------------------------------- the evidence table
+  const evidenceTables = tokens.filter(
+    (token) => token.type === 'table' && inSpan(token, measured),
   );
-
-  /** A table row's cells, or undefined when the line is not a well-formed row. */
-  const cellsOf = (line) => {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return undefined;
-    return trimmed.slice(1, -1).split('|');
-  };
-
-  const [header, separator, ...dataRows] = tables[0];
-  const headerCells = cellsOf(header)?.map((cell) => cell.trim());
   assert(
-    headerCells !== undefined && headerCells.join(' | ') === 'Command | Status | Result',
-    `the canonical evidence table header is "${String(headerCells?.join(' | '))}"; it must be ` +
+    evidenceTables.length === 1,
+    `the canonical evidence results hold ${String(evidenceTables.length)} tables; there must be ` +
+      'exactly one',
+  );
+  const table = evidenceTables[0];
+  assertRowShapes(table, 'canonical evidence');
+  const header = table.header.map((cell) => cell.text.trim());
+  assert(
+    header.join(' | ') === 'Command | Status | Result',
+    `the canonical evidence table header is "${header.join(' | ')}"; it must be ` +
       '"Command | Status | Result"',
   );
-  const separatorCells = cellsOf(separator ?? '')?.map((cell) => cell.trim());
-  assert(
-    separatorCells !== undefined &&
-      separatorCells.length === 3 &&
-      separatorCells.every((cell) => /^-{3,}$/.test(cell)),
-    'the canonical evidence table has no three-column separator row',
-  );
 
-  const FAILURE_WORDS = /\b(fail|failed|failing|skip|skipped|not run|non-?zero|error)\b/i;
   const byCommand = new Map();
-  for (const row of dataRows) {
-    const cells = cellsOf(row);
+  for (const row of table.rows) {
     assert(
-      cells !== undefined && cells.length === 3,
-      `a result row does not have exactly three cells: ${row.trim().slice(0, 70)}`,
+      row.length === 3,
+      `a result row does not have exactly three cells: ${row.map((c) => c.text).join(' | ')}`,
     );
-    const [commandCell, statusCell, resultCell] = cells.map((cell) => cell.trim());
-
-    // Exactly one backticked command, and it must be one the battery lists. A
-    // row that named the command without backticks was invisible.
-    const quoted = [...commandCell.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    const [commandCell, statusCell, resultCell] = row.map((cell) => cell.text.trim());
+    const quoted = [...commandCell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
     assert(
       quoted.length === 1,
-      `a result row names ${String(quoted.length)} backticked commands: ` +
-        `${row.trim().slice(0, 70)}`,
+      `a result row names ${String(quoted.length)} backticked commands: ${commandCell}`,
     );
     const command = quoted[0];
     assert(
-      batterySet.has(command),
-      `the canonical evidence results report a command the battery does not list: ${command}`,
+      commandCell === `\`${command}\``,
+      `a result row's command cell carries more than the command: ${commandCell}`,
+    );
+    const entry = manifest.battery.find((candidate) => candidate.command === command);
+    assert(
+      entry !== undefined,
+      `the canonical evidence results report a command the manifest does not declare: ${command}`,
     );
     assert(!byCommand.has(command), `the canonical evidence results carry two rows for ${command}`);
-
     assert(
       statusCell === 'PASS',
       `the canonical evidence records a status other than PASS: ${command} → ${statusCell}`,
     );
-    assert(resultCell !== '', `the canonical evidence records an empty result for ${command}`);
     assert(
-      !FAILURE_WORDS.test(resultCell),
-      `the canonical evidence records a result that claims failure for ${command}: ${resultCell}`,
+      resultCell === entry.result,
+      `the canonical evidence result for ${command} is "${resultCell}"; the manifest declares ` +
+        `"${entry.result}"`,
     );
     byCommand.set(command, resultCell);
   }
-
-  const unreported = batteryCommands.filter((command) => !byCommand.has(command));
+  const unreported = declared.filter((command) => !byCommand.has(command));
   assert(
     unreported.length === 0,
     `the canonical evidence results have no row for: ${unreported.join('; ')}`,
   );
 
-  // ------------------------------------------------- the current position
+  // ------------------------------------------------- the measured-on label
   //
-  // Explicit rows with unique keys and exact values. The row used to carry
-  // prose, and a second contradicting sentence appended to it was shadowed by
-  // the first regex match.
-  const position = sectionBounds(text, '## Current position');
-  assert(position !== undefined, 'there is no "## Current position" section');
+  // Visible text only: a correct label written inside an HTML comment renders as
+  // nothing, and a stale one beside it was what a reader saw.
+  const ORDINALS = [
+    'first',
+    'second',
+    'third',
+    'fourth',
+    'fifth',
+    'sixth',
+    'seventh',
+    'eighth',
+    'ninth',
+    'tenth',
+    'eleventh',
+    'twelfth',
+    'thirteenth',
+    'fourteenth',
+    'fifteenth',
+    'sixteenth',
+    'seventeenth',
+    'eighteenth',
+    'nineteenth',
+    'twentieth',
+  ];
+  const visible = tokens
+    .filter((token) => inSpan(token, measured) && token.type !== 'html' && token.type !== 'code')
+    .map((token) => token.raw)
+    .join('\n');
+  const labels = [...visible.matchAll(/Measured on the ([a-z]+)-repair tree/g)];
+  assert(
+    labels.length === 1,
+    `the canonical evidence results carry ${String(labels.length)} visible measured-on labels; ` +
+      'there must be exactly one',
+  );
+  const labelNumber = ORDINALS.indexOf(labels[0][1]) + 1;
+  assert(
+    labelNumber === manifest.measuredOnRepairNumber,
+    `the canonical evidence was measured on the ${labels[0][1]}-repair tree ` +
+      `(${String(labelNumber)}); the manifest declares ${String(manifest.measuredOnRepairNumber)}`,
+  );
+
+  // --------------------------------------------------- the current position
+  const positionHeadings = headingTokens.filter(
+    (token) => token.depth === 2 && token.text.trim() === 'Current position',
+  );
+  assert(
+    positionHeadings.length === 1,
+    `there are ${String(positionHeadings.length)} visible "Current position" H2 headings; there ` +
+      'must be exactly one',
+  );
+  const positionHeading = positionHeadings[0];
+  const afterPosition = tokens.find(
+    (token) => token.start > positionHeading.start && token.type === 'heading' && token.depth <= 2,
+  );
+  const positionSpan = {
+    start: positionHeading.start,
+    end: afterPosition === undefined ? text.length : afterPosition.start,
+  };
+  const positionTables = tokens.filter(
+    (token) => token.type === 'table' && inSpan(token, positionSpan),
+  );
+  assert(
+    positionTables.length === 1,
+    `the current position holds ${String(positionTables.length)} tables; there must be exactly one`,
+  );
+
+  assertRowShapes(positionTables[0], 'current-position');
   const positionRows = new Map();
-  for (const line of text.slice(position.start, position.end).split('\n')) {
-    const cells = cellsOf(line);
-    if (cells === undefined || cells.length !== 2) continue;
-    const key = cells[0].trim();
-    if (key === 'Field' || /^-{3,}$/.test(key)) continue;
+  for (const row of positionTables[0].rows) {
+    assert(
+      row.length === 2,
+      `a current-position row does not have exactly two cells: ${row.map((c) => c.text).join(' | ')}`,
+    );
+    const key = row[0].text.trim();
     assert(!positionRows.has(key), `the current position states "${key}" twice`);
-    positionRows.set(key, cells[1].trim());
+    positionRows.set(key, row[1].text.trim());
   }
 
-  const positionValue = (key) => {
-    const value = positionRows.get(key);
-    assert(value !== undefined, `the current position has no "${key}" row`);
-    return value;
-  };
-
-  const CARDINALS = {
-    seventh: 7,
-    eighth: 8,
-    ninth: 9,
-    tenth: 10,
-    eleventh: 11,
-    twelfth: 12,
-    thirteenth: 13,
-    fourteenth: 14,
-    fifteenth: 15,
-    sixteenth: 16,
-    seventeenth: 17,
-  };
-  const ORDINALS = {
-    first: 1,
-    second: 2,
-    third: 3,
-    fourth: 4,
-    fifth: 5,
-    sixth: 6,
-    ...CARDINALS,
-  };
-
-  const positionState = /^`([A-Z_]+)`$/.exec(positionValue('Phase state'))?.[1];
+  const EXPECTED_POSITION = new Map([
+    ['Current phase', manifest.currentPhase],
+    ['Phase state', `\`${manifest.phaseState}\``],
+    ['Customer review number', String(manifest.customerReviewNumber)],
+    ['Latest implemented repair number', String(manifest.latestRepairNumber)],
+    ['Customer acceptance', `\`${manifest.customerAcceptance}\``],
+  ]);
+  for (const [key, want] of EXPECTED_POSITION) {
+    assert(positionRows.has(key), `the current position has no "${key}" row`);
+    assert(
+      positionRows.get(key) === want,
+      `the current position states ${key} = "${String(positionRows.get(key))}"; the manifest ` +
+        `declares "${want}"`,
+    );
+  }
+  const NARRATIVE_ROWS = new Set(['Next phase', 'Next phase state', 'Blocking conflicts']);
+  for (const key of positionRows.keys()) {
+    assert(
+      EXPECTED_POSITION.has(key) || NARRATIVE_ROWS.has(key),
+      `the current position carries a row the manifest does not govern: ${key}`,
+    );
+  }
   assert(
-    positionState !== undefined,
-    `the current position phase state is "${positionValue('Phase state')}"; it must be one ` +
-      'backticked state and nothing else',
-  );
-  const acceptance = /^`([A-Z_]+)`$/.exec(positionValue('Customer acceptance'))?.[1];
-  assert(
-    acceptance === 'NOT_ACCEPTED',
-    `the current position states customer acceptance "${String(acceptance)}"; Phase 03 is not ` +
+    manifest.customerAcceptance === 'NOT_ACCEPTED',
+    `the manifest declares customer acceptance ${manifest.customerAcceptance}; Phase 03 is not ` +
       'accepted and this document does not claim otherwise',
   );
-  const reviewNumber = /^(\d+)$/.exec(positionValue('Customer review number'))?.[1];
-  const repairNumberText = /^(\d+)$/.exec(positionValue('Latest implemented repair number'))?.[1];
   assert(
-    reviewNumber !== undefined && repairNumberText !== undefined,
-    'the current position review and repair numbers must each be a bare number',
-  );
-  const repairNumber = Number(repairNumberText);
-  assert(
-    Number(reviewNumber) === repairNumber,
-    `the current position says review ${reviewNumber} and repair ${repairNumberText}`,
+    manifest.customerReviewNumber === manifest.latestRepairNumber,
+    `the manifest declares review ${String(manifest.customerReviewNumber)} and repair ` +
+      `${String(manifest.latestRepairNumber)}`,
   );
 
-  // One phase state, stated in three places, compared.
-  const ledgerState = /^\|\s*03\s*\|[^|]*\|\s*`([A-Z_]+)`/.exec(ledgerRow)?.[1];
+  // -------------------------------------------------------- the phase ledger
+  const ledgerTables = tokens.filter(
+    (token) => token.type === 'table' && token.rows.some((row) => row[0]?.text.trim() === '03'),
+  );
+  assert(ledgerTables.length === 1, 'the phase ledger is not one table');
+  const ledgerRows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === '03');
   assert(
-    ledgerState === positionState,
-    `the current position says ${positionState} and the Phase 03 ledger row says ` +
-      `${String(ledgerState)}`,
+    ledgerRows.length === 1,
+    `the phase ledger holds ${String(ledgerRows.length)} Phase 03 rows; there must be exactly one`,
+  );
+  const ledgerRow = ledgerRows[0];
+  assertRowShapes(ledgerTables[0], 'phase ledger');
+  const ledgerText = ledgerRow.map((cell) => cell.text).join(' | ');
+  const stateTokens = [...ledgerText.matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]);
+  assert(
+    stateTokens.length === 1,
+    `the Phase 03 ledger row names ${String(stateTokens.length)} state tokens; there must be ` +
+      'exactly one',
   );
   assert(
-    positionState === 'SECURITY_REPAIR_REQUIRED',
-    `every repair heading states SECURITY_REPAIR_REQUIRED; the current position says ` +
-      `${positionState}`,
+    stateTokens[0] === manifest.phaseState,
+    `the Phase 03 ledger row says ${stateTokens[0]}; the manifest declares ${manifest.phaseState}`,
   );
-
-  // And the ledger keeps no copy of the review ordinal. Another copy of a moving
-  // number is another thing to go stale, which is exactly what it did.
-  const ledgerOrdinal = new RegExp(`\\b(${Object.keys(ORDINALS).join('|')})\\b`, 'i').exec(
-    ledgerRow,
-  );
+  assert(ledgerText.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
+  const ledgerOrdinal = new RegExp(`\\b(${ORDINALS.join('|')})\\b`, 'i').exec(ledgerText);
   assert(
     ledgerOrdinal === null,
     `the Phase 03 ledger row restates the repair ordinal "${String(ledgerOrdinal?.[1])}"; the ` +
-      'canonical section is the one place that number is written',
-  );
-
-  assert(
-    ORDINALS[measured] === repairNumber,
-    `the canonical evidence was "measured on the ${measured}-repair tree" (` +
-      `${String(ORDINALS[measured])}); the current position names review ` +
-      `${String(repairNumber)}`,
+      'manifest is the one place that number is written',
   );
 
   // ------------------------------------------------------- the repair history
   //
-  // Every ATX heading at every level, including headings indented by up to three
-  // spaces, which Markdown still renders as headings. A malformed `####` record
-  // behind an empty canonical `###` decoy, an `##` record and an indented `###`
-  // record were each invisible to a rule that only looked at unindented `### `.
-  const CANONICAL_HEADING =
+  // Every heading the document renders, at every level and in every form: ATX,
+  // Setext, and raw `<h1>`–`<h6>`. A heading that describes a repair or a
+  // customer review must be the canonical, unindented H3 record, inside the
+  // bounded history. A canonical heading written inside an HTML comment renders
+  // as nothing and cannot stand in for a record.
+  const CANONICAL =
     /^### ([A-Za-z]+) security repair \(customer review (\d+)\) — `SECURITY_REPAIR_REQUIRED`$/;
-  const DECLARED_SECTION_HEADINGS = new Set([
-    '### Remaining blockers',
-    '### GATE-SEC sub-gate counts',
-  ]);
+  const DECLARED_SECTION_HEADINGS = new Set(['Remaining blockers', 'GATE-SEC sub-gate counts']);
   const DESCRIBES_A_REPAIR = /\brepair\b|\bcustomer review\b/i;
 
-  const history = markedRegion(text, 'phase-03-repair-history');
-  const headings = [...text.matchAll(/^ {0,3}#{1,6} [^\n]*$/gm)].map((match) => ({
-    heading: match[0],
-    inside: match.index >= history.start && match.index < history.end,
-  }));
-
-  const sections = [];
-  for (const entry of headings) {
-    const canonical = CANONICAL_HEADING.test(entry.heading);
-    if (canonical) {
-      assert(
-        entry.inside,
-        `a repair heading sits outside the bounded repair history: ${entry.heading.trim()}`,
-      );
-      const parsed = CANONICAL_HEADING.exec(entry.heading);
-      sections.push({
-        heading: entry.heading,
-        word: parsed[1].toLowerCase(),
-        number: Number(parsed[2]),
-      });
+  const rendered = [];
+  for (const token of tokens) {
+    if (token.type === 'heading') {
+      rendered.push({ token, raw: token.raw.replace(/\n+$/, ''), text: token.text.trim() });
       continue;
     }
-    // Not canonical. It may not describe a repair record at any level, indented
-    // or not, inside the history region or outside it.
+    if (token.type !== 'html') continue;
+    for (const match of token.raw.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)) {
+      rendered.push({ token, raw: match[0], text: match[2].trim() });
+    }
+  }
+
+  const sections = [];
+  for (const entry of rendered) {
+    const canonical = CANONICAL.test(entry.raw);
+    if (canonical) {
+      assert(
+        inSpan(entry.token, history),
+        `a repair heading sits outside the bounded repair history: ${entry.raw}`,
+      );
+      const parsed = CANONICAL.exec(entry.raw);
+      sections.push({ raw: entry.raw, word: parsed[1].toLowerCase(), number: Number(parsed[2]) });
+      continue;
+    }
     assert(
-      !DESCRIBES_A_REPAIR.test(entry.heading),
+      !DESCRIBES_A_REPAIR.test(entry.text),
       `a heading describes a repair or a customer review but is not a canonical, unindented ` +
-        `H3 repair heading: ${entry.heading.trim()}`,
+        `H3 repair heading: ${entry.raw.slice(0, 80)}`,
     );
-    if (!entry.inside) continue;
-    if (!entry.heading.startsWith('### ')) continue; // a sub-heading of a record
+    if (!inSpan(entry.token, history)) continue;
+    if (entry.token.type !== 'heading' || entry.token.depth !== 3) continue;
     assert(
-      DECLARED_SECTION_HEADINGS.has(entry.heading.trim()),
+      DECLARED_SECTION_HEADINGS.has(entry.text),
       `a heading in the repair history is neither a canonical repair heading nor a declared ` +
-        `section heading: ${entry.heading.trim()}`,
+        `section heading: ${entry.raw.slice(0, 80)}`,
     );
   }
-  assert(sections.length > 0, 'there are no numbered repair sections');
 
+  const numbers = sections.map((entry) => entry.number);
+  assert(numbers.length > 0, 'there are no numbered repair sections');
   for (const entry of sections) {
     assert(
-      ORDINALS[entry.word] === entry.number,
-      `a repair heading disagrees with its own number: ${entry.heading.trim()}`,
+      ORDINALS.indexOf(entry.word) + 1 === entry.number,
+      `a repair heading disagrees with its own number: ${entry.raw}`,
     );
   }
-
-  // Unique, contiguous and ascending from 1 through the current review. A
-  // duplicate latest heading, a gap, or a reordered history each passed while
-  // only the last entry was read.
-  const numbers = sections.map((entry) => entry.number);
   assert(
-    numbers.length === new Set(numbers).size,
-    `the repair history repeats a review number: ${numbers.join(', ')}`,
+    JSON.stringify(numbers) === JSON.stringify(manifest.repairHistory),
+    `the repair history is ${JSON.stringify(numbers)}; the manifest declares ` +
+      `${JSON.stringify(manifest.repairHistory)}`,
   );
   assert(
-    numbers.every((value, index) => value === index + 1),
-    `the repair history is not 1..${String(numbers.length)} in order: ${numbers.join(', ')}`,
-  );
-  assert(
-    numbers[numbers.length - 1] === repairNumber,
-    `the current position names review ${String(repairNumber)}; the history runs to review ` +
-      `${String(numbers[numbers.length - 1])}`,
+    numbers[numbers.length - 1] === manifest.latestRepairNumber,
+    `the manifest declares repair ${String(manifest.latestRepairNumber)}; the history runs to ` +
+      `review ${String(numbers[numbers.length - 1])}`,
   );
 
   // Every mutable result form, in every region that is not the canonical
-  // section. `15/15 checks` slipped through a pattern that only knew about
-  // gate names and sub-gate counts.
+  // section.
   const MUTABLE = [
     { why: 'an N/N ratio', re: /\b\d+\/\d+\b/ },
     { why: 'a test count', re: /\b\d+\s+tests?\b/ },
@@ -952,7 +1027,7 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
     { why: 'a gate result', re: /GATE-(?:SEC|MIGR|INTEG|CONC|UNIT|E2E)[^\n|]*\d/ },
   ];
   const forbidden = [
-    ['the Phase 03 ledger row', [ledgerRow]],
+    ['the Phase 03 ledger row', [ledgerText]],
     ['the Phase 03 gate battery', battery.body.split('\n')],
   ];
   for (const [where, lines] of forbidden) {
@@ -965,7 +1040,6 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
     }
   }
 
-  // A superseded repair section must not claim to be current.
   const stale = text
     .split('\n')
     .filter((line) => /holds the current counts|This section holds the current/i.test(line));
@@ -975,8 +1049,9 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   );
 
   return (
-    `one canonical section for review ${String(repairNumber)}; position, history, evidence ` +
-    'label, ledger row and battery all agree and restate nothing'
+    `manifest review ${String(manifest.customerReviewNumber)}; ` +
+    `${String(declared.length)} battery commands, all exits zero; position, ledger, evidence ` +
+    'table, label and repair history all match it'
   );
 });
 

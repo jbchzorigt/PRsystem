@@ -13,7 +13,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | **03 — Platform kernel** |
+| Current phase | 03 — Platform kernel |
 | Phase state | `SECURITY_REPAIR_REQUIRED` |
 | Customer review number | 16 |
 | Latest implemented repair number | 16 |
@@ -1177,12 +1177,12 @@ Measured on the sixteenth-repair tree. Every command exited 0.
 | `pnpm run compose:config` | PASS | valid |
 | `pnpm run test:migrations` | PASS | 138 |
 | `pnpm run test:integration` | PASS | 51 — db 41, outbox 5, api 5 |
-| `pnpm run test:concurrency` (three runs) | PASS | 16 each run |
+| `pnpm run test:concurrency` | PASS | 16 each run |
 | `pnpm run test:regression` | PASS | 51 |
 | `node tools/validate-regression-coverage.mjs` | PASS | 429 of 429 |
 | `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 50 of 50 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12, four fixtures |
-| `pnpm run test:security` (three runs) | PASS | 18 of 18 sub-gates, 488, each run |
+| `pnpm run test:security` | PASS | 18 of 18 sub-gates, 488, each run |
 | `pnpm run test:e2e` | PASS | 15 |
 | `pnpm run audit:prod` | PASS | no known vulnerabilities |
 | `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |

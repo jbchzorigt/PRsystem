@@ -19,8 +19,20 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNBOOK = join(ROOT, 'docs', 'implementation', 'database-bootstrap-runbook.md');
 const PHASE_STATUS = join(ROOT, 'docs', 'implementation', 'phase-status.md');
+const EVIDENCE_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-03-evidence.json');
 const originalRunbook = readFileSync(RUNBOOK, 'utf8');
 const originalPhaseStatus = readFileSync(PHASE_STATUS, 'utf8');
+const originalManifest = readFileSync(EVIDENCE_MANIFEST, 'utf8');
+
+const SOURCES = {
+  runbook: { text: originalRunbook, env: 'PRSYSTEM_RUNBOOK', file: 'doc.md' },
+  'phase-status': { text: originalPhaseStatus, env: 'PRSYSTEM_PHASE_STATUS', file: 'doc.md' },
+  manifest: {
+    text: originalManifest,
+    env: 'PRSYSTEM_EVIDENCE_MANIFEST',
+    file: 'phase-03-evidence.json',
+  },
+};
 
 /**
  * Applies `change` only inside the canonical evidence region.
@@ -89,7 +101,7 @@ const FIXTURES = [
     // does not depend on which repair happens to be current.
     name: 'evidence: the measured-on label names an older repair',
     file: 'phase-status',
-    expect: /measured on the [a-z]+-repair tree" \(\d+\); the current position/,
+    expect: /measured on the [a-z]+-repair tree \(\d+\); the manifest declares/,
     mutate: (text) => {
       const current = /Measured on the ([a-z]+)-repair tree/.exec(text)?.[1];
       if (current === undefined) throw new Error('no "Measured on the …-repair tree" label');
@@ -217,7 +229,7 @@ const FIXTURES = [
   {
     name: 'current position: acceptance claimed',
     file: 'phase-status',
-    expect: /states customer acceptance "ACCEPTED"/,
+    expect: /states Customer acceptance = /,
     mutate: (text) =>
       text.replace(
         '| Customer acceptance | `NOT_ACCEPTED` |',
@@ -227,7 +239,7 @@ const FIXTURES = [
   {
     name: 'history: the latest heading duplicated',
     file: 'phase-status',
-    expect: /repeats a review number/,
+    expect: /the repair history is \[[\d,]+\]; the manifest declares/,
     mutate: (text) => {
       const headings = [
         ...text.matchAll(/^### [A-Za-z]+ security repair \(customer review \d+\)[^\n]*$/gm),
@@ -261,7 +273,7 @@ const FIXTURES = [
   {
     name: 'history: two sections transposed',
     file: 'phase-status',
-    expect: /is not 1\.\.\d+ in order/,
+    expect: /the repair history is \[[\d,]+\]; the manifest declares/,
     mutate: (text) => {
       const ninth = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       const tenth = /^### Tenth security repair \(customer review 10\)[^\n]*$/m.exec(text)?.[0];
@@ -301,7 +313,7 @@ const FIXTURES = [
   {
     name: 'evidence: a result row for a command the battery does not list',
     file: 'phase-status',
-    expect: /report a command the battery does not list/,
+    expect: /report a command the manifest does not declare/,
     mutate: (text) =>
       inEvidenceRegion(text, (region) => {
         const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
@@ -314,7 +326,7 @@ const FIXTURES = [
     // name any tree at all.
     name: 'evidence: two measured-on labels on one line',
     file: 'phase-status',
-    expect: /carry 2 measured-on labels/,
+    expect: /carry 2 visible measured-on labels/,
     mutate: (text) => {
       const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
       if (label === undefined) throw new Error('no measured-on label');
@@ -327,7 +339,7 @@ const FIXTURES = [
   {
     name: 'current position: the review and repair numbers disagree',
     file: 'phase-status',
-    expect: /says review \d+ and repair \d+/,
+    expect: /states Latest implemented repair number = /,
     mutate: (text) => {
       const row = /^\|\s*Latest implemented repair number\s*\|\s*(\d+)\s*\|$/m.exec(text);
       if (row === null) throw new Error('no repair-number row');
@@ -340,7 +352,7 @@ const FIXTURES = [
   {
     name: 'current position: the state disagrees with the ledger',
     file: 'phase-status',
-    expect: /the current position says DONE and the Phase 03 ledger row says/,
+    expect: /states Phase state = /,
     mutate: (text) =>
       text.replace('| Phase state | `SECURITY_REPAIR_REQUIRED` |', '| Phase state | `DONE` |'),
   },
@@ -431,7 +443,7 @@ const FIXTURES = [
   {
     name: 'evidence: PASS beside a result that says the command was not run',
     file: 'phase-status',
-    expect: /records a result that claims failure for pnpm run test:e2e/,
+    expect: /result for pnpm run test:e2e is "FAILED — command was not run"/,
     mutate: (text) =>
       inEvidenceRegion(text, (region) =>
         region.replace(
@@ -443,7 +455,7 @@ const FIXTURES = [
   {
     name: 'evidence: a blank result',
     file: 'phase-status',
-    expect: /records an empty result for pnpm run test:e2e/,
+    expect: /result for pnpm run test:e2e is ""/,
     mutate: (text) =>
       inEvidenceRegion(text, (region) =>
         region.replace(/^\| `pnpm run test:e2e` \|[^\n]*$/m, '| `pnpm run test:e2e` | PASS |  |'),
@@ -452,7 +464,7 @@ const FIXTURES = [
   {
     name: 'evidence: a row with the wrong number of cells',
     file: 'phase-status',
-    expect: /does not have exactly three cells/,
+    expect: /a canonical evidence row has 4 cells/,
     mutate: (text) =>
       inEvidenceRegion(text, (region) =>
         region.replace(
@@ -501,13 +513,140 @@ const FIXTURES = [
   {
     name: 'history: an indented H3 repair heading',
     file: 'phase-status',
-    expect: /unindented H3 repair heading: ### Sixteenth security repair/,
+    expect: /unindented H3 repair heading:\s+### Sixteenth security repair/,
     mutate: (text) =>
       text.replace(
         '## Update protocol',
         '   ### Sixteenth security repair (customer review 16) — `SECURITY_REPAIR_REQUIRED`\n\n' +
           '(indented h3)\n\n## Update protocol',
       ),
+  },
+  {
+    // GFM does not require the outer pipes. A pattern anchored on "|" did not
+    // see this line as a row at all, and it sat in the table saying something
+    // else.
+    name: 'evidence: a GFM row without leading or trailing pipes',
+    file: 'phase-status',
+    expect: /carry two rows for pnpm run test:e2e/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) => {
+        const row = /^\| `pnpm run test:e2e` \|[^\n]*$/m.exec(region)?.[0];
+        if (row === undefined) throw new Error('no test:e2e result row');
+        return region.replace(row, `${row}\n\`pnpm run test:e2e\` | PASS | 0 findings`);
+      }),
+  },
+  {
+    // Success is the recorded exit code, never the prose beside it.
+    name: 'evidence: PASS beside a result that reports exit 1',
+    file: 'phase-status',
+    expect: /result for pnpm run test:e2e is "15 tests, exit 1"/,
+    mutate: (text) =>
+      inEvidenceRegion(text, (region) =>
+        region.replace(
+          /^\| `pnpm run test:e2e` \|[^\n]*$/m,
+          '| `pnpm run test:e2e` | PASS | 15 tests, exit 1 |',
+        ),
+      ),
+  },
+  {
+    name: 'manifest: a non-zero exit code recorded for a battery command',
+    file: 'manifest',
+    expect: /records a non-zero exit code/,
+    mutate: (json) => json.replace('"exits": [0]', '"exits": [1]'),
+  },
+  {
+    name: 'manifest: an execution count that does not match the exit codes',
+    file: 'manifest',
+    expect: /declares 3 executions and 2 exit codes/,
+    mutate: (json) => json.replace('"exits": [0, 0, 0]', '"exits": [0, 0]'),
+  },
+  {
+    name: 'current position: a duplicate Current position H2',
+    file: 'phase-status',
+    expect: /there are 2 visible "Current position" H2 headings/,
+    mutate: (text) =>
+      text.replace(
+        '## Current position',
+        '## Current position\n\n| Field | Value |\n| --- | --- |\n| Phase state | `DONE` |\n\n' +
+          '## Current position',
+      ),
+  },
+  {
+    // GFM truncates a row with too many cells, so the parsed row is the right
+    // width and only the written shape shows the mistake.
+    name: 'current position: a malformed three-cell row',
+    file: 'phase-status',
+    expect: /a current-position row has 3 cells; the table declares 2/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase state | `SECURITY_REPAIR_REQUIRED` |',
+        '| Phase state | `SECURITY_REPAIR_REQUIRED` | extra |',
+      ),
+  },
+  {
+    name: 'ledger: a second state token in the Phase 03 row',
+    file: 'phase-status',
+    expect: /ledger row names 2 state tokens/,
+    mutate: (text) =>
+      text.replace(/^(\| 03 \| Platform kernel \|[^\n]*)$/m, (row) =>
+        row.replace('`0001_kernel`', '`0001_kernel` `DONE`'),
+      ),
+  },
+  {
+    // An HTML comment renders as nothing. A correct label written inside one and
+    // a stale label beside it is what a reader would actually see.
+    name: 'evidence: the correct label hidden in a comment beside a stale one',
+    file: 'phase-status',
+    expect: /raw HTML in a governed region is not an approved boundary marker/,
+    mutate: (text) => {
+      const label = /^Measured on the [a-z]+-repair tree[^\n]*$/m.exec(text)?.[0];
+      if (label === undefined) throw new Error('no measured-on label');
+      return text.replace(
+        label,
+        `<!-- ${label} -->\nMeasured on the first-repair tree. Every command exited 0.`,
+      );
+    },
+  },
+  {
+    name: 'history: a Setext repair heading',
+    file: 'phase-status',
+    expect: /unindented H3 repair heading: Seventeenth security repair/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        'Seventeenth security repair (customer review 17)\n' +
+          '---------------------------------------------\n\n(setext)\n\n## Update protocol',
+      ),
+  },
+  {
+    name: 'history: a raw <h3> repair heading',
+    file: 'phase-status',
+    expect: /raw HTML in a governed region is not an approved boundary marker: <h3>/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '<h3>Seventeenth security repair (customer review 17)</h3>\n\n(raw)\n\n## Update protocol',
+      ),
+  },
+  {
+    name: 'history: a tab-separated ATX repair heading',
+    file: 'phase-status',
+    expect: /unindented H3 repair heading:\s+###\s+Seventeenth security repair/,
+    mutate: (text) =>
+      text.replace(
+        '## Update protocol',
+        '###\tSeventeenth security repair (customer review 17)\n\n(tab)\n\n## Update protocol',
+      ),
+  },
+  {
+    name: 'history: a canonical heading hidden in a comment beside a visible record',
+    file: 'phase-status',
+    expect: /raw HTML in a governed region is not an approved boundary marker: <!-- ###/,
+    mutate: (text) => {
+      const real = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
+      if (real === undefined) throw new Error('no ninth repair heading');
+      return text.replace(real, `<!-- ${real} -->\n\n### Ninth repair record\n`);
+    },
   },
   {
     name: 'evidence: the results markers removed',
@@ -538,7 +677,7 @@ const FIXTURES = [
   {
     name: 'evidence: the measured-on label removed entirely',
     file: 'phase-status',
-    expect: /carry 0 measured-on labels; there must be exactly one/,
+    expect: /carry 0 visible measured-on labels/,
     mutate: (text) =>
       text.replace(/Measured on the [a-z]+-repair tree\./, 'Measured on the final tree.'),
   },
@@ -612,7 +751,7 @@ const FIXTURES = [
   {
     name: 'canonical section: duplicated',
     file: 'phase-status',
-    expect: /found 2/,
+    expect: /gate battery is not inside the canonical evidence section/,
     mutate: (text) =>
       text.replace(
         '## Current Phase 03 evidence',
@@ -622,7 +761,7 @@ const FIXTURES = [
   {
     name: 'canonical section: removed',
     file: 'phase-status',
-    expect: /found 0/,
+    expect: /no visible "Current Phase 03 evidence" H2/,
     mutate: (text) => text.replace(/^## Current Phase 03 evidence$/m, '## Evidence'),
   },
   {
@@ -632,7 +771,7 @@ const FIXTURES = [
     // advanced — a negative fixture that changes nothing proves nothing.
     name: 'current position: a stale review number',
     file: 'phase-status',
-    expect: /says review \d+ and repair \d+/,
+    expect: /states Customer review number = /,
     mutate: (text) => {
       const row = /^\|\s*Customer review number\s*\|\s*(\d+)\s*\|$/m.exec(text);
       if (row === null) throw new Error('no review-number row');
@@ -642,7 +781,7 @@ const FIXTURES = [
   {
     name: 'current position: the history runs past the stated repair number',
     file: 'phase-status',
-    expect: /the history runs to review \d+/,
+    expect: /measured on the [a-z]+-repair tree \(\d+\); the manifest declares/,
     mutate: (text) => {
       const review = /^\|\s*Customer review number\s*\|\s*(\d+)\s*\|$/m.exec(text);
       const repair = /^\|\s*Latest implemented repair number\s*\|\s*(\d+)\s*\|$/m.exec(text);
@@ -702,7 +841,8 @@ function failedFor(output, expected) {
 }
 
 for (const fixture of FIXTURES) {
-  const original = fixture.file === 'runbook' ? originalRunbook : originalPhaseStatus;
+  const source = SOURCES[fixture.file];
+  const original = source.text;
   const mutated = fixture.mutate(original);
   if (mutated === original) {
     results.push({ name: fixture.name, ok: false, detail: 'fixture did not change the document' });
@@ -711,17 +851,21 @@ for (const fixture of FIXTURES) {
   }
 
   const dir = mkdtempSync(join(tmpdir(), 'prsystem-gov-fixture-'));
-  const path = join(dir, 'doc.md');
+  const path = join(dir, source.file);
   try {
     writeFileSync(path, mutated);
     const env = { ...process.env };
-    env[fixture.file === 'runbook' ? 'PRSYSTEM_RUNBOOK' : 'PRSYSTEM_PHASE_STATUS'] = path;
+    env[source.env] = path;
     const run = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-governance.mjs')], {
       cwd: ROOT,
       encoding: 'utf8',
       env,
     });
     const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
+    if (process.env['PRSYSTEM_FIXTURE_VERBOSE'] === '1') {
+      const line = output.split('\n').find((l) => l.startsWith('[FAIL]'));
+      console.error(`### ${fixture.name} :: ${String(line)}`);
+    }
     const rejected = run.status !== 0;
     const diagnosed = failedFor(output, fixture.expect);
     results.push({
@@ -743,6 +887,7 @@ for (const fixture of FIXTURES) {
 for (const [name, path, original] of [
   ['runbook', RUNBOOK, originalRunbook],
   ['phase-status', PHASE_STATUS, originalPhaseStatus],
+  ['the evidence manifest', EVIDENCE_MANIFEST, originalManifest],
 ]) {
   const unchanged = readFileSync(path, 'utf8') === original;
   results.push({
