@@ -10,6 +10,12 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
+import {
+  BATTERY_ENTRY_KEYS,
+  GOVERNED_STATE,
+  MANIFEST_KEYS,
+  REQUIRED_BATTERY,
+} from './phase-03-battery.mjs';
 import { SUB_GATES } from './gate-sec-config.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -717,11 +723,99 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
     .split('\n')
     .map((line) => line.replace(/#.*$/, '').trim())
     .filter((line) => line !== '');
+  // ------------------------------------------------- the required battery
+  //
+  // Declared in `phase-03-battery.mjs`, not here and not in the manifest. The
+  // manifest, the battery block and the evidence table could be edited together,
+  // so removing `pnpm run test:security` from all three — or reducing the
+  // battery to `git diff --check` — left this check reporting 15 of 15. A gate
+  // the document can delete is not a gate. The manifest records what was
+  // measured; what must be measured is not its to decide.
+  const required = REQUIRED_BATTERY.map((entry) => entry.command);
+  assert(new Set(required).size === required.length, 'the required battery lists a command twice');
+
   const declared = manifest.battery.map((entry) => entry.command);
   assert(
-    batteryCommands.join('\n') === declared.join('\n'),
-    'the gate battery block and the evidence manifest list different commands',
+    new Set(declared).size === declared.length,
+    `the evidence manifest lists a command twice: ${declared.join('; ')}`,
   );
+  const missing = required.filter((command) => !declared.includes(command));
+  const extra = declared.filter((command) => !required.includes(command));
+  assert(
+    missing.length === 0,
+    `the evidence manifest omits required battery commands: ${missing.join('; ')}`,
+  );
+  assert(
+    extra.length === 0,
+    `the evidence manifest declares commands the required battery does not: ${extra.join('; ')}`,
+  );
+
+  assert(
+    new Set(batteryCommands).size === batteryCommands.length,
+    `the Phase 03 gate battery lists a command twice: ${batteryCommands.join('; ')}`,
+  );
+  const blockMissing = required.filter((command) => !batteryCommands.includes(command));
+  const blockExtra = batteryCommands.filter((command) => !required.includes(command));
+  assert(
+    blockMissing.length === 0,
+    `the Phase 03 gate battery omits required commands: ${blockMissing.join('; ')}`,
+  );
+  assert(
+    blockExtra.length === 0,
+    `the Phase 03 gate battery lists commands the requirement does not: ${blockExtra.join('; ')}`,
+  );
+  assert(
+    batteryCommands.join('\n') === declared.join('\n'),
+    'the gate battery block and the evidence manifest list the commands in different orders',
+  );
+
+  for (const wanted of REQUIRED_BATTERY) {
+    const entry = manifest.battery.find((candidate) => candidate.command === wanted.command);
+    assert(
+      entry.executions === wanted.runs,
+      `${wanted.command} must be executed ${String(wanted.runs)} time(s); the manifest records ` +
+        `${String(entry.executions)}`,
+    );
+  }
+
+  // ------------------------------------------------ the manifest's own shape
+  const manifestKeys = Object.keys(manifest).sort();
+  assert(
+    manifestKeys.join(',') === [...MANIFEST_KEYS].sort().join(','),
+    `the evidence manifest declares keys [${manifestKeys.join(', ')}]; it must declare exactly ` +
+      `[${[...MANIFEST_KEYS].sort().join(', ')}]`,
+  );
+  for (const entry of manifest.battery) {
+    const keys = Object.keys(entry).sort();
+    assert(
+      keys.join(',') === [...BATTERY_ENTRY_KEYS].sort().join(','),
+      `a battery entry declares keys [${keys.join(', ')}]; it must declare exactly ` +
+        `[${[...BATTERY_ENTRY_KEYS].sort().join(', ')}]`,
+    );
+    assert(
+      typeof entry.command === 'string' && entry.command !== '',
+      'a battery entry has no command',
+    );
+    assert(
+      typeof entry.result === 'string' && entry.result !== '',
+      `${entry.command} has no result`,
+    );
+  }
+
+  // -------------------------------------------------- the governed state
+  //
+  // Phase 03 is not accepted, and this document may not say otherwise. An
+  // accepted transition is a customer decision, so it is a change to
+  // `phase-03-battery.mjs` and not something the manifest can declare about
+  // itself.
+  for (const [key, want] of Object.entries(GOVERNED_STATE)) {
+    if (key === 'nextPhaseState') continue;
+    assert(
+      manifest[key] === want,
+      `the evidence manifest declares ${key} = ${JSON.stringify(manifest[key])}; the governed ` +
+        `state is ${JSON.stringify(want)}`,
+    );
+  }
 
   // -------------------------------------------------------- the exit codes
   //
@@ -939,6 +1033,19 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
     `the Phase 03 ledger row says ${stateTokens[0]}; the manifest declares ${manifest.phaseState}`,
   );
   assert(ledgerText.includes(ANCHOR), `the Phase 03 ledger row does not link to ${ANCHOR}`);
+  // Phase 04 has not started, and the ledger is where that is recorded.
+  const nextRows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === '04');
+  assert(
+    nextRows.length === 1,
+    `the phase ledger holds ${String(nextRows.length)} Phase 04 rows; there must be exactly one`,
+  );
+  const nextState = /`([A-Z_ ]+)`/.exec(nextRows[0].map((cell) => cell.text).join(' | '))?.[1];
+  assert(
+    nextState === GOVERNED_STATE.nextPhaseState,
+    `the Phase 04 ledger row says ${String(nextState)}; the governed state is ` +
+      `${GOVERNED_STATE.nextPhaseState}`,
+  );
+
   const ledgerOrdinal = new RegExp(`\\b(${ORDINALS.join('|')})\\b`, 'i').exec(ledgerText);
   assert(
     ledgerOrdinal === null,
@@ -1003,7 +1110,33 @@ check('15', 'Phase 03 evidence matches the machine-readable manifest', () => {
       ORDINALS.indexOf(entry.word) + 1 === entry.number,
       `a repair heading disagrees with its own number: ${entry.raw}`,
     );
+    // Every record states the governed state. A heading that claimed a
+    // different one would be a record of a phase this document is not in.
+    assert(
+      entry.raw.endsWith(`\`${GOVERNED_STATE.phaseState}\``),
+      `a repair heading states a state other than ${GOVERNED_STATE.phaseState}: ${entry.raw}`,
+    );
   }
+
+  // Unique, ordered and exactly contiguous 1..latestRepairNumber, in both the
+  // manifest and the rendered history. Removing one repair from both, or
+  // duplicating a number in both, left the two agreeing with each other and
+  // wrong.
+  assert(
+    new Set(numbers).size === numbers.length,
+    `the repair history repeats a review number: ${numbers.join(', ')}`,
+  );
+  const contiguous = Array.from({ length: manifest.latestRepairNumber }, (_, i) => i + 1);
+  assert(
+    JSON.stringify(numbers) === JSON.stringify(contiguous),
+    `the repair history is ${JSON.stringify(numbers)}; it must be 1..` +
+      `${String(manifest.latestRepairNumber)} exactly`,
+  );
+  assert(
+    JSON.stringify(manifest.repairHistory) === JSON.stringify(contiguous),
+    `the manifest repair history is ${JSON.stringify(manifest.repairHistory)}; it must be 1..` +
+      `${String(manifest.latestRepairNumber)} exactly`,
+  );
   assert(
     JSON.stringify(numbers) === JSON.stringify(manifest.repairHistory),
     `the repair history is ${JSON.stringify(numbers)}; the manifest declares ` +

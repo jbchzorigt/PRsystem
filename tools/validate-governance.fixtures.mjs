@@ -51,6 +51,19 @@ function inEvidenceRegion(text, change) {
   return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
 }
 
+/** Removes one command from the battery block, the evidence table and the manifest. */
+function removeCommand(sources, command) {
+  const manifest = JSON.parse(sources.manifest);
+  manifest.battery = manifest.battery.filter((entry) => entry.command !== command);
+  const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return {
+    'phase-status': sources['phase-status']
+      .replace(new RegExp(`^${escaped}[^\n]*\n`, 'm'), '')
+      .replace(new RegExp(`^\\| \`${escaped}\` \\|[^\n]*\n`, 'm'), ''),
+    manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+  };
+}
+
 const FIXTURES = [
   {
     name: 'catalogue: a sub-gate removed',
@@ -239,7 +252,7 @@ const FIXTURES = [
   {
     name: 'history: the latest heading duplicated',
     file: 'phase-status',
-    expect: /the repair history is \[[\d,]+\]; the manifest declares/,
+    expect: /the repair history repeats a review number/,
     mutate: (text) => {
       const headings = [
         ...text.matchAll(/^### [A-Za-z]+ security repair \(customer review \d+\)[^\n]*$/gm),
@@ -273,7 +286,7 @@ const FIXTURES = [
   {
     name: 'history: two sections transposed',
     file: 'phase-status',
-    expect: /the repair history is \[[\d,]+\]; the manifest declares/,
+    expect: /the repair history is \[[\d,]+\]; it must be 1\.\.\d+ exactly/,
     mutate: (text) => {
       const ninth = /^### Ninth security repair \(customer review 9\)[^\n]*$/m.exec(text)?.[0];
       const tenth = /^### Tenth security repair \(customer review 10\)[^\n]*$/m.exec(text)?.[0];
@@ -649,6 +662,144 @@ const FIXTURES = [
     },
   },
   {
+    // The three places a command is written could be edited together, so the
+    // gate deleted itself and governance still reported 15 of 15. What must be
+    // measured is declared in `phase-03-battery.mjs`, which the document cannot
+    // reach.
+    name: 'coordinated: test:security removed from manifest, battery and table',
+    files: ['phase-status', 'manifest'],
+    expect: /omits required battery commands: pnpm run test:security/,
+    mutate: (sources) => removeCommand(sources, 'pnpm run test:security'),
+  },
+  {
+    name: 'coordinated: the battery reduced to one command everywhere',
+    files: ['phase-status', 'manifest'],
+    expect: /omits required battery commands/,
+    mutate: (sources) => {
+      let next = sources;
+      for (const entry of JSON.parse(sources.manifest).battery) {
+        if (entry.command === 'git diff --check') continue;
+        next = removeCommand(next, entry.command);
+      }
+      return next;
+    },
+  },
+  {
+    name: 'coordinated: a command duplicated in the manifest and the battery',
+    files: ['phase-status', 'manifest'],
+    expect: /lists a command twice/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      const entry = manifest.battery.find((candidate) => candidate.command === 'pnpm run test:e2e');
+      manifest.battery.push({ ...entry });
+      return {
+        'phase-status': sources['phase-status'].replace(
+          /^pnpm run test:e2e[^\n]*$/m,
+          (line) => `${line}\n${line}`,
+        ),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    // Acceptance is the customer's to give. The document may not vote itself
+    // done.
+    name: 'coordinated: DONE in the manifest, the position and the ledger',
+    files: ['phase-status', 'manifest'],
+    expect: /declares phaseState = "DONE"; the governed state is "SECURITY_REPAIR_REQUIRED"/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      manifest.phaseState = 'DONE';
+      return {
+        'phase-status': sources['phase-status']
+          .replace('| Phase state | `SECURITY_REPAIR_REQUIRED` |', '| Phase state | `DONE` |')
+          .replace(/^(\| 03 \| Platform kernel \| )`SECURITY_REPAIR_REQUIRED`/m, '$1`DONE`'),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    name: 'coordinated: the current phase advanced to Phase 04',
+    files: ['phase-status', 'manifest'],
+    expect: /declares currentPhase = "04 [^"]*"; the governed state is "03 — Platform kernel"/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      manifest.currentPhase = '04 — IAM, tenancy, RBAC, and staff lifecycle';
+      return {
+        'phase-status': sources['phase-status'].replace(
+          '| Current phase | 03 — Platform kernel |',
+          '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |',
+        ),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    name: 'coordinated: Phase 04 no longer NOT STARTED in the ledger',
+    file: 'phase-status',
+    expect: /the Phase 04 ledger row says [A-Z_ ]+; the governed state is NOT STARTED/,
+    mutate: (text) => text.replace(/^(\| 04 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+  },
+  {
+    name: 'coordinated: one repair removed from the manifest and the history',
+    files: ['phase-status', 'manifest'],
+    expect: /the repair history is \[[\d,]+\]; it must be 1\.\.\d+ exactly/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      manifest.repairHistory = manifest.repairHistory.filter((n) => n !== 9);
+      return {
+        'phase-status': sources['phase-status'].replace(
+          /^### Ninth security repair \(customer review 9\)[^\n]*\n/m,
+          '',
+        ),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    name: 'coordinated: a repair number duplicated in the manifest and the history',
+    files: ['phase-status', 'manifest'],
+    expect: /the repair history repeats a review number/,
+    mutate: (sources) => {
+      const manifest = JSON.parse(sources.manifest);
+      manifest.repairHistory = [...manifest.repairHistory, manifest.latestRepairNumber];
+      const heading = new RegExp(
+        '^### [A-Za-z]+ security repair \\(customer review ' +
+          String(manifest.latestRepairNumber) +
+          '\\)[^\\n]*$',
+        'm',
+      ).exec(sources['phase-status'])?.[0];
+      if (heading === undefined) throw new Error('no newest repair heading');
+      return {
+        'phase-status': sources['phase-status'].replace(
+          heading,
+          `${heading}\n\n(dup)\n\n${heading}`,
+        ),
+        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
+      };
+    },
+  },
+  {
+    name: 'manifest: an unreviewed extra key',
+    file: 'manifest',
+    expect: /it must declare exactly/,
+    mutate: (json) => json.replace('{\n  "currentPhase"', '{\n  "extra": 1,\n  "currentPhase"'),
+  },
+  {
+    // The canonical form carries the governed state, so a heading claiming a
+    // different one is not canonical — and a heading that mentions a repair and
+    // is not canonical is refused.
+    name: 'coordinated: a repair heading claiming another state',
+    file: 'phase-status',
+    expect:
+      /unindented H3 repair heading: ### Ninth security repair \(customer review 9\) — `DONE`/,
+    mutate: (text) =>
+      text.replace(
+        /^(### Ninth security repair \(customer review 9\) — )`SECURITY_REPAIR_REQUIRED`$/m,
+        '$1`DONE`',
+      ),
+  },
+  {
     name: 'evidence: the results markers removed',
     file: 'phase-status',
     expect:
@@ -841,21 +992,30 @@ function failedFor(output, expected) {
 }
 
 for (const fixture of FIXTURES) {
-  const source = SOURCES[fixture.file];
-  const original = source.text;
-  const mutated = fixture.mutate(original);
-  if (mutated === original) {
+  // A fixture names one source, or several when the mutation is coordinated —
+  // the manifest, the battery block and the evidence table changed together is
+  // exactly the shape this check has to refuse.
+  const names = fixture.files ?? [fixture.file];
+  const originals = Object.fromEntries(names.map((name) => [name, SOURCES[name].text]));
+  const mutatedAll =
+    fixture.files === undefined
+      ? { [fixture.file]: fixture.mutate(originals[fixture.file]) }
+      : fixture.mutate(originals);
+  const changed = names.filter((name) => mutatedAll[name] !== originals[name]);
+  if (changed.length === 0) {
     results.push({ name: fixture.name, ok: false, detail: 'fixture did not change the document' });
     failures += 1;
     continue;
   }
 
   const dir = mkdtempSync(join(tmpdir(), 'prsystem-gov-fixture-'));
-  const path = join(dir, source.file);
   try {
-    writeFileSync(path, mutated);
     const env = { ...process.env };
-    env[source.env] = path;
+    for (const name of names) {
+      const path = join(dir, SOURCES[name].file);
+      writeFileSync(path, mutatedAll[name]);
+      env[SOURCES[name].env] = path;
+    }
     const run = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-governance.mjs')], {
       cwd: ROOT,
       encoding: 'utf8',
