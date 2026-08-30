@@ -15,7 +15,13 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { diffDeclarations, drizzleProjection, exportedEnums } from './schema-projection';
+import {
+  assertDeclaredInventory,
+  classifyExports,
+  diffDeclarations,
+  drizzleProjection,
+  exportedEnums,
+} from './schema-projection';
 import type { ProjectableTable } from './schema-projection';
 
 /**
@@ -402,7 +408,7 @@ describe('row level security and policies', () => {
   it('projects RLS enablement, so turning it off is not an empty diff', () => {
     expect(drizzleProjection([off]).rls).toEqual([]);
     expect(drizzleProjection([on]).rls).toEqual([
-      { table: 'extraction_probe.rls_b', enabled: true },
+      { schema: 'extraction_probe', table: 'rls_b', enabled: true },
     ]);
   });
 
@@ -559,7 +565,7 @@ describe('PostgreSQL enum types', () => {
 
   it('projects the enum type with its ordered labels', () => {
     expect(drizzleProjection([withTwo]).enums).toEqual([
-      { name: 'extraction_probe.probe_mood', labels: ['sad', 'happy'] },
+      { schema: 'extraction_probe', name: 'probe_mood', labels: ['sad', 'happy'] },
     ]);
   });
 
@@ -600,7 +606,8 @@ describe('a declared table with no columns', () => {
   const snapshot = {
     columns: [
       {
-        table: 'extraction_probe.empty_a',
+        schema: 'extraction_probe',
+        table: 'empty_a',
         column: 'gone',
         shape: 'integer | NOT NULL | no default | no identity | not generated',
       },
@@ -614,7 +621,9 @@ describe('a declared table with no columns', () => {
   };
 
   it('carries the table in the declared inventory', () => {
-    expect(drizzleProjection([empty]).tables).toEqual(['extraction_probe.empty_a']);
+    expect(drizzleProjection([empty]).tables).toEqual([
+      { schema: 'extraction_probe', table: 'empty_a' },
+    ]);
   });
 
   it('reports the snapshot column that the declaration no longer has', () => {
@@ -745,12 +754,14 @@ describe('standalone enum declarations', () => {
 
   it('projects an enum no column references', () => {
     expect(drizzleProjection([], [standalone]).enums).toEqual([
-      { name: 'extraction_probe.probe_standalone', labels: ['x', 'y'] },
+      { schema: 'extraction_probe', name: 'probe_standalone', labels: ['x', 'y'] },
     ]);
   });
 
   it('projects referenced and standalone enums together, each once', () => {
-    const names = drizzleProjection([table], [standalone, referenced]).enums.map((e) => e.name);
+    const names = drizzleProjection([table], [standalone, referenced]).enums.map(
+      (e) => `${e.schema}.${e.name}`,
+    );
     expect(names.sort()).toEqual([
       'extraction_probe.probe_referenced',
       'extraction_probe.probe_standalone',
@@ -810,5 +821,201 @@ describe('duplicate qualified table declarations', () => {
       (t) => [foreignKey({ name: 'dup_fk', columns: [t.pid], foreignColumns: [parent.id] })],
     );
     expect(drizzleProjection([child]).constraints.some((c) => c.name === 'dup_fk')).toBe(true);
+  });
+});
+
+/**
+ * Compound keys that a name can forge.
+ *
+ * Every comparison keyed on `${table}.${name}` is ambiguous, because a schema,
+ * table, column, constraint, index or policy name may itself contain a dot.
+ * Two genuinely different objects then produce the same key, one silently
+ * replaces the other while the maps are built, and a changed predicate on the
+ * loser is reported as no difference at all.
+ */
+describe('compound keys are injective', () => {
+  const dotted = pgSchema('probe.dotted');
+
+  const snapshotOf = (projection: ReturnType<typeof drizzleProjection>) => ({
+    columns: projection.columns,
+    constraints: projection.constraints,
+    indexes: projection.indexes,
+    identitySequences: projection.identitySequences,
+    rls: projection.rls.map((entry) => ({ ...entry, forced: true })),
+    policies: projection.policies,
+    enums: projection.enums,
+  });
+
+  it('tells two policies whose dotted keys collide apart', () => {
+    const outer = dotted
+      .table('a.b', { hotelId: text('hotel_id') }, () => [
+        pgPolicy('c', { for: 'select', using: sql`(true)` }),
+      ])
+      .enableRLS();
+    const inner = dotted
+      .table('a', { hotelId: text('hotel_id') }, () => [
+        pgPolicy('b.c', { for: 'select', using: sql`(false)` }),
+      ])
+      .enableRLS();
+
+    const projection = drizzleProjection([outer, inner]);
+    expect(projection.policies).toHaveLength(2);
+
+    // The snapshot agrees, then one predicate is weakened. Exactly one
+    // difference must be reported, and it must name the policy that changed.
+    const snapshot = snapshotOf(projection);
+    expect(diffDeclarations(projection, snapshot)).toEqual([]);
+
+    const weakened = {
+      ...snapshot,
+      policies: snapshot.policies.map((policy) =>
+        policy.name === 'c' ? { ...policy, using: '(1 = 1)' } : policy,
+      ),
+    };
+    const differences = diffDeclarations(projection, weakened);
+    expect(differences).toHaveLength(1);
+    expect(differences[0]?.kind).toBe('declaration-policy');
+  });
+
+  it('tells two columns whose dotted keys collide apart', () => {
+    const outer = dotted.table('x.y', { z: text('z') });
+    const inner = dotted.table('x', { 'y.z': text('y.z') });
+    const projection = drizzleProjection([outer, inner]);
+    expect(projection.columns).toHaveLength(2);
+
+    const snapshot = snapshotOf(projection);
+    expect(diffDeclarations(projection, snapshot)).toEqual([]);
+
+    const changed = {
+      ...snapshot,
+      columns: snapshot.columns.map((column) =>
+        column.column === 'z'
+          ? { ...column, shape: column.shape.replace('text', 'integer') }
+          : column,
+      ),
+    };
+    expect(diffDeclarations(projection, changed)).toHaveLength(1);
+  });
+
+  it('tells two constraints whose dotted keys collide apart', () => {
+    const outer = dotted.table('p.q', { a: integer('a') }, () => [check('r', sql`(a > 0)`)]);
+    const inner = dotted.table('p', { a: integer('a') }, () => [check('q.r', sql`(a > 1)`)]);
+    const projection = drizzleProjection([outer, inner]);
+    expect(projection.constraints.filter((c) => c.kind === 'c')).toHaveLength(2);
+
+    const snapshot = snapshotOf(projection);
+    expect(diffDeclarations(projection, snapshot)).toEqual([]);
+
+    const weakened = {
+      ...snapshot,
+      constraints: snapshot.constraints.map((constraint) =>
+        constraint.name === 'r' ? { ...constraint, definition: 'CHECK ((a > 5))' } : constraint,
+      ),
+    };
+    expect(diffDeclarations(projection, weakened)).toHaveLength(1);
+  });
+
+  it('tells two indexes whose dotted keys collide apart', () => {
+    const outer = dotted.table('i.j', { a: integer('a') }, (t) => [index('k').on(t.a)]);
+    const inner = dotted.table('i', { a: integer('a') }, (t) => [index('j.k').on(t.a)]);
+    const projection = drizzleProjection([outer, inner]);
+    expect(projection.indexes).toHaveLength(2);
+
+    const snapshot = snapshotOf(projection);
+    expect(diffDeclarations(projection, snapshot)).toEqual([]);
+
+    const changed = {
+      ...snapshot,
+      indexes: snapshot.indexes.map((entry) =>
+        entry.name === 'k' ? { ...entry, definition: `${entry.definition} WHERE (a > 0)` } : entry,
+      ),
+    };
+    expect(diffDeclarations(projection, changed)).toHaveLength(1);
+  });
+
+  it('tells two enums whose dotted qualified names collide apart', () => {
+    const outerSchema = pgSchema('e.f');
+    const innerSchema = pgSchema('e');
+    const outer = outerSchema.enum('g', ['one']);
+    const inner = innerSchema.enum('f.g', ['two']);
+    const projection = drizzleProjection([], [outer, inner]);
+    expect(projection.enums).toHaveLength(2);
+
+    const snapshot = snapshotOf(projection);
+    expect(diffDeclarations(projection, snapshot)).toEqual([]);
+  });
+});
+
+/**
+ * The whole top-level export surface, not one hand-kept list.
+ *
+ * Drizzle Kit loads what the schema module exports. Anything it would create
+ * that this projection does not know about is a persistent object the gate
+ * cannot see: an exported table missing from `DECLARED_TABLES`, an exported enum
+ * registered under the same name but different labels, a standalone sequence, or
+ * an entity kind nobody classified.
+ */
+describe('the declared inventory is bound to the module exports', () => {
+  const inventorySchema = pgSchema('inventory_probe');
+  const table = inventorySchema.table('t', { id: integer('id').primaryKey() });
+  const mood = inventorySchema.enum('mood', ['sad', 'happy']);
+
+  it('accepts a module whose exports are all registered', () => {
+    expect(() =>
+      assertDeclaredInventory({ inventorySchema, table, mood }, { tables: [table], enums: [mood] }),
+    ).not.toThrow();
+  });
+
+  it('refuses an exported table that the registry omits', () => {
+    expect(() =>
+      assertDeclaredInventory({ inventorySchema, table }, { tables: [], enums: [] }),
+    ).toThrow(/inventory_probe\.t/);
+  });
+
+  it('refuses a registered table that is not exported', () => {
+    const other = inventorySchema.table('u', { id: integer('id').primaryKey() });
+    expect(() =>
+      assertDeclaredInventory({ inventorySchema, table }, { tables: [table, other], enums: [] }),
+    ).toThrow(/inventory_probe\.u/);
+  });
+
+  it('refuses a same-name enum registered in place of the exported one', () => {
+    // Same qualified name, different labels — and a different object. Comparing
+    // flattened names alone accepted this.
+    const impostor = inventorySchema.enum('mood', ['sad', 'furious']);
+    expect(() =>
+      assertDeclaredInventory(
+        { inventorySchema, table, mood },
+        { tables: [table], enums: [impostor] },
+      ),
+    ).toThrow(/inventory_probe\.mood/);
+  });
+
+  it('refuses an exported standalone sequence', () => {
+    const sequence = inventorySchema.sequence('s');
+    expect(() =>
+      assertDeclaredInventory({ inventorySchema, table, sequence }, { tables: [table], enums: [] }),
+    ).toThrow(/PgSequence/);
+  });
+
+  it('refuses an exported entity kind nobody classified', () => {
+    const role = pgRole('inventory_probe_role');
+    expect(() =>
+      assertDeclaredInventory({ inventorySchema, table, role }, { tables: [table], enums: [] }),
+    ).toThrow(/PgRole/);
+  });
+
+  it('classifies exported schemas explicitly', () => {
+    expect(classifyExports({ inventorySchema, table, mood }).schemas).toEqual(['inventory_probe']);
+  });
+
+  it('refuses two registered tables with the same qualified name', () => {
+    const twin = inventorySchema.table('t', { id: integer('id').primaryKey() });
+    expect(() =>
+      assertDeclaredInventory(
+        { inventorySchema, table, twin },
+        { tables: [table, twin], enums: [] },
+      ),
+    ).toThrow(/declared twice/);
   });
 });

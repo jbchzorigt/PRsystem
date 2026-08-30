@@ -17,7 +17,7 @@ import {
   assertSchemaMatchesDeclaration,
   compareSchema,
 } from './schema-comparator';
-import { diffDeclarations, drizzleProjection } from './schema-projection';
+import { diffDeclarations, drizzleProjection, identityKey } from './schema-projection';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
 import { KERNEL_OWNERS, assertOwnershipManifest } from './ownership-manifest';
 import type { ManifestClient } from './ownership-manifest';
@@ -241,8 +241,13 @@ describe('migration runner', () => {
     try {
       const declared = drizzleProjection().columns;
 
-      const live = await pool.query<{ table: string; column: string; shape: string }>(
-        `SELECT n.nspname || '.' || c.relname AS table, a.attname AS column,
+      const live = await pool.query<{
+        schema: string;
+        table: string;
+        column: string;
+        shape: string;
+      }>(
+        `SELECT n.nspname AS schema, c.relname AS table, a.attname AS column,
                 format_type(a.atttypid, a.atttypmod)
                   || ' | ' || CASE WHEN a.attnotnull THEN 'NOT NULL' ELSE 'NULL' END
                   || ' | ' || CASE WHEN d.adbin IS NULL THEN 'no default'
@@ -259,10 +264,13 @@ describe('migration runner', () => {
             AND c.relkind IN ('r', 'p')
             AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
             AND a.attnum > 0 AND NOT a.attisdropped
-          ORDER BY 1, 2`,
+          ORDER BY 1, 2, 3`,
       );
 
-      const key = (r: { table: string; column: string }): string => `${r.table}.${r.column}`;
+      // The identity tuple, not a dotted concatenation: a schema, table or
+      // column name may contain a dot, and two different columns then key alike.
+      const key = (r: { schema: string; table: string; column: string }): string =>
+        identityKey(r.schema, r.table, r.column);
       const liveByKey = new Map(live.rows.map((r) => [key(r), r.shape]));
 
       for (const column of declared) {
@@ -2092,43 +2100,50 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
     // Not a vacuous projection: it carries the properties the DSL was extended
     // to express, so "it agrees" above is a statement about something.
     expect(projection.columns).toContainEqual({
-      table: 'platform.job_run',
+      schema: 'platform',
+      table: 'job_run',
       column: 'state',
       shape: "text | NOT NULL | default 'running'::text | no identity | not generated",
     });
     expect(projection.columns).toContainEqual({
-      table: 'platform.outbox_event',
+      schema: 'platform',
+      table: 'outbox_event',
       column: 'event_id',
       shape: 'bigint | NOT NULL | no default | identity a | not generated',
     });
     expect(projection.constraints).toContainEqual({
-      table: 'audit.platform_event',
+      schema: 'audit',
+      table: 'platform_event',
       name: 'platform_event_pk',
       kind: 'p',
       definition: 'PRIMARY KEY (occurred_at, event_id)',
     });
     expect(projection.constraints).toContainEqual({
-      table: 'platform.provider_event',
+      schema: 'platform',
+      table: 'provider_event',
       name: 'provider_event_uq',
       kind: 'u',
       definition: 'UNIQUE (provider, provider_event_id)',
     });
     expect(projection.constraints).toContainEqual({
-      table: 'platform.outbox_delivery',
+      schema: 'platform',
+      table: 'outbox_delivery',
       name: 'outbox_delivery_event_id_fkey',
       kind: 'f',
       definition:
         'FOREIGN KEY (event_id) REFERENCES platform.outbox_event(event_id) ON DELETE RESTRICT',
     });
     expect(projection.constraints).toContainEqual({
-      table: 'platform.job_run',
+      schema: 'platform',
+      table: 'job_run',
       name: 'job_run_state_known',
       kind: 'c',
       definition:
         "CHECK ((state = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text])))",
     });
     expect(projection.indexes).toContainEqual({
-      table: 'platform.operational_alert',
+      schema: 'platform',
+      table: 'operational_alert',
       name: 'operational_alert_open_idx',
       definition:
         'CREATE INDEX operational_alert_open_idx ON platform.operational_alert ' +
@@ -2142,7 +2157,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
     const projection = drizzleProjection();
     const withEnum = {
       ...projection,
-      enums: [{ name: 'platform.mood', labels: ['sad', 'happy'] }],
+      enums: [{ schema: 'platform', name: 'mood', labels: ['sad', 'happy'] }],
     };
     expect(diffDeclarations(withEnum, EXPECTED_SCHEMA_SNAPSHOT)).toEqual([
       {
@@ -2158,10 +2173,13 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
     // The two declarations below are different PostgreSQL types. Joined with a
     // delimiter they were the same text, so this comparison reported nothing.
     const projection = drizzleProjection();
-    const declared = { ...projection, enums: [{ name: 'platform.mood', labels: ['a, b'] }] };
+    const declared = {
+      ...projection,
+      enums: [{ schema: 'platform', name: 'mood', labels: ['a, b'] }],
+    };
     const snapshot = {
       ...EXPECTED_SCHEMA_SNAPSHOT,
-      enums: [{ name: 'platform.mood', labels: ['a', 'b'] }],
+      enums: [{ schema: 'platform', name: 'mood', labels: ['a', 'b'] }],
     };
     expect(diffDeclarations(declared, snapshot)).toEqual([
       {
@@ -2191,18 +2209,18 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
     };
     const reported = diffDeclarations(declared, snapshot);
     expect(reported).toHaveLength(1);
-    expect(reported[0]?.subject).toBe(`${one.table}.${one.name}`);
+    expect(reported[0]?.subject).toBe(`${one.schema}.${one.table}.${one.name}`);
   });
 
   it('reports a reordered enum label list', () => {
     const projection = drizzleProjection();
     const declared = {
       ...projection,
-      enums: [{ name: 'platform.mood', labels: ['happy', 'sad'] }],
+      enums: [{ schema: 'platform', name: 'mood', labels: ['happy', 'sad'] }],
     };
     const snapshot = {
       ...EXPECTED_SCHEMA_SNAPSHOT,
-      enums: [{ name: 'platform.mood', labels: ['sad', 'happy'] }],
+      enums: [{ schema: 'platform', name: 'mood', labels: ['sad', 'happy'] }],
     };
     expect(diffDeclarations(declared, snapshot)).toEqual([
       {
@@ -2229,7 +2247,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       mutate: (p) => ({
         ...p,
         columns: p.columns.map((c) =>
-          c.table === 'platform.job_run' && c.column === 'error_name'
+          c.schema === 'platform' && c.table === 'job_run' && c.column === 'error_name'
             ? { ...c, shape: c.shape.replace('text |', 'character varying(200) |') }
             : c,
         ),
@@ -2242,7 +2260,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       mutate: (p) => ({
         ...p,
         columns: p.columns.map((c) =>
-          c.table === 'platform.job_run' && c.column === 'job_name'
+          c.schema === 'platform' && c.table === 'job_run' && c.column === 'job_name'
             ? { ...c, shape: c.shape.replace('NOT NULL', 'NULL') }
             : c,
         ),
@@ -2255,7 +2273,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       mutate: (p) => ({
         ...p,
         columns: p.columns.map((c) =>
-          c.table === 'platform.job_run' && c.column === 'state'
+          c.schema === 'platform' && c.table === 'job_run' && c.column === 'state'
             ? { ...c, shape: c.shape.replace("default 'running'::text", 'no default') }
             : c,
         ),
@@ -2268,7 +2286,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       mutate: (p) => ({
         ...p,
         columns: p.columns.map((c) =>
-          c.table === 'platform.outbox_event' && c.column === 'event_id'
+          c.schema === 'platform' && c.table === 'outbox_event' && c.column === 'event_id'
             ? { ...c, shape: c.shape.replace('identity a', 'no identity') }
             : c,
         ),
@@ -2281,7 +2299,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       mutate: (p) => ({
         ...p,
         columns: p.columns.filter(
-          (c) => !(c.table === 'platform.job_run' && c.column === 'issuer_ref'),
+          (c) => !(c.schema === 'platform' && c.table === 'job_run' && c.column === 'issuer_ref'),
         ),
       }),
     },
@@ -2294,7 +2312,8 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
         columns: [
           ...p.columns,
           {
-            table: 'platform.job_run',
+            schema: 'platform',
+            table: 'job_run',
             column: 'invented',
             shape: 'text | NULL | no default | no identity | not generated',
           },
@@ -2334,7 +2353,7 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
       mutate: (p) => ({
         ...p,
         columns: p.columns.map((c) =>
-          c.table === 'platform.job_run' && c.column === 'job_name'
+          c.schema === 'platform' && c.table === 'job_run' && c.column === 'job_name'
             ? { ...c, shape: c.shape.replace('not generated', 'generated s') }
             : c,
         ),

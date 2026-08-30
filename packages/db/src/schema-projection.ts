@@ -1,5 +1,13 @@
 import { is } from 'drizzle-orm';
-import { PgDialect, PgRole, getTableConfig } from 'drizzle-orm/pg-core';
+import {
+  PgDialect,
+  PgRole,
+  PgTable,
+  getTableConfig,
+  isPgEnum,
+  isPgSchema,
+  isPgSequence,
+} from 'drizzle-orm/pg-core';
 import { DECLARED_ENUMS, DECLARED_TABLES } from './schema';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
 import type { SchemaSnapshot } from './schema-snapshot';
@@ -41,6 +49,7 @@ export type SchemaSnapshotInput = Pick<
 const dialect = new PgDialect();
 
 export interface ProjectedColumn {
+  readonly schema: string;
   readonly table: string;
   readonly column: string;
   /** Same `type | nullability | default | identity | generated` shape as the snapshot. */
@@ -48,6 +57,7 @@ export interface ProjectedColumn {
 }
 
 export interface ProjectedConstraint {
+  readonly schema: string;
   readonly table: string;
   readonly name: string;
   /** `p` primary key, `u` unique, `f` foreign key, `c` check. */
@@ -56,19 +66,23 @@ export interface ProjectedConstraint {
 }
 
 export interface ProjectedIndex {
+  readonly schema: string;
   readonly table: string;
   readonly name: string;
   readonly definition: string;
 }
 
 export interface ProjectedIdentitySequence {
+  readonly schema: string;
   readonly table: string;
   readonly column: string;
+  readonly sequenceSchema: string;
   readonly sequence: string;
   readonly shape: string;
 }
 
 export interface ProjectedRls {
+  readonly schema: string;
   readonly table: string;
   readonly enabled: boolean;
 }
@@ -82,6 +96,7 @@ export interface ProjectedRls {
  * the targets stay an ordered list and are compared as one.
  */
 export interface ProjectedPolicy {
+  readonly schema: string;
   readonly table: string;
   readonly name: string;
   /** `PERMISSIVE` or `RESTRICTIVE`. */
@@ -105,6 +120,7 @@ export interface ProjectedPolicy {
  * presence of `enumValues`.
  */
 export interface ProjectedEnum {
+  readonly schema: string;
   readonly name: string;
   /**
    * Labels in declaration order, which is the order PostgreSQL sorts by.
@@ -126,7 +142,7 @@ export interface SchemaProjection {
    * not in it — so removing the last column from a declared table filtered its
    * own snapshot rows out of the comparison and returned an empty difference.
    */
-  readonly tables: readonly string[];
+  readonly tables: readonly { readonly schema: string; readonly table: string }[];
   readonly columns: readonly ProjectedColumn[];
   readonly constraints: readonly ProjectedConstraint[];
   /** Standalone indexes only; the ones a key creates are projected as constraints. */
@@ -135,6 +151,20 @@ export interface SchemaProjection {
   readonly rls: readonly ProjectedRls[];
   readonly policies: readonly ProjectedPolicy[];
   readonly enums: readonly ProjectedEnum[];
+}
+
+/**
+ * A comparison key that no name can forge.
+ *
+ * Every key was a dotted concatenation — `${table}.${policy}`, and `table` was
+ * itself `${schema}.${name}`. A schema, table, column, constraint, index or
+ * policy name may contain a dot, so two genuinely different objects produced the
+ * same key: one silently replaced the other while the maps were built, and a
+ * changed predicate on the loser was reported as no difference at all. JSON of
+ * the components round-trips, so the mapping from identity to key is injective.
+ */
+export function identityKey(...parts: readonly string[]): string {
+  return JSON.stringify(parts);
 }
 
 /** PostgreSQL's `pg_attribute.attidentity` letter for a Drizzle identity kind. */
@@ -226,9 +256,174 @@ export function exportedEnums(module: Record<string, unknown>): DeclaredEnum[] {
   return Object.values(module).filter(isDeclaredEnum);
 }
 
-/** `schema.name` for a declared enum; `public` when it names no schema. */
-function qualifiedEnumName(declared: DeclaredEnum): string {
-  return `${declared.schema ?? 'public'}.${declared.enumName}`;
+/**
+ * Drizzle's own name for what a value is, or undefined for a plain value.
+ *
+ * Drizzle stamps every entity class with `Symbol.for('drizzle:entityKind')`, and
+ * that stamp is the only reliable answer to "what did the schema module just
+ * export". Structural guesses accept lookalikes and, worse, miss entity kinds
+ * nobody thought to guess at — which is how a standalone sequence became a
+ * persistent object the gate could not see.
+ */
+const ENTITY_KIND = Symbol.for('drizzle:entityKind');
+
+export function entityKindOf(value: unknown): string | undefined {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    return undefined;
+  }
+  // `pgEnum` returns a callable with no constructor stamp; Drizzle identifies it
+  // with `isPgEnum`, so it is named here the same way it is named there.
+  if (isPgEnum(value)) return 'PgEnum';
+  const prototype = Object.getPrototypeOf(value) as {
+    constructor?: Record<symbol, unknown>;
+  } | null;
+  const kind = prototype?.constructor?.[ENTITY_KIND];
+  return typeof kind === 'string' ? kind : undefined;
+}
+
+/** What a top-level schema-module export is, once classified. */
+export interface ExportInventory {
+  readonly tables: readonly ProjectableTable[];
+  readonly enums: readonly DeclaredEnum[];
+  readonly schemas: readonly string[];
+}
+
+/**
+ * Classifies every top-level export of a schema module.
+ *
+ * Drizzle Kit loads this surface and creates what it finds, so anything it would
+ * create that this projection does not understand is a persistent object the
+ * gate cannot see. Every Drizzle entity must land in exactly one supported
+ * category; an unsupported kind is refused by name rather than ignored.
+ *
+ * Standalone sequences, views, materialized views, roles and policies are all
+ * persistent and none of them has a declaration, snapshot and live-catalogue
+ * comparison here yet. They are rejected explicitly until they do — an
+ * unsupported export that reads as accepted is the failure this replaces.
+ */
+export function classifyExports(module: Record<string, unknown>): ExportInventory {
+  const tables: ProjectableTable[] = [];
+  const enums: DeclaredEnum[] = [];
+  const schemas: string[] = [];
+
+  for (const [exported, value] of Object.entries(module)) {
+    const kind = entityKindOf(value);
+    if (kind === undefined) continue;
+
+    if (kind === 'PgTable' || is(value, PgTable)) {
+      tables.push(value as ProjectableTable);
+      continue;
+    }
+    if (kind === 'PgEnum' && isDeclaredEnum(value)) {
+      enums.push(value);
+      continue;
+    }
+    if (isPgSchema(value)) {
+      // Persistent, and created by the migration. It carries no shape of its own
+      // beyond its name, and the comparator already governs which schemas exist.
+      schemas.push((value as unknown as { schemaName: string }).schemaName);
+      continue;
+    }
+    if (isPgSequence(value)) {
+      throw new Error(
+        `${exported} is a PgSequence, which Drizzle Kit creates and this projection does not ` +
+          'compare: a standalone sequence has no declaration, snapshot or live-catalogue ' +
+          'coverage here. Implement it or remove the export — an unsupported export that reads ' +
+          'as accepted is a persistent object nothing checks',
+      );
+    }
+    throw new Error(
+      `${exported} is a ${kind}, which this projection does not classify. Every persistent ` +
+        'Drizzle export must fall in exactly one supported category; an unclassified kind is ' +
+        'refused rather than ignored',
+    );
+  }
+
+  return { tables, enums, schemas };
+}
+
+/**
+ * Holds the declared registries to what the schema module actually exports.
+ *
+ * By object identity, not by name. Comparing flattened qualified names accepted
+ * a *different* enum registered under the same schema and name with different
+ * labels: the inventory agreed, the projection carried the registered one, and
+ * the exported one — the object Drizzle Kit would create — was never described.
+ */
+export function assertDeclaredInventory(
+  module: Record<string, unknown>,
+  registry: {
+    readonly tables?: readonly ProjectableTable[];
+    readonly enums?: readonly DeclaredEnum[];
+  } = {},
+): ExportInventory {
+  const inventory = classifyExports(module);
+  const tables = registry.tables ?? DECLARED_TABLES;
+  const enums = registry.enums ?? DECLARED_ENUMS;
+
+  const tableName = (table: ProjectableTable): string => {
+    const config = getTableConfig(table);
+    return `${config.schema ?? 'public'}.${config.name}`;
+  };
+
+  // Duplicates in the registry itself, by qualified name as well as by object.
+  const byQualified = new Map<string, ProjectableTable>();
+  for (const table of tables) {
+    const qualified = tableName(table);
+    if (byQualified.has(qualified)) {
+      throw new Error(`table ${qualified} is declared twice in the table registry`);
+    }
+    byQualified.set(qualified, table);
+  }
+
+  const registeredTables = new Set<unknown>(tables);
+  for (const table of inventory.tables) {
+    if (!registeredTables.has(table)) {
+      throw new Error(
+        `the schema module exports table ${tableName(table)}, which the table registry does ` +
+          'not hold. Drizzle Kit creates what the module exports, so an unregistered table is a ' +
+          'table nothing compares',
+      );
+    }
+  }
+  const exportedTables = new Set<unknown>(inventory.tables);
+  for (const table of tables) {
+    if (!exportedTables.has(table)) {
+      throw new Error(
+        `the table registry holds ${tableName(table)}, which is not the object the schema ` +
+          'module exports. The registry must name the same objects, by identity',
+      );
+    }
+  }
+
+  const registeredEnums = new Set<unknown>(enums);
+  for (const declared of inventory.enums) {
+    const identity = enumIdentity(declared);
+    if (!registeredEnums.has(declared)) {
+      throw new Error(
+        `the schema module exports enum ${identity.schema}.${identity.name}, which is not the ` +
+          'object the enum registry holds. Registration is by identity, so a same-named type ' +
+          'with different labels is a different type',
+      );
+    }
+  }
+  const exportedEnumObjects = new Set<unknown>(inventory.enums);
+  for (const declared of enums) {
+    const identity = enumIdentity(declared);
+    if (!exportedEnumObjects.has(declared)) {
+      throw new Error(
+        `the enum registry holds ${identity.schema}.${identity.name}, which is not the object ` +
+          'the schema module exports',
+      );
+    }
+  }
+
+  return inventory;
+}
+
+/** A declared enum's identity: its schema and its name, kept apart. */
+export function enumIdentity(declared: DeclaredEnum): { schema: string; name: string } {
+  return { schema: declared.schema ?? 'public', name: declared.enumName };
 }
 
 /** The parts of Drizzle's index configuration this projection reads. */
@@ -309,8 +504,8 @@ export function drizzleProjection(
   const identitySequences: ProjectedIdentitySequence[] = [];
   const rls: ProjectedRls[] = [];
   const policies: ProjectedPolicy[] = [];
-  const declaredTables: string[] = [];
-  const enums = new Map<string, readonly string[]>();
+  const declaredTables: { schema: string; table: string }[] = [];
+  const enums = new Map<string, { schema: string; name: string; labels: readonly string[] }>();
 
   /**
    * Registers one enum type, refusing a second declaration with other labels.
@@ -320,17 +515,18 @@ export function drizzleProjection(
    * what let two partial declarations of one object look like a whole one.
    */
   const registerEnum = (declared: DeclaredEnum): void => {
-    const name = qualifiedEnumName(declared);
+    const identity = enumIdentity(declared);
+    const key = identityKey(identity.schema, identity.name);
     const labels = [...declared.enumValues];
-    const seen = enums.get(name);
-    if (seen !== undefined && JSON.stringify(seen) !== JSON.stringify(labels)) {
+    const seen = enums.get(key);
+    if (seen !== undefined && JSON.stringify(seen.labels) !== JSON.stringify(labels)) {
       throw new Error(
-        `enum type ${name} is declared twice with different labels (` +
-          `${JSON.stringify(seen)} and ${JSON.stringify(labels)}): PostgreSQL holds one label ` +
-          'list per type, so the declaration contradicts itself',
+        `enum type ${identity.schema}.${identity.name} is declared twice with different labels (` +
+          `${JSON.stringify(seen.labels)} and ${JSON.stringify(labels)}): PostgreSQL holds one ` +
+          'label list per type, so the declaration contradicts itself',
       );
     }
-    enums.set(name, labels);
+    enums.set(key, { ...identity, labels });
   };
 
   // The declared inventory first. Discovery through table columns alone missed
@@ -341,18 +537,24 @@ export function drizzleProjection(
 
   for (const table of tables) {
     const config = getTableConfig(table);
-    const qualified = `${config.schema ?? 'public'}.${config.name}`;
+    const schemaName = config.schema ?? 'public';
+    const qualified = `${schemaName}.${config.name}`;
+    const tableIdentity = { schema: schemaName, table: config.name };
     // Two declarations of one qualified table are a contradiction, not a merge.
     // Appending each declaration's columns unioned them into one apparent table
     // that could match the snapshot while neither declaration described it.
-    if (declaredTables.includes(qualified)) {
+    if (
+      declaredTables.some(
+        (declared) => declared.schema === schemaName && declared.table === config.name,
+      )
+    ) {
       throw new Error(
         `table ${qualified} is declared twice. PostgreSQL holds one definition per qualified ` +
           'table, so two declarations contradict each other: unioning their columns would ' +
           'describe a table neither of them declares',
       );
     }
-    declaredTables.push(qualified);
+    declaredTables.push(tableIdentity);
     const simplePrimary: string[] = [];
 
     for (const column of config.columns) {
@@ -378,7 +580,7 @@ export function drizzleProjection(
       const identity = (column as unknown as { generatedIdentity?: { type?: string } })
         .generatedIdentity;
       columns.push({
-        table: qualified,
+        ...tableIdentity,
         column: column.name,
         shape: [
           column.getSQLType(),
@@ -421,10 +623,11 @@ export function drizzleProjection(
       if (identityConfig !== undefined) {
         const options = identityConfig.sequenceOptions ?? {};
         identitySequences.push({
-          table: qualified,
+          ...tableIdentity,
           column: column.name,
           // PostgreSQL's default name for an identity sequence.
-          sequence: `${config.schema ?? 'public'}.${identityConfig.sequenceName ?? `${config.name}_${column.name}_seq`}`,
+          sequenceSchema: schemaName,
+          sequence: identityConfig.sequenceName ?? `${config.name}_${column.name}_seq`,
           shape: [
             `start ${String(options.startWith ?? 1)}`,
             `increment ${String(options.increment ?? 1)}`,
@@ -446,7 +649,7 @@ export function drizzleProjection(
       };
       if (uniqueColumn.isUnique === true) {
         constraints.push({
-          table: qualified,
+          ...tableIdentity,
           name: uniqueColumn.uniqueName ?? `${config.name}_${column.name}_unique`,
           kind: 'u',
           definition:
@@ -458,7 +661,7 @@ export function drizzleProjection(
 
     if (simplePrimary.length > 0) {
       constraints.push({
-        table: qualified,
+        ...tableIdentity,
         name: `${config.name}_pkey`,
         kind: 'p',
         definition: `PRIMARY KEY (${simplePrimary.join(', ')})`,
@@ -466,7 +669,7 @@ export function drizzleProjection(
     }
     for (const key of config.primaryKeys) {
       constraints.push({
-        table: qualified,
+        ...tableIdentity,
         name: key.getName(),
         kind: 'p',
         definition: `PRIMARY KEY (${key.columns.map((column) => column.name).join(', ')})`,
@@ -479,7 +682,7 @@ export function drizzleProjection(
       const nullsNotDistinct =
         (unique as unknown as { nullsNotDistinct?: boolean }).nullsNotDistinct === true;
       constraints.push({
-        table: qualified,
+        ...tableIdentity,
         name: unique.name ?? '',
         kind: 'u',
         definition:
@@ -503,7 +706,7 @@ export function drizzleProjection(
       const suffix = (keyword: string, value: string): string =>
         value === '' || value === 'NO ACTION' ? '' : ` ON ${keyword} ${value}`;
       constraints.push({
-        table: qualified,
+        ...tableIdentity,
         name: foreignKey.getName(),
         kind: 'f',
         definition:
@@ -521,7 +724,7 @@ export function drizzleProjection(
     // rendering of a JavaScript expression.
     for (const checkConstraint of config.checks) {
       constraints.push({
-        table: qualified,
+        ...tableIdentity,
         name: checkConstraint.name,
         kind: 'c',
         definition: `CHECK (${render(checkConstraint.value)})`,
@@ -545,7 +748,7 @@ export function drizzleProjection(
       const storage = built.with === undefined ? '' : ` WITH (${renderStorage(built.with)})`;
       const where = built.where === undefined ? '' : ` WHERE (${render(built.where)})`;
       indexes.push({
-        table: qualified,
+        ...tableIdentity,
         name: built.name ?? '',
         definition:
           `CREATE ${built.unique === true ? 'UNIQUE ' : ''}INDEX ${built.name ?? ''} ` +
@@ -559,7 +762,7 @@ export function drizzleProjection(
     // themselves are expressible, and calling them unsupported left the two
     // descriptions of the same rule uncompared.
     const tableRls = (config as unknown as { enableRLS?: boolean }).enableRLS;
-    if (tableRls === true) rls.push({ table: qualified, enabled: true });
+    if (tableRls === true) rls.push({ ...tableIdentity, enabled: true });
 
     for (const policy of (config as unknown as { policies?: readonly unknown[] }).policies ?? []) {
       const declared = policy as {
@@ -571,7 +774,7 @@ export function drizzleProjection(
         withCheck?: unknown;
       };
       policies.push({
-        table: qualified,
+        ...tableIdentity,
         name: declared.name ?? '',
         as: (declared.as ?? 'permissive').toUpperCase(),
         command: (declared.for ?? 'all').toUpperCase(),
@@ -590,7 +793,7 @@ export function drizzleProjection(
     identitySequences,
     rls,
     policies,
-    enums: [...enums].map(([name, labels]) => ({ name, labels })),
+    enums: [...enums.values()],
   };
 }
 
@@ -622,170 +825,142 @@ export function diffDeclarations(
   // with no columns was absent from a column-derived set, and every reverse
   // comparison is scoped by it — so dropping a declared table's last column
   // filtered its own snapshot rows out and returned an empty difference.
-  const declaredTables = new Set(projection.tables);
-
-  const snapshotColumns = new Map(
-    snapshot.columns.map((column) => [`${column.table}.${column.column}`, column]),
+  const declaredTables = new Set(
+    projection.tables.map((entry) => identityKey(entry.schema, entry.table)),
   );
+  const inDeclaredTable = (entry: { schema: string; table: string }): boolean =>
+    declaredTables.has(identityKey(entry.schema, entry.table));
+  // Human-facing only. Every *key* below is an injective tuple; this is what the
+  // difference is reported as, where a reader wants to see a name.
+  const label = (...parts: readonly string[]): string => parts.join('.');
 
-  for (const column of projection.columns) {
-    const key = `${column.table}.${column.column}`;
-    const snapshot = snapshotColumns.get(key);
-    if (snapshot === undefined) {
-      differences.push({
-        kind: 'declaration-column',
-        subject: key,
-        expected: 'present in the snapshot',
-        actual: 'declared in schema.ts only',
-      });
-      continue;
-    }
-    if (snapshot.shape !== column.shape) {
-      differences.push({
-        kind: 'declaration-column',
-        subject: key,
-        expected: snapshot.shape,
-        actual: column.shape,
-      });
-    }
-  }
-
-  const projected = new Set(projection.columns.map((column) => `${column.table}.${column.column}`));
-  for (const column of snapshot.columns) {
-    if (!declaredTables.has(column.table)) continue;
-    const key = `${column.table}.${column.column}`;
-    if (!projected.has(key)) {
-      differences.push({
-        kind: 'declaration-column',
-        subject: key,
-        expected: 'declared in schema.ts',
-        actual: 'present in the snapshot only',
-      });
-    }
-  }
+  compareKeyed(
+    differences,
+    'declaration-column',
+    projection.columns.map((column) => [
+      identityKey(column.schema, column.table, column.column),
+      column.shape,
+      label(column.schema, column.table, column.column),
+    ]),
+    snapshot.columns
+      .filter(inDeclaredTable)
+      .map((column) => [
+        identityKey(column.schema, column.table, column.column),
+        column.shape,
+        label(column.schema, column.table, column.column),
+      ]),
+  );
 
   // Every constraint kind the DSL can state: primary keys, uniques, foreign
   // keys with their action, and checks. Only exclusion constraints remain
   // snapshot-only, because Drizzle 0.45.2 has no faithful form for them.
   const PROJECTED_KINDS = new Set(['p', 'u', 'f', 'c']);
-  const snapshotKeys = new Map(
+  compareKeyed(
+    differences,
+    'declaration-key',
+    projection.constraints.map((c) => [
+      identityKey(c.schema, c.table, c.name),
+      `${c.kind} ${c.definition}`,
+      label(c.schema, c.table, c.name),
+    ]),
     snapshot.constraints
-      .filter((c) => PROJECTED_KINDS.has(c.kind) && declaredTables.has(c.table))
-      .map((c) => [`${c.table}.${c.name}`, `${c.kind} ${c.definition}`]),
+      .filter((c) => PROJECTED_KINDS.has(c.kind) && inDeclaredTable(c))
+      .map((c) => [
+        identityKey(c.schema, c.table, c.name),
+        `${c.kind} ${c.definition}`,
+        label(c.schema, c.table, c.name),
+      ]),
   );
-  const projectedKeys = new Map(
-    projection.constraints.map((c) => [`${c.table}.${c.name}`, `${c.kind} ${c.definition}`]),
-  );
-
-  for (const [key, value] of projectedKeys) {
-    const snapshot = snapshotKeys.get(key);
-    if (snapshot === undefined) {
-      differences.push({
-        kind: 'declaration-key',
-        subject: key,
-        expected: 'present in the snapshot',
-        actual: value,
-      });
-    } else if (snapshot !== value) {
-      differences.push({
-        kind: 'declaration-key',
-        subject: key,
-        expected: snapshot,
-        actual: value,
-      });
-    }
-  }
-  for (const [key, value] of snapshotKeys) {
-    if (!projectedKeys.has(key)) {
-      differences.push({
-        kind: 'declaration-key',
-        subject: key,
-        expected: 'declared in schema.ts',
-        actual: `${value} (snapshot only)`,
-      });
-    }
-  }
 
   // Standalone indexes. The ones a primary key or unique constraint creates are
   // already compared as constraints, and comparing them again here would ask
   // Drizzle to declare an index it never writes.
   const constraintBacked = new Set(
-    snapshot.constraints.filter((c) => c.kind === 'p' || c.kind === 'u').map((c) => c.name),
+    snapshot.constraints
+      .filter((c) => c.kind === 'p' || c.kind === 'u')
+      .map((c) => identityKey(c.schema, c.name)),
   );
-  const snapshotIndexes = new Map(
+  compareKeyed(
+    differences,
+    'declaration-index',
+    projection.indexes.map((i) => [
+      identityKey(i.schema, i.table, i.name),
+      i.definition,
+      label(i.schema, i.table, i.name),
+    ]),
     snapshot.indexes
-      .filter((i) => declaredTables.has(i.table) && !constraintBacked.has(i.name))
-      .map((i) => [`${i.table}.${i.name}`, i.definition]),
-  );
-  const projectedIndexes = new Map(
-    projection.indexes.map((i) => [`${i.table}.${i.name}`, i.definition]),
+      .filter((i) => inDeclaredTable(i) && !constraintBacked.has(identityKey(i.schema, i.name)))
+      .map((i) => [
+        identityKey(i.schema, i.table, i.name),
+        i.definition,
+        label(i.schema, i.table, i.name),
+      ]),
   );
 
-  for (const [key, value] of projectedIndexes) {
-    const snapshotDefinition = snapshotIndexes.get(key);
-    if (snapshotDefinition === undefined) {
-      differences.push({
-        kind: 'declaration-index',
-        subject: key,
-        expected: 'present in the snapshot',
-        actual: value,
-      });
-    } else if (snapshotDefinition !== value) {
-      differences.push({
-        kind: 'declaration-index',
-        subject: key,
-        expected: snapshotDefinition,
-        actual: value,
-      });
-    }
-  }
-  for (const [key, value] of snapshotIndexes) {
-    if (!projectedIndexes.has(key)) {
-      differences.push({
-        kind: 'declaration-index',
-        subject: key,
-        expected: 'declared in schema.ts',
-        actual: `${value} (snapshot only)`,
-      });
-    }
-  }
-
-  // Identity sequences, RLS enablement and policies, each compared both ways.
   compareKeyed(
     differences,
     'declaration-identity',
     projection.identitySequences.map((entry) => [
-      `${entry.table}.${entry.column}`,
-      `${entry.sequence} | ${entry.shape}`,
+      identityKey(entry.schema, entry.table, entry.column),
+      identityKey(entry.sequenceSchema, entry.sequence, entry.shape),
+      label(entry.schema, entry.table, entry.column),
     ]),
     snapshot.identitySequences
-      .filter((entry) => declaredTables.has(entry.table))
-      .map((entry) => [`${entry.table}.${entry.column}`, `${entry.sequence} | ${entry.shape}`]),
+      .filter(inDeclaredTable)
+      .map((entry) => [
+        identityKey(entry.schema, entry.table, entry.column),
+        identityKey(entry.sequenceSchema, entry.sequence, entry.shape),
+        label(entry.schema, entry.table, entry.column),
+      ]),
   );
 
   compareKeyed(
     differences,
     'declaration-rls',
-    projection.rls.map((entry) => [entry.table, String(entry.enabled)]),
+    projection.rls.map((entry) => [
+      identityKey(entry.schema, entry.table),
+      String(entry.enabled),
+      label(entry.schema, entry.table),
+    ]),
     snapshot.rls
-      .filter((entry) => declaredTables.has(entry.table) && entry.enabled)
-      .map((entry) => [entry.table, String(entry.enabled)]),
+      .filter((entry) => inDeclaredTable(entry) && entry.enabled)
+      .map((entry) => [
+        identityKey(entry.schema, entry.table),
+        String(entry.enabled),
+        label(entry.schema, entry.table),
+      ]),
   );
 
   compareKeyed(
     differences,
     'declaration-enum',
-    projection.enums.map((entry) => [entry.name, serialiseLabels(entry.labels)]),
-    snapshot.enums.map((entry) => [entry.name, serialiseLabels(entry.labels)]),
+    projection.enums.map((entry) => [
+      identityKey(entry.schema, entry.name),
+      serialiseLabels(entry.labels),
+      label(entry.schema, entry.name),
+    ]),
+    snapshot.enums.map((entry) => [
+      identityKey(entry.schema, entry.name),
+      serialiseLabels(entry.labels),
+      label(entry.schema, entry.name),
+    ]),
   );
 
   compareKeyed(
     differences,
     'declaration-policy',
-    projection.policies.map((entry) => [`${entry.table}.${entry.name}`, serialisePolicy(entry)]),
+    projection.policies.map((entry) => [
+      identityKey(entry.schema, entry.table, entry.name),
+      serialisePolicy(entry),
+      label(entry.schema, entry.table, entry.name),
+    ]),
     snapshot.policies
-      .filter((entry) => declaredTables.has(entry.table))
-      .map((entry) => [`${entry.table}.${entry.name}`, serialisePolicy(entry)]),
+      .filter(inDeclaredTable)
+      .map((entry) => [
+        identityKey(entry.schema, entry.table, entry.name),
+        serialisePolicy(entry),
+        label(entry.schema, entry.table, entry.name),
+      ]),
   );
 
   return differences;
@@ -824,30 +999,57 @@ export function serialisePolicy(policy: {
   });
 }
 
-/** Compares two keyed sets in both directions. */
+/**
+ * Compares two keyed sets in both directions.
+ *
+ * Each entry is `[key, value, subject]`: the key is the injective tuple that
+ * decides identity, and the subject is the readable name the difference is
+ * reported under. Keeping them apart is the point — the readable name is
+ * ambiguous by construction, and it used to be the key as well.
+ *
+ * A duplicate key is a contradiction rather than something to resolve by
+ * insertion order: building a `Map` silently kept the last entry, which is how a
+ * changed predicate on a colliding policy became no difference at all.
+ */
 function compareKeyed(
   into: SchemaDifference[],
   kind: string,
-  projected: readonly (readonly [string, string])[],
-  snapshot: readonly (readonly [string, string])[],
+  projected: readonly (readonly [string, string, string])[],
+  snapshot: readonly (readonly [string, string, string])[],
 ): void {
-  const snapshotMap = new Map(snapshot);
-  const projectedMap = new Map(projected);
-  for (const [key, value] of projectedMap) {
+  const index = (entries: readonly (readonly [string, string, string])[], side: string) => {
+    const map = new Map<string, { value: string; subject: string }>();
+    for (const [key, value, subject] of entries) {
+      if (map.has(key)) {
+        throw new Error(`${side} declares ${subject} twice (${kind}); identities must be unique`);
+      }
+      map.set(key, { value, subject });
+    }
+    return map;
+  };
+  const snapshotMap = index(snapshot, 'the snapshot');
+  const projectedMap = index(projected, 'the declaration');
+
+  for (const [key, entry] of projectedMap) {
     const expected = snapshotMap.get(key);
     if (expected === undefined) {
-      into.push({ kind, subject: key, expected: 'present in the snapshot', actual: value });
-    } else if (expected !== value) {
-      into.push({ kind, subject: key, expected, actual: value });
+      into.push({
+        kind,
+        subject: entry.subject,
+        expected: 'present in the snapshot',
+        actual: entry.value,
+      });
+    } else if (expected.value !== entry.value) {
+      into.push({ kind, subject: entry.subject, expected: expected.value, actual: entry.value });
     }
   }
-  for (const [key, value] of snapshotMap) {
+  for (const [key, entry] of snapshotMap) {
     if (!projectedMap.has(key)) {
       into.push({
         kind,
-        subject: key,
+        subject: entry.subject,
         expected: 'declared in schema.ts',
-        actual: `${value} (snapshot only)`,
+        actual: `${entry.value} (snapshot only)`,
       });
     }
   }

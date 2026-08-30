@@ -4,6 +4,7 @@ import { DECLARED_TABLES } from './schema';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
 import {
   compareDeclarationToSnapshot,
+  identityKey,
   serialiseLabels,
   serialisePolicy,
 } from './schema-projection';
@@ -33,6 +34,7 @@ export type { SchemaDifference };
 export const COMPARED_SCHEMAS = ['platform', 'audit', 'police_audit'] as const;
 
 interface LiveColumn {
+  schema: string;
   table: string;
   column: string;
   type: string;
@@ -43,6 +45,7 @@ interface LiveColumn {
 }
 
 interface LiveConstraint {
+  schema: string;
   table: string;
   name: string;
   kind: string;
@@ -50,17 +53,18 @@ interface LiveConstraint {
 }
 
 interface LiveIndex {
+  schema: string;
   table: string;
   name: string;
   definition: string;
 }
 
 /** Every root (non-partition) table the declaration says must exist. */
-export function declaredTableNames(): string[] {
+export function declaredTableNames(): { schema: string; table: string }[] {
   return DECLARED_TABLES.map((table) => {
     const config = getTableConfig(table);
-    return `${config.schema ?? 'public'}.${config.name}`;
-  }).sort();
+    return { schema: config.schema ?? 'public', table: config.name };
+  }).sort((a, b) => identityKey(a.schema, a.table).localeCompare(identityKey(b.schema, b.table)));
 }
 
 /**
@@ -79,27 +83,36 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
 
   // ---------------------------------------------------------------- tables
   const liveTables = (
-    await pool.query<{ table: string }>(
-      `SELECT n.nspname || '.' || c.relname AS table
+    await pool.query<{ schema: string; table: string }>(
+      `SELECT n.nspname AS schema, c.relname AS table
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = ANY($1) AND c.relkind IN ('r', 'p')
           AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
-        ORDER BY 1`,
+        ORDER BY 1, 2`,
       [schemas],
     )
-  ).rows.map((row) => row.table);
+  ).rows;
 
   const declaredTables = declaredTableNames();
-  for (const table of declaredTables) {
-    if (!liveTables.includes(table)) {
-      differences.push({ kind: 'table', subject: table, expected: 'present', actual: 'missing' });
-    }
-  }
-  for (const table of liveTables) {
-    if (!declaredTables.includes(table)) {
+  const liveTableKeys = new Set(liveTables.map((row) => identityKey(row.schema, row.table)));
+  const declaredTableKeys = new Set(
+    declaredTables.map((row) => identityKey(row.schema, row.table)),
+  );
+  for (const entry of declaredTables) {
+    if (!liveTableKeys.has(identityKey(entry.schema, entry.table))) {
       differences.push({
         kind: 'table',
-        subject: table,
+        subject: `${entry.schema}.${entry.table}`,
+        expected: 'present',
+        actual: 'missing',
+      });
+    }
+  }
+  for (const entry of liveTables) {
+    if (!declaredTableKeys.has(identityKey(entry.schema, entry.table))) {
+      differences.push({
+        kind: 'table',
+        subject: `${entry.schema}.${entry.table}`,
         expected: 'undeclared',
         actual: 'present',
       });
@@ -109,7 +122,7 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   // --------------------------------------------------------------- columns
   const liveColumns = (
     await pool.query<LiveColumn>(
-      `SELECT n.nspname || '.' || c.relname AS table, a.attname AS column,
+      `SELECT n.nspname AS schema, c.relname AS table, a.attname AS column,
               format_type(a.atttypid, a.atttypmod) AS type,
               a.attnotnull AS not_null,
               coalesce(pg_get_expr(d.adbin, d.adrelid), '') AS default_expr,
@@ -127,13 +140,13 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     )
   ).rows;
 
-  const liveColumnKey = (row: { table: string; column: string }): string =>
-    `${row.table}.${row.column}`;
+  const liveColumnKey = (row: { schema: string; table: string; column: string }): string =>
+    identityKey(row.schema, row.table, row.column);
   const liveColumnMap = new Map(liveColumns.map((row) => [liveColumnKey(row), row]));
 
   for (const expected of EXPECTED_SCHEMA_SNAPSHOT.columns) {
-    const actual = liveColumnMap.get(`${expected.table}.${expected.column}`);
-    const subject = `${expected.table}.${expected.column}`;
+    const actual = liveColumnMap.get(liveColumnKey(expected));
+    const subject = `${expected.schema}.${expected.table}.${expected.column}`;
     if (actual === undefined) {
       differences.push({ kind: 'column', subject, expected: 'present', actual: 'missing' });
       continue;
@@ -149,17 +162,22 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
       differences.push({ kind: 'column', subject, expected: expected.shape, actual: actualShape });
     }
   }
+  const declaredColumnKeys = new Set(EXPECTED_SCHEMA_SNAPSHOT.columns.map(liveColumnKey));
   for (const actual of liveColumns) {
-    const subject = liveColumnKey(actual);
-    if (!EXPECTED_SCHEMA_SNAPSHOT.columns.some((c) => `${c.table}.${c.column}` === subject)) {
-      differences.push({ kind: 'column', subject, expected: 'undeclared', actual: 'present' });
+    if (!declaredColumnKeys.has(liveColumnKey(actual))) {
+      differences.push({
+        kind: 'column',
+        subject: `${actual.schema}.${actual.table}.${actual.column}`,
+        expected: 'undeclared',
+        actual: 'present',
+      });
     }
   }
 
   // ----------------------------------------------------------- constraints
   const liveConstraints = (
     await pool.query<LiveConstraint>(
-      `SELECT n.nspname || '.' || rel.relname AS table, con.conname AS name,
+      `SELECT n.nspname AS schema, rel.relname AS table, con.conname AS name,
               con.contype::text AS kind, pg_get_constraintdef(con.oid) AS definition
          FROM pg_constraint con
          JOIN pg_class rel ON rel.oid = con.conrelid
@@ -175,12 +193,14 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     differences,
     'constraint',
     EXPECTED_SCHEMA_SNAPSHOT.constraints.map((c) => ({
-      key: `${c.table}.${c.name}`,
+      key: identityKey(c.schema, c.table, c.name),
       value: `${c.kind} ${c.definition}`,
+      subject: `${c.schema}.${c.table}.${c.name}`,
     })),
     liveConstraints.map((c) => ({
-      key: `${c.table}.${c.name}`,
+      key: identityKey(c.schema, c.table, c.name),
       value: `${c.kind} ${c.definition}`,
+      subject: `${c.schema}.${c.table}.${c.name}`,
     })),
   );
 
@@ -192,7 +212,7 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   // name matched.
   const liveIndexes = (
     await pool.query<LiveIndex>(
-      `SELECT n.nspname || '.' || t.relname AS table, i.relname AS name,
+      `SELECT n.nspname AS schema, t.relname AS table, i.relname AS name,
               pg_get_indexdef(ix.indexrelid) AS definition
          FROM pg_index ix
          JOIN pg_class i ON i.oid = ix.indexrelid
@@ -209,17 +229,29 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     differences,
     'index',
     EXPECTED_SCHEMA_SNAPSHOT.indexes.map((i) => ({
-      key: `${i.table}.${i.name}`,
+      key: identityKey(i.schema, i.table, i.name),
       value: i.definition,
+      subject: `${i.schema}.${i.table}.${i.name}`,
     })),
-    liveIndexes.map((i) => ({ key: `${i.table}.${i.name}`, value: i.definition })),
+    liveIndexes.map((i) => ({
+      key: identityKey(i.schema, i.table, i.name),
+      value: i.definition,
+      subject: `${i.schema}.${i.table}.${i.name}`,
+    })),
   );
 
   // ---------------------------------------------------- identity sequences
   const liveIdentity = (
-    await pool.query<{ table: string; column: string; sequence: string; shape: string }>(
-      `SELECT n.nspname || '.' || t.relname AS table, a.attname AS column,
-              sn.nspname || '.' || sc.relname AS sequence,
+    await pool.query<{
+      schema: string;
+      table: string;
+      column: string;
+      sequence_schema: string;
+      sequence: string;
+      shape: string;
+    }>(
+      `SELECT n.nspname AS schema, t.relname AS table, a.attname AS column,
+              sn.nspname AS sequence_schema, sc.relname AS sequence,
               'start ' || s.seqstart || ' | increment ' || s.seqincrement ||
               ' | min ' || s.seqmin || ' | max ' || s.seqmax ||
               ' | cache ' || s.seqcache ||
@@ -241,24 +273,26 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     differences,
     'identity-sequence',
     EXPECTED_SCHEMA_SNAPSHOT.identitySequences.map((entry) => ({
-      key: `${entry.table}.${entry.column}`,
-      value: `${entry.sequence} | ${entry.shape}`,
+      key: identityKey(entry.schema, entry.table, entry.column),
+      value: identityKey(entry.sequenceSchema, entry.sequence, entry.shape),
+      subject: `${entry.schema}.${entry.table}.${entry.column}`,
     })),
     liveIdentity.map((entry) => ({
-      key: `${entry.table}.${entry.column}`,
-      value: `${entry.sequence} | ${entry.shape}`,
+      key: identityKey(entry.schema, entry.table, entry.column),
+      value: identityKey(entry.sequence_schema, entry.sequence, entry.shape),
+      subject: `${entry.schema}.${entry.table}.${entry.column}`,
     })),
   );
 
   // ------------------------------------------------------------------- RLS
   const liveRls = (
-    await pool.query<{ table: string; enabled: boolean; forced: boolean }>(
-      `SELECT n.nspname || '.' || c.relname AS table,
+    await pool.query<{ schema: string; table: string; enabled: boolean; forced: boolean }>(
+      `SELECT n.nspname AS schema, c.relname AS table,
               c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced
          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = ANY($1) AND c.relkind IN ('r', 'p')
           AND (c.relrowsecurity OR c.relforcerowsecurity)
-        ORDER BY 1`,
+        ORDER BY 1, 2`,
       [schemas],
     )
   ).rows;
@@ -266,12 +300,14 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     differences,
     'rls',
     EXPECTED_SCHEMA_SNAPSHOT.rls.map((entry) => ({
-      key: entry.table,
+      key: identityKey(entry.schema, entry.table),
       value: `enabled ${String(entry.enabled)} | forced ${String(entry.forced)}`,
+      subject: `${entry.schema}.${entry.table}`,
     })),
     liveRls.map((entry) => ({
-      key: entry.table,
+      key: identityKey(entry.schema, entry.table),
       value: `enabled ${String(entry.enabled)} | forced ${String(entry.forced)}`,
+      subject: `${entry.schema}.${entry.table}`,
     })),
   );
 
@@ -283,15 +319,15 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   // with a delimiter cannot say where one label ends. The driver returns a real
   // array and the comparison serialises it the same way both declarations do.
   const liveEnums = (
-    await pool.query<{ name: string; labels: string[] }>(
-      `SELECT n.nspname || '.' || t.typname AS name,
+    await pool.query<{ schema: string; name: string; labels: string[] }>(
+      `SELECT n.nspname AS schema, t.typname AS name,
               array_agg(e.enumlabel::text ORDER BY e.enumsortorder) AS labels
          FROM pg_type t
          JOIN pg_namespace n ON n.oid = t.typnamespace
          JOIN pg_enum e ON e.enumtypid = t.oid
         WHERE n.nspname = ANY($1)
-        GROUP BY 1
-        ORDER BY 1`,
+        GROUP BY 1, 2
+        ORDER BY 1, 2`,
       [schemas],
     )
   ).rows;
@@ -299,10 +335,15 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     differences,
     'enum',
     EXPECTED_SCHEMA_SNAPSHOT.enums.map((entry) => ({
-      key: entry.name,
+      key: identityKey(entry.schema, entry.name),
       value: serialiseLabels(entry.labels),
+      subject: `${entry.schema}.${entry.name}`,
     })),
-    liveEnums.map((entry) => ({ key: entry.name, value: serialiseLabels(entry.labels) })),
+    liveEnums.map((entry) => ({
+      key: identityKey(entry.schema, entry.name),
+      value: serialiseLabels(entry.labels),
+      subject: `${entry.schema}.${entry.name}`,
+    })),
   );
 
   // -------------------------------------------------------------- policies
@@ -311,6 +352,7 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   // different things.
   const livePolicies = (
     await pool.query<{
+      schema: string;
       table: string;
       name: string;
       as: string;
@@ -319,7 +361,7 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
       using: string | null;
       with_check: string | null;
     }>(
-      `SELECT schemaname || '.' || tablename AS table, policyname AS name,
+      `SELECT schemaname AS schema, tablename AS table, policyname AS name,
               permissive AS as, cmd AS command,
               array(SELECT r::text FROM unnest(roles) AS r) AS to,
               qual AS using, with_check
@@ -332,11 +374,13 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     differences,
     'policy',
     EXPECTED_SCHEMA_SNAPSHOT.policies.map((entry) => ({
-      key: `${entry.table}.${entry.name}`,
+      key: identityKey(entry.schema, entry.table, entry.name),
       value: serialisePolicy(entry),
+      subject: `${entry.schema}.${entry.table}.${entry.name}`,
     })),
     livePolicies.map((entry) => ({
-      key: `${entry.table}.${entry.name}`,
+      key: identityKey(entry.schema, entry.table, entry.name),
+      subject: `${entry.schema}.${entry.table}.${entry.name}`,
       value: serialisePolicy({
         as: entry.as,
         command: entry.command,
@@ -350,27 +394,48 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
   return differences;
 }
 
-/** Compares two keyed sets, recording missing, extra and differing entries. */
+/**
+ * Compares two keyed sets, recording missing, extra and differing entries.
+ *
+ * `key` is the injective identity tuple; `subject` is the readable name the
+ * difference is reported under. They were the same dotted string, so a name
+ * containing a dot let one object take another's place in the map.
+ */
 function compareSets(
   into: SchemaDifference[],
   kind: string,
-  expected: readonly { key: string; value: string }[],
-  actual: readonly { key: string; value: string }[],
+  expected: readonly { key: string; value: string; subject: string }[],
+  actual: readonly { key: string; value: string; subject: string }[],
 ): void {
-  const actualMap = new Map(actual.map((entry) => [entry.key, entry.value]));
-  const expectedMap = new Map(expected.map((entry) => [entry.key, entry.value]));
+  const index = (
+    entries: readonly { key: string; value: string; subject: string }[],
+    side: string,
+  ) => {
+    const map = new Map<string, { value: string; subject: string }>();
+    for (const entry of entries) {
+      if (map.has(entry.key)) {
+        throw new Error(
+          `${side} holds ${entry.subject} twice (${kind}); identities must be unique`,
+        );
+      }
+      map.set(entry.key, { value: entry.value, subject: entry.subject });
+    }
+    return map;
+  };
+  const actualMap = index(actual, 'the live catalogue');
+  const expectedMap = index(expected, 'the snapshot');
 
   for (const entry of expected) {
     const found = actualMap.get(entry.key);
     if (found === undefined) {
-      into.push({ kind, subject: entry.key, expected: entry.value, actual: 'missing' });
-    } else if (found !== entry.value) {
-      into.push({ kind, subject: entry.key, expected: entry.value, actual: found });
+      into.push({ kind, subject: entry.subject, expected: entry.value, actual: 'missing' });
+    } else if (found.value !== entry.value) {
+      into.push({ kind, subject: entry.subject, expected: entry.value, actual: found.value });
     }
   }
   for (const entry of actual) {
     if (!expectedMap.has(entry.key)) {
-      into.push({ kind, subject: entry.key, expected: 'undeclared', actual: entry.value });
+      into.push({ kind, subject: entry.subject, expected: 'undeclared', actual: entry.value });
     }
   }
 }

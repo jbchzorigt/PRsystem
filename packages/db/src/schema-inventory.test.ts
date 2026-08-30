@@ -5,6 +5,7 @@ import { getTableConfig, integer, pgSchema, text } from 'drizzle-orm/pg-core';
 import * as schemaModule from './schema';
 import { DECLARED_ENUMS, DECLARED_TABLES } from './schema';
 import {
+  assertDeclaredInventory,
   compareDeclarationToSnapshot,
   drizzleProjection,
   exportedEnums,
@@ -161,23 +162,24 @@ describe('extraction property inventory', () => {
     expect(unclassified).toEqual([]);
     // And the classification is honest in both directions.
     expect(drizzleProjection([table]).enums).toEqual([
-      { name: 'inventory_probe.inventory_mood', labels: ['sad', 'happy'] },
+      { schema: 'inventory_probe', name: 'inventory_mood', labels: ['sad', 'happy'] },
     ]);
   });
 
-  it('registers every PostgreSQL enum the schema module exports', () => {
-    // The declared inventory is only a contract if something holds it to the
-    // module. Drizzle Kit creates an exported `pgEnum` whether or not a column
-    // uses it, so one missing from DECLARED_ENUMS is a type the database would
-    // hold and the declaration would not.
-    const exported = exportedEnums(schemaModule as unknown as Record<string, unknown>)
-      .map((declared) => `${declared.schema ?? 'public'}.${declared.enumName}`)
-      .sort();
-    const registered = DECLARED_ENUMS.map(
-      (declared: { schema?: string | undefined; enumName: string }) =>
-        `${declared.schema ?? 'public'}.${declared.enumName}`,
-    ).sort();
-    expect(exported).toEqual(registered);
+  it('registers every persistent entity the schema module exports', () => {
+    // The registries are only a contract if something holds them to the module.
+    // Drizzle Kit creates what the module exports, so an unregistered table, a
+    // same-named enum registered in place of the exported one, a standalone
+    // sequence or an entity kind nobody classified is a persistent object the
+    // gate cannot see. Binding is by object identity.
+    const module = schemaModule as unknown as Record<string, unknown>;
+    expect(() => assertDeclaredInventory(module)).not.toThrow();
+    const inventory = assertDeclaredInventory(module);
+    expect(inventory.tables).toHaveLength(DECLARED_TABLES.length);
+    expect(inventory.enums).toHaveLength(DECLARED_ENUMS.length);
+    expect([...inventory.schemas].sort()).toEqual(['audit', 'platform', 'police_audit']);
+    // Non-vacuous: the same helper reads enums off a module that has one.
+    expect(exportedEnums(module)).toEqual([...DECLARED_ENUMS]);
   });
 
   it('projects something for every key classified as projected', () => {
@@ -196,7 +198,7 @@ describe('extraction property inventory', () => {
     expect(projection.tables).toEqual(
       DECLARED_TABLES.map((table) => {
         const config = getTableConfig(table);
-        return `${config.schema ?? 'public'}.${config.name}`;
+        return { schema: config.schema ?? 'public', table: config.name };
       }),
     );
   });
