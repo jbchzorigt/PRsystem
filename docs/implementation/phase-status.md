@@ -15,8 +15,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | --- | --- |
 | Current phase | 03 — Platform kernel |
 | Phase state | `SECURITY_REPAIR_REQUIRED` |
-| Customer review number | 16 |
-| Latest implemented repair number | 16 |
+| Customer review number | 17 |
+| Latest implemented repair number | 17 |
 | Customer acceptance | `NOT_ACCEPTED` |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
@@ -1159,15 +1159,15 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 <!-- phase-03-evidence:begin -->
 
-Measured on the sixteenth-repair tree. Every command exited 0.
+Measured on the seventeenth-repair tree. Every command exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
 | `node tools/validate-governance.mjs` | PASS | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | PASS | 55 of 55 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 55 of 55 correct |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 68 of 68 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 63 of 63 correct |
 | `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
-| `node tools/scan-secrets.mjs` | PASS | 330 indexed files, none reported |
+| `node tools/scan-secrets.mjs` | PASS | 331 indexed files, none reported |
 | `pnpm run format:check` | PASS | clean |
 | `pnpm run lint` | PASS | 16 of 16 projects |
 | `pnpm run typecheck` | PASS | 25 of 25 graphs |
@@ -1179,8 +1179,8 @@ Measured on the sixteenth-repair tree. Every command exited 0.
 | `pnpm run test:integration` | PASS | 51 — db 41, outbox 5, api 5 |
 | `pnpm run test:concurrency` | PASS | 16 each run |
 | `pnpm run test:regression` | PASS | 51 |
-| `node tools/validate-regression-coverage.mjs` | PASS | 429 of 429 |
-| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 50 of 50 bypasses caught |
+| `node tools/validate-regression-coverage.mjs` | PASS | 489 of 489 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 54 of 54 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12, four fixtures |
 | `pnpm run test:security` | PASS | 18 of 18 sub-gates, 488, each run |
 | `pnpm run test:e2e` | PASS | 15 |
@@ -1467,6 +1467,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Sixteenth security repair (customer review 16) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The fifteenth repair was **not accepted**. Two defects were raised, both
 independently reproduced; both are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
@@ -1484,6 +1487,40 @@ where I2 supersedes H2's parsing.
 | --- | --- | --- |
 | I1 | a staged credential, a clean blob, `git replace`, a tidied working tree | `scanRepository` reported **`scanned 1, findings 0`** while `--no-replace-objects cat-file` showed the credential still in the blob. The three replacement fixtures each report **0 findings** against the ab9c69d scanner core. With the flag removed, the hash check alone refuses the substitution — measured, restored, not committed |
 | I2 | the eight mutations listed above, each asserted to have changed the document | governance passed **15 of 15** on every one |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Seventeenth security repair (customer review 17) — `SECURITY_REPAIR_REQUIRED`
+
+The sixteenth repair was **not accepted**. Two defects were raised, both
+independently reproduced; both are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**. The disabled replacement processing
+and the streamed object-hash verification are unchanged.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| J1 | The index was the whole inventory, so a credential already committed could be hidden behind clean staged content: `HEAD:<path>` named the secret blob, `:<path>` named the replacement, and the scan reported zero findings | The checked-out commit and the index are enumerated independently and both are mandatory. Where they name the same blob for the same path there is nothing to scan twice, and that identical-blob case is the only one deduplicated. A path with different HEAD and index objects is scanned twice and each finding names its source. HEAD must resolve to a commit — unborn, non-commit or unreadable means one of the two sources is missing and is refused. A tree where a blob is expected, a gitlink, a bad object name and a non-zero index stage fail closed on either side. In CI each of the five jobs now scans immediately after checkout and before `pnpm install`, so the first look at HEAD and the index happens before any dependency lifecycle script can run; the manifest marks the step `beforeInstall` and the validator enforces the ordering |
+| J2 | Line-oriented regular expressions cannot model Markdown. Eight constructs passed or were misdiagnosed: a GFM row without outer pipes, `PASS` beside "exit 1", a duplicate `Current position` H2, a three-cell row in a two-column table, a second ledger state token, a correct measured-on label hidden in an HTML comment beside a stale visible one, and Setext, raw `<h3>` and tab-separated ATX repair headings | The document is parsed with `marked@18.0.11` — pinned, CommonMark with GFM, no transitive dependencies — and the check reads the tree, with every top-level token carrying its exact character span. What the document must say is declared once in `docs/implementation/phase-03-evidence.json`: phase, state, review and repair numbers, acceptance, repair history, and for every battery command its execution count, actual exit codes and measured result. Success is decided by the exit codes; the Result column must equal the manifest text exactly, so free text decides nothing. Rows are also checked as written, because GFM pads and truncates rows to the header width. Raw HTML in a governed region is refused unless it is one of the six approved boundary markers |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| J1 | a committed credential, clean content staged over it | `scanRepository` reported **`scanned 1, findings 0`** with the credential plainly in `HEAD:leak.ts`. The eight new fixtures give **56 of 63** against the 1aa3335 scanner core; the committed-secret case reports **0 findings** and the staged-deletion case detects nothing at all |
+| J2 | the eight listed mutations, each asserted to have changed the copied document | five passed **15 of 15**; the other three were refused for unrelated reasons. Of the twelve new fixtures, **seven are accepted outright** by the 1aa3335 validator and five are refused for a different reason |
+
+#### Dependency change
+
+`marked@18.0.11` added to root `devDependencies`, pinned exactly, with no
+transitive dependencies; the lockfile grows by one package. `pnpm run
+audit:prod` reports no known vulnerabilities and `pnpm run audit:tree` reports
+one moderate — the pre-existing `DSR-01`, unchanged.
 
 #### Standing items, unchanged
 
