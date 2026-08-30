@@ -15,8 +15,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | --- | --- |
 | Current phase | 03 — Platform kernel |
 | Phase state | `SECURITY_REPAIR_REQUIRED` |
-| Customer review number | 17 |
-| Latest implemented repair number | 17 |
+| Customer review number | 18 |
+| Latest implemented repair number | 18 |
 | Customer acceptance | `NOT_ACCEPTED` |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
@@ -1159,15 +1159,15 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 <!-- phase-03-evidence:begin -->
 
-Measured on the seventeenth-repair tree. Every command exited 0.
+Measured on the eighteenth-repair tree. Every command exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
 | `node tools/validate-governance.mjs` | PASS | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | PASS | 68 of 68 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 63 of 63 correct |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 92 of 92 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 67 of 67 correct |
 | `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
-| `node tools/scan-secrets.mjs` | PASS | 331 indexed files, none reported |
+| `node tools/scan-secrets.mjs` | PASS | 333 indexed files, none reported |
 | `pnpm run format:check` | PASS | clean |
 | `pnpm run lint` | PASS | 16 of 16 projects |
 | `pnpm run typecheck` | PASS | 25 of 25 graphs |
@@ -1179,8 +1179,8 @@ Measured on the seventeenth-repair tree. Every command exited 0.
 | `pnpm run test:integration` | PASS | 51 — db 41, outbox 5, api 5 |
 | `pnpm run test:concurrency` | PASS | 16 each run |
 | `pnpm run test:regression` | PASS | 51 |
-| `node tools/validate-regression-coverage.mjs` | PASS | 489 of 489 |
-| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 54 of 54 bypasses caught |
+| `node tools/validate-regression-coverage.mjs` | PASS | 657 of 657 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 67 of 67 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12, four fixtures |
 | `pnpm run test:security` | PASS | 18 of 18 sub-gates, 488, each run |
 | `pnpm run test:e2e` | PASS | 15 |
@@ -1497,6 +1497,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Seventeenth security repair (customer review 17) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The sixteenth repair was **not accepted**. Two defects were raised, both
 independently reproduced; both are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
@@ -1521,6 +1524,38 @@ and the streamed object-hash verification are unchanged.
 transitive dependencies; the lockfile grows by one package. `pnpm run
 audit:prod` reports no known vulnerabilities and `pnpm run audit:tree` reports
 one moderate — the pre-existing `DSR-01`, unchanged.
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Eighteenth security repair (customer review 18) — `SECURITY_REPAIR_REQUIRED`
+
+The seventeenth repair was **not accepted**. Five defects were raised, each
+independently reproduced; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| K1 | Entries were deduplicated on `[path, object]`, so a regular file in HEAD and a symlink in the index naming the same blob collapsed into one entry carrying HEAD's mode. The working-tree pass then found a symlink where it expected a regular file, noted it and moved on, and the link text carrying the credential went unread | The mode is part of an entry's identity: it decides how the entry may be read and belongs to the source that recorded it. Deduplication keys on path, object and mode, so a mode transition produces two entries, each read the way its own source describes it, and the working-tree pass uses the index entry's mode |
+| K2 | The validator proved only that the scan preceded one exact command line. `pnpm/action-setup` with `run_install: true`, an `npm ci`, a `corepack pnpm install`, a local action and a bare `git reset` all ran arbitrary code with the checkout in place and passed | Every required job begins with the canonical checkout and then the scan, checked as an exact prefix: step 0 must be `actions/checkout@vN` carrying no `run` and no `if`, step 1 must be the scan, and pnpm and Node are set up afterwards. The checkout may not override `repository`, `ref` or `path`, a job checks out exactly once, and an action that installs while setting up is refused by name |
+| K3 | The manifest, the gate-battery block and the evidence table could be edited together, so the document decided what it had to prove: removing `test:security` from all three, or reducing the battery to one command, or declaring `DONE`, or advancing to Phase 04, all passed | `tools/phase-03-battery.mjs` declares the required commands with their execution multiplicities and the governed state, outside the manifest's reach. The manifest records measurements against that requirement and carries an exact key set. The current phase, phase state, customer acceptance and the Phase 04 ledger row are each checked against the governed state, and the repair history must be unique, ordered and exactly contiguous in both sources |
+| K4 | Only top-level tokens were inspected, so a blockquote was a hiding place; and raw source was read as visible text, so link titles, entity references and link destinations could say one thing to the parser and another to a reader | The tree is walked recursively — blockquotes, list items, table cells, inline children — and every rule applies to descendants. Visible text is extracted semantically, with entities decoded and link destinations, titles, reference definitions, code and raw HTML excluded. Markers are exact, unique, top-level HTML comment tokens and the marker text may occur nowhere else. The ledger link is validated by its own `href`. The raw-HTML restriction covers the evidence section, the current position, the ledger and the repair history |
+| K5 | The production CLI accepted `PRSYSTEM_RUNBOOK`, `PRSYSTEM_PHASE_STATUS` and `PRSYSTEM_EVIDENCE_MANIFEST`, so pointed at clean decoys it validated documents nobody ships while the canonical ones drifted | The checks move to `tools/governance-checks.mjs`, which takes the three paths as arguments. The CLI names the canonical documents and reads no configuration. The fixture harness calls the core directly. CI refuses all three variables at workflow, job and step level |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| K1 | HEAD `100644` and index `120000` over one blob, the working-tree link text carrying the credential | `scanned 1, findings 0`, with a note about a mode mismatch derived from the wrong source. Three of the four new fixtures fail against the de9b324 core |
+| K2 | the four listed mutations plus a local action, a second checkout at another ref, an arbitrary step and each checkout override | all eight passed **489 of 489** |
+| K3 | the seven coordinated mutations across manifest, battery block and table | five passed **15 of 15**; two were refused for unrelated reasons |
+| K4 | the eleven listed mutations | seven were accepted outright; four were refused for unrelated reasons |
+| K5 | the three variables pointed at clean decoys while the canonical document was set to `DONE` | the CLI reported **15 of 15**, and the CI validator named none of the three |
 
 #### Standing items, unchanged
 

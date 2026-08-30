@@ -2,10 +2,10 @@
   "currentPhase": "03 \u2014 Platform kernel",
   "phaseState": "SECURITY_REPAIR_REQUIRED",
   "customerAcceptance": "NOT_ACCEPTED",
-  "customerReviewNumber": 17,
-  "latestRepairNumber": 17,
-  "measuredOnRepairNumber": 17,
-  "repairHistory": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+  "customerReviewNumber": 18,
+  "latestRepairNumber": 18,
+  "measuredOnRepairNumber": 18,
+  "repairHistory": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
   "battery": [
     {
       "command": "node tools/validate-governance.mjs",
@@ -17,13 +17,13 @@
       "command": "node tools/validate-governance.fixtures.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "68 of 68 drift fixtures caught"
+      "result": "92 of 92 drift fixtures caught"
     },
     {
       "command": "node tools/validate-secret-scan.fixtures.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "63 of 63 correct"
+      "result": "67 of 67 correct"
     },
     {
       "command": "node tools/validate-workspace.mjs",
@@ -35,13 +35,13 @@
       "command": "node tools/validate-regression-coverage.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "489 of 489"
+      "result": "657 of 657"
     },
     {
       "command": "node tools/validate-regression-coverage.fixtures.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "54 of 54 bypasses caught"
+      "result": "67 of 67 bypasses caught"
     },
     {
       "command": "node tools/validate-pool-error-fixture.mjs",
@@ -53,7 +53,7 @@
       "command": "node tools/scan-secrets.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "331 indexed files, none reported"
+      "result": "333 indexed files, none reported"
     },
     {
       "command": "pnpm run format:check",
