@@ -15,8 +15,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | --- | --- |
 | Current phase | 03 — Platform kernel |
 | Phase state | `SECURITY_REPAIR_REQUIRED` |
-| Customer review number | 18 |
-| Latest implemented repair number | 18 |
+| Customer review number | 19 |
+| Latest implemented repair number | 19 |
 | Customer acceptance | `NOT_ACCEPTED` |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
@@ -1159,13 +1159,13 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 <!-- phase-03-evidence:begin -->
 
-Measured on the eighteenth-repair tree. Every command exited 0.
+Measured on the nineteenth-repair tree. Every command exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
 | `node tools/validate-governance.mjs` | PASS | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | PASS | 92 of 92 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 67 of 67 correct |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 112 of 112 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
 | `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
 | `node tools/scan-secrets.mjs` | PASS | 333 indexed files, none reported |
 | `pnpm run format:check` | PASS | clean |
@@ -1179,8 +1179,8 @@ Measured on the eighteenth-repair tree. Every command exited 0.
 | `pnpm run test:integration` | PASS | 51 — db 41, outbox 5, api 5 |
 | `pnpm run test:concurrency` | PASS | 16 each run |
 | `pnpm run test:regression` | PASS | 51 |
-| `node tools/validate-regression-coverage.mjs` | PASS | 657 of 657 |
-| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 67 of 67 bypasses caught |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12, four fixtures |
 | `pnpm run test:security` | PASS | 18 of 18 sub-gates, 488, each run |
 | `pnpm run test:e2e` | PASS | 15 |
@@ -1534,6 +1534,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Eighteenth security repair (customer review 18) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The seventeenth repair was **not accepted**. Five defects were raised, each
 independently reproduced; all are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
@@ -1556,6 +1559,38 @@ review, and **no acceptance is claimed**.
 | K3 | the seven coordinated mutations across manifest, battery block and table | five passed **15 of 15**; two were refused for unrelated reasons |
 | K4 | the eleven listed mutations | seven were accepted outright; four were refused for unrelated reasons |
 | K5 | the three variables pointed at clean decoys while the canonical document was set to `DONE` | the CLI reported **15 of 15**, and the CI validator named none of the three |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Nineteenth security repair (customer review 19) — `SECURITY_REPAIR_REQUIRED`
+
+The eighteenth repair was **not accepted**. Five defects were raised, each
+independently reproduced; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| L1 | The index mode was trusted and a working-tree type mismatch only produced a note, so the content was skipped and the scan exited 0. A clean regular file replaced by an unstaged secret symlink, and a clean symlink replaced by an unstaged secret regular file, each reported `scanned 1, findings []` | The working tree is read by what `lstat` says it is: a regular file as content, a symlink as its stored link text and never through the target. The divergence is still reported but decides how to read the entry, never whether. Anything that is neither is refused outright |
+| L2 | The environment could end the scan before it read anything: `NODE_OPTIONS: --require=./tools/bypass-scan.cjs` on the scan step turned a repository holding a committed credential from exit 1 into exit 0 with no output, and coverage validation still reported 657 of 657 | `ALLOWED_ENV` names what each level may declare instead of listing what it may not. The workflow may set `NODE_VERSION` and `PNPM_VERSION`, a required job may set nothing at all, an ordinary step may set `DATABASE_URL`, and the scan step may set nothing. Anything else is refused, named or not |
+| L3 | Seven coordinated mutations passed all fifteen checks, including rolling every pointer to the review number back together, deleting the newest record with them, appending a bold `DONE` beside the ledger token, reordering the battery in both sources, duplicating a JSON member name, and recording failure prose beside zero exits | `governedReviewNumber` is declared outside the document and all four statements of it must agree; the repair history must be exactly `1..governedReviewNumber`; the manifest and battery block must match `REQUIRED_BATTERY`'s order; duplicate JSON member names are refused before parsing; the Phase 03 and Phase 04 ledger state cells must render exactly their governed token; the Current position's next-phase rows are governed; and result prose may not contradict the recorded exits |
+| L4 | A blockquoted canonical H2 made the section span govern the blockquote; a measured-on label inside a list was invisible to the visible-text walk; a second blockquoted ledger declaring Phase 03 `DONE` was never counted; and `<h3 >…</h3 >` and `re<span></span>pair` rendered as headings no pattern matched | Canonical section H2s must be their own top-level heading; visible text recurses through `items`, table headers, rows and cells; exactly one rendered ledger table and exactly one Phase 03 and Phase 04 row exist in the whole document; and raw HTML is refused everywhere except the six approved boundary comments, so there is no HTML left to parse |
+| L5 | `runGovernanceChecks({ phaseStatusPath })` honoured the argument in check 15 and nowhere else, so a scratch document with Phase 22 deleted returned 15 of 15 — and the CLI non-redirection controls pointed at byte-identical valid copies, which a redirectable CLI would also have passed | The document is read once, from the supplied path, and the other two injected paths were audited the same way. Each CLI decoy is now a document that fails on its own, with three further controls proving it fails when actually read |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| L1 | both type-change directions | `scanned 1, findings []` with only a note; three of five new fixtures fail against the 4d77df0 core |
+| L2 | six workflow mutations, plus a scratch repository holding a real committed credential | all six passed **657 of 657**; the scanner exited 1 plainly and **0 silently** under `NODE_OPTIONS --require` |
+| L3 | seven coordinated mutations | five passed all fifteen checks; two were refused for unrelated reasons |
+| L4 | six rendered-Markdown mutations | four passed **15 of 15**; two were refused for unrelated reasons |
+| L5 | Phase 22 deleted from a supplied scratch document | **0 failures of 15** |
 
 #### Standing items, unchanged
 

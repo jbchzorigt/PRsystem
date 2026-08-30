@@ -54,7 +54,7 @@ export const GOVERNED_STATE = {
   customerAcceptance: 'NOT_ACCEPTED',
   nextPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
   nextPhaseState: 'NOT STARTED',
-  governedReviewNumber: 18,
+  governedReviewNumber: 19,
 };
 
 /** The manifest's exact key set. Anything else is an unreviewed addition. */
