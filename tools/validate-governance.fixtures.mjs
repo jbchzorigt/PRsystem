@@ -930,6 +930,16 @@ const FIXTURES = [
       ),
   },
   {
+    // Every check must read the supplied document. Only check 15 did, so a
+    // scratch phase-status with a whole phase deleted from the ledger returned
+    // 15 of 15 and the harness was validating the real file while believing it
+    // validated a copy.
+    name: 'core: Phase 22 deleted from the supplied phase status',
+    file: 'phase-status',
+    expect: /phase-status\.md ledger: missing phases 22/,
+    mutate: (text) => text.replace(/^\| 22 \|[^\n]*\n/m, ''),
+  },
+  {
     name: 'evidence: the results markers removed',
     file: 'phase-status',
     expect: /phase-03-evidence: the begin marker text occurs 0 times in the document/,
@@ -1212,13 +1222,63 @@ const control = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-gover
   encoding: 'utf8',
 });
 
-// The production CLI reads no path from the environment. Every one of the three
-// variables that used to redirect it is set here to a document that would pass
-// on its own, while the canonical documents are the ones that must be read.
+// The production CLI reads no path from the environment.
+//
+// The decoys are deliberately *invalid*: each would fail if the CLI read it, so
+// identical output can only mean it was not read. Byte-identical valid copies
+// proved nothing — a redirectable CLI would have produced the same output too.
 const DECOY_DIR = mkdtempSync(join(tmpdir(), 'prsystem-gov-decoy-'));
-writeFileSync(join(DECOY_DIR, 'doc.md'), originalPhaseStatus);
-writeFileSync(join(DECOY_DIR, 'phase-03-evidence.json'), originalManifest);
-writeFileSync(join(DECOY_DIR, 'runbook.md'), originalRunbook);
+const decoyPhaseStatus = originalPhaseStatus.replace(/^\| 22 \|[^\n]*\n/m, '');
+const decoyManifest = originalManifest.replace('"exits": [0]', '"exits": [1]');
+const decoyRunbook = originalRunbook.replace('`SEC-SCHEDULER`, ', '');
+for (const [label, contents] of [
+  ['phase status', decoyPhaseStatus],
+  ['manifest', decoyManifest],
+  ['runbook', decoyRunbook],
+]) {
+  const changed =
+    label === 'phase status'
+      ? contents !== originalPhaseStatus
+      : label === 'manifest'
+        ? contents !== originalManifest
+        : contents !== originalRunbook;
+  results.push({
+    name: `control: the ${label} decoy is a document that would fail`,
+    ok: changed,
+    detail: changed ? 'differs from the canonical document' : 'THE DECOY IS UNCHANGED',
+  });
+  if (!changed) failures += 1;
+}
+writeFileSync(join(DECOY_DIR, 'doc.md'), decoyPhaseStatus);
+writeFileSync(join(DECOY_DIR, 'phase-03-evidence.json'), decoyManifest);
+writeFileSync(join(DECOY_DIR, 'runbook.md'), decoyRunbook);
+
+// And the decoys really would fail, read through the core the CLI uses.
+for (const [label, paths, expected] of [
+  ['phase status', { phaseStatusPath: join(DECOY_DIR, 'doc.md') }, /missing phases 22/],
+  [
+    'manifest',
+    { manifestPath: join(DECOY_DIR, 'phase-03-evidence.json') },
+    /records a non-zero exit code/,
+  ],
+  ['runbook', { runbookPath: join(DECOY_DIR, 'runbook.md') }, /the catalogue omits SEC-SCHEDULER/],
+]) {
+  const outcome = runGovernanceChecks({
+    root: ROOT,
+    runbookPath: RUNBOOK,
+    phaseStatusPath: PHASE_STATUS,
+    manifestPath: EVIDENCE_MANIFEST,
+    ...paths,
+  });
+  const rejected = outcome.results.some((r) => !r.ok && expected.test(r.detail));
+  results.push({
+    name: `control: the ${label} decoy is rejected when it is actually read`,
+    ok: rejected,
+    detail: rejected ? 'rejected' : 'ACCEPTED — the decoy would not have failed',
+  });
+  if (!rejected) failures += 1;
+}
+
 for (const [name, value] of [
   ['PRSYSTEM_PHASE_STATUS', join(DECOY_DIR, 'doc.md')],
   ['PRSYSTEM_EVIDENCE_MANIFEST', join(DECOY_DIR, 'phase-03-evidence.json')],
@@ -1232,10 +1292,12 @@ for (const [name, value] of [
   const same = run.stdout === control.stdout && run.status === control.status;
   results.push({
     name: `CLI: ${name} does not redirect governance validation`,
-    ok: same,
-    detail: same ? 'identical to the unset run' : 'the output changed',
+    ok: same && run.status === 0,
+    detail: same
+      ? 'identical to the unset run, and still passing'
+      : 'the output changed — the variable was read',
   });
-  if (!same) failures += 1;
+  if (!same || run.status !== 0) failures += 1;
 }
 rmSync(DECOY_DIR, { recursive: true, force: true });
 results.push({

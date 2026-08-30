@@ -45,7 +45,13 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
 
   const read = (p) => readFileSync(p, 'utf8');
   const buildPlan = read(join(IMPL, 'build-plan.md'));
-  const phaseStatus = read(join(IMPL, 'phase-status.md'));
+  // The supplied path, not the canonical one.
+  //
+  // Only check 15 read `phaseStatusPath`; checks 1 to 13 opened
+  // `docs/implementation/phase-status.md` regardless, so a scratch document with
+  // a phase deleted from its ledger still returned 15 of 15 and the fixture
+  // harness was validating the real file while believing it validated a copy.
+  const phaseStatus = read(phaseStatusPath);
   const traceability = read(join(IMPL, 'requirements-traceability.md'));
   const extGates = read(join(IMPL, 'external-integration-gates.md'));
   const assumptions = read(join(IMPL, 'assumptions-and-conflicts.md'));
