@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | **`SECURITY_REPAIR_REQUIRED`** — twelve customer reviews completed; the twelfth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
+| Phase state | **`SECURITY_REPAIR_REQUIRED`** — thirteen customer reviews completed; the thirteenth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -28,7 +28,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the twelfth repair; see the same section |
+| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` … the thirteenth repair; see the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -1151,15 +1151,15 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 <!-- phase-03-evidence:begin -->
 
-Measured on the twelfth-repair tree. Every command exited 0.
+Measured on the thirteenth-repair tree. Every command exited 0.
 
 | Command | Result |
 | --- | --- |
 | `node tools/validate-governance.mjs` | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | 22 of 22 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | 11 of 11 correct |
+| `node tools/validate-governance.fixtures.mjs` | 27 of 27 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 27 of 27 correct |
 | `node tools/validate-workspace.mjs` | 15 of 15 |
-| `node tools/scan-secrets.mjs` | 328 tracked text files, none reported |
+| `node tools/scan-secrets.mjs` | 330 tracked text files, none reported |
 | `pnpm run format:check` | clean |
 | `pnpm run lint` | 16 of 16 projects |
 | `pnpm run typecheck` | 25 of 25 graphs |
@@ -1167,12 +1167,12 @@ Measured on the twelfth-repair tree. Every command exited 0.
 | `pnpm run build` | 16 of 16 projects |
 | `pnpm run openapi` | document generated |
 | `pnpm run compose:config` | valid |
-| `pnpm run test:migrations` | 134 |
+| `pnpm run test:migrations` | 138 |
 | `pnpm run test:integration` | 51 — db 41, outbox 5, api 5 |
 | `pnpm run test:concurrency` (three runs) | 16 each run |
 | `pnpm run test:regression` | 51 |
-| `node tools/validate-regression-coverage.mjs` | 249 of 249 |
-| `node tools/validate-regression-coverage.fixtures.mjs` | 44 of 44 bypasses caught |
+| `node tools/validate-regression-coverage.mjs` | 321 of 321 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 47 of 47 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | 12 of 12, four fixtures |
 | `pnpm run test:security` (three runs) | 18 of 18 sub-gates, 488, each run |
 | `pnpm run test:e2e` | 15 |
@@ -1315,6 +1315,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Twelfth security repair (customer review 12) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The eleventh repair was **not accepted**. Seven further false-negatives were
 raised, each independently reproduced; all are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
@@ -1345,6 +1348,41 @@ unchanged.
 
 Twelve of the 42 extraction cases and all four bootstrap-ownership cases were
 observed failing on `d63da9f` before any fix was written.
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Thirteenth security repair (customer review 13) — `SECURITY_REPAIR_REQUIRED`
+
+The twelfth repair was **not accepted**. Six further defects were raised, each
+independently reproduced; all are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**. E1 and the accepted parts of E2–E5 and
+E7 are unchanged.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| F1 | Enum labels were joined with `", "` in the declaration and again in the live query. A label is arbitrary text, so `['a, b']` and `['a', 'b']` — different PostgreSQL types — produced the same string | Labels are an ordered list end to end: projection, canonical snapshot and `array_agg(... ORDER BY enumsortorder)`. Comparison serialises them as JSON, which round-trips, so both label boundaries and order are visible |
+| F2 | Policy targets had the same defect: one role named `a, b` and the two roles `a` and `b` both rendered `TO a, b`, and they authorise different things | A policy is carried in parts — permissiveness, command, an ordered list of exact role names, `USING` and `WITH CHECK` — in the projection, the snapshot and `pg_policies`, with `roles` left an array. Membership is decided by Drizzle's own `is(value, PgRole)`, so a structural `{ name: string }` lookalike is refused rather than silently read |
+| F3 | Enums were discovered only through table columns, so an exported `pgEnum` nothing references projected nothing — while `CREATE TYPE` creates it and Drizzle Kit loads it | `DECLARED_ENUMS` is an explicit inventory, projected alongside column-discovered enums with each type appearing exactly once. `exportedEnums` holds that inventory to what the schema module actually exports. Two declarations of one qualified enum with different labels are refused |
+| F4 | Two declarations of the same qualified table had their columns appended together, so two partial declarations were unioned into an apparent table that could match the snapshot while neither declaration described it | A duplicate qualified table name is refused before anything is projected. A foreign key to a table outside the projected list is unaffected |
+| F5 | `marked()` took the first begin and the first end marker, so a correct-looking decoy pair before the canonical section supplied the region while the real block went unread; and the newest heading's review numeral was captured and never compared | `markedRegion` requires exactly one of each marker in the document and the end to follow the begin; containment is asserted on the region's exact character bounds against the section's. The current-position cardinal, its repair ordinal, the heading numeral and the measured-evidence label are mapped to integers and must agree, and every repair heading must spell its own number consistently |
+| F6 | The scan CLI honoured `PRSYSTEM_SCAN_ROOT` and `PRSYSTEM_SCAN_FILES`, so the gate itself was redirectable: the root alone pointed the repository's file list at another directory, read nothing, and exited 0 | The scanner core moves to `tools/secret-scan.mjs` and the fixture harness calls `scanFiles` directly. The CLI enumerates git-tracked files and reads no configuration at all. `scanFiles` fails closed on an empty list, a missing or unreadable file, an absolute path, a path escaping the root, a duplicate or empty entry, and a missing, relative, non-directory root or non-array list. The CI validator refuses both variables in `env` at workflow, job and step level |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| F1 | `['a, b']` against `['a', 'b']`, plus quote, Unicode, boundary and order cases | 16 of 61 declaration cases failed; against the live catalogue the joined form read `'a', 'b'` back as `["a, b"]`, identical to the one-comma-label type |
+| F2 | `pgRole('probe_x, probe_y')` against `[pgRole('probe_x'), pgRole('probe_y')]`, in the declaration and as a real `ALTER POLICY` on `platform.job_run` | both produced the same target text; a `{ name: string }` lookalike was accepted as a role |
+| F3 | an exported enum no column references | `enums: []` and an empty declaration diff |
+| F4 | two partial declarations, two conflicting declarations, and the same table object twice | all three were unioned and accepted |
+| F5 | a decoy marker pair before the canonical section masking a stale label; the newest heading renumbered from `(customer review 12)` to `(customer review 11)` | 15 of 15 PASS in both cases |
+| F6 | `PRSYSTEM_SCAN_ROOT` alone, an empty `PRSYSTEM_SCAN_FILES`, a nonexistent supplied file, an absolute path and a `../` traversal; and both variables on the CI scan step | the first three scanned 0 files and exited 0; the last two followed the path out of the root; the CI validator reported 249 of 249 |
 
 #### Standing items, unchanged
 
