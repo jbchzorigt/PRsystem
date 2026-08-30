@@ -761,31 +761,37 @@ check('15', 'Phase 03 results live in exactly one canonical section', () => {
   ]);
 
   const history = markedRegion(text, 'phase-03-repair-history');
-  const headings = history.body.split('\n').filter((line) => line.startsWith('### '));
+  // By position, not by text. A heading placed outside the region is often a
+  // *copy* of one inside it, so "is this line among the region's lines" answers
+  // yes for the very case the check exists to catch.
+  const allHeadings = [...text.matchAll(/^### [^\n]*$/gm)].map((match) => ({
+    heading: match[0],
+    inside: match.index >= history.start && match.index < history.end,
+  }));
+
   const sections = [];
-  for (const heading of headings) {
-    if (DECLARED_SECTION_HEADINGS.has(heading.trim())) continue;
-    const parsed = CANONICAL_HEADING.exec(heading);
+  for (const entry of allHeadings) {
+    if (!entry.inside) {
+      assert(
+        !CANONICAL_HEADING.test(entry.heading),
+        `a repair heading sits outside the bounded repair history: ${entry.heading.trim()}`,
+      );
+      continue;
+    }
+    if (DECLARED_SECTION_HEADINGS.has(entry.heading.trim())) continue;
+    const parsed = CANONICAL_HEADING.exec(entry.heading);
     assert(
       parsed !== null,
       `a heading in the repair history is neither a canonical repair heading nor a declared ` +
-        `section heading: ${heading.trim()}`,
+        `section heading: ${entry.heading.trim()}`,
     );
-    sections.push({ heading, word: parsed[1].toLowerCase(), number: Number(parsed[2]) });
+    sections.push({
+      heading: entry.heading,
+      word: parsed[1].toLowerCase(),
+      number: Number(parsed[2]),
+    });
   }
   assert(sections.length > 0, 'there are no numbered repair sections');
-
-  // And no repair heading may sit outside the region, where the sequence check
-  // cannot see it.
-  const outside = text
-    .split('\n')
-    .filter((line) => line.startsWith('### '))
-    .filter((line) => CANONICAL_HEADING.test(line))
-    .filter((line) => !headings.includes(line));
-  assert(
-    outside.length === 0,
-    `a repair heading sits outside the bounded repair history: ${outside[0]?.trim()}`,
-  );
   for (const entry of sections) {
     assert(
       ORDINALS[entry.word] === entry.number,

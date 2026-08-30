@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Field | Value |
 | --- | --- |
 | Current phase | **03 — Platform kernel** |
-| Phase state | **`SECURITY_REPAIR_REQUIRED`** — fourteen customer reviews completed; the fourteenth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
+| Phase state | **`SECURITY_REPAIR_REQUIRED`** — fifteen customer reviews completed; the fifteenth repair is implemented and committed and is **awaiting customer review**. No acceptance is claimed. |
 | Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
 | Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
@@ -1156,15 +1156,15 @@ carrying its own copy again, which is how they came to read `49 / 439 / 51 / 26 
 
 <!-- phase-03-evidence:begin -->
 
-Measured on the fourteenth-repair tree. Every command exited 0.
+Measured on the fifteenth-repair tree. Every command exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
 | `node tools/validate-governance.mjs` | PASS | 15 of 15 |
-| `node tools/validate-governance.fixtures.mjs` | PASS | 34 of 34 drift fixtures caught |
-| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 42 of 42 correct |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 44 of 44 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 50 of 50 correct |
 | `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
-| `node tools/scan-secrets.mjs` | PASS | 330 tracked files, none reported |
+| `node tools/scan-secrets.mjs` | PASS | 330 indexed files, none reported |
 | `pnpm run format:check` | PASS | clean |
 | `pnpm run lint` | PASS | 16 of 16 projects |
 | `pnpm run typecheck` | PASS | 25 of 25 graphs |
@@ -1401,6 +1401,9 @@ external action needing explicit push authorisation, and was not attempted.
 
 ### Fourteenth security repair (customer review 14) — `SECURITY_REPAIR_REQUIRED`
 
+> **Historical snapshot.** Superseded. Current results are in
+> [Current Phase 03 evidence](#current-phase-03-evidence).
+
 The thirteenth repair was **not accepted**. Four defects were raised, each
 independently reproduced; all are closed. Phase 03 stays
 `SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
@@ -1422,6 +1425,32 @@ policy-target value representations are unchanged.
 | G2 | colliding pairs in policies, columns, constraints, indexes and enums — `a.b`/`c` against `a`/`b.c` | the four table-scoped pairs each reported **no difference**; the colliding enums were rejected as one contradictory type |
 | G3 | markers wrapping a decoy label; decoy prose above a stale `Phase state` row; a duplicated latest heading; a malformed near-match; a gap; a transposition | governance passed **15 of 15** on every one |
 | G4 | an alternate one-entry index via `GIT_INDEX_FILE`; the same through `GIT_DIR`/`GIT_WORK_TREE`; a plaintext credential in `leak.png`; a credential on line 1 of a 2.1 MB file; symlinks to `/dev/null` and `/dev/zero` | the two index redirections each reported **1 tracked text file, 0 findings** and exit 0, with the fixture harness still reporting 27 of 27; `leak.png` and the oversized file passed with the credential unread; `/dev/null` counted as scanned; `/dev/zero` ran until an external 20 s timeout killed it |
+
+#### Standing items, unchanged
+
+17 P1 configuration items open, 11 EXT gates seeded closed, `DSR-01` OPEN and
+contained. Selecting `GATE-SEC` as a required GitHub status check remains an
+external action needing explicit push authorisation, and was not attempted.
+
+
+### Fifteenth security repair (customer review 15) — `SECURITY_REPAIR_REQUIRED`
+
+The fourteenth repair was **not accepted**. Two defects were raised, both
+independently reproduced; both are closed. Phase 03 stays
+`SECURITY_REPAIR_REQUIRED`, the repair is committed and awaiting customer
+review, and **no acceptance is claimed**. G1 and G2 are unchanged.
+
+| # | Defect | Repair |
+| --- | --- | --- |
+| H1 | `gitInventory` read each entry's blob name and threw it away, and `scanEntries` scanned the mutable working-tree path instead. A credential staged and then overwritten with clean text reported nothing while it sat in the index, ready to be committed | The inventory retains and validates the blob name and the index stage. A non-zero stage is refused — an unmerged path has no single indexed content. An object that is not a git object name, one the repository does not hold, and one that is not a blob are each refused rather than skipped. Content comes from the indexed blob, read in one `git cat-file --batch`, spilled to a file and scanned back in bounded chunks. The working tree is scanned *additionally*, never instead: it cannot mask content already read, so an entry absent from the working tree or present in another form is noted on stderr and the scan continues. A finding seen in both is reported once, against the index, and each finding names its source. `GIT_*` sanitisation, root verification, mode handling, gitlink refusal, extension-independent scanning and bounded processing are unchanged |
+| H2 | Eight governance mutations passed 15 of 15: a result changed to `FAILED — not run`; two conflicting rows for one command; two measured-on labels on one line; a second review-number statement in the Phase state row; the position changed to `DONE` while the ledger stayed `SECURITY_REPAIR_REQUIRED`; a stale review ordinal in the ledger; a malformed historical heading behind an empty canonical decoy; and an extra noncanonical fifteenth heading | The results table is a one-to-one command mapping — one row per battery command, no unknown commands, and `Status` is its own column with one accepted value. The battery block gains the three supplemental commands the table already reported, so the two lists are the same list. Measured-on labels are counted as occurrences. The Phase state row is parsed structurally: exactly one review count, one repair ordinal and one phase state, and that state must equal the ledger's and the newest repair heading's. The ledger no longer keeps its own copy of the review ordinal, and restoring one is refused. The repair history is bounded by explicit markers running to the end of the document; inside it every `###` heading must be a canonical repair heading or one of two declared section headings, and no canonical repair heading may sit outside it |
+
+#### Failing-first evidence
+
+| Item | Reproduction | Before the fix |
+| --- | --- | --- |
+| H1 | a credential staged into a tracked file, then the working-tree file overwritten with clean text | the real repository scan reported **331 tracked files, 0 findings** and exit 0. Running the new fixture harness against the 8fb172b scanner core gives **30 of 50** correct: the four index validations, the unmerged path and all six staged fixtures fail. Nine of the twenty failures are the CLI rows, which fail only because the mixed state pairs the new CLI with the old core, and are not independent evidence |
+| H2 | the eight mutations listed above, each asserted to have changed the document | governance passed **15 of 15** on every one |
 
 #### Standing items, unchanged
 
