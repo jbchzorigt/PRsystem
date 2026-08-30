@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { getTableConfig } from 'drizzle-orm/pg-core';
+import { getTableConfig, integer, pgSchema, text } from 'drizzle-orm/pg-core';
 import { DECLARED_TABLES } from './schema';
 import { compareDeclarationToSnapshot, drizzleProjection } from './schema-projection';
 
@@ -56,6 +56,14 @@ const COLUMN_INVENTORY: Readonly<Record<string, 'projected' | 'non-persistent' |
   // PostgreSQL stores it.
   dataType: 'non-persistent',
   columnType: 'non-persistent',
+  // The PostgreSQL enum type behind a `pgEnum` column: its name and its ordered
+  // labels are stored in `pg_type`/`pg_enum` and decide which values the column
+  // accepts and how it sorts.
+  enum: 'projected',
+  // The label list as Drizzle exposes it on *any* column, including a
+  // `text({ enum })` column, where it is a TypeScript narrowing and leaves no
+  // trace in the catalogue. The persistent form is read from `enum` above, which
+  // only a `pgEnum` column carries — which is how the two are told apart.
   enumValues: 'non-persistent',
   defaultFn: 'non-persistent',
   onUpdateFn: 'non-persistent',
@@ -125,6 +133,33 @@ describe('extraction property inventory', () => {
     expect(unclassified).toEqual([]);
   });
 
+  it('classifies every key a pgEnum column adds', () => {
+    // The shipped schema declares no enum type, so scanning it alone would never
+    // reach the keys a `pgEnum` column carries — and `enum` was exactly the key
+    // whose absence let the persistent half of `enumValues` go unclassified.
+    const probe = pgSchema('inventory_probe');
+    const mood = probe.enum('inventory_mood', ['sad', 'happy']);
+    const table = probe.table('t', {
+      id: integer('id').primaryKey(),
+      m: mood('m'),
+      hint: text('hint', { enum: ['a', 'b'] }),
+    });
+    const seen = new Set<string>();
+    for (const column of getTableConfig(table).columns) {
+      for (const key of Object.keys(column)) seen.add(key);
+    }
+    expect(seen.has('enum')).toBe(true);
+    const unclassified = [...seen]
+      .filter((key) => !key.startsWith('_'))
+      .filter((key) => !(key in COLUMN_INVENTORY))
+      .sort();
+    expect(unclassified).toEqual([]);
+    // And the classification is honest in both directions.
+    expect(drizzleProjection([table]).enums).toEqual([
+      { name: 'inventory_probe.inventory_mood', labels: 'sad, happy' },
+    ]);
+  });
+
   it('projects something for every key classified as projected', () => {
     // Guards against an entry being marked "projected" without the extractor
     // reading it — the inventory would then be a comment rather than a check.
@@ -138,6 +173,12 @@ describe('extraction property inventory', () => {
     expect(projection.identitySequences.length).toBeGreaterThan(0);
     expect(projection.rls.length).toBeGreaterThan(0);
     expect(projection.policies.length).toBeGreaterThan(0);
+    expect(projection.tables).toEqual(
+      DECLARED_TABLES.map((table) => {
+        const config = getTableConfig(table);
+        return `${config.schema ?? 'public'}.${config.name}`;
+      }),
+    );
   });
 
   it('agrees with the canonical snapshot as shipped', () => {

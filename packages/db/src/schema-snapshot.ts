@@ -75,6 +75,20 @@ export interface PolicySnapshot {
   readonly definition: string;
 }
 
+/**
+ * A PostgreSQL enum type and its labels, in the order PostgreSQL sorts by.
+ *
+ * Persistent and catalogue-visible: the labels decide which values a column of
+ * the type accepts, and their order decides how it sorts. Classifying Drizzle's
+ * `enumValues` as a non-persistent hint was right for `text({ enum })` and wrong
+ * for `pgEnum`, so the two are now told apart and this half is compared.
+ */
+export interface EnumSnapshot {
+  readonly name: string;
+  /** Labels joined in order: `sad, ok, happy`. */
+  readonly labels: string;
+}
+
 export interface SchemaSnapshot {
   readonly columns: readonly ColumnSnapshot[];
   readonly constraints: readonly ConstraintSnapshot[];
@@ -82,6 +96,7 @@ export interface SchemaSnapshot {
   readonly identitySequences: readonly IdentitySequenceSnapshot[];
   readonly rls: readonly RlsSnapshot[];
   readonly policies: readonly PolicySnapshot[];
+  readonly enums: readonly EnumSnapshot[];
 }
 
 export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
@@ -1134,6 +1149,11 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     { table: 'platform.outbox_event', enabled: true, forced: true },
     { table: 'platform.provider_event', enabled: true, forced: true },
   ],
+  // No kernel schema declares a PostgreSQL enum type: every state column is
+  // `text` with a check constraint, so the allowed values live in a constraint
+  // the comparator already reads. An enum appearing in a kernel schema is a
+  // schema change and is reported as one.
+  enums: [],
   policies: [
     {
       table: 'platform.export_artifact',

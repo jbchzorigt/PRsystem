@@ -271,6 +271,30 @@ export async function compareSchema(pool: Pool): Promise<SchemaDifference[]> {
     })),
   );
 
+  // ----------------------------------------------------------- enum types
+  // Labels and their order are persistent: they decide which values a column of
+  // the type accepts and how it sorts. Read straight from `pg_enum` in
+  // `enumsortorder`, which is the order PostgreSQL itself uses.
+  const liveEnums = (
+    await pool.query<{ name: string; labels: string }>(
+      `SELECT n.nspname || '.' || t.typname AS name,
+              string_agg(e.enumlabel, ', ' ORDER BY e.enumsortorder) AS labels
+         FROM pg_type t
+         JOIN pg_namespace n ON n.oid = t.typnamespace
+         JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE n.nspname = ANY($1)
+        GROUP BY 1
+        ORDER BY 1`,
+      [schemas],
+    )
+  ).rows;
+  compareSets(
+    differences,
+    'enum',
+    EXPECTED_SCHEMA_SNAPSHOT.enums.map((entry) => ({ key: entry.name, value: entry.labels })),
+    liveEnums.map((entry) => ({ key: entry.name, value: entry.labels })),
+  );
+
   // -------------------------------------------------------------- policies
   const livePolicies = (
     await pool.query<{ table: string; name: string; definition: string }>(

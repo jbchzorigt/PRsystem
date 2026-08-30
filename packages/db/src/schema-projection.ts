@@ -7,7 +7,7 @@ import type { SchemaDifference } from './schema-difference';
 /** Only the parts of the snapshot this comparison reads. */
 export type SchemaSnapshotInput = Pick<
   SchemaSnapshot,
-  'columns' | 'constraints' | 'indexes' | 'identitySequences' | 'rls' | 'policies'
+  'columns' | 'constraints' | 'indexes' | 'identitySequences' | 'rls' | 'policies' | 'enums'
 >;
 
 /**
@@ -78,7 +78,33 @@ export interface ProjectedPolicy {
   readonly definition: string;
 }
 
+/**
+ * A PostgreSQL enum type, with its labels in declaration order.
+ *
+ * `enumValues` was classified as a Drizzle-side hint. On a `pgEnum` column it is
+ * the label list PostgreSQL stores in `pg_enum`: it decides which values the
+ * column accepts and the order it sorts in, and both are persistent. The
+ * TypeScript-only `text({ enum })` hint genuinely is Drizzle-side, so the two
+ * are distinguished by the column carrying a `PgEnum` object rather than by the
+ * presence of `enumValues`.
+ */
+export interface ProjectedEnum {
+  readonly name: string;
+  /** Labels in declaration order, which is the order PostgreSQL sorts by. */
+  readonly labels: string;
+}
+
 export interface SchemaProjection {
+  /**
+   * Every declared table, whatever its column count.
+   *
+   * Derived from the declaration itself rather than from the projected columns.
+   * The reverse half of every comparison is scoped to "tables the declaration
+   * knows about", and deriving that set from columns meant a table with none was
+   * not in it — so removing the last column from a declared table filtered its
+   * own snapshot rows out of the comparison and returned an empty difference.
+   */
+  readonly tables: readonly string[];
   readonly columns: readonly ProjectedColumn[];
   readonly constraints: readonly ProjectedConstraint[];
   /** Standalone indexes only; the ones a key creates are projected as constraints. */
@@ -86,6 +112,7 @@ export interface SchemaProjection {
   readonly identitySequences: readonly ProjectedIdentitySequence[];
   readonly rls: readonly ProjectedRls[];
   readonly policies: readonly ProjectedPolicy[];
+  readonly enums: readonly ProjectedEnum[];
 }
 
 /** PostgreSQL's `pg_attribute.attidentity` letter for a Drizzle identity kind. */
@@ -124,6 +151,36 @@ function render(fragment: unknown): string {
     );
   }
   return query.sql;
+}
+
+/**
+ * The role names a policy is granted to.
+ *
+ * `to` is either a role name, a `PgRole` object, or an array of those.
+ * `String(pgRole('role_a'))` is `[object Object]`, so stringifying the value
+ * generically made every `PgRole` target render identically: two policies
+ * granted to genuinely different roles produced the same text and a change of
+ * grantee was an empty diff. Anything that is neither a name nor a `PgRole` is
+ * refused rather than stringified, because a target nothing can name is a target
+ * nothing can compare.
+ */
+function renderPolicyRoles(to: unknown): string {
+  const one = (target: unknown): string => {
+    if (typeof target === 'string') return target;
+    if (
+      typeof target === 'object' &&
+      target !== null &&
+      'name' in target &&
+      typeof (target as { name: unknown }).name === 'string'
+    ) {
+      return (target as { name: string }).name;
+    }
+    throw new Error(
+      `policy target ${JSON.stringify(target)} is neither a role name nor a pgRole: a target ` +
+        'that cannot be named cannot be compared, so it is refused rather than stringified',
+    );
+  };
+  return Array.isArray(to) ? to.map(one).join(', ') : one(to);
 }
 
 /** The parts of Drizzle's index configuration this projection reads. */
@@ -203,10 +260,13 @@ export function drizzleProjection(
   const identitySequences: ProjectedIdentitySequence[] = [];
   const rls: ProjectedRls[] = [];
   const policies: ProjectedPolicy[] = [];
+  const declaredTables: string[] = [];
+  const enums = new Map<string, string>();
 
   for (const table of tables) {
     const config = getTableConfig(table);
     const qualified = `${config.schema ?? 'public'}.${config.name}`;
+    declaredTables.push(qualified);
     const simplePrimary: string[] = [];
 
     for (const column of config.columns) {
@@ -225,7 +285,10 @@ export function drizzleProjection(
           ? render(generated.as)
           : column.default === undefined
             ? ''
-            : dialect.sqlToQuery(column.default as Parameters<typeof dialect.sqlToQuery>[0]).sql;
+            : // Through `render`, so a parameterised default is refused rather than
+              // projected as `default $1`. Two genuinely different defaults
+              // rendered identically that way, and PostgreSQL stores the literal.
+              render(column.default);
       const identity = (column as unknown as { generatedIdentity?: { type?: string } })
         .generatedIdentity;
       columns.push({
@@ -243,6 +306,35 @@ export function drizzleProjection(
       });
 
       if (column.primary) simplePrimary.push(column.name);
+
+      // A `pgEnum` column carries the enum object itself; a `text({ enum })`
+      // column carries only `enumValues`. The first is a PostgreSQL type whose
+      // labels and their order are persistent; the second is a TypeScript hint
+      // that leaves no trace in the catalogue.
+      const declaredEnum = (
+        column as unknown as {
+          enum?: { enumName?: unknown; enumValues?: unknown; schema?: unknown };
+        }
+      ).enum;
+      if (
+        declaredEnum !== undefined &&
+        typeof declaredEnum.enumName === 'string' &&
+        Array.isArray(declaredEnum.enumValues)
+      ) {
+        const name =
+          `${typeof declaredEnum.schema === 'string' ? declaredEnum.schema : 'public'}.` +
+          declaredEnum.enumName;
+        const labels = (declaredEnum.enumValues as unknown[]).map(String).join(', ');
+        const seen = enums.get(name);
+        if (seen !== undefined && seen !== labels) {
+          throw new Error(
+            `enum type ${name} is declared twice with different labels ([${seen}] and ` +
+              `[${labels}]): PostgreSQL holds one label list per type, so the declaration ` +
+              'contradicts itself',
+          );
+        }
+        enums.set(name, labels);
+      }
 
       // The identity's backing sequence. `attidentity` says a column is an
       // identity; it says nothing about the sequence's start, step or bounds,
@@ -410,16 +502,11 @@ export function drizzleProjection(
         name?: string;
         as?: string;
         for?: string;
-        to?: string | readonly string[];
+        to?: unknown;
         using?: unknown;
         withCheck?: unknown;
       };
-      const roles =
-        declared.to === undefined
-          ? 'public'
-          : Array.isArray(declared.to)
-            ? declared.to.join(', ')
-            : String(declared.to);
+      const roles = declared.to === undefined ? 'public' : renderPolicyRoles(declared.to);
       policies.push({
         table: qualified,
         name: declared.name ?? '',
@@ -433,7 +520,16 @@ export function drizzleProjection(
     }
   }
 
-  return { columns, constraints, indexes, identitySequences, rls, policies };
+  return {
+    tables: declaredTables,
+    columns,
+    constraints,
+    indexes,
+    identitySequences,
+    rls,
+    policies,
+    enums: [...enums].map(([name, labels]) => ({ name, labels })),
+  };
 }
 
 /**
@@ -460,7 +556,11 @@ export function diffDeclarations(
   snapshot: SchemaSnapshotInput,
 ): SchemaDifference[] {
   const differences: SchemaDifference[] = [];
-  const declaredTables = new Set(projection.columns.map((column) => column.table));
+  // From the declared-table inventory, not from the projected columns. A table
+  // with no columns was absent from a column-derived set, and every reverse
+  // comparison is scoped by it — so dropping a declared table's last column
+  // filtered its own snapshot rows out and returned an empty difference.
+  const declaredTables = new Set(projection.tables);
 
   const snapshotColumns = new Map(
     snapshot.columns.map((column) => [`${column.table}.${column.column}`, column]),
@@ -608,6 +708,13 @@ export function diffDeclarations(
     snapshot.rls
       .filter((entry) => declaredTables.has(entry.table) && entry.enabled)
       .map((entry) => [entry.table, String(entry.enabled)]),
+  );
+
+  compareKeyed(
+    differences,
+    'declaration-enum',
+    projection.enums.map((entry) => [entry.name, entry.labels]),
+    snapshot.enums.map((entry) => [entry.name, entry.labels]),
   );
 
   compareKeyed(

@@ -7,6 +7,7 @@ import {
   index,
   integer,
   pgPolicy,
+  pgRole,
   pgSchema,
   primaryKey,
   text,
@@ -14,7 +15,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { drizzleProjection } from './schema-projection';
+import { diffDeclarations, drizzleProjection } from './schema-projection';
 import type { ProjectableTable } from './schema-projection';
 
 /**
@@ -425,5 +426,203 @@ describe('row level security and policies', () => {
   it('projects WITH CHECK separately from USING', () => {
     expect(drizzleProjection([policied]).policies[0]?.definition).toContain('WITH CHECK');
     expect(drizzleProjection([widened]).policies[0]?.definition).not.toContain('WITH CHECK');
+  });
+});
+
+/**
+ * Column defaults, rendered through the same refusal every other fragment uses.
+ *
+ * `column.default` went straight to `sqlToQuery(...).sql` rather than through
+ * `render()`, so a parameterised default projected as `default $1` — and two
+ * genuinely different defaults projected identically. A default is a persistent
+ * property PostgreSQL stores as literal text; a placeholder makes a value change
+ * invisible in exactly the way the check, generated-expression and predicate
+ * refusals already prevent.
+ */
+describe('parameterised column defaults', () => {
+  const one = probe.table('default_a', {
+    id: integer('id').primaryKey(),
+    n: integer('n').default(sql`${1}`),
+  });
+  const two = probe.table('default_b', {
+    id: integer('id').primaryKey(),
+    n: integer('n').default(sql`${2}`),
+  });
+  const literal = probe.table('default_c', {
+    id: integer('id').primaryKey(),
+    n: integer('n').default(sql`1`),
+  });
+
+  it('refuses a parameterised default rather than projecting a placeholder', () => {
+    expect(() => drizzleProjection([one])).toThrow(/parameterised/);
+    expect(() => drizzleProjection([two])).toThrow(/parameterised/);
+  });
+
+  it('accepts the equivalent literal default', () => {
+    expect(columnOf(literal, 'n')?.shape).toContain('default 1');
+  });
+});
+
+/**
+ * Policy targets named by `pgRole`.
+ *
+ * `String(pgRole('role_a'))` is `[object Object]`, so two policies granted to
+ * genuinely different roles projected the same text and a change of grantee was
+ * an empty diff.
+ */
+describe('policy role targets', () => {
+  const roleA = pgRole('probe_role_a');
+  const roleB = pgRole('probe_role_b');
+
+  const toA = probe
+    .table('role_a', { a: text('a') }, () => [
+      pgPolicy('probe_policy', { for: 'select', to: roleA, using: sql`(true)` }),
+    ])
+    .enableRLS();
+  const toB = probe
+    .table('role_b', { a: text('a') }, () => [
+      pgPolicy('probe_policy', { for: 'select', to: roleB, using: sql`(true)` }),
+    ])
+    .enableRLS();
+  const toBoth = probe
+    .table('role_c', { a: text('a') }, () => [
+      pgPolicy('probe_policy', { for: 'select', to: [roleA, roleB], using: sql`(true)` }),
+    ])
+    .enableRLS();
+  const toMixed = probe
+    .table('role_d', { a: text('a') }, () => [
+      pgPolicy('probe_policy', { for: 'select', to: [roleA, 'public'], using: sql`(true)` }),
+    ])
+    .enableRLS();
+
+  it('renders a single role target by name', () => {
+    expect(drizzleProjection([toA]).policies[0]?.definition).toContain('TO probe_role_a');
+  });
+
+  it('tells two different role targets apart', () => {
+    const a = drizzleProjection([toA]).policies[0]?.definition;
+    const b = drizzleProjection([toB]).policies[0]?.definition;
+    expect(a).not.toBe(b);
+    expect(b).toContain('TO probe_role_b');
+  });
+
+  it('renders an array target as its role names', () => {
+    expect(drizzleProjection([toBoth]).policies[0]?.definition).toContain(
+      'TO probe_role_a, probe_role_b',
+    );
+    expect(drizzleProjection([toMixed]).policies[0]?.definition).toContain(
+      'TO probe_role_a, public',
+    );
+  });
+
+  it('refuses a target representation it cannot name', () => {
+    const opaque = probe
+      .table('role_e', { a: text('a') }, () => [
+        pgPolicy('probe_policy', {
+          for: 'select',
+          to: { notARole: true } as unknown as string,
+          using: sql`(true)`,
+        }),
+      ])
+      .enableRLS();
+    expect(() => drizzleProjection([opaque])).toThrow(/policy target/);
+  });
+});
+
+/**
+ * PostgreSQL enum types.
+ *
+ * `enumValues` was classified as non-persistent. For a column declared from a
+ * `pgEnum` it is nothing of the sort: the labels and their order are stored in
+ * `pg_enum`, they decide which values the column accepts and how it sorts, and
+ * two same-named declarations with different labels projected identically. The
+ * TypeScript-only `text({ enum })` hint really is non-persistent, and the two
+ * have to be told apart rather than lumped together.
+ */
+describe('PostgreSQL enum types', () => {
+  const moodTwo = probe.enum('probe_mood', ['sad', 'happy']);
+  const moodThree = probe.enum('probe_mood', ['sad', 'ok', 'happy']);
+  const moodReordered = probe.enum('probe_mood', ['happy', 'sad']);
+
+  const withTwo = probe.table('enum_a', { id: integer('id').primaryKey(), m: moodTwo('m') });
+  const withThree = probe.table('enum_b', { id: integer('id').primaryKey(), m: moodThree('m') });
+  const reordered = probe.table('enum_c', {
+    id: integer('id').primaryKey(),
+    m: moodReordered('m'),
+  });
+  const textHint = probe.table('enum_d', {
+    id: integer('id').primaryKey(),
+    m: text('m', { enum: ['sad', 'happy'] }),
+  });
+
+  it('projects the enum type with its ordered labels', () => {
+    expect(drizzleProjection([withTwo]).enums).toEqual([
+      { name: 'extraction_probe.probe_mood', labels: 'sad, happy' },
+    ]);
+  });
+
+  it('tells an added label apart', () => {
+    expect(drizzleProjection([withTwo]).enums).not.toEqual(drizzleProjection([withThree]).enums);
+  });
+
+  it('tells a reordered label list apart', () => {
+    expect(drizzleProjection([withTwo]).enums).not.toEqual(drizzleProjection([reordered]).enums);
+  });
+
+  it('does not treat a TypeScript-only text enum hint as a PostgreSQL type', () => {
+    expect(drizzleProjection([textHint]).enums).toEqual([]);
+  });
+
+  it('reports each enum type once however many columns use it', () => {
+    const both = probe.table('enum_e', {
+      id: integer('id').primaryKey(),
+      a: moodTwo('a'),
+      b: moodTwo('b'),
+    });
+    expect(drizzleProjection([both]).enums).toHaveLength(1);
+  });
+});
+
+/**
+ * A declared table with no columns.
+ *
+ * `diffDeclarations` derived its table inventory from the projected columns, so
+ * a table with none was absent from it — and every reverse comparison is scoped
+ * by that inventory. Removing the last column from a declared table therefore
+ * produced an empty difference: the snapshot's columns, keys and indexes for it
+ * were all filtered out as "not a declared table".
+ */
+describe('a declared table with no columns', () => {
+  const empty = probe.table('empty_a', {});
+
+  const snapshot = {
+    columns: [
+      {
+        table: 'extraction_probe.empty_a',
+        column: 'gone',
+        shape: 'integer | NOT NULL | no default | no identity | not generated',
+      },
+    ],
+    constraints: [],
+    indexes: [],
+    identitySequences: [],
+    rls: [],
+    policies: [],
+    enums: [],
+  };
+
+  it('carries the table in the declared inventory', () => {
+    expect(drizzleProjection([empty]).tables).toEqual(['extraction_probe.empty_a']);
+  });
+
+  it('reports the snapshot column that the declaration no longer has', () => {
+    const differences = diffDeclarations(drizzleProjection([empty]), snapshot);
+    expect(differences).toHaveLength(1);
+    expect(differences[0]?.subject).toBe('extraction_probe.empty_a.gone');
+  });
+
+  it('still reports a declared column the snapshot lacks', () => {
+    const populated = probe.table('empty_a', { gone: integer('gone').notNull() });
+    expect(diffDeclarations(drizzleProjection([populated]), snapshot)).toEqual([]);
   });
 });
