@@ -339,13 +339,60 @@ for (const required of REQUIRED_JOBS) {
     previousIndex = index;
 
     if (spec.beforeInstall === true) {
-      // A lifecycle script runs arbitrary code with the checkout in place, so a
-      // scan placed after the install has already given away the one thing it
-      // is looking at. Ordering it is the whole point of the step.
+      // "Before the install" was the wrong property, because it only ordered the
+      // scan against one exact command line. `pnpm/action-setup` with
+      // `run_install: true`, an `npm ci`, a `corepack pnpm install`, a local
+      // action or a bare `git reset` all ran arbitrary code with the checkout in
+      // place and satisfied it. The property that has to hold is that *nothing*
+      // executes first: the trusted prefix is the checkout and then this scan,
+      // exactly, and it is checked as a prefix rather than searched for.
       check(
-        `'${spec.run}' runs before the install in '${required.job}'`,
-        jobInstallIndex >= 0 && index < jobInstallIndex,
+        `'${spec.run}' is the first executable step in '${required.job}'`,
+        index === 1,
+        `step ${String(index)} (must be step 1, immediately after checkout)`,
+      );
+      check(
+        `'${spec.run}' still runs before the install in '${required.job}'`,
+        jobInstallIndex > index,
         `step ${String(index)}, install ${String(jobInstallIndex)}`,
+      );
+
+      const checkoutStep = steps[0];
+      const usesCheckout =
+        typeof checkoutStep?.uses === 'string' &&
+        /^actions\/checkout@v\d+$/.test(checkoutStep.uses);
+      check(
+        `'${required.job}' begins with the canonical checkout`,
+        usesCheckout,
+        usesCheckout
+          ? String(checkoutStep.uses)
+          : `step 0 is ${JSON.stringify(checkoutStep ?? null)}`,
+      );
+      check(
+        `'${required.job}' checkout runs nothing of its own`,
+        checkoutStep?.run === undefined && checkoutStep?.if === undefined,
+        checkoutStep?.run === undefined && checkoutStep?.if === undefined
+          ? 'no run, no if'
+          : 'the checkout step carries a run or an if',
+      );
+      // A checkout that redirects the repository, the ref or the path scans a
+      // tree other than the one the workflow was triggered on.
+      for (const key of ['repository', 'ref', 'path']) {
+        const overridden = checkoutStep?.with?.[key] !== undefined;
+        check(
+          `'${required.job}' checkout does not override ${key}`,
+          !overridden,
+          overridden ? `with.${key}: ${String(checkoutStep.with[key])}` : 'absent',
+        );
+      }
+      // And no second checkout anywhere in the job.
+      const checkouts = steps.filter(
+        (step) => typeof step?.uses === 'string' && step.uses.startsWith('actions/checkout'),
+      );
+      check(
+        `'${required.job}' checks out exactly once`,
+        checkouts.length === 1,
+        `${String(checkouts.length)} checkout step(s)`,
       );
     }
 
@@ -474,6 +521,29 @@ for (const job of Object.keys(workflow?.jobs ?? {})) {
     `'${job}' installs with a frozen lockfile`,
     installIndex >= 0,
     installIndex >= 0 ? `install at step ${String(installIndex)}` : 'no frozen-lockfile install',
+  );
+
+  // And the setup itself comes after the pre-install scan: an action that
+  // installs while setting up — `pnpm/action-setup` with `run_install: true` —
+  // is a dependency install by another name.
+  const scanIndex = steps.findIndex((step) => runsExactly(step, 'node tools/scan-secrets.mjs'));
+  check(
+    `'${job}' sets pnpm up after the pre-install scan`,
+    scanIndex >= 0 && setupIndex > scanIndex,
+    `scan ${String(scanIndex)}, setup ${String(setupIndex)}`,
+  );
+  const runInstall = steps.find(
+    (step) =>
+      typeof step?.uses === 'string' &&
+      step.uses.startsWith('pnpm/action-setup') &&
+      step.with?.run_install !== undefined,
+  );
+  check(
+    `'${job}' does not install through pnpm/action-setup`,
+    runInstall === undefined,
+    runInstall === undefined
+      ? 'no run_install'
+      : `run_install: ${String(runInstall.with.run_install)}`,
   );
 
   // pnpm has to exist before the install that uses it. Only

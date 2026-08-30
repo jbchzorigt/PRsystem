@@ -26,7 +26,69 @@ const REGRESSION_STEP = `      - name: Complete regression suite against real Po
 const PRE_INSTALL =
   '      - name: Scan for committed secrets before install\n        run: node tools/scan-secrets.mjs\n';
 
+const CHECKOUT = '      - uses: actions/checkout@v4\n';
+
 const FIXTURES = [
+  {
+    // Anything that executes before the scan has already had the checkout in
+    // its hands. Ordering against one exact install command line was not the
+    // property; being first is.
+    name: 'pnpm/action-setup installs while setting up',
+    mutate: (yaml) =>
+      yaml.replace(
+        '      - uses: pnpm/action-setup@v4\n        with:\n          version: ${{ env.PNPM_VERSION }}',
+        '      - uses: pnpm/action-setup@v4\n        with:\n          version: ${{ env.PNPM_VERSION }}\n          run_install: true',
+      ),
+  },
+  {
+    name: 'npm ci before the pre-install scan',
+    mutate: (yaml) =>
+      yaml.replace(CHECKOUT, `${CHECKOUT}      - name: npm ci\n        run: npm ci\n`),
+  },
+  {
+    name: 'corepack install before the pre-install scan',
+    mutate: (yaml) =>
+      yaml.replace(
+        CHECKOUT,
+        `${CHECKOUT}      - name: corepack\n        run: corepack pnpm install --frozen-lockfile\n`,
+      ),
+  },
+  {
+    name: 'a repository-mutating step before the pre-install scan',
+    mutate: (yaml) =>
+      yaml.replace(
+        CHECKOUT,
+        `${CHECKOUT}      - name: reset\n        run: git reset --hard HEAD~1\n`,
+      ),
+  },
+  {
+    name: 'a local action before the pre-install scan',
+    mutate: (yaml) => yaml.replace(CHECKOUT, `${CHECKOUT}      - uses: ./.github/actions/local\n`),
+  },
+  {
+    name: 'an arbitrary executable step before the pre-install scan',
+    mutate: (yaml) =>
+      yaml.replace(CHECKOUT, `${CHECKOUT}      - name: arbitrary\n        run: echo hello\n`),
+  },
+  {
+    name: 'a second checkout at another ref',
+    mutate: (yaml) =>
+      yaml.replace(CHECKOUT, `${CHECKOUT}${CHECKOUT}        with:\n          ref: other\n`),
+  },
+  {
+    name: 'checkout overriding the repository',
+    mutate: (yaml) =>
+      yaml.replace(CHECKOUT, `${CHECKOUT}        with:\n          repository: someone/else\n`),
+  },
+  {
+    name: 'checkout overriding the ref',
+    mutate: (yaml) => yaml.replace(CHECKOUT, `${CHECKOUT}        with:\n          ref: other\n`),
+  },
+  {
+    name: 'checkout overriding the path',
+    mutate: (yaml) =>
+      yaml.replace(CHECKOUT, `${CHECKOUT}        with:\n          path: elsewhere\n`),
+  },
   {
     // The pre-install scan is the one look at HEAD and the index taken before a
     // dependency lifecycle script can run code against the checkout.

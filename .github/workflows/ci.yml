@@ -19,6 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The first executable step in the job, before pnpm or Node is set up and
+      # before any dependency is installed. Nothing but the checkout runs ahead
+      # of it, so no lifecycle script, setup action or install alias can touch
+      # HEAD or the index before it has read them.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -29,12 +35,6 @@ jobs:
       # The validators below are pnpm scripts that import js-yaml. Without an
       # install this job passes only on a machine that already has node_modules,
       # which a clean runner does not.
-      # Before any dependency is installed. A lifecycle script runs arbitrary
-      # code with the checkout in place, so the first look at HEAD and the index
-      # must happen while nothing from the dependency tree has executed yet.
-      # This scan reads git and Node only, so it needs no install.
-      - name: Scan for committed secrets before install
-        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Validate governance documents
@@ -57,6 +57,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The first executable step in the job, before pnpm or Node is set up and
+      # before any dependency is installed. Nothing but the checkout runs ahead
+      # of it, so no lifecycle script, setup action or install alias can touch
+      # HEAD or the index before it has read them.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -64,12 +70,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      # Before any dependency is installed. A lifecycle script runs arbitrary
-      # code with the checkout in place, so the first look at HEAD and the index
-      # must happen while nothing from the dependency tree has executed yet.
-      # This scan reads git and Node only, so it needs no install.
-      - name: Scan for committed secrets before install
-        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Format check
@@ -99,6 +99,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The first executable step in the job, before pnpm or Node is set up and
+      # before any dependency is installed. Nothing but the checkout runs ahead
+      # of it, so no lifecycle script, setup action or install alias can touch
+      # HEAD or the index before it has read them.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -106,12 +112,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      # Before any dependency is installed. A lifecycle script runs arbitrary
-      # code with the checkout in place, so the first look at HEAD and the index
-      # must happen while nothing from the dependency tree has executed yet.
-      # This scan reads git and Node only, so it needs no install.
-      - name: Scan for committed secrets before install
-        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Install Playwright browser
@@ -124,6 +124,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The first executable step in the job, before pnpm or Node is set up and
+      # before any dependency is installed. Nothing but the checkout runs ahead
+      # of it, so no lifecycle script, setup action or install alias can touch
+      # HEAD or the index before it has read them.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -131,12 +137,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      # Before any dependency is installed. A lifecycle script runs arbitrary
-      # code with the checkout in place, so the first look at HEAD and the index
-      # must happen while nothing from the dependency tree has executed yet.
-      # This scan reads git and Node only, so it needs no install.
-      - name: Scan for committed secrets before install
-        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Validate compose configuration
@@ -187,6 +187,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The first executable step in the job, before pnpm or Node is set up and
+      # before any dependency is installed. Nothing but the checkout runs ahead
+      # of it, so no lifecycle script, setup action or install alias can touch
+      # HEAD or the index before it has read them.
+      - name: Scan for committed secrets before install
+        run: node tools/scan-secrets.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -194,12 +200,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      # Before any dependency is installed. A lifecycle script runs arbitrary
-      # code with the checkout in place, so the first look at HEAD and the index
-      # must happen while nothing from the dependency tree has executed yet.
-      # This scan reads git and Node only, so it needs no install.
-      - name: Scan for committed secrets before install
-        run: node tools/scan-secrets.mjs
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: Start backing services
