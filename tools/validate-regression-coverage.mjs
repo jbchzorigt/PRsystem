@@ -224,6 +224,12 @@ const FORBIDDEN_ENV = [
   'GIT_INDEX_FILE',
   'GIT_DIR',
   'GIT_WORK_TREE',
+  // The governance CLI's former path overrides. It reads none of them now, and
+  // pointed at clean decoys it once reported 15 of 15 while the canonical
+  // document said anything at all.
+  'PRSYSTEM_RUNBOOK',
+  'PRSYSTEM_PHASE_STATUS',
+  'PRSYSTEM_EVIDENCE_MANIFEST',
 ];
 
 /** The forbidden variables an `env:` mapping declares, whatever their value. */

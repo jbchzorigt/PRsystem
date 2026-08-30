@@ -159,6 +159,32 @@ const FIXTURES = [
       ),
   },
   {
+    name: 'governance path override at step level',
+    mutate: (yaml) =>
+      yaml.replace(
+        '      - name: Validate governance documents\n        run: node tools/validate-governance.mjs',
+        '      - name: Validate governance documents\n        run: node tools/validate-governance.mjs\n' +
+          '        env:\n          PRSYSTEM_PHASE_STATUS: /tmp/decoy.md',
+      ),
+  },
+  {
+    name: 'evidence manifest override at workflow level',
+    mutate: (yaml) =>
+      yaml.replace(
+        'env:\n  NODE_VERSION:',
+        'env:\n  PRSYSTEM_EVIDENCE_MANIFEST: /tmp/decoy.json\n  NODE_VERSION:',
+      ),
+  },
+  {
+    name: 'runbook override at job level',
+    mutate: (yaml) =>
+      yaml.replace(
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n',
+        '  governance:\n    name: governance and workspace\n    runs-on: ubuntu-latest\n' +
+          '    env:\n      PRSYSTEM_RUNBOOK: /tmp/decoy.md\n',
+      ),
+  },
+  {
     name: 'git work tree override at workflow level',
     mutate: (yaml) =>
       yaml.replace('env:\n  NODE_VERSION:', 'env:\n  GIT_WORK_TREE: /tmp/decoy\n  NODE_VERSION:'),

@@ -11,6 +11,7 @@
 // are never modified.
 
 import { spawnSync } from 'node:child_process';
+import { runGovernanceChecks } from './governance-checks.mjs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -1137,23 +1138,44 @@ for (const fixture of FIXTURES) {
 
   const dir = mkdtempSync(join(tmpdir(), 'prsystem-gov-fixture-'));
   try {
-    const env = { ...process.env };
+    // The checks are called directly, with the mutated copies named as
+    // arguments. Driving the CLI meant the CLI had to accept path overrides from
+    // the environment, and that seam redirected the production gate: pointed at
+    // clean decoys it reported 15 of 15 while the canonical document said
+    // whatever it liked.
+    const paths = {
+      root: ROOT,
+      runbookPath: RUNBOOK,
+      phaseStatusPath: PHASE_STATUS,
+      manifestPath: EVIDENCE_MANIFEST,
+    };
+    const KEY = {
+      runbook: 'runbookPath',
+      'phase-status': 'phaseStatusPath',
+      manifest: 'manifestPath',
+    };
     for (const name of names) {
       const path = join(dir, SOURCES[name].file);
       writeFileSync(path, mutatedAll[name]);
-      env[SOURCES[name].env] = path;
+      paths[KEY[name]] = path;
     }
-    const run = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-governance.mjs')], {
-      cwd: ROOT,
-      encoding: 'utf8',
-      env,
-    });
-    const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
+    let outcome;
+    try {
+      outcome = runGovernanceChecks(paths);
+    } catch (error) {
+      outcome = {
+        results: [{ id: '0', title: 'the checks threw', ok: false, detail: String(error) }],
+        failed: 1,
+      };
+    }
+    const output = outcome.results
+      .map((r) => `[${r.ok ? 'PASS' : 'FAIL'}] ${r.id}. ${r.title}  ${r.detail}`)
+      .join('\n');
     if (process.env['PRSYSTEM_FIXTURE_VERBOSE'] === '1') {
       const line = output.split('\n').find((l) => l.startsWith('[FAIL]'));
       console.error(`### ${fixture.name} :: ${String(line)}`);
     }
-    const rejected = run.status !== 0;
+    const rejected = outcome.failed > 0;
     const diagnosed = failedFor(output, fixture.expect);
     results.push({
       name: fixture.name,
@@ -1161,7 +1183,7 @@ for (const fixture of FIXTURES) {
       detail: !rejected
         ? 'ACCEPTED — the drift was not caught'
         : diagnosed
-          ? `rejected (exit ${String(run.status)})`
+          ? `rejected (${String(outcome.failed)} failing check(s))`
           : `rejected, but not by ${String(fixture.expect)}`,
     });
     if (!rejected || !diagnosed) failures += 1;
@@ -1189,6 +1211,33 @@ const control = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-gover
   cwd: ROOT,
   encoding: 'utf8',
 });
+
+// The production CLI reads no path from the environment. Every one of the three
+// variables that used to redirect it is set here to a document that would pass
+// on its own, while the canonical documents are the ones that must be read.
+const DECOY_DIR = mkdtempSync(join(tmpdir(), 'prsystem-gov-decoy-'));
+writeFileSync(join(DECOY_DIR, 'doc.md'), originalPhaseStatus);
+writeFileSync(join(DECOY_DIR, 'phase-03-evidence.json'), originalManifest);
+writeFileSync(join(DECOY_DIR, 'runbook.md'), originalRunbook);
+for (const [name, value] of [
+  ['PRSYSTEM_PHASE_STATUS', join(DECOY_DIR, 'doc.md')],
+  ['PRSYSTEM_EVIDENCE_MANIFEST', join(DECOY_DIR, 'phase-03-evidence.json')],
+  ['PRSYSTEM_RUNBOOK', join(DECOY_DIR, 'runbook.md')],
+]) {
+  const run = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-governance.mjs')], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, [name]: value },
+  });
+  const same = run.stdout === control.stdout && run.status === control.status;
+  results.push({
+    name: `CLI: ${name} does not redirect governance validation`,
+    ok: same,
+    detail: same ? 'identical to the unset run' : 'the output changed',
+  });
+  if (!same) failures += 1;
+}
+rmSync(DECOY_DIR, { recursive: true, force: true });
 results.push({
   name: 'control: the real documents pass',
   ok: control.status === 0,
