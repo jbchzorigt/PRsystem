@@ -43,12 +43,18 @@ import {
   scanRepository,
 } from './secret-scan.mjs';
 
-/** Runs git in `dir` with a sanitised environment, returning stdout. */
+/**
+ * Runs git in `dir` with a sanitised environment, returning stdout.
+ *
+ * `stdio[0]` is only 'ignore' when nothing is being written: with it set, an
+ * `input` option is silently discarded, and `hash-object --stdin` quietly wrote
+ * an empty blob instead of the content the fixture meant to store.
+ */
 function git(dir, args, options = {}) {
   return execFileSync('git', ['-C', dir, ...args], {
     encoding: 'utf8',
     env: sanitisedGitEnv(),
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     ...options,
   });
 }
@@ -532,6 +538,127 @@ for (const fixture of STAGED_FIXTURES) {
     );
   });
 }
+
+// ------------------------------------------------------------- replace refs
+/**
+ * `git replace` substitutes one object for another, repository-locally.
+ *
+ * `cat-file --batch` honours the substitution and still prints the OID that was
+ * asked for, so the header is not evidence of what the bytes are: a staged
+ * credential could be swapped for clean text and the scan reported nothing.
+ * Every case below must either reveal the indexed secret or fail closed.
+ */
+const REPLACE_FIXTURES = [
+  {
+    name: 'replace: a regular indexed secret blob replaced by a clean blob',
+    build: (dir) => {
+      writeFileSync(join(dir, 'leak.ts'), LEAK);
+      return dir;
+    },
+    replace: (root) => [git(root, ['rev-parse', ':leak.ts']).trim()],
+    settle: (root) => writeFileSync(join(root, 'leak.ts'), 'export const clean = 1;\n'),
+    expectFindings: 1,
+  },
+  {
+    name: 'replace: an indexed symlink blob replaced by a clean blob',
+    build: (dir) => {
+      symlinkSync(`${KEY}="an-actual-looking-credential-1234"`, join(dir, 'link.ts'));
+      return dir;
+    },
+    replace: (root) => [git(root, ['rev-parse', ':link.ts']).trim()],
+    settle: (root) => {
+      rmSync(join(root, 'link.ts'));
+      symlinkSync('nothing', join(root, 'link.ts'));
+    },
+    expectFindings: 1,
+  },
+  {
+    name: 'replace: one replaced object among several ordinary ones',
+    build: (dir) => {
+      writeFileSync(join(dir, 'a.ts'), 'export const a = 1;\n');
+      writeFileSync(join(dir, 'leak.ts'), LEAK);
+      writeFileSync(join(dir, 'b.ts'), 'export const b = 2;\n');
+      return dir;
+    },
+    replace: (root) => [git(root, ['rev-parse', ':leak.ts']).trim()],
+    settle: (root) => writeFileSync(join(root, 'leak.ts'), 'export const clean = 1;\n'),
+    expectFindings: 1,
+    expectScanned: 3,
+  },
+  {
+    name: 'control: an ordinary repository with no replacement still scans',
+    build: (dir) => {
+      writeFileSync(join(dir, 'a.ts'), 'export const a = 1;\n');
+      writeFileSync(join(dir, 'leak.ts'), LEAK);
+      return dir;
+    },
+    replace: () => [],
+    settle: () => undefined,
+    expectFindings: 1,
+    expectScanned: 2,
+  },
+];
+
+for (const fixture of REPLACE_FIXTURES) {
+  inTempDir((dir) => {
+    const root = repository(join(dir, 'repo'), fixture.build);
+    const clean = git(root, ['hash-object', '-w', '--stdin'], {
+      input: 'export const clean = 1;\n',
+    }).trim();
+    for (const original of fixture.replace(root)) {
+      git(root, ['replace', original, clean]);
+    }
+    fixture.settle(root);
+
+    let result;
+    let raised;
+    try {
+      result = scanRepository(root);
+    } catch (error) {
+      raised = error;
+    }
+    // Either outcome is acceptable except a clean scan: the secret must be
+    // revealed, or the substitution must be refused.
+    const revealed = result !== undefined && result.findings.length === fixture.expectFindings;
+    const refused = raised instanceof SecretScanInventoryError && /hash to /.test(raised.message);
+    const scannedOk =
+      fixture.expectScanned === undefined ||
+      raised !== undefined ||
+      result?.scanned === fixture.expectScanned;
+    const ok = (revealed || refused) && scannedOk;
+    record(
+      fixture.name,
+      ok,
+      refused
+        ? 'refused'
+        : raised !== undefined
+          ? `raised ${String(raised)}`
+          : `scanned ${String(result?.scanned)}, ${String(result?.findings.length)} finding(s)`,
+    );
+  });
+}
+
+// And the substitution is refused on its own merits, with the flag removed from
+// the picture: the header still says the requested OID, and the bytes do not.
+inTempDir((dir) => {
+  const root = repository(join(dir, 'repo'), (at) => writeFileSync(join(at, 'leak.ts'), LEAK));
+  const original = git(root, ['rev-parse', ':leak.ts']).trim();
+  const clean = git(root, ['hash-object', '-w', '--stdin'], {
+    input: 'export const clean = 1;\n',
+  }).trim();
+  git(root, ['replace', original, clean]);
+  const substituted = execFileSync('git', ['-C', root, 'cat-file', '--batch'], {
+    input: `${original}\n`,
+    encoding: 'latin1',
+    env: sanitisedGitEnv(),
+  });
+  const header = substituted.split('\n')[0];
+  record(
+    'replace: cat-file reports the requested OID while returning other bytes',
+    header.startsWith(`${original} blob `) && !substituted.includes('an-actual-looking'),
+    header.trim(),
+  );
+});
 
 // A submodule is content this scan cannot reach, and is refused rather than
 // passed over.

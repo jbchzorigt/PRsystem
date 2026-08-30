@@ -25,8 +25,16 @@
 // findings while the credential sat in the index, ready to be committed. Every
 // entry is scanned from its indexed blob; the working tree is scanned as well,
 // never instead.
+//
+// "The blob git returns" is not the same claim as "the blob the index names".
+// A repository-local `git replace` ref makes `cat-file` answer with a different
+// object while still printing the OID that was asked for, so a staged credential
+// could be swapped for clean text and the scan reported nothing. Replacement is
+// disabled explicitly, and every returned object is hashed back to a git object
+// name and required to be the one the index recorded.
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   lstatSync,
@@ -156,13 +164,34 @@ export function sanitisedGitEnv(env = process.env) {
   return clean;
 }
 
+/**
+ * Every GIT_* variable removed and replacement processing refused.
+ *
+ * `--no-replace-objects` and `GIT_NO_REPLACE_OBJECTS` say the same thing twice
+ * on purpose: the flag is what this process asks for, and the variable is what
+ * any git subprocess it spawns inherits.
+ */
+function gitEnv() {
+  return { ...sanitisedGitEnv(), GIT_NO_REPLACE_OBJECTS: '1' };
+}
+
 function git(root, args) {
-  return execFileSync('git', ['-C', root, ...args], {
+  return execFileSync('git', ['-C', root, '--no-replace-objects', ...args], {
     encoding: 'latin1',
-    env: sanitisedGitEnv(),
+    env: gitEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 1 << 28,
   });
+}
+
+/** Node's name for the repository's git object format. */
+function objectHashAlgorithm(root) {
+  const format = git(root, ['rev-parse', '--show-object-format']).trim();
+  if (format === 'sha1') return 'sha1';
+  if (format === 'sha256') return 'sha256';
+  throw new SecretScanInventoryError(
+    `this repository uses the ${format} object format, which this scan cannot verify`,
+  );
 }
 
 /**
@@ -323,8 +352,13 @@ function sequentialReader(fd) {
       }
     },
 
-    /** Scans exactly `size` bytes as text, line by line. */
-    scanBytes(size, onLine) {
+    /**
+     * Scans exactly `size` bytes as text, line by line.
+     *
+     * `onBytes` sees the same bytes as raw slices, so the caller can hash the
+     * object as it goes. Hashing after the fact would mean holding it.
+     */
+    scanBytes(size, onLine, onBytes) {
       let remaining = size;
       let carry = '';
       let line = 1;
@@ -333,6 +367,7 @@ function sequentialReader(fd) {
           throw new SecretScanInventoryError('the object stream ended before the object did');
         }
         const take = Math.min(remaining, filled - position);
+        if (onBytes !== undefined) onBytes(buffer.subarray(position, position + take));
         const text = carry + buffer.toString('latin1', position, position + take);
         position += take;
         remaining -= take;
@@ -459,14 +494,15 @@ export function scanEntries({ root, entries }) {
   // it is scanned first and unconditionally: the working-tree path used to be
   // scanned in its place, so a staged credential overwritten with clean text
   // reported nothing at all.
+  const algorithm = objectHashAlgorithm(root);
   const spillDir = mkdtempSync(join(tmpdir(), 'prsystem-secret-scan-'));
   const spillPath = join(spillDir, 'objects');
   try {
     const spill = openSync(spillPath, 'w');
     try {
-      execFileSync('git', ['-C', root, 'cat-file', '--batch'], {
+      execFileSync('git', ['-C', root, '--no-replace-objects', 'cat-file', '--batch'], {
         input: entries.map((entry) => String(entry.object)).join('\n') + '\n',
-        env: sanitisedGitEnv(),
+        env: gitEnv(),
         stdio: ['pipe', spill, 'pipe'],
       });
     } catch (error) {
@@ -511,13 +547,30 @@ export function scanEntries({ root, entries }) {
               `${String(size)}`,
           );
         }
+        // The object git returned, hashed back to a git object name.
+        //
+        // `--no-replace-objects` already refuses the substitution, and this
+        // proves it independently: a replace ref made `cat-file` answer with a
+        // different object while still printing the requested OID, so the header
+        // cannot be taken as evidence of what the bytes are. Hashed
+        // incrementally, so the object is still never held.
+        const digest = createHash(algorithm);
+        digest.update(`blob ${String(length)}\0`, 'latin1');
         try {
-          reader.scanBytes(length, record(entry.path, 'index'));
+          reader.scanBytes(length, record(entry.path, 'index'), (chunk) => digest.update(chunk));
         } catch (error) {
           if (error instanceof SecretScanInventoryError) {
             throw new SecretScanInventoryError(`${entry.path}: ${error.message}`);
           }
           throw error;
+        }
+        const actual = digest.digest('hex');
+        if (actual !== String(entry.object)) {
+          throw new SecretScanInventoryError(
+            `${entry.path} names object ${String(entry.object)} but the bytes returned for it ` +
+              `hash to ${actual}. Indexed content that cannot be verified is refused, never ` +
+              'scanned as though it were the recorded object',
+          );
         }
         reader.skip(1); // the newline `--batch` writes after each object
         scanned += 1;
