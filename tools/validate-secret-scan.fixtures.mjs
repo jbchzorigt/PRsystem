@@ -485,13 +485,15 @@ const STAGED_FIXTURES = [
     expectNotes: 1,
   },
   {
-    name: 'staged: a credential whose working-tree file became a directory is still reported',
+    // A directory where a tracked file should be is a broken working tree, and
+    // the scan refuses rather than guessing. It cannot exit 0 either way: the
+    // indexed credential is read before this point and the refusal is loud.
+    name: 'staged: a working-tree file replaced by a directory is refused',
     after: (dir) => {
       rmSync(join(dir, 'leak.ts'));
       mkdirSync(join(dir, 'leak.ts'));
     },
-    expectFindings: 1,
-    expectNotes: 1,
+    expectRefusal: /neither a regular file nor a symlink in the working tree/,
   },
   {
     name: 'staged: a working-tree credential the index does not carry is still reported',
@@ -533,7 +535,11 @@ for (const fixture of STAGED_FIXTURES) {
     const findings = result?.findings.length ?? -1;
     const notes = result?.notes?.length ?? -1;
     const ok =
-      raised === undefined && findings === fixture.expectFindings && notes === fixture.expectNotes;
+      fixture.expectRefusal !== undefined
+        ? raised instanceof SecretScanInventoryError && fixture.expectRefusal.test(raised.message)
+        : raised === undefined &&
+          findings === fixture.expectFindings &&
+          notes === fixture.expectNotes;
     record(
       fixture.name,
       ok,
@@ -691,6 +697,89 @@ inTempDir((dir) => {
     ok ? 'refused' : `NOT REFUSED — ${raised === undefined ? 'accepted' : String(raised)}`,
   );
 });
+
+// -------------------------------------------- unstaged working-tree types
+/**
+ * The working tree's actual type decides how it is read.
+ *
+ * The recorded index mode was trusted, and a mismatch merely produced a note —
+ * so a clean regular file replaced by an unstaged symlink whose link text was a
+ * credential, and a clean symlink replaced by an unstaged regular file holding
+ * one, each reported nothing and exited 0.
+ */
+const TYPE_CHANGE_FIXTURES = [
+  {
+    name: 'worktree: a clean regular file replaced by an unstaged secret symlink',
+    build: (dir) => writeFileSync(join(dir, 'probe.ts'), 'export const clean = 1;\n'),
+    after: (root) => {
+      rmSync(join(root, 'probe.ts'));
+      symlinkSync(`${KEY}="an-actual-looking-credential-1234"`, join(root, 'probe.ts'));
+    },
+    expectFindings: 1,
+    expectNotes: 1,
+  },
+  {
+    name: 'worktree: a clean symlink replaced by an unstaged secret regular file',
+    build: (dir) => symlinkSync('clean-target', join(dir, 'probe.ts')),
+    after: (root) => {
+      rmSync(join(root, 'probe.ts'));
+      writeFileSync(join(root, 'probe.ts'), LEAK);
+    },
+    expectFindings: 1,
+    expectNotes: 1,
+  },
+  {
+    name: 'worktree: a clean regular file with no unstaged change',
+    build: (dir) => writeFileSync(join(dir, 'probe.ts'), 'export const clean = 1;\n'),
+    after: () => undefined,
+    expectFindings: 0,
+    expectNotes: 0,
+  },
+  {
+    name: 'worktree: a clean symlink with no unstaged change',
+    build: (dir) => symlinkSync('clean-target', join(dir, 'probe.ts')),
+    after: () => undefined,
+    expectFindings: 0,
+    expectNotes: 0,
+  },
+  {
+    name: 'worktree: a type this scan does not classify is refused',
+    build: (dir) => writeFileSync(join(dir, 'probe.ts'), 'export const clean = 1;\n'),
+    after: (root) => {
+      rmSync(join(root, 'probe.ts'));
+      mkdirSync(join(root, 'probe.ts'));
+    },
+    expectRefusal: /neither a regular file nor a symlink in the working tree/,
+  },
+];
+
+for (const fixture of TYPE_CHANGE_FIXTURES) {
+  inTempDir((dir) => {
+    const root = repository(join(dir, 'repo'), fixture.build);
+    fixture.after(root);
+    let result;
+    let raised;
+    try {
+      result = scanRepository(root);
+    } catch (error) {
+      raised = error;
+    }
+    const ok =
+      fixture.expectRefusal !== undefined
+        ? raised instanceof SecretScanInventoryError && fixture.expectRefusal.test(raised.message)
+        : raised === undefined &&
+          result.findings.length === fixture.expectFindings &&
+          result.notes.length === fixture.expectNotes;
+    record(
+      fixture.name,
+      ok,
+      raised !== undefined
+        ? `raised ${String(raised).slice(0, 80)}`
+        : `scanned ${String(result?.scanned)}, ${String(result?.findings.length)} finding(s), ` +
+            `${String(result?.notes.length)} note(s)`,
+    );
+  });
+}
 
 // ------------------------------------------------------------ mode changes
 /**

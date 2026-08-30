@@ -689,21 +689,37 @@ export function scanEntries({ root, entries }) {
       continue;
     }
 
-    if (entry.mode === SYMLINK_MODE) {
-      if (!stat.isSymbolicLink()) {
-        notes.push(`${rel}: indexed as a symlink but is not one in the working tree`);
-        continue;
-      }
+    // The type the working tree actually has, not the type the index records.
+    //
+    // Trusting the recorded mode and writing a note when they differed skipped
+    // the content entirely: a clean regular file replaced by an unstaged symlink
+    // whose link text was a credential, and a clean symlink replaced by an
+    // unstaged regular file holding one, each reported nothing and exited 0. The
+    // divergence is still reported, but it decides how to read the entry, never
+    // whether to read it.
+    const indexedKind = entry.mode === SYMLINK_MODE ? 'a symlink' : 'a regular file';
+    const actualKind = stat.isSymbolicLink()
+      ? 'a symlink'
+      : stat.isFile()
+        ? 'a regular file'
+        : undefined;
+    if (actualKind === undefined) {
+      throw new SecretScanInventoryError(
+        `${rel} is neither a regular file nor a symlink in the working tree; this scan does not ` +
+          'classify what it is, so it refuses rather than passing over it',
+      );
+    }
+    if (actualKind !== indexedKind) {
+      notes.push(`${rel}: indexed as ${indexedKind} but is ${actualKind} in the working tree`);
+    }
+
+    if (stat.isSymbolicLink()) {
       // The link text, never the target. Following it read /dev/null as an
       // empty scanned file and hung on /dev/zero.
       record(rel, 'worktree')(readlinkSync(abs), 1);
       continue;
     }
 
-    if (!stat.isFile()) {
-      notes.push(`${rel}: indexed as a regular file but is not one in the working tree`);
-      continue;
-    }
     let fd;
     try {
       fd = openSync(abs, 'r');
