@@ -19,6 +19,8 @@ import {
 } from './schema-comparator';
 import { diffDeclarations, drizzleProjection } from './schema-projection';
 import { EXPECTED_SCHEMA_SNAPSHOT } from './schema-snapshot';
+import { KERNEL_OWNERS, assertOwnershipManifest } from './ownership-manifest';
+import type { ManifestClient } from './ownership-manifest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 
 /**
@@ -1065,6 +1067,38 @@ describe('schema comparator mutations', () => {
     expect(await compareSchema(comparatorPool)).toEqual([]);
   }, 60000);
 
+  it('the comparator rejects an undeclared enum type', async () => {
+    // Enum labels and their order are persistent — they decide which values a
+    // column accepts and how it sorts — and nothing read `pg_enum` at all, so a
+    // type appearing in a compared schema produced no difference.
+    await comparatorPool.query(`CREATE TYPE platform.comparator_mood AS ENUM ('a', 'b')`);
+    try {
+      expect(await compareSchema(comparatorPool)).toContainEqual(
+        expect.objectContaining({ kind: 'enum', subject: 'platform.comparator_mood' }),
+      );
+    } finally {
+      await comparatorPool.query(`DROP TYPE platform.comparator_mood`);
+    }
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
+  it('reads enum labels in PostgreSQL sort order, not insertion order', async () => {
+    // `enumsortorder`, not `oid`: `ALTER TYPE ... ADD VALUE ... BEFORE` gives a
+    // later-created label an earlier position, and the position is what decides
+    // ordering comparisons on the column.
+    await comparatorPool.query(`CREATE TYPE platform.comparator_mood AS ENUM ('b', 'c')`);
+    try {
+      await comparatorPool.query(`ALTER TYPE platform.comparator_mood ADD VALUE 'a' BEFORE 'b'`);
+      const reported = (await compareSchema(comparatorPool)).find(
+        (difference) => difference.subject === 'platform.comparator_mood',
+      );
+      expect(reported?.actual).toBe('a, b, c');
+    } finally {
+      await comparatorPool.query(`DROP TYPE platform.comparator_mood`);
+    }
+    expect(await compareSchema(comparatorPool)).toEqual([]);
+  }, 60000);
+
   it('the comparator rejects an undeclared table', async () => {
     await comparatorPool.query(`CREATE TABLE platform.comparator_probe (id integer PRIMARY KEY)`);
     expect(await compareSchema(comparatorPool)).toContainEqual(
@@ -1757,6 +1791,121 @@ describe('ownership manifest on upgrade', () => {
     }, 120000);
   }
 
+  /**
+   * The same four classes, owned by the pinned bootstrap superuser.
+   *
+   * `pg_shdepend` is PostgreSQL's ownership dependency, and PostgreSQL does not
+   * record a row in it for an object owned by a pinned role — OID 10, the
+   * bootstrap superuser created by initdb. A census that derives its inventory
+   * from `pg_shdepend` therefore sees nothing at all for those objects: an enum,
+   * a domain, a composite type or extended statistics inside a kernel schema
+   * could be reassigned to the bootstrap operator and stay invisible, and it is
+   * the operator identity an attacker with cluster access already has.
+   *
+   * These objects are created by the admin connection, which *is* that role, so
+   * no reassignment is needed to reach the invisible state.
+   */
+  const BOOTSTRAP_OWNERSHIP_CASES = [
+    {
+      what: 'an enum type',
+      create: `CREATE TYPE platform.bootstrap_enum AS ENUM ('a', 'b')`,
+      drop: `DROP TYPE IF EXISTS platform.bootstrap_enum`,
+      own: `ALTER TYPE platform.bootstrap_enum OWNER TO ${KERNEL_OWNERS.migrate}`,
+      subject: /platform\.bootstrap_enum/,
+    },
+    {
+      what: 'a domain',
+      create: `CREATE DOMAIN platform.bootstrap_domain AS text`,
+      drop: `DROP DOMAIN IF EXISTS platform.bootstrap_domain`,
+      own: `ALTER DOMAIN platform.bootstrap_domain OWNER TO ${KERNEL_OWNERS.migrate}`,
+      subject: /platform\.bootstrap_domain/,
+    },
+    {
+      what: 'a composite type',
+      create: `CREATE TYPE platform.bootstrap_composite AS (a int, b text)`,
+      drop: `DROP TYPE IF EXISTS platform.bootstrap_composite`,
+      own: `ALTER TYPE platform.bootstrap_composite OWNER TO ${KERNEL_OWNERS.migrate}`,
+      subject: /platform\.bootstrap_composite/,
+    },
+    {
+      what: 'extended statistics',
+      create: `CREATE STATISTICS platform.bootstrap_stat (dependencies)
+                 ON job_name, state FROM platform.job_run`,
+      drop: `DROP STATISTICS IF EXISTS platform.bootstrap_stat`,
+      own: `ALTER STATISTICS platform.bootstrap_stat OWNER TO ${KERNEL_OWNERS.migrate}`,
+      subject: /platform\.bootstrap_stat/,
+    },
+  ] as const;
+
+  it('the admin connection is the pinned bootstrap superuser, and it owns without a shdepend row', async () => {
+    // The premise of every case below, asserted rather than assumed.
+    const identity = await pool.query<{ bootstrap: boolean }>(
+      `SELECT (SELECT oid FROM pg_roles WHERE rolname = current_user) = 10 AS bootstrap`,
+    );
+    expect(identity.rows[0]?.bootstrap).toBe(true);
+
+    await pool.query(`CREATE TYPE platform.shdepend_probe AS ENUM ('a')`);
+    try {
+      const rows = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count
+           FROM pg_shdepend d
+          WHERE d.deptype = 'o' AND d.refclassid = 'pg_authid'::regclass
+            AND d.classid = 'pg_type'::regclass
+            AND d.objid = 'platform.shdepend_probe'::regtype::oid`,
+      );
+      expect(rows.rows[0]?.count).toBe('0');
+    } finally {
+      await pool.query(`DROP TYPE IF EXISTS platform.shdepend_probe`);
+    }
+  }, 60000);
+
+  for (const kernelCase of BOOTSTRAP_OWNERSHIP_CASES) {
+    it(`refuses ${kernelCase.what} in a kernel schema owned by the bootstrap operator`, async () => {
+      const raised = await refusesUpgrade([kernelCase.create], [kernelCase.drop]);
+      expect((raised as Error | undefined)?.name).toBe('MigrationOwnershipError');
+      expect((raised as Error).message).toMatch(kernelCase.subject);
+    }, 120000);
+
+    it(`accepts ${kernelCase.what} owned by the DDL owner`, async () => {
+      // The positive control for the case above: the same object, the same
+      // schema, the expected owner — and the upgrade proceeds. Without it the
+      // refusal could be "any object of this class is rejected".
+      const before = await ledgerSize();
+      await pool.query(kernelCase.create);
+      await pool.query(kernelCase.own);
+      try {
+        const outcome = await runMigrations(ownershipUrl, { migrationsFolder: pending });
+        expect(outcome.appliedAfter).toBe(before + 1);
+        expect(await probeApplied()).toBe(true);
+      } finally {
+        await pool.query(`DROP TABLE IF EXISTS platform.${PROBE_TABLE}`).catch(() => undefined);
+        await pool
+          .query(`DELETE FROM drizzle.__drizzle_migrations WHERE id > $1`, [before])
+          .catch(() => undefined);
+        await pool.query(kernelCase.drop).catch(() => undefined);
+      }
+    }, 120000);
+  }
+
+  it('fails closed on a schema-contained catalogue nobody classified', async () => {
+    // The coverage guard, driven by a stub rather than by a PostgreSQL release:
+    // a future version that adds an ownable schema-contained catalogue must stop
+    // the migration rather than silently leave that class uncensused.
+    const client: ManifestClient = {
+      query: <R>(text: string) => {
+        if (text.includes('pg_catalog') && text.includes('namespace$')) {
+          return Promise.resolve({
+            rows: [{ catalogue: 'pg_future_thing', has_owner: true }] as R[],
+          });
+        }
+        return Promise.resolve({ rows: [] as R[] });
+      },
+    };
+    await expect(assertOwnershipManifest(client, new Set(['operator']))).rejects.toThrow(
+      /pg_future_thing/,
+    );
+  });
+
   it('applies the pending migration once ownership is intact', async () => {
     // The positive control. Every case above reverts in its own `finally`, so a
     // green result here proves the manifest rejects drift rather than everything.
@@ -1929,6 +2078,41 @@ describe('the Drizzle declaration and the canonical snapshot are bound together'
         'CREATE INDEX operational_alert_open_idx ON platform.operational_alert ' +
         'USING btree (alert_code, raised_at DESC) WHERE (resolved_at IS NULL)',
     });
+  });
+
+  it('reports an enum label list that the snapshot does not carry', () => {
+    // Declaration against snapshot, with no database involved: the property is
+    // about the two declarations agreeing on the type's labels and their order.
+    const projection = drizzleProjection();
+    const withEnum = {
+      ...projection,
+      enums: [{ name: 'platform.mood', labels: 'sad, happy' }],
+    };
+    expect(diffDeclarations(withEnum, EXPECTED_SCHEMA_SNAPSHOT)).toEqual([
+      {
+        kind: 'declaration-enum',
+        subject: 'platform.mood',
+        expected: 'present in the snapshot',
+        actual: 'sad, happy',
+      },
+    ]);
+  });
+
+  it('reports a reordered enum label list', () => {
+    const projection = drizzleProjection();
+    const declared = { ...projection, enums: [{ name: 'platform.mood', labels: 'happy, sad' }] };
+    const snapshot = {
+      ...EXPECTED_SCHEMA_SNAPSHOT,
+      enums: [{ name: 'platform.mood', labels: 'sad, happy' }],
+    };
+    expect(diffDeclarations(declared, snapshot)).toEqual([
+      {
+        kind: 'declaration-enum',
+        subject: 'platform.mood',
+        expected: 'sad, happy',
+        actual: 'happy, sad',
+      },
+    ]);
   });
 
   const mutations: readonly {

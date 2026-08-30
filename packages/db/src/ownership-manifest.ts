@@ -255,50 +255,183 @@ const OWNERSHIP_CENSUS_QUERY = `
    ORDER BY 1, 2, 3`;
 
 /**
- * Every owned object located in a kernel schema, whoever owns it.
+ * Every catalogue whose rows are objects *contained in a schema* and owned.
  *
- * The restricted-role census enumerates objects owned by a role that must own
- * nothing or own only what the manifest names, so an *external* role is outside
- * it. The expected-owner comparison enumerates schemas, relations and functions,
- * so an enum, a domain, a composite type or extended statistics is outside that.
- * An arbitrary role owning an omitted class inside `platform` passed both.
- *
- * `pg_identify_object` names any catalogue object generically, so this covers
- * classes nobody enumerated rather than the three somebody remembered.
+ * Keyed by catalogue, with the namespace and owner columns PostgreSQL stores
+ * them in. The kernel census is generated from this map, so classifying a
+ * catalogue is the same act as censusing it: the two cannot drift apart the way
+ * a hand-written query and a hand-written comment do.
  */
-const KERNEL_OBJECT_CENSUS_QUERY = `
-  SELECT r.rolname::text AS owner,
-         d.classid::regclass::text AS class,
+export const OWNABLE_SCHEMA_CATALOGUES: Readonly<
+  Record<string, { readonly namespace: string; readonly owner: string; readonly where?: string }>
+> = {
+  pg_class: {
+    namespace: 'relnamespace',
+    owner: 'relowner',
+    // Indexes, TOAST tables and composite-type rowtypes have no owner of their
+    // own: PostgreSQL refuses `ALTER INDEX ... OWNER TO` outright, TOAST tables
+    // live in `pg_toast`, and a standalone composite type is censused through
+    // `pg_type`, where `ALTER TYPE ... OWNER TO` actually applies.
+    where: "o.relkind NOT IN ('i', 'I', 't', 'c')",
+  },
+  pg_collation: { namespace: 'collnamespace', owner: 'collowner' },
+  pg_conversion: { namespace: 'connamespace', owner: 'conowner' },
+  pg_extension: { namespace: 'extnamespace', owner: 'extowner' },
+  pg_opclass: { namespace: 'opcnamespace', owner: 'opcowner' },
+  pg_operator: { namespace: 'oprnamespace', owner: 'oprowner' },
+  pg_opfamily: { namespace: 'opfnamespace', owner: 'opfowner' },
+  pg_proc: { namespace: 'pronamespace', owner: 'proowner' },
+  pg_statistic_ext: { namespace: 'stxnamespace', owner: 'stxowner' },
+  pg_ts_config: { namespace: 'cfgnamespace', owner: 'cfgowner' },
+  pg_ts_dict: { namespace: 'dictnamespace', owner: 'dictowner' },
+  pg_type: {
+    namespace: 'typnamespace',
+    owner: 'typowner',
+    // Derived types carry the owner of the thing they were generated from and
+    // cannot be reassigned on their own — PostgreSQL refuses "cannot alter array
+    // type", "cannot alter multirange type" and "is a table's row type" — so
+    // each is judged through the object it belongs to, which this census already
+    // covers.
+    where: `NOT EXISTS (SELECT 1 FROM pg_type e WHERE e.typarray = o.oid)
+        AND NOT EXISTS (SELECT 1 FROM pg_range rg WHERE rg.rngmultitypid = o.oid)
+        AND NOT (o.typrelid <> 0
+                 AND (SELECT rc.relkind FROM pg_class rc WHERE rc.oid = o.typrelid) <> 'c')`,
+  },
+};
+
+/**
+ * Schema-contained catalogues whose rows have no owner at all, and why.
+ *
+ * Present so the coverage guard can tell "this class has no owner" from "nobody
+ * thought about this class". If a future PostgreSQL gives one of these an owner
+ * column, the guard fails rather than leaving it uncensused.
+ */
+export const UNOWNED_SCHEMA_CATALOGUES: Readonly<Record<string, string>> = {
+  pg_constraint: 'a constraint belongs to its table; PostgreSQL records no separate owner',
+  pg_default_acl: 'a default-privilege entry keyed by role, not an ownable object',
+  pg_ts_parser: 'no owner column; creating one is superuser-only',
+  pg_ts_template: 'no owner column; creating one is superuser-only',
+};
+
+/** `pg_class.relkind` values the census expects to judge. */
+const CENSUSED_RELKINDS = new Set(['r', 'p', 'v', 'm', 'S', 'f']);
+
+/** `pg_type.typtype` values the census expects to judge. */
+const CENSUSED_TYPTYPES = new Set(['b', 'c', 'd', 'e', 'p', 'r', 'm']);
+
+/**
+ * Every catalogue that contains schema-scoped rows, and whether it has an owner.
+ *
+ * Read from the running server rather than from a list, so a PostgreSQL upgrade
+ * that introduces an ownable schema-contained class is reported instead of being
+ * silently omitted from the census.
+ */
+const SCHEMA_CATALOGUE_COVERAGE_QUERY = `
+  SELECT c.relname::text AS catalogue,
+         EXISTS (
+           SELECT 1 FROM pg_attribute owner_column
+            WHERE owner_column.attrelid = c.oid AND owner_column.attnum > 0
+              AND owner_column.attname ~ 'owner$'
+         ) AS has_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0
+   WHERE n.nspname = 'pg_catalog' AND c.relkind = 'r' AND a.attname ~ 'namespace$'
+   GROUP BY c.oid, c.relname
+   ORDER BY 1`;
+
+/**
+ * Every object located in a kernel schema, whoever owns it.
+ *
+ * Enumerated from the catalogues themselves, not from `pg_shdepend`. PostgreSQL
+ * records no ownership dependency for an object owned by a *pinned* role — OID
+ * 10, the bootstrap superuser initdb creates — so a census built on
+ * `pg_shdepend` saw nothing at all for those objects. An enum, a domain, a
+ * composite type or extended statistics inside `platform` could be reassigned to
+ * the bootstrap operator and stay invisible, which is the identity anybody with
+ * cluster access already holds.
+ *
+ * `pg_get_userbyid` on the catalogue's own owner column has no such gap: it
+ * reports the owner PostgreSQL actually stores, pinned or not.
+ *
+ * `pg_identify_object` names any class generically, so a class nobody
+ * enumerated is described rather than skipped; relations and functions are named
+ * exactly as the manifest keys them so the comparison is against the manifest
+ * and not against a rendering of it.
+ */
+function kernelObjectCensusQuery(): string {
+  const branches = Object.entries(OWNABLE_SCHEMA_CATALOGUES).map(([catalogue, spec]) => {
+    const subkind =
+      catalogue === 'pg_class'
+        ? 'o.relkind::text'
+        : catalogue === 'pg_type'
+          ? 'o.typtype::text'
+          : "''";
+    return (
+      `    SELECT '${catalogue}'::regclass AS classid, o.oid AS objid, ` +
+      `o.${spec.owner} AS ownerid, ${subkind} AS subkind
+` +
+      `      FROM ${catalogue} o JOIN pg_namespace n ON n.oid = o.${spec.namespace}
+` +
+      `     WHERE n.nspname = ANY($1)` +
+      (spec.where === undefined
+        ? ''
+        : `
+       AND ${spec.where}`)
+    );
+  });
+
+  return `
+  WITH candidates AS (
+${branches.join('\n    UNION ALL\n')}
+  )
+  SELECT pg_get_userbyid(c.ownerid)::text AS owner,
+         c.classid::regclass::text AS class,
+         c.subkind::text AS subkind,
          o.type::text AS object_type,
-         CASE d.classid
+         CASE c.classid
            WHEN 'pg_proc'::regclass THEN (
              SELECT n.nspname || '.' || p.proname || '(' ||
                     pg_get_function_identity_arguments(p.oid) || ')'
                FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-              WHERE p.oid = d.objid)
+              WHERE p.oid = c.objid)
            WHEN 'pg_class'::regclass THEN (
-             SELECT n.nspname || '.' || c.relname
-               FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-              WHERE c.oid = d.objid)
+             SELECT n.nspname || '.' || r.relname
+               FROM pg_class r JOIN pg_namespace n ON n.oid = r.relnamespace
+              WHERE r.oid = c.objid)
            ELSE o.identity
          END::text AS name,
-         (SELECT pn.nspname || '.' || pc.relname
-            FROM pg_inherits i
-            JOIN pg_class pc ON pc.oid = i.inhparent
-            JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-           WHERE i.inhrelid = d.objid AND d.classid = 'pg_class'::regclass)::text AS parent
-    FROM pg_shdepend d
-    JOIN pg_roles r ON r.oid = d.refobjid
-    CROSS JOIN LATERAL pg_identify_object(d.classid, d.objid, d.objsubid) o
-   WHERE d.deptype = 'o'
-     AND d.refclassid = 'pg_authid'::regclass
-     AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))
-     AND o.schema = ANY($1)
-   ORDER BY 1, 2, 4`;
+         COALESCE(
+           (SELECT pn.nspname || '.' || pc.relname
+              FROM pg_inherits i
+              JOIN pg_class pc ON pc.oid = i.inhparent
+              JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+             WHERE i.inhrelid = c.objid AND c.classid = 'pg_class'::regclass),
+           (SELECT pn.nspname || '.' || pc.relname
+              FROM pg_depend dep
+              JOIN pg_class pc ON pc.oid = dep.refobjid
+              JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+             WHERE dep.classid = 'pg_class'::regclass AND dep.objid = c.objid
+               AND dep.refclassid = 'pg_class'::regclass AND dep.deptype IN ('a', 'i')
+               AND c.classid = 'pg_class'::regclass)
+         )::text AS parent
+    FROM candidates c
+    CROSS JOIN LATERAL pg_identify_object(c.classid, c.objid, 0) o
+   ORDER BY 1, 2, 5`;
+}
+
+const KERNEL_OBJECT_CENSUS_QUERY = kernelObjectCensusQuery();
+
+interface CatalogueCoverageRow {
+  readonly catalogue: string;
+  readonly has_owner: boolean;
+}
 
 interface KernelObjectRow {
   readonly owner: string;
   readonly class: string;
+  /** `relkind` for a relation, `typtype` for a type, empty otherwise. */
+  readonly subkind: string;
   readonly object_type: string;
   readonly name: string | null;
   readonly parent: string | null;
@@ -357,6 +490,38 @@ export async function assertOwnershipManifest(
     );
   }
 
+  // The catalogue coverage guard, before any census runs.
+  //
+  // The kernel census is generated from `OWNABLE_SCHEMA_CATALOGUES`, so a
+  // schema-contained class that is missing from that map is a class nothing
+  // looks at. Read from the running server rather than assumed, so a PostgreSQL
+  // upgrade that adds one stops the migration instead of quietly narrowing the
+  // census.
+  const coverage = await client.query<CatalogueCoverageRow>(SCHEMA_CATALOGUE_COVERAGE_QUERY);
+  for (const row of coverage.rows) {
+    const ownable = row.catalogue in OWNABLE_SCHEMA_CATALOGUES;
+    const unowned = row.catalogue in UNOWNED_SCHEMA_CATALOGUES;
+    if (row.has_owner && ownable) continue;
+    if (!row.has_owner && unowned) continue;
+    throw new MigrationOwnershipError(
+      `${row.catalogue} holds schema-contained rows and ` +
+        (row.has_owner ? 'has an owner column' : 'has no owner column') +
+        ', which contradicts its classification' +
+        (ownable || unowned ? '' : ' (it is not classified at all)') +
+        '. Ownership coverage fails closed: classify the catalogue in ' +
+        'OWNABLE_SCHEMA_CATALOGUES or UNOWNED_SCHEMA_CATALOGUES rather than leaving objects ' +
+        'of that class uncensused',
+    );
+  }
+  const censused = new Set(coverage.rows.map((row) => row.catalogue));
+  for (const catalogue of Object.keys(OWNABLE_SCHEMA_CATALOGUES)) {
+    if (censused.has(catalogue)) continue;
+    throw new MigrationOwnershipError(
+      `${catalogue} is censused for ownership but this server has no such schema-contained ` +
+        'catalogue: the census would silently cover nothing',
+    );
+  }
+
   // One census, over PostgreSQL's own ownership dependency, for every role that
   // must own nothing and every narrow owner. `pg_shdepend` covers every ownable
   // class, so a foreign table, an enum, a domain, a composite type or a class
@@ -410,6 +575,23 @@ export async function assertOwnershipManifest(
     [...KERNEL_SCHEMAS],
   ]);
   for (const row of kernelObjects.rows) {
+    // A relation kind or type kind the census was not written to judge fails
+    // closed. Naming an object is not the same as knowing what it is: a class
+    // whose sub-kind nobody classified is exactly the case that went unseen.
+    if (row.class === 'pg_class' && !CENSUSED_RELKINDS.has(row.subkind)) {
+      throw new MigrationOwnershipError(
+        `${row.name ?? '(unnamed)'} in a kernel schema has relkind "${row.subkind}", which the ` +
+          'ownership census does not classify: extend CENSUSED_RELKINDS rather than letting the ' +
+          'object through unjudged',
+      );
+    }
+    if (row.class === 'pg_type' && !CENSUSED_TYPTYPES.has(row.subkind)) {
+      throw new MigrationOwnershipError(
+        `${row.name ?? '(unnamed)'} in a kernel schema has typtype "${row.subkind}", which the ` +
+          'ownership census does not classify: extend CENSUSED_TYPTYPES rather than letting the ' +
+          'object through unjudged',
+      );
+    }
     if (row.name === null) {
       throw new MigrationOwnershipError(
         `an object of class ${row.class} (${row.object_type}) in a kernel schema cannot be ` +
