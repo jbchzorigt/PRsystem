@@ -253,6 +253,55 @@ const FIXTURES = [
       ),
   },
   {
+    // Phase 04's acceptance is governed the same way Phase 03's is, and for the
+    // same reason: it is the customer's to give and the customer's to withdraw.
+    // Rolling the row back to the state it was written under before the customer
+    // decided would erase a decision that was made.
+    name: 'current position: the Phase 04 acceptance withdrawn',
+    file: 'phase-status',
+    expect: /states Phase 04 acceptance = "`AWAITING_CUSTOMER_ACCEPTANCE`"/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase 04 acceptance | `ACCEPTED` |',
+        '| Phase 04 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |',
+      ),
+  },
+  {
+    // An acceptance names one tree. Repointing it at a later commit would let
+    // work the customer never saw arrive under a decision they already made.
+    name: 'current position: the Phase 04 acceptance moved to another commit',
+    file: 'phase-status',
+    expect: /states Phase 04 accepted at = "`0{40}`"/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |',
+        `| Phase 04 accepted at | \`${'0'.repeat(40)}\` |`,
+      ),
+  },
+  {
+    // Deleting the row rather than editing it: an acceptance with no tree behind
+    // it reads as covering whatever HEAD happens to be.
+    name: 'current position: the Phase 04 accepted-at row removed',
+    file: 'phase-status',
+    expect: /the current position has no "Phase 04 accepted at" row/,
+    mutate: (text) =>
+      text.replace('| Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |\n', ''),
+  },
+  {
+    // Reading the acceptance as authorization for what comes next, in both cells
+    // at once. Each is asserted against the governed state independently rather
+    // than against the other, so agreeing with itself buys the edit nothing; the
+    // check refuses at the first of the two, and the ledger cell on its own is
+    // the fixture above.
+    name: 'coordinated: the acceptance used to start Phase 05',
+    file: 'phase-status',
+    expect: /states Phase state = "`IN PROGRESS`[^"]*"; it must name exactly one state/,
+    mutate: (text) =>
+      text
+        .replace('| Phase state | `NOT STARTED`', '| Phase state | `IN PROGRESS`')
+        .replace(/^(\| 05 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+  },
+  {
     name: 'history: the latest heading duplicated',
     file: 'phase-status',
     expect: /the repair history repeats a review number/,

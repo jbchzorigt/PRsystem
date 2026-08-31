@@ -1147,6 +1147,35 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       );
     }
 
+    // Two acceptances, two commits, and they are not the same commit. Both are
+    // governed outside this document; asserting their shape here means a typo or
+    // a copied SHA in `phase-03-battery.mjs` is caught by the gate rather than by
+    // a reader. Reusing Phase 03's commit would have let one acceptance stand in
+    // for the other.
+    const ACCEPTED_COMMITS = [
+      ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
+      ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
+    ];
+    for (const [phase, commit] of ACCEPTED_COMMITS) {
+      assert(
+        /^[0-9a-f]{40}$/.test(commit),
+        `the governed ${phase} accepted commit is not a full lowercase object name: ` +
+          `${JSON.stringify(commit)}`,
+      );
+    }
+    assert(
+      ACCEPTED_COMMITS[0][1] !== ACCEPTED_COMMITS[1][1],
+      'the governed state names one commit as both the Phase 03 and the Phase 04 acceptance',
+    );
+    // An acceptance is not an authorization to start what comes next. Phase 04
+    // being accepted and Phase 05 being unstarted are independent facts, and the
+    // governed state must keep saying the second while it says the first.
+    assert(
+      GOVERNED_STATE.currentPhaseState === 'NOT STARTED',
+      'the governed state advances the current phase past NOT STARTED; beginning a phase is a ' +
+        'separate explicit authorization, not a consequence of the previous phase being accepted',
+    );
+
     // One review number, stated four times, and the fourth is governed outside
     // the document. Every mutable pointer agreed only with the others, so
     // rolling all of them back — or deleting the newest record and rolling every
@@ -1329,6 +1358,10 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       // Phase 04's own acceptance, distinct from its ledger state: a repaired
       // phase whose battery is green is still a phase nobody has accepted.
       ['Phase 04 acceptance', `\`${GOVERNED_STATE.completedPhaseAcceptance}\``],
+      // And the one commit it was accepted at. Without this row the acceptance
+      // was a token with no tree behind it: it could have been read as covering
+      // whatever HEAD happened to be.
+      ['Phase 04 accepted at', `\`${GOVERNED_STATE.completedPhaseAcceptedAtCommit}\``],
       ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
       ['Latest implemented repair number', String(manifest.latestRepairNumber)],

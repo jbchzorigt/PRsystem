@@ -18,7 +18,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase state | `NOT STARTED` — implementation requires explicit authorization to begin |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
-| Phase 04 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 04 acceptance | `ACCEPTED` |
+| Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -35,7 +36,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
-| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | see the Phase 04 record and the four remediations |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
@@ -70,9 +71,9 @@ The accepted phase, its state, the acceptance itself and the commit it was given
 the manifest that reports them, and `validate-governance` check 15 holds both to them. This document
 can no more withdraw the acceptance than it could have granted it.
 
-Phase 04 has since been implemented and then repaired once; it is recorded as `DONE` and
-`AWAITING_CUSTOMER_ACCEPTANCE`. Phase 05 is the current phase and has **not started**. Beginning it
-requires a further explicit authorization.
+Phase 04 has since been implemented, remediated four times, and accepted in its own right; see
+[Phase 04 acceptance](#phase-04-acceptance). Phase 05 is the current phase and has **not started**.
+Beginning it requires a further explicit authorization.
 
 Carried forward into Phase 04 and beyond, unchanged by the acceptance:
 
@@ -86,6 +87,48 @@ Carried forward into Phase 04 and beyond, unchanged by the acceptance:
   Phase 23.
 - **Selecting `GATE-SEC` as a required GitHub status check**, an external repository-settings action
   that needs push authorisation and has not been attempted.
+
+---
+
+## Phase 04 acceptance
+
+The customer accepted Phase 04 at commit `e5fcf19c4164c72106b6d2408f460751ad30685f` — the
+fourth-remediation tree, whose measured gates are the table in
+[Phase 04 remediation 4](#phase-04-remediation-4). That is the accepted evidence and it is frozen;
+the Phase 04 implementation battery is not re-run to restate it.
+
+The acceptance and the commit it was given at are declared in
+[`tools/phase-03-battery.mjs`](../../tools/phase-03-battery.mjs), outside this document, and
+`validate-governance` check 15 holds the Current position rows to both. This document can no more
+withdraw the acceptance, or move it to a different tree, than it could have granted it.
+
+The four Phase 04 remediation records below are history. Each states the state it was written under
+and keeps saying it; the acceptance does not rewrite them.
+
+**Phase 05 is unchanged by this.** It remains the current phase in `NOT STARTED`, and implementing
+it requires a further explicit authorization. An acceptance closes the phase behind it and
+authorizes nothing ahead of it.
+
+Carried forward past the acceptance, unchanged:
+
+- **17 P1 configuration items**, open — including the reset lease, retry and dead-letter numbers —
+  in [assumptions-and-conflicts.md](assumptions-and-conflicts.md).
+- **11 EXT gates** (EXT-01 … EXT-11), seeded closed against deterministic simulators, in
+  [external-integration-gates.md](external-integration-gates.md); each opens in the phase that needs
+  its provider.
+- **`INT-MAIL-01`** — no contracted transactional mail provider; the notification port stays a
+  deterministic simulator and the production adapter stays disabled.
+- **The scheduled invokers** for the password-reset intake drain and the handoff-discovery
+  reconciliation, assigned to their owning future phases; Phase 04 built the operations, not the
+  schedule that calls them.
+- **`DSR-01`**, OPEN and contained, in
+  [dependency-security-register.md](dependency-security-register.md), with its mandatory review in
+  Phase 23.
+- **Selecting `GATE-SEC` as a required GitHub status check**, an external repository-settings action
+  that needs push authorisation and has not been attempted.
+
+Phase 03's acceptance, its commit, its review number and its evidence are untouched by this and
+remain exactly as recorded above.
 
 ---
 

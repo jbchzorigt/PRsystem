@@ -59,7 +59,9 @@ export const REQUIRED_BATTERY = [
  * `completedPhase` is the most recent phase to have finished; `currentPhase` is
  * the one after it, which has not started. Beginning a phase requires a further
  * explicit authorization and a change to this module — the document cannot
- * advance the programme by editing a cell.
+ * advance the programme by editing a cell. An acceptance is not that
+ * authorization: Phase 04 being `ACCEPTED` says nothing about Phase 05, which
+ * stays `NOT STARTED` until it is separately authorized.
  */
 export const GOVERNED_STATE = {
   acceptedPhase: '03 — Platform kernel',
@@ -71,14 +73,23 @@ export const GOVERNED_STATE = {
   completedPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
   completedPhaseState: 'DONE',
   /**
-   * Phase 04 is implemented and its battery is green; it is **not** accepted.
+   * Phase 04 is accepted, at the commit named below.
    *
-   * `DONE` above says the work is finished and measured. It does not say the
-   * customer has taken it, and after a bounded security repair the difference
-   * matters: the ledger token and the acceptance are separate facts, and this
-   * document may no more grant the second than it could grant Phase 03's.
+   * `DONE` above says the work is finished and measured; this says the customer
+   * has taken it. They remain separate facts recorded separately, and the
+   * acceptance — like Phase 03's — is a change to this module and never
+   * something a document can declare about itself. `phase-status.md` may
+   * restate it and may not withdraw it, move it to another commit, or read it
+   * as authorization to begin Phase 05.
    */
-  completedPhaseAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+  completedPhaseAcceptance: 'ACCEPTED',
+  /**
+   * The one tree Phase 04's acceptance was given at: the fourth-remediation
+   * commit whose battery is recorded in the Phase 04 remediation 4 section.
+   * Governed separately from Phase 03's, and required to differ from it — a
+   * copied SHA would have made one acceptance stand in for the other.
+   */
+  completedPhaseAcceptedAtCommit: 'e5fcf19c4164c72106b6d2408f460751ad30685f',
   currentPhase: '05 — Hotel onboarding and subscription',
   currentPhaseState: 'NOT STARTED',
 };
