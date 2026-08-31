@@ -13,13 +13,13 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 03 — Platform kernel |
-| Phase state | `SECURITY_REPAIR_REQUIRED` |
+| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
+| Phase state | `NOT STARTED` — implementation requires explicit authorization to begin |
+| Phase 03 state | `DONE` |
+| Customer acceptance | `ACCEPTED` |
+| Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
 | Latest implemented repair number | 19 |
-| Customer acceptance | `NOT_ACCEPTED` |
-| Next phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
-| Next phase state | `NOT STARTED` — requires explicit authorization to begin |
 | Blocking conflicts | None. Four documented drift resolutions, zero unresolved P0 conflicts. |
 
 ---
@@ -31,7 +31,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 00 | Requirement intake and governance baseline | `DONE` | — | `GATE-GOV` | `07a9fd0`, `d2cbc65` |
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
-| 03 | Platform kernel | `SECURITY_REPAIR_REQUIRED` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
+| 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
@@ -52,6 +52,36 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 21 | Responsive UI and accessibility | `NOT STARTED` | — | — | — |
 | 22 | Security, concurrency, recovery, and full E2E | `NOT STARTED` | — | — | — |
 | 23 | Release candidate audit | `NOT STARTED` | — | — | — |
+
+---
+
+## Phase 03 acceptance
+
+The customer accepted Phase 03 at commit `3ac74a6244a7c350b7489be05778884a9fe65c3c`, the tree the
+nineteenth-repair evidence below was measured on. That snapshot is frozen: review 19 is the final
+Phase 03 security review, the results in [Current Phase 03 evidence](#current-phase-03-evidence) are
+the accepted ones, and the nineteen repair records are history and are not rewritten.
+
+The accepted phase, its state, the acceptance itself and the commit it was given at are declared in
+[`tools/phase-03-battery.mjs`](../../tools/phase-03-battery.mjs), outside this document and outside
+the manifest that reports them, and `validate-governance` check 15 holds both to them. This document
+can no more withdraw the acceptance than it could have granted it.
+
+Phase 04 — IAM, tenancy, RBAC, and staff lifecycle — is the current phase and has **not started**.
+Beginning it requires a further explicit authorization and a change to the same module.
+
+Carried forward into Phase 04 and beyond, unchanged by the acceptance:
+
+- **17 P1 configuration items**, open, tracked in
+  [assumptions-and-conflicts.md](assumptions-and-conflicts.md).
+- **11 EXT gates** (EXT-01 … EXT-11), seeded closed against deterministic simulators, in
+  [external-integration-gates.md](external-integration-gates.md); each opens in the phase that needs
+  its provider.
+- **`DSR-01`**, OPEN and contained, in
+  [dependency-security-register.md](dependency-security-register.md), with its mandatory review in
+  Phase 23.
+- **Selecting `GATE-SEC` as a required GitHub status check**, an external repository-settings action
+  that needs push authorisation and has not been attempted.
 
 ---
 

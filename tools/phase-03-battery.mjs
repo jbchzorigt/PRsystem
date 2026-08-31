@@ -39,29 +39,43 @@ export const REQUIRED_BATTERY = [
 ];
 
 /**
- * The state Phase 03 is in, and the only state this document may claim.
+ * The state the programme is in, and the only state this document may claim.
  *
- * `governedReviewNumber` is the review this repair answers, declared here rather
- * than read from the document. Every mutable pointer to it — the current review
- * number, the latest repair number, the measured-on label — had to agree only
- * with each other, so rolling all of them back together, or deleting the newest
- * record and rolling every pointer back with it, left nothing to disagree with.
- * Advancing it is a customer-issued change to this module.
+ * Phase 03 was accepted by the customer at the review-19 evidence snapshot, so
+ * the accepted phase, its state and its acceptance are recorded here — outside
+ * the document and outside the manifest that reports them. An acceptance is a
+ * customer decision; it is a change to this module, never something a document
+ * can declare about itself.
+ *
+ * `governedReviewNumber` is the final Phase 03 security review. Every mutable
+ * pointer to it — the customer review number, the latest repair number, the
+ * measured-on label — had to agree only with each other, so rolling all of them
+ * back together, or deleting the newest record and rolling every pointer back
+ * with it, left nothing to disagree with. It is frozen with the acceptance.
+ *
+ * `repairRecordState` is the state every repair record was written under. The
+ * records are history and keep saying what was true when they were made.
+ *
+ * `currentPhase` is now Phase 04, which has not started. Beginning it requires a
+ * further explicit authorization and a change to this module.
  */
 export const GOVERNED_STATE = {
-  currentPhase: '03 — Platform kernel',
-  phaseState: 'SECURITY_REPAIR_REQUIRED',
-  customerAcceptance: 'NOT_ACCEPTED',
-  nextPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
-  nextPhaseState: 'NOT STARTED',
+  acceptedPhase: '03 — Platform kernel',
+  acceptedPhaseState: 'DONE',
+  customerAcceptance: 'ACCEPTED',
+  acceptedAtCommit: '3ac74a6244a7c350b7489be05778884a9fe65c3c',
+  repairRecordState: 'SECURITY_REPAIR_REQUIRED',
   governedReviewNumber: 19,
+  currentPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
+  currentPhaseState: 'NOT STARTED',
 };
 
 /** The manifest's exact key set. Anything else is an unreviewed addition. */
 export const MANIFEST_KEYS = [
-  'currentPhase',
-  'phaseState',
+  'acceptedPhase',
+  'acceptedPhaseState',
   'customerAcceptance',
+  'acceptedAtCommit',
   'customerReviewNumber',
   'latestRepairNumber',
   'measuredOnRepairNumber',

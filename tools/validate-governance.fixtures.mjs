@@ -241,13 +241,15 @@ const FIXTURES = [
     },
   },
   {
-    name: 'current position: acceptance claimed',
+    // Acceptance is the customer's to give and the customer's to withdraw. The
+    // document may restate it and nothing else.
+    name: 'current position: the acceptance withdrawn',
     file: 'phase-status',
     expect: /states Customer acceptance = /,
     mutate: (text) =>
       text.replace(
-        '| Customer acceptance | `NOT_ACCEPTED` |',
         '| Customer acceptance | `ACCEPTED` |',
+        '| Customer acceptance | `NOT_ACCEPTED` |',
       ),
   },
   {
@@ -364,11 +366,14 @@ const FIXTURES = [
     },
   },
   {
-    name: 'current position: the state disagrees with the ledger',
+    name: 'current position: the Phase 03 state disagrees with the ledger',
     file: 'phase-status',
-    expect: /states Phase state = /,
+    expect: /states Phase 03 state = /,
     mutate: (text) =>
-      text.replace('| Phase state | `SECURITY_REPAIR_REQUIRED` |', '| Phase state | `DONE` |'),
+      text.replace(
+        '| Phase 03 state | `DONE` |',
+        '| Phase 03 state | `SECURITY_REPAIR_REQUIRED` |',
+      ),
   },
   {
     // The ledger used to keep its own copy of the repair ordinal, and it went
@@ -592,10 +597,7 @@ const FIXTURES = [
     file: 'phase-status',
     expect: /a current-position row has 3 cells; the table declares 2/,
     mutate: (text) =>
-      text.replace(
-        '| Phase state | `SECURITY_REPAIR_REQUIRED` |',
-        '| Phase state | `SECURITY_REPAIR_REQUIRED` | extra |',
-      ),
+      text.replace('| Phase 03 state | `DONE` |', '| Phase 03 state | `DONE` | extra |'),
   },
   {
     name: 'ledger: a second state token in the Phase 03 row',
@@ -703,37 +705,35 @@ const FIXTURES = [
     },
   },
   {
-    // Acceptance is the customer's to give. The document may not vote itself
-    // done.
-    name: 'coordinated: DONE in the manifest, the position and the ledger',
+    // Acceptance is the customer's decision, in both directions. The document
+    // could not vote itself done, and now that it is done it may not reopen
+    // itself either — not even with the manifest, the position and the ledger
+    // all saying so together.
+    name: 'coordinated: the acceptance rolled back in the manifest, the position and the ledger',
     files: ['phase-status', 'manifest'],
-    expect: /declares phaseState = "DONE"; the governed state is "SECURITY_REPAIR_REQUIRED"/,
+    expect:
+      /declares acceptedPhaseState = "SECURITY_REPAIR_REQUIRED"; the governed state is "DONE"/,
     mutate: (sources) => {
       const manifest = JSON.parse(sources.manifest);
-      manifest.phaseState = 'DONE';
+      manifest.acceptedPhaseState = 'SECURITY_REPAIR_REQUIRED';
       return {
         'phase-status': sources['phase-status']
-          .replace('| Phase state | `SECURITY_REPAIR_REQUIRED` |', '| Phase state | `DONE` |')
-          .replace(/^(\| 03 \| Platform kernel \| )`SECURITY_REPAIR_REQUIRED`/m, '$1`DONE`'),
+          .replace('| Phase 03 state | `DONE` |', '| Phase 03 state | `SECURITY_REPAIR_REQUIRED` |')
+          .replace(/^(\| 03 \| Platform kernel \| )`DONE`/m, '$1`SECURITY_REPAIR_REQUIRED`'),
         manifest: `${JSON.stringify(manifest, null, 2)}\n`,
       };
     },
   },
   {
-    name: 'coordinated: the current phase advanced to Phase 04',
-    files: ['phase-status', 'manifest'],
-    expect: /declares currentPhase = "04 [^"]*"; the governed state is "03 — Platform kernel"/,
-    mutate: (sources) => {
-      const manifest = JSON.parse(sources.manifest);
-      manifest.currentPhase = '04 — IAM, tenancy, RBAC, and staff lifecycle';
-      return {
-        'phase-status': sources['phase-status'].replace(
-          '| Current phase | 03 — Platform kernel |',
-          '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |',
-        ),
-        manifest: `${JSON.stringify(manifest, null, 2)}\n`,
-      };
-    },
+    // Starting the next phase is an authorization, not an edit.
+    name: 'current position: the current phase advanced past Phase 04',
+    file: 'phase-status',
+    expect: /states Current phase = "05 [^"]*"; the governed value is "04 — IAM/,
+    mutate: (text) =>
+      text.replace(
+        '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |',
+        '| Current phase | 05 — Hotel onboarding and subscription |',
+      ),
   },
   {
     name: 'coordinated: Phase 04 no longer NOT STARTED in the ledger',
@@ -784,7 +784,7 @@ const FIXTURES = [
     name: 'manifest: an unreviewed extra key',
     file: 'manifest',
     expect: /it must declare exactly/,
-    mutate: (json) => json.replace('{\n  "currentPhase"', '{\n  "extra": 1,\n  "currentPhase"'),
+    mutate: (json) => json.replace('{\n  "acceptedPhase"', '{\n  "extra": 1,\n  "acceptedPhase"'),
   },
   {
     // The canonical form carries the governed state, so a heading claiming a
@@ -925,8 +925,8 @@ const FIXTURES = [
     expect: /raw HTML is not an approved boundary marker: <div>/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 03 — Platform kernel |',
-        '| Current phase | 03 — Platform kernel |\n\n<div>raw</div>\n',
+        '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |',
+        '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |\n\n<div>raw</div>\n',
       ),
   },
   {
@@ -1041,19 +1041,19 @@ const FIXTURES = [
     },
   },
   {
-    name: 'governed: Next phase state changed while the ledger stays NOT STARTED',
+    name: 'governed: the current phase state changed while the ledger stays NOT STARTED',
     file: 'phase-status',
-    expect: /states Next phase state = "`IN PROGRESS`/,
+    expect: /states Phase state = "`IN PROGRESS`/,
     mutate: (text) =>
-      text.replace('| Next phase state | `NOT STARTED`', '| Next phase state | `IN PROGRESS`'),
+      text.replace('| Phase state | `NOT STARTED`', '| Phase state | `IN PROGRESS`'),
   },
   {
     // The required token stays in place and the row says two things.
     name: 'governed: a bold DONE appended beside the ledger state token',
     file: 'phase-status',
-    expect: /ledger state cell renders "`SECURITY_REPAIR_REQUIRED` \*\*DONE\*\*"/,
+    expect: /ledger state cell renders "`DONE` \*\*SECURITY_REPAIR_REQUIRED\*\*"/,
     mutate: (text) =>
-      text.replace(/^(\| 03 \| Platform kernel \| `SECURITY_REPAIR_REQUIRED`)/m, '$1 **DONE**'),
+      text.replace(/^(\| 03 \| Platform kernel \| `DONE`)/m, '$1 **SECURITY_REPAIR_REQUIRED**'),
   },
   {
     name: 'governed: the required battery reordered in both sources',
@@ -1079,11 +1079,11 @@ const FIXTURES = [
     // `JSON.parse` keeps the last member of a duplicated name and says nothing.
     name: 'manifest: a duplicated conflicting member name',
     file: 'manifest',
-    expect: /names "phaseState" twice in the same object/,
+    expect: /names "acceptedPhaseState" twice in the same object/,
     mutate: (json) =>
       json.replace(
-        '"phaseState": "SECURITY_REPAIR_REQUIRED",',
-        '"phaseState": "DONE",\n  "phaseState": "SECURITY_REPAIR_REQUIRED",',
+        '"acceptedPhaseState": "DONE",',
+        '"acceptedPhaseState": "SECURITY_REPAIR_REQUIRED",\n  "acceptedPhaseState": "DONE",',
       ),
   },
   {

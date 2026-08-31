@@ -1,7 +1,8 @@
 {
-  "currentPhase": "03 \u2014 Platform kernel",
-  "phaseState": "SECURITY_REPAIR_REQUIRED",
-  "customerAcceptance": "NOT_ACCEPTED",
+  "acceptedPhase": "03 \u2014 Platform kernel",
+  "acceptedPhaseState": "DONE",
+  "customerAcceptance": "ACCEPTED",
+  "acceptedAtCommit": "3ac74a6244a7c350b7489be05778884a9fe65c3c",
   "customerReviewNumber": 19,
   "latestRepairNumber": 19,
   "measuredOnRepairNumber": 19,

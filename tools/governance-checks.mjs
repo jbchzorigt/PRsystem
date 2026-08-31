@@ -1098,11 +1098,17 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
 
     // -------------------------------------------------- the governed state
     //
-    // Phase 03 is not accepted, and this document may not say otherwise. An
-    // accepted transition is a customer decision, so it is a change to
-    // `phase-03-battery.mjs` and not something the manifest can declare about
-    // itself.
-    for (const key of ['currentPhase', 'phaseState', 'customerAcceptance']) {
+    // Phase 03 is accepted, at one named commit, and this document may not
+    // restate any of that differently. An acceptance is a customer decision, so
+    // it is a change to `phase-03-battery.mjs` and not something the manifest
+    // can declare about itself — in either direction: the manifest can no more
+    // withdraw the acceptance than it could have granted it.
+    for (const key of [
+      'acceptedPhase',
+      'acceptedPhaseState',
+      'customerAcceptance',
+      'acceptedAtCommit',
+    ]) {
       assert(
         manifest[key] === GOVERNED_STATE[key],
         `the evidence manifest declares ${key} = ${JSON.stringify(manifest[key])}; the governed ` +
@@ -1113,7 +1119,8 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // One review number, stated four times, and the fourth is governed outside
     // the document. Every mutable pointer agreed only with the others, so
     // rolling all of them back — or deleting the newest record and rolling every
-    // pointer back with it — left nothing to disagree with.
+    // pointer back with it — left nothing to disagree with. Frozen with the
+    // acceptance: this is the final Phase 03 security review.
     for (const key of ['customerReviewNumber', 'latestRepairNumber', 'measuredOnRepairNumber']) {
       assert(
         manifest[key] === GOVERNED_STATE.governedReviewNumber,
@@ -1275,49 +1282,42 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       positionRows.set(key, row[1].text.trim());
     }
 
+    // The current phase and its state are governed directly, not by the Phase 03
+    // manifest: `phase-03-evidence.json` is the record of a phase that is closed
+    // and may not be the authority on what comes after it.
     const EXPECTED_POSITION = new Map([
-      ['Current phase', manifest.currentPhase],
-      ['Phase state', `\`${manifest.phaseState}\``],
+      ['Current phase', GOVERNED_STATE.currentPhase],
+      ['Phase 03 state', `\`${manifest.acceptedPhaseState}\``],
+      ['Customer acceptance', `\`${manifest.customerAcceptance}\``],
+      ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
       ['Latest implemented repair number', String(manifest.latestRepairNumber)],
-      ['Customer acceptance', `\`${manifest.customerAcceptance}\``],
     ]);
     for (const [key, want] of EXPECTED_POSITION) {
       assert(positionRows.has(key), `the current position has no "${key}" row`);
       assert(
         positionRows.get(key) === want,
-        `the current position states ${key} = "${String(positionRows.get(key))}"; the manifest ` +
-          `declares "${want}"`,
+        `the current position states ${key} = "${String(positionRows.get(key))}"; the governed ` +
+          `value is "${want}"`,
       );
     }
-    assert(
-      positionRows.get('Next phase') === GOVERNED_STATE.nextPhase,
-      'the current position states Next phase = ' +
-        `${JSON.stringify(positionRows.get('Next phase'))}; the governed state is ` +
-        `${JSON.stringify(GOVERNED_STATE.nextPhase)}`,
-    );
     // Exactly one state token in the cell, and it is the governed one. The row
     // could say `IN PROGRESS` while the ledger still said NOT STARTED.
-    const nextStateCell = positionRows.get('Next phase state') ?? '';
-    const nextStateTokens = [...nextStateCell.matchAll(/`([A-Z_ ]+)`/g)].map((m) => m[1]);
+    const phaseStateCell = positionRows.get('Phase state') ?? '';
+    const phaseStateTokens = [...phaseStateCell.matchAll(/`([A-Z_ ]+)`/g)].map((m) => m[1]);
     assert(
-      nextStateTokens.length === 1 && nextStateTokens[0] === GOVERNED_STATE.nextPhaseState,
-      `the current position states Next phase state = ${JSON.stringify(nextStateCell)}; it must ` +
-        `name exactly one state and it must be ${GOVERNED_STATE.nextPhaseState}`,
+      phaseStateTokens.length === 1 && phaseStateTokens[0] === GOVERNED_STATE.currentPhaseState,
+      `the current position states Phase state = ${JSON.stringify(phaseStateCell)}; it must ` +
+        `name exactly one state and it must be ${GOVERNED_STATE.currentPhaseState}`,
     );
 
-    const NARRATIVE_ROWS = new Set(['Next phase', 'Next phase state', 'Blocking conflicts']);
+    const NARRATIVE_ROWS = new Set(['Phase state', 'Blocking conflicts']);
     for (const key of positionRows.keys()) {
       assert(
         EXPECTED_POSITION.has(key) || NARRATIVE_ROWS.has(key),
         `the current position carries a row the manifest does not govern: ${key}`,
       );
     }
-    assert(
-      manifest.customerAcceptance === 'NOT_ACCEPTED',
-      `the manifest declares customer acceptance ${manifest.customerAcceptance}; Phase 03 is not ` +
-        'accepted and this document does not claim otherwise',
-    );
     assert(
       manifest.customerReviewNumber === manifest.latestRepairNumber,
       `the manifest declares review ${String(manifest.customerReviewNumber)} and repair ` +
@@ -1340,9 +1340,9 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     assert(STATE_COLUMN >= 0, 'the phase ledger has no State column');
     const phase03State = ledgerRow[STATE_COLUMN].text.trim();
     assert(
-      phase03State === `\`${manifest.phaseState}\``,
+      phase03State === `\`${manifest.acceptedPhaseState}\``,
       `the Phase 03 ledger state cell renders ${JSON.stringify(phase03State)}; it must render ` +
-        `exactly \`${manifest.phaseState}\``,
+        `exactly \`${manifest.acceptedPhaseState}\``,
     );
     const stateTokens = [...ledgerText.matchAll(/`([A-Z_ ]+)`/g)].map((m) => m[1]);
     assert(
@@ -1368,7 +1368,9 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       `the Phase 03 ledger row has ${String(anchorLinks.length)} links whose destination is ` +
         `${ANCHOR}; there must be exactly one`,
     );
-    // Phase 04 has not started, and the ledger is where that is recorded.
+    // Phase 04 has not started, and the ledger is where that is recorded. It is
+    // the current phase now, and beginning it is a change to
+    // `phase-03-battery.mjs`, not to this row.
     const nextRows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === '04');
     assert(
       nextRows.length === 1,
@@ -1376,9 +1378,9 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     );
     const phase04State = nextRows[0][STATE_COLUMN].text.trim();
     assert(
-      phase04State === `\`${GOVERNED_STATE.nextPhaseState}\``,
+      phase04State === `\`${GOVERNED_STATE.currentPhaseState}\``,
       `the Phase 04 ledger state cell renders ${JSON.stringify(phase04State)}; it must render ` +
-        `exactly \`${GOVERNED_STATE.nextPhaseState}\``,
+        `exactly \`${GOVERNED_STATE.currentPhaseState}\``,
     );
 
     const ledgerOrdinal = new RegExp(`\\b(${ORDINALS.join('|')})\\b`, 'i').exec(ledgerText);
@@ -1395,8 +1397,10 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // customer review must be the canonical, unindented H3 record, inside the
     // bounded history. A canonical heading written inside an HTML comment renders
     // as nothing and cannot stand in for a record.
-    const CANONICAL =
-      /^### ([A-Za-z]+) security repair \(customer review (\d+)\) — `SECURITY_REPAIR_REQUIRED`$/;
+    const CANONICAL = new RegExp(
+      '^### ([A-Za-z]+) security repair \\(customer review (\\d+)\\) — ' +
+        `\`${GOVERNED_STATE.repairRecordState}\`$`,
+    );
     const DECLARED_SECTION_HEADINGS = new Set(['Remaining blockers', 'GATE-SEC sub-gate counts']);
     const DESCRIBES_A_REPAIR = /\brepair\b|\bcustomer review\b/i;
 
@@ -1437,11 +1441,13 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
         ORDINALS.indexOf(entry.word) + 1 === entry.number,
         `a repair heading disagrees with its own number: ${entry.raw}`,
       );
-      // Every record states the governed state. A heading that claimed a
-      // different one would be a record of a phase this document is not in.
+      // Every record states the state it was written under, which is history
+      // and does not move with the phase. A heading claiming a different one
+      // would be a record of something that did not happen.
       assert(
-        entry.raw.endsWith(`\`${GOVERNED_STATE.phaseState}\``),
-        `a repair heading states a state other than ${GOVERNED_STATE.phaseState}: ${entry.raw}`,
+        entry.raw.endsWith(`\`${GOVERNED_STATE.repairRecordState}\``),
+        `a repair heading states a state other than ${GOVERNED_STATE.repairRecordState}: ` +
+          `${entry.raw}`,
       );
     }
 
