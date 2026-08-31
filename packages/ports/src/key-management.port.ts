@@ -7,7 +7,16 @@
  */
 
 /** Key scopes are per realm: compromise of one does not expose the other (ADR-0020 §5). */
-export type KeyScope = 'pii.hotel_guest' | 'pii.police';
+export type KeyScope =
+  | 'pii.hotel_guest'
+  | 'pii.police'
+  /**
+   * A one-time secret held only long enough to hand it to a provider
+   * (doc 19 §6). Its own scope, for the reason every other scope has one:
+   * compromise of the guest-PII key must not also open reset links, and the
+   * lifetime and rotation cadence of the two have nothing in common.
+   */
+  | 'auth.delivery_secret';
 
 /**
  * Lookup scopes are separate from encryption scopes, and Police lookup has its
@@ -26,7 +35,11 @@ export type HmacScope =
   | 'auth.invitation_token'
   | 'auth.password_reset_token';
 
-export const KEY_SCOPES: readonly KeyScope[] = ['pii.hotel_guest', 'pii.police'];
+export const KEY_SCOPES: readonly KeyScope[] = [
+  'pii.hotel_guest',
+  'pii.police',
+  'auth.delivery_secret',
+];
 export const HMAC_SCOPES: readonly HmacScope[] = [
   'lookup.identity',
   'lookup.police_identity',

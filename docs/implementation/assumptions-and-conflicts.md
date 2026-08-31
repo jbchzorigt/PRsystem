@@ -245,6 +245,19 @@ Five decisions were taken during the bounded security remediation recorded in
 | 2 | The reset-intake drain and the discovery reconciliation are durable processors with no scheduled invoker in Phase 04. | **Recorded rather than improvised.** Scheduling the drain belongs with the email provider it would deliver through (`INT-MAIL-01`, no adapter exists), and scheduling the reconciliation belongs with Phases 09, 11 and 15, which own the work it enumerates. Both are reachable now as explicit commands, and both are listed as carried forward in [phase-status.md](phase-status.md#phase-04-remediation-2). |
 | 3 | doc 19 §6 makes the reset endpoint unauthenticated and indistinguishable, but the account-specific work behind it — a lookup, a keyed derivation, a provider call — is unbounded in time and only happens for addresses that exist. | **Indistinguishable means the work, not just the answer.** The public path performs one bounded insert and returns; everything account-specific moves behind a durable queue. Normalising the status and body alone left a timing oracle that a slow or unreachable provider widened from microseconds to seconds. |
 
+### 3.7 Phase 04 remediation 3 — decisions taken while repairing
+
+| # | Question | Resolution |
+| --- | --- | --- |
+| 1 | A client idempotency key may be 200 characters, which is also the column's limit, so any suffix produced an illegal key. Truncating the caller's key would fit but would make two different requests collide. | **Digest, never concatenate.** One helper derives every internal key: length-prefixed components under SHA-256, behind a versioned readable operation tag. Fixed length, always legal, deterministic, collision-resistant, and unambiguous about where one component ends and the next begins. |
+| 2 | A discovery marker described a suspension, but nothing tied it to the transition that raised it, so it survived a reactivation and could later hand an active employee's work away. | **A marker is bound to one revision of one membership.** It stores the state and revision it expects, paired by a CHECK to its reason; reconciliation locks the membership and compares both before enumerating anything. A reactivation supersedes its own marker in the same transaction, and the open-marker index is partial on `PENDING` so a later transition raises its own rather than reusing the old one. |
+| 3 | The reset delivery has to survive a provider that is slow, unreachable, or that accepts a message whose acknowledgement is then lost — and the secret it delivers may not be stored in plaintext. | **A leased queue plus a durable, sealed delivery intent.** Ownership is a claim token with an expiry, checked by compare-and-set on every settlement; an outage is retryable with capped backoff and eventually an operator-visible dead letter, while `ignored` and `throttled` stay terminal because they are decisions. The reset and its intent commit before the provider is contacted, the one-time secret is held under envelope encryption with its own key scope, key version and row-bound AAD, and a stable `delivery_id` makes a retry after a lost acknowledgement produce no second visible message. |
+| 4 | Moving the Hotel-Admin-initiated reset onto the same queue would have reattributed its resets to `self`. | **The attribution travels with the entry.** One delivery mechanism, because two would be two ways to hold a live link; `initiated_by` and `initiated_by_account_id` are carried on the intake so the reset it produces still records who asked for it. |
+
+The lease duration, retry backoff, dead-letter threshold and their ceiling are
+**provisional**, carried in the same versioned record as the rest of P1-06. None
+of them is a customer-approved value.
+
 ---
 
 ## 4. P1 configuration register

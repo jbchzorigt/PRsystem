@@ -43,12 +43,25 @@ export interface SessionRow {
 }
 
 /** What happened to a queued request. Recorded, never returned to the caller. */
-export type ResetIntakeOutcome = 'sent' | 'ignored' | 'throttled' | 'unavailable';
+export type ResetIntakeOutcome = 'sent' | 'ignored' | 'throttled' | 'unavailable' | 'dead_letter';
 
 export interface ResetIntakeRow {
   readonly intakeId: string;
   readonly emailNormalized: string;
   readonly attempts: number;
+  /** The lease this worker holds. Every settlement is a CAS on it. */
+  readonly claimToken: string;
+  readonly initiatedBy: 'self' | 'hotel_admin';
+  readonly initiatedByAccountId: string | null;
+}
+
+export interface UndeliveredResetRow {
+  readonly resetId: string;
+  readonly deliveryId: string;
+  readonly expiresAt: Date;
+  readonly ciphertext: string;
+  readonly wrappedDek: string;
+  readonly keyVersion: string;
 }
 
 export interface ResetRow {
@@ -306,31 +319,99 @@ export class AccountRepository {
     return mapReset(result.rows[0]);
   }
 
+  /**
+   * Records the reset **and its delivery intent**, before any provider is
+   * contacted.
+   *
+   * `resetId` is chosen by the caller rather than the database because the
+   * one-time secret's AAD is bound to it: the ciphertext is tied to this row,
+   * this column and this id, so moving it anywhere else makes decryption fail
+   * instead of quietly succeeding (ADR-0020 §4).
+   */
   async createReset(input: {
+    resetId: string;
     accountId: string;
     tokenHash: string;
     tokenKeyVersion: string;
     ttlSeconds: number;
     initiatedBy: 'self' | 'hotel_admin';
     initiatedByAccountId: string | null;
-  }): Promise<string> {
-    const result = await this.uow.query<{ reset_id: string }>(
+    secret?: { ciphertext: string; wrappedDek: string; keyVersion: string };
+  }): Promise<{ resetId: string; deliveryId: string; expiresAt: Date }> {
+    const result = await this.uow.query<Record<string, unknown>>(
       `INSERT INTO platform.password_reset_request
-         (account_id, token_hash, token_key_version, initiated_by, initiated_by_account_id, expires_at)
-       VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))
-       RETURNING reset_id`,
+         (reset_id, account_id, token_hash, token_key_version, initiated_by,
+          initiated_by_account_id, expires_at,
+          secret_ciphertext, secret_wrapped_dek, secret_key_version)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8, $9, $10)
+       RETURNING reset_id, delivery_id, expires_at`,
       [
+        input.resetId,
         input.accountId,
         input.tokenHash,
         input.tokenKeyVersion,
         input.initiatedBy,
         input.initiatedByAccountId,
         input.ttlSeconds,
+        input.secret?.ciphertext ?? null,
+        input.secret?.wrappedDek ?? null,
+        input.secret?.keyVersion ?? null,
       ],
     );
-    const id = result.rows[0]?.reset_id;
-    if (id === undefined) throw new Error('the reset insert returned no row');
-    return id;
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('the reset insert returned no row');
+    return {
+      resetId: String(row['reset_id']),
+      deliveryId: String(row['delivery_id']),
+      expiresAt: row['expires_at'] as Date,
+    };
+  }
+
+  /**
+   * The live reset for an account whose link has not yet been handed over.
+   *
+   * This is what makes a lost acknowledgement cost a repeat attempt rather than
+   * a second link: the intent is already durable, so a retry re-reads it,
+   * recovers the same secret and delivers under the same identity.
+   */
+  async undeliveredResetFor(accountId: string): Promise<UndeliveredResetRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT reset_id, delivery_id, expires_at,
+              secret_ciphertext, secret_wrapped_dek, secret_key_version
+         FROM platform.password_reset_request
+        WHERE account_id = $1 AND state = 'ACTIVE' AND delivered_at IS NULL
+          AND secret_ciphertext IS NOT NULL
+          FOR UPDATE`,
+      [accountId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      resetId: String(row['reset_id']),
+      deliveryId: String(row['delivery_id']),
+      expiresAt: row['expires_at'] as Date,
+      ciphertext: String(row['secret_ciphertext']),
+      wrappedDek: String(row['secret_wrapped_dek']),
+      keyVersion: String(row['secret_key_version']),
+    };
+  }
+
+  /**
+   * Records the hand-over and destroys the stored secret.
+   *
+   * The ciphertext exists only to survive the gap between committing the intent
+   * and the provider accepting it. Once that has happened it is not needed
+   * again, and a secret that is not needed is not kept.
+   */
+  async markResetDelivered(resetId: string): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.password_reset_request
+          SET delivered_at = now(),
+              secret_ciphertext = NULL, secret_wrapped_dek = NULL, secret_key_version = NULL
+        WHERE reset_id = $1 AND state = 'ACTIVE' AND delivered_at IS NULL`,
+      [resetId],
+    );
+    return result.rowCount === 1;
   }
 
   async terminaliseReset(resetId: string, state: string, reason: string): Promise<boolean> {
@@ -352,12 +433,19 @@ export class AccountRepository {
    * path did more work for an address that exists than for one that does not,
    * the endpoint became an account oracle whatever its status code said.
    */
-  async queueResetIntake(emailNormalized: string): Promise<string> {
+  async queueResetIntake(
+    emailNormalized: string,
+    initiator: { by: 'self' | 'hotel_admin'; accountId: string | null } = {
+      by: 'self',
+      accountId: null,
+    },
+  ): Promise<string> {
     const result = await this.uow.query<{ intake_id: string }>(
-      `INSERT INTO platform.password_reset_intake (email_normalized)
-       VALUES ($1)
+      `INSERT INTO platform.password_reset_intake
+         (email_normalized, initiated_by, initiated_by_account_id)
+       VALUES ($1, $2, $3)
        RETURNING intake_id`,
-      [normaliseEmail(emailNormalized)],
+      [normaliseEmail(emailNormalized), initiator.by, initiator.accountId],
     );
     const id = result.rows[0]?.intake_id;
     if (id === undefined) throw new Error('the reset intake insert returned no row');
@@ -365,36 +453,100 @@ export class AccountRepository {
   }
 
   /**
-   * Claims queued requests for processing.
+   * Takes ownership of queued requests.
    *
-   * `SKIP LOCKED` so two drains never take the same row, and `FOR UPDATE` so a
-   * row a drain is holding cannot be settled underneath it.
+   * One statement, and it *writes*: the entry moves to `CLAIMED` with a token
+   * only this caller has and a lease that expires. `SELECT … FOR UPDATE SKIP
+   * LOCKED` alone was not ownership — the lock lasted only as long as the
+   * selecting transaction, which committed before any delivery was attempted,
+   * so a second worker could take the same entry and both would send.
+   *
+   * An entry whose lease has run out is reclaimable, which is what makes a
+   * worker that died a delay rather than a lost link.
    */
-  async claimResetIntake(limit: number): Promise<readonly ResetIntakeRow[]> {
+  async claimResetIntake(limit: number, leaseSeconds: number): Promise<readonly ResetIntakeRow[]> {
     const result = await this.uow.query<Record<string, unknown>>(
-      `SELECT intake_id, email_normalized, attempts
-         FROM platform.password_reset_intake
-        WHERE state = 'PENDING'
-        ORDER BY requested_at
-        LIMIT $1
-          FOR UPDATE SKIP LOCKED`,
-      [limit],
+      // The claimed set comes back in the order it was claimed in. `RETURNING`
+      // has no order of its own, and processing two entries for one address in
+      // an arbitrary order decides which of them is the throttled one — a
+      // coin-flip an operator reading the outcomes would have to explain.
+      `WITH claimed AS (
+         UPDATE platform.password_reset_intake AS target
+            SET state = 'CLAIMED',
+                claim_token = gen_random_uuid(),
+                lease_expires_at = now() + make_interval(secs => $2),
+                attempts = target.attempts + 1
+          WHERE target.intake_id IN (
+                  SELECT candidate.intake_id
+                    FROM platform.password_reset_intake AS candidate
+                   WHERE (candidate.state = 'PENDING' AND candidate.next_attempt_at <= now())
+                      OR (candidate.state = 'CLAIMED' AND candidate.lease_expires_at <= now())
+                   ORDER BY candidate.next_attempt_at, candidate.requested_at
+                   LIMIT $1
+                     FOR UPDATE SKIP LOCKED)
+         RETURNING intake_id, email_normalized, attempts, claim_token,
+                   initiated_by, initiated_by_account_id, next_attempt_at, requested_at)
+       SELECT intake_id, email_normalized, attempts, claim_token,
+              initiated_by, initiated_by_account_id
+         FROM claimed
+        ORDER BY next_attempt_at, requested_at`,
+      [limit, leaseSeconds],
     );
     return result.rows.map((row) => ({
       intakeId: String(row['intake_id']),
       emailNormalized: String(row['email_normalized']),
       attempts: Number(row['attempts']),
+      claimToken: String(row['claim_token']),
+      initiatedBy: row['initiated_by'] as 'self' | 'hotel_admin',
+      initiatedByAccountId: (row['initiated_by_account_id'] as string | null) ?? null,
     }));
   }
 
-  /** Settles one queued request. The outcome is for operators, never for callers. */
-  async settleResetIntake(intakeId: string, outcome: ResetIntakeOutcome): Promise<boolean> {
+  /**
+   * Settles one entry this worker owns. Terminal.
+   *
+   * The compare-and-set on the claim token is the whole guarantee: a worker
+   * whose lease was reclaimed while it was working affects no row here, and
+   * learns that it no longer owns the entry rather than writing a second
+   * settlement for it.
+   */
+  async settleResetIntake(
+    intakeId: string,
+    claimToken: string,
+    outcome: ResetIntakeOutcome,
+    state: 'PROCESSED' | 'DEAD_LETTER' = 'PROCESSED',
+  ): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.password_reset_intake
-          SET state = 'PROCESSED', processed_at = now(),
-              attempts = attempts + 1, outcome = $2
-        WHERE intake_id = $1 AND state = 'PENDING'`,
-      [intakeId, outcome],
+          SET state = $4, processed_at = now(), outcome = $3,
+              claim_token = NULL, lease_expires_at = NULL
+        WHERE intake_id = $1 AND claim_token = $2 AND state = 'CLAIMED'`,
+      [intakeId, claimToken, outcome, state],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * Returns one entry to the queue for a later attempt.
+   *
+   * A provider that could not be reached is not a decision about the request,
+   * so the entry goes back to `PENDING` behind a backoff rather than to a
+   * terminal state nothing will ever revisit.
+   */
+  async retryResetIntake(
+    intakeId: string,
+    claimToken: string,
+    outcome: ResetIntakeOutcome,
+    backoffSeconds: number,
+    reason: string,
+  ): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.password_reset_intake
+          SET state = 'PENDING', claim_token = NULL, lease_expires_at = NULL,
+              next_attempt_at = now() + make_interval(secs => $4),
+              outcome = $3, last_error = $5
+        WHERE intake_id = $1 AND claim_token = $2 AND state = 'CLAIMED'`,
+      [intakeId, claimToken, outcome, backoffSeconds, reason.slice(0, 500)],
     );
     return result.rowCount === 1;
   }

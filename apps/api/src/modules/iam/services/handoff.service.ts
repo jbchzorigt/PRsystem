@@ -16,6 +16,7 @@ import { MembershipRepository } from '../repositories/membership.repository';
 import { authorizeCommand } from './authorization.service';
 import type { CommandActor, HotelGate, IamDependencies, RequestContext } from './iam-context';
 import { IamServiceBase } from './iam-context';
+import { derivedIdempotencyKey } from './derived-key';
 
 /**
  * Unfinished work after a suspension (doc 19 §8.1–§8.4, `STAFF-DEC-007`,
@@ -168,7 +169,27 @@ export class HandoffService extends IamServiceBase {
       let resolved = 0;
       let pending = 0;
 
+      let superseded = 0;
       for (const marker of markers) {
+        // The membership first, and locked, because the marker describes a
+        // transition rather than a person: if the row has moved on since, this
+        // marker is about a state that no longer exists and enumerating work
+        // under it would hand a working employee's shift to somebody else.
+        const membership = await memberships.lock(marker.membershipId);
+        if (membership === undefined) {
+          await discovery.recordAttempt(marker.discoveryId, 'the membership is not visible');
+          pending += 1;
+          continue;
+        }
+        if (
+          membership.state !== marker.expectedState ||
+          membership.membershipRevision !== marker.membershipRevision
+        ) {
+          await discovery.supersede(marker.discoveryId, 'membership_moved_on');
+          superseded += 1;
+          continue;
+        }
+
         let work: readonly OpenWork[];
         try {
           work = await this.deps.openWork.openWorkFor(input.hotelId, marker.membershipId);
@@ -182,20 +203,18 @@ export class HandoffService extends IamServiceBase {
           continue;
         }
 
-        const membership = await memberships.lock(marker.membershipId);
-        if (membership === undefined) {
-          await discovery.recordAttempt(marker.discoveryId, 'the membership is not visible');
-          pending += 1;
-          continue;
-        }
-
         for (const entry of work) {
           items.push(
             await this.openForMembership(uow, {
               membership,
               work: entry,
               reason: marker.openedReason,
-              idempotencyKey: `${marker.idempotencySeed}:${entry.kind}:${entry.ref}`,
+              idempotencyKey: derivedIdempotencyKey(
+                'handoff.open',
+                marker.idempotencySeed,
+                entry.kind,
+                entry.ref,
+              ),
             }),
           );
         }
@@ -207,7 +226,7 @@ export class HandoffService extends IamServiceBase {
         action: 'iam.handoff.discovery_reconciled',
         outcome: 'allowed',
         targetType: 'work_handoff_discovery',
-        payload: { resolved, pending, items: [...items] },
+        payload: { resolved, pending, superseded, items: [...items] },
       });
 
       const result = { resolved, pending, items };

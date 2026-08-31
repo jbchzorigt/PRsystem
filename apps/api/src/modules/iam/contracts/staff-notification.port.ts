@@ -23,6 +23,15 @@ export interface StaffInvitationMessage {
 
 export interface PasswordResetMessage {
   readonly kind: 'password_reset';
+  /**
+   * The stable identity of this delivery.
+   *
+   * A retry after a lost acknowledgement carries the same value, so a provider —
+   * and the simulator standing in for one — can recognise that it has already
+   * sent this message and not send a second visible copy. It is minted with the
+   * reset it belongs to and never changes.
+   */
+  readonly deliveryId: string;
   readonly accountId: string;
   readonly resetId: string;
   readonly emailNormalized: string;
@@ -66,6 +75,8 @@ export class UnavailableStaffNotification implements StaffNotificationPort {
  */
 export class SimulatedStaffNotification implements StaffNotificationPort {
   private readonly delivered: StaffNotification[] = [];
+  private readonly attempted: PasswordResetMessage[] = [];
+  private readonly sent = new Set<string>();
   private failures = 0;
   private blocked: Promise<void> | undefined;
 
@@ -105,7 +116,26 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
       this.failures -= 1;
       throw new StaffNotificationUnavailableError();
     }
+    // A retry of a delivery this provider has already made is acknowledged and
+    // not repeated. That is what makes "at least once" safe to build on: the
+    // sender may lose an acknowledgement and try again, and the recipient still
+    // sees one message.
+    if (message.kind === 'password_reset') {
+      this.attempted.push(message);
+      if (this.sent.has(message.deliveryId)) return;
+      this.sent.add(message.deliveryId);
+    }
     this.delivered.push(message);
+  }
+
+  /** How many messages a recipient actually saw, ignoring accepted retries. */
+  visibleCount(): number {
+    return this.delivered.filter((message) => message.kind === 'password_reset').length;
+  }
+
+  /** Every attempt, including the ones this provider recognised as retries. */
+  attempts(): readonly PasswordResetMessage[] {
+    return [...this.attempted];
   }
 
   /** Every message delivered so far, oldest first. */
@@ -143,6 +173,8 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
 
   reset(): void {
     this.delivered.length = 0;
+    this.attempted.length = 0;
+    this.sent.clear();
     this.failures = 0;
     this.blocked = undefined;
   }

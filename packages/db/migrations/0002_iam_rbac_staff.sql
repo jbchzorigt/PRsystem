@@ -361,6 +361,20 @@ CREATE TABLE platform.password_reset_request (
   expires_at               timestamptz NOT NULL,
   terminal_at              timestamptz,
   terminal_reason          text,
+  -- The durable delivery intent, recorded with the reset and before the
+  -- provider is contacted.
+  --
+  -- `delivery_id` is the stable identity a retry carries, so a lost
+  -- acknowledgement costs a repeat attempt rather than a second visible link.
+  -- The one-time secret is held under envelope encryption with its key version
+  -- and AAD (ADR-0020 §2–§4) because delivery happens after this transaction
+  -- commits and the value has to be recoverable — never in plaintext, and
+  -- destroyed once the provider has accepted it.
+  delivery_id              uuid NOT NULL DEFAULT gen_random_uuid(),
+  secret_ciphertext        text,
+  secret_wrapped_dek       text,
+  secret_key_version       text,
+  delivered_at             timestamptz,
   CONSTRAINT password_reset_request_account_id_fkey FOREIGN KEY (account_id)
     REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
   CONSTRAINT password_reset_request_initiator_fkey FOREIGN KEY (initiated_by_account_id)
@@ -375,7 +389,11 @@ CREATE TABLE platform.password_reset_request (
                               'EXPIRED'::text, 'REVOKED'::text])),
   CONSTRAINT password_reset_request_terminal_has_time
     CHECK ((state = 'ACTIVE'::text) = (terminal_at IS NULL)),
+  CONSTRAINT password_reset_request_secret_complete
+    CHECK (num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY
+           (ARRAY[0, 3])),
   CONSTRAINT password_reset_request_token_shape CHECK (token_hash ~ '^[0-9a-f]{64}$'::text),
+  CONSTRAINT password_reset_request_delivery_uq UNIQUE (delivery_id),
   CONSTRAINT password_reset_request_token_uq UNIQUE (token_hash)
 );
 --> statement-breakpoint
@@ -403,27 +421,63 @@ CREATE UNIQUE INDEX password_reset_request_one_active_uq
 CREATE TABLE platform.password_reset_intake (
   intake_id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email_normalized text NOT NULL,
+  -- Who asked. The public surface is always `self`; a Hotel Admin sending the
+  -- link on someone's behalf (doc 19 §6) goes through the same queue, because
+  -- two delivery mechanisms would mean two ways to hold a live link — but the
+  -- attribution travels with the entry so the reset it produces still records
+  -- who initiated it.
+  initiated_by     text NOT NULL DEFAULT 'self',
+  initiated_by_account_id uuid,
   state            text NOT NULL DEFAULT 'PENDING',
   attempts         integer NOT NULL DEFAULT 0,
   outcome          text,
+  last_error       text,
+  -- The lease. A worker takes an entry by writing a token it alone knows and an
+  -- expiry; every settlement is a compare-and-set on that token. `SKIP LOCKED`
+  -- alone was not ownership — it held the row only for the length of the
+  -- selecting transaction, which committed before any delivery was attempted,
+  -- so two workers could each believe they had it.
+  claim_token      uuid,
+  lease_expires_at timestamptz,
+  -- When this entry may next be attempted. A transient failure moves it here
+  -- rather than to a terminal state, so an unreachable provider costs a delay
+  -- rather than a lost link.
+  next_attempt_at  timestamptz NOT NULL DEFAULT now(),
   requested_at     timestamptz NOT NULL DEFAULT now(),
   processed_at     timestamptz,
+  CONSTRAINT password_reset_intake_initiator_fkey FOREIGN KEY (initiated_by_account_id)
+    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
   CONSTRAINT password_reset_intake_attempts_non_negative CHECK (attempts >= 0),
   CONSTRAINT password_reset_intake_email_normalised
     CHECK (email_normalized = lower(email_normalized)),
+  CONSTRAINT password_reset_intake_initiator_known
+    CHECK (initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text])),
+  CONSTRAINT password_reset_intake_initiator_recorded
+    CHECK ((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL)),
+  CONSTRAINT password_reset_intake_lease_paired
+    CHECK ((claim_token IS NULL) = (lease_expires_at IS NULL)),
+  CONSTRAINT password_reset_intake_claim_is_leased
+    CHECK ((state = 'CLAIMED'::text) = (claim_token IS NOT NULL)),
   -- The outcome vocabulary is closed, and none of its values is ever returned to
   -- the requester: it exists so an operator can see that the queue is draining.
   CONSTRAINT password_reset_intake_outcome_known
     CHECK ((outcome IS NULL) OR (outcome = ANY (ARRAY['sent'::text, 'ignored'::text,
-                                                      'throttled'::text, 'unavailable'::text]))),
+                                                      'throttled'::text, 'unavailable'::text,
+                                                      'dead_letter'::text]))),
   CONSTRAINT password_reset_intake_processed_has_time
-    CHECK ((state = 'PROCESSED'::text) = (processed_at IS NOT NULL)),
+    CHECK ((state = ANY (ARRAY['PROCESSED'::text, 'DEAD_LETTER'::text]))
+           = (processed_at IS NOT NULL)),
   CONSTRAINT password_reset_intake_state_known
-    CHECK (state = ANY (ARRAY['PENDING'::text, 'PROCESSED'::text]))
+    CHECK (state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text, 'PROCESSED'::text,
+                              'DEAD_LETTER'::text]))
 );
 --> statement-breakpoint
 CREATE INDEX password_reset_intake_queue_idx
-  ON platform.password_reset_intake (state, requested_at);
+  ON platform.password_reset_intake (state, next_attempt_at);
+--> statement-breakpoint
+CREATE INDEX password_reset_intake_lease_idx
+  ON platform.password_reset_intake (lease_expires_at)
+  WHERE state = 'CLAIMED'::text;
 --> statement-breakpoint
 
 -- ------------------------------------------------ explicit permission grants
@@ -630,38 +684,55 @@ CREATE INDEX work_handoff_item_queue_idx
 -- treating an unanswerable provider as "no open work" — from ever being what
 -- happens by default.
 CREATE TABLE platform.work_handoff_discovery (
-  discovery_id     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  hotel_id         uuid NOT NULL,
-  membership_id    uuid NOT NULL,
-  opened_reason    text NOT NULL,
-  state            text NOT NULL DEFAULT 'PENDING',
-  attempts         integer NOT NULL DEFAULT 0,
-  last_error       text,
+  discovery_id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  hotel_id            uuid NOT NULL,
+  membership_id       uuid NOT NULL,
+  opened_reason       text NOT NULL,
+  -- The state and revision this marker was raised against. A marker describes
+  -- *one* transition of one membership, not the membership: a reactivation
+  -- moves the row on, and the marker that described the suspension before it is
+  -- stale from that moment. Without both, reconciliation could later hand a
+  -- working employee's shift to somebody else.
+  expected_state      text NOT NULL,
+  membership_revision integer NOT NULL,
+  state               text NOT NULL DEFAULT 'PENDING',
+  attempts            integer NOT NULL DEFAULT 0,
+  last_error          text,
   -- The suspension's own idempotency key. Every retry derives the handoff
   -- items' keys from it, so a second attempt reopens nothing.
-  idempotency_seed text NOT NULL,
-  created_at       timestamptz NOT NULL DEFAULT now(),
-  updated_at       timestamptz NOT NULL DEFAULT now(),
-  completed_at     timestamptz,
+  idempotency_seed    text NOT NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  settled_at          timestamptz,
+  settled_reason      text,
   CONSTRAINT work_handoff_discovery_membership_fkey FOREIGN KEY (hotel_id, membership_id)
     REFERENCES platform.staff_membership (hotel_id, membership_id) ON DELETE RESTRICT,
   CONSTRAINT work_handoff_discovery_attempts_non_negative CHECK (attempts >= 0),
-  CONSTRAINT work_handoff_discovery_completed_has_time
-    CHECK ((state = 'COMPLETED'::text) = (completed_at IS NOT NULL)),
+  CONSTRAINT work_handoff_discovery_expected_state_known
+    CHECK (expected_state = ANY (ARRAY['SUSPENDED'::text, 'TERMINATED'::text])),
   CONSTRAINT work_handoff_discovery_reason_known
     CHECK (opened_reason = ANY (ARRAY['suspension'::text, 'termination'::text])),
+  -- The reason and the state it expects are two spellings of one fact, so they
+  -- cannot drift apart.
+  CONSTRAINT work_handoff_discovery_reason_matches_state
+    CHECK (((opened_reason = 'suspension'::text) AND (expected_state = 'SUSPENDED'::text))
+        OR ((opened_reason = 'termination'::text) AND (expected_state = 'TERMINATED'::text))),
+  CONSTRAINT work_handoff_discovery_revision_non_negative CHECK (membership_revision >= 0),
   CONSTRAINT work_handoff_discovery_seed_shape
     CHECK (length(idempotency_seed) BETWEEN 8 AND 200),
+  CONSTRAINT work_handoff_discovery_settled_has_time
+    CHECK ((state <> 'PENDING'::text) = (settled_at IS NOT NULL)),
   CONSTRAINT work_handoff_discovery_state_known
-    CHECK (state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text])),
+    CHECK (state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text, 'SUPERSEDED'::text])),
   CONSTRAINT work_handoff_discovery_scope_uq UNIQUE (hotel_id, discovery_id)
 );
 --> statement-breakpoint
--- One open marker per membership: repeated attempts advance the same row rather
--- than queueing a second enumeration of the same person's work.
+-- One *open* marker per membership. A settled one — completed or superseded —
+-- does not block the next suspension from raising its own, which is what makes
+-- a later termination a new question rather than a reuse of the old one.
 CREATE UNIQUE INDEX work_handoff_discovery_open_uq
   ON platform.work_handoff_discovery (hotel_id, membership_id)
-  WHERE state <> 'COMPLETED'::text;
+  WHERE state = 'PENDING'::text;
 --> statement-breakpoint
 CREATE INDEX work_handoff_discovery_queue_idx
   ON platform.work_handoff_discovery (hotel_id, state, created_at);
@@ -898,7 +969,8 @@ BEGIN
      OR NEW.initiated_by IS DISTINCT FROM OLD.initiated_by
      OR NEW.initiated_by_account_id IS DISTINCT FROM OLD.initiated_by_account_id
      OR NEW.created_at IS DISTINCT FROM OLD.created_at
-     OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
+     OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
+     OR NEW.delivery_id IS DISTINCT FROM OLD.delivery_id THEN
     RAISE EXCEPTION 'a reset request is immutable apart from its terminal state'
       USING ERRCODE = '42501';
   END IF;
@@ -907,9 +979,25 @@ BEGIN
     RAISE EXCEPTION 'reset request % is already %', OLD.reset_id, OLD.state
       USING ERRCODE = '22023';
   END IF;
+
+  -- Delivery bookkeeping, while the request is still live. The delivery of a
+  -- link is not a state change of the link: recording that the provider took it,
+  -- and destroying the ciphertext once it has, both leave the request ACTIVE.
   IF NEW.state = 'ACTIVE'::text THEN
-    RAISE EXCEPTION 'the only update to a reset request is its terminal transition'
-      USING ERRCODE = '22023';
+    IF OLD.delivered_at IS NOT NULL AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at THEN
+      RAISE EXCEPTION 'a delivery is recorded once' USING ERRCODE = '22023';
+    END IF;
+    IF NEW.delivered_at IS NULL AND OLD.delivered_at IS NOT NULL THEN
+      RAISE EXCEPTION 'a recorded delivery is not unrecorded' USING ERRCODE = '42501';
+    END IF;
+    -- The stored secret may only be destroyed, never rewritten: a ciphertext
+    -- that could be replaced is a link that could be replaced.
+    IF NEW.secret_ciphertext IS NOT NULL
+       AND OLD.secret_ciphertext IS DISTINCT FROM NEW.secret_ciphertext THEN
+      RAISE EXCEPTION 'a stored delivery secret is destroyed, never rewritten'
+        USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
   END IF;
 
   RETURN NEW;
@@ -1106,8 +1194,14 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  IF OLD.state = 'COMPLETED'::text THEN
-    RAISE EXCEPTION 'handoff discovery % is already completed', OLD.discovery_id
+  IF NEW.expected_state IS DISTINCT FROM OLD.expected_state
+     OR NEW.membership_revision IS DISTINCT FROM OLD.membership_revision THEN
+    RAISE EXCEPTION 'a discovery marker is bound to one revision of one membership'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.state <> 'PENDING'::text THEN
+    RAISE EXCEPTION 'handoff discovery % is already %', OLD.discovery_id, OLD.state
       USING ERRCODE = '22023';
   END IF;
   IF NEW.attempts < OLD.attempts THEN
@@ -1127,6 +1221,8 @@ CREATE OR REPLACE FUNCTION platform.password_reset_intake_guard() RETURNS trigge
 BEGIN
   IF NEW.intake_id IS DISTINCT FROM OLD.intake_id
      OR NEW.email_normalized IS DISTINCT FROM OLD.email_normalized
+     OR NEW.initiated_by IS DISTINCT FROM OLD.initiated_by
+     OR NEW.initiated_by_account_id IS DISTINCT FROM OLD.initiated_by_account_id
      OR NEW.requested_at IS DISTINCT FROM OLD.requested_at THEN
     RAISE EXCEPTION 'a reset intake records the address it was queued for, and is not rewritten'
       USING ERRCODE = '42501';

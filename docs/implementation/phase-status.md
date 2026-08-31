@@ -35,7 +35,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
-| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1 and 2 | the Phase 04 battery — counts in [Phase 04 remediation 2](#phase-04-remediation-2) | see the Phase 04 record and the two remediations |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–3 | the Phase 04 battery — counts in [Phase 04 remediation 3](#phase-04-remediation-3) | see the Phase 04 record and the three remediations |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
@@ -2093,3 +2093,129 @@ reconciliation.** Both processors exist, are durable and are tested; neither has
 a scheduled invoker yet. The drain's belongs with the email provider it would
 deliver through, and the reconciliation's with the modules that own the work it
 would enumerate — both of which are the phases already named above.
+
+---
+
+## Phase 04 remediation 3
+
+The final bounded remediation, on top of `6c20d99`. Three defects, all in work
+the previous two remediations introduced. Phase 04 stays `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`; Phase 03 is untouched and Phase 05 has not
+started.
+
+Reproduced first, in `apps/api/src/modules/iam/iam.remediation3.test.ts`:
+**11 of 12 failed** against `6c20d99`. The twelfth — two concurrent drains
+sharing one intake — *passed* by luck, which is the defect: `SKIP LOCKED` made
+the outcome a race rather than a rule, and only the leased claim below makes it
+deterministic.
+
+### R1-A — a derived idempotency key that did not fit
+
+A client key may legally be 200 characters, which is also the column's limit.
+The implementation appended `:discovery`, and later `:${kind}:${ref}`, so a
+perfectly valid request produced an internal key the database refused. Because
+that refusal surfaced inside a best-effort retry it was swallowed: the
+suspension committed and its discovery stayed `PENDING` forever.
+
+Every internal key is now derived through one helper. It digests
+length-prefixed components with SHA-256 behind a versioned, human-readable
+operation tag — fixed length, always inside 8–200, deterministic,
+collision-resistant, and unambiguous, so `("ab","c")` and `("a","bc")` are
+different keys. Nothing is truncated: trimming a caller's key to fit would make
+two different requests collide, which is worse than the error it replaced.
+
+### R1-B — a marker that outlived the state it described
+
+A `PENDING` discovery marker survived reactivation, and reconciliation checked
+neither membership state nor revision. A recovered provider could therefore hand
+an **active employee's** shift to a replacement, and a later termination reused
+the suspension's marker, reason and seed.
+
+A marker now carries the `expected_state` and the `membership_revision` it was
+raised against, paired by a CHECK to the reason it records. Reconciliation locks
+the membership first and compares both; a mismatch supersedes the marker and
+creates nothing. Reactivation supersedes its own pending marker in the same
+transaction as the state change. The open-marker index is now partial on
+`PENDING`, so a settled marker no longer blocks the next transition from raising
+its own — a later termination gets a new marker with its own revision, reason
+and seed. Markers are still append-only: superseding is a transition, and no
+past security event is rewritten.
+
+### R4 — a queue that was neither owned nor durable
+
+Four defects in one path. `claimResetIntake` only held a row for the length of
+the selecting transaction, which committed before any delivery, so two workers
+could each believe they owned one entry. A provider failure was terminalised as
+`PROCESSED/unavailable`, so nothing ever retried it. And delivery happened
+inside the transaction that recorded the reset, so a provider that accepted a
+link the transaction then failed to commit sent a link to nothing.
+
+The claim is now a single `UPDATE` that writes a `claim_token` and a lease
+expiry; every settlement is a compare-and-set on that token with its affected-row
+count asserted, so a worker whose lease was reclaimed writes nothing — including
+no second settlement audit. An expired lease is reclaimable. A provider or
+infrastructure failure returns the entry to `PENDING` behind an exponential,
+capped backoff; `ignored` and `throttled` stay terminal, because they are
+decisions rather than outages. After a bounded number of attempts the entry
+becomes an operator-visible `DEAD_LETTER`.
+
+The reset and its delivery intent are committed **before** the provider is
+contacted. The one-time secret is held under envelope encryption with its key
+version and an AAD binding it to that row, column and id — under its own
+`auth.delivery_secret` key scope — and destroyed once the provider has accepted
+it. Every delivery carries a stable `delivery_id`; the port and its simulator
+treat a repeat of that id as already sent, so a delivery whose acknowledgement
+was lost is retried under the same identity and the recipient still sees one
+message. The lease, retry, backoff and dead-letter numbers are provisional and
+versioned with the rest of P1-06; none is a customer-approved value.
+
+The Hotel-Admin-initiated reset now goes through the same queue, because two
+delivery mechanisms would be two ways to hold a live link. Its attribution
+travels on the intake, so the reset it produces still records who initiated it.
+
+### Migration path
+
+`0002_iam_rbac_staff.sql` corrected in place once more — Phase 04 is unaccepted
+and undeployed, so the delta stays exactly one migration. `0000_baseline` and
+`0001_kernel` are untouched and still checksum-pinned. The upgrade gate again
+runs the frozen accepted Phase 03 state (0 → 2) plus only the Phase 04 migration
+(2 → 3), a repeat that applies nothing, and fresh/upgrade schema equality.
+
+### Test gates — Phase 04 remediation 3
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 114 of 114 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
+| `node tools/scan-secrets.mjs` | 386 indexed files, none reported |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 17 of 17 projects |
+| `pnpm run typecheck` | 27 of 27 graphs |
+| `pnpm run test:unit` | 1 246 across 11 projects |
+| `pnpm run test:migrations` | 142 |
+| `pnpm run test:integration` | 129 — db 41, outbox 5, api 83 |
+| `pnpm run test:concurrency` | 26 — db 16, api 10 |
+| `pnpm run test:regression` | 51 |
+| `pnpm run test:security` | 18 of 18 sub-gates, 637 tests |
+| `pnpm run test:e2e` | 15 |
+| `pnpm run build` | 17 of 17 projects |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | none at high or critical; one moderate, `DSR-01` |
+| `git diff --check` | clean |
+
+### Carried forward — unchanged
+
+`INT-MAIL-01`; the Phase 05 subscription contract; the Phase 15 restaurant
+directory; the Phase 09/11/15 open-work providers; 17 P1 configuration items,
+now including the reset lease, retry and dead-letter numbers; 11 EXT gates
+seeded closed; `DSR-01` OPEN and contained with its Phase 23 review; `GATE-SEC`
+as a required GitHub status check, needing push authorisation and not attempted;
+and the scheduled invokers for the reset drain and the discovery reconciliation,
+which land with the phases that own what they call.

@@ -60,6 +60,21 @@ export interface AuthSecurityParameters {
   /** Minimum length of a user-created password. */
   readonly passwordMinimumLength: number;
   readonly passwordMaximumLength: number;
+  /**
+   * How long one worker owns a claimed reset-delivery entry before another may
+   * reclaim it. Long enough that an ordinary delivery finishes inside it; short
+   * enough that a worker that died does not strand the entry.
+   */
+  readonly passwordResetLeaseSeconds: number;
+  /**
+   * Deliveries attempted before an entry is dead-lettered for an operator.
+   * Bounded on purpose: an address the provider never accepts must stop being
+   * retried and start being visible.
+   */
+  readonly passwordResetDeliveryMaxAttempts: number;
+  /** Backoff base, doubled per attempt and capped by the ceiling below. */
+  readonly passwordResetRetryBackoffSeconds: number;
+  readonly passwordResetRetryBackoffCeilingSeconds: number;
 }
 
 /**
@@ -93,6 +108,13 @@ export const AUTH_SECURITY_PARAMETERS: AuthSecurityParameters = {
   tokenRequestWindowSeconds: 60 * 60,
   passwordMinimumLength: 12,
   passwordMaximumLength: 256,
+  // Provisional like everything else here: doc 19 §14 leaves the retry and
+  // lease numbers open with the rest of P1-06, and nothing below is an approved
+  // customer decision.
+  passwordResetLeaseSeconds: 2 * 60,
+  passwordResetDeliveryMaxAttempts: 5,
+  passwordResetRetryBackoffSeconds: 30,
+  passwordResetRetryBackoffCeilingSeconds: 15 * 60,
 };
 
 /**

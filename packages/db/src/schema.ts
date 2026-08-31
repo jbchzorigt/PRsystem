@@ -1052,12 +1052,19 @@ export const passwordResetRequest = platform.table(
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .default(sql`now()`),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .default(sql`gen_random_uuid()`),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     initiatedBy: text('initiated_by').notNull(),
     initiatedByAccountId: uuid('initiated_by_account_id'),
     resetId: uuid('reset_id')
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    secretCiphertext: text('secret_ciphertext'),
+    secretKeyVersion: text('secret_key_version'),
+    secretWrappedDek: text('secret_wrapped_dek'),
     state: text('state')
       .notNull()
       .default(sql`'ACTIVE'::text`),
@@ -1077,6 +1084,10 @@ export const passwordResetRequest = platform.table(
       sql`((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL))`,
     ),
     check(
+      'password_reset_request_secret_complete',
+      sql`(num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY (ARRAY[0, 3]))`,
+    ),
+    check(
       'password_reset_request_state_known',
       sql`(state = ANY (ARRAY['ACTIVE'::text, 'USED'::text, 'SUPERSEDED'::text, 'EXPIRED'::text, 'REVOKED'::text]))`,
     ),
@@ -1085,6 +1096,7 @@ export const passwordResetRequest = platform.table(
       sql`((state = 'ACTIVE'::text) = (terminal_at IS NULL))`,
     ),
     check('password_reset_request_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+    unique('password_reset_request_delivery_uq').on(table.deliveryId),
     unique('password_reset_request_token_uq').on(table.tokenHash),
     foreignKey({
       name: 'password_reset_request_account_id_fkey',
@@ -1108,10 +1120,20 @@ export const passwordResetIntake = platform.table(
     attempts: integer('attempts')
       .notNull()
       .default(sql`0`),
+    claimToken: uuid('claim_token'),
     emailNormalized: text('email_normalized').notNull(),
+    initiatedBy: text('initiated_by')
+      .notNull()
+      .default(sql`'self'::text`),
+    initiatedByAccountId: uuid('initiated_by_account_id'),
     intakeId: uuid('intake_id')
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    lastError: text('last_error'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
     outcome: text('outcome'),
     processedAt: timestamp('processed_at', { withTimezone: true }),
     requestedAt: timestamp('requested_at', { withTimezone: true })
@@ -1128,18 +1150,42 @@ export const passwordResetIntake = platform.table(
       sql`(email_normalized = lower(email_normalized))`,
     ),
     check(
+      'password_reset_intake_claim_is_leased',
+      sql`((state = 'CLAIMED'::text) = (claim_token IS NOT NULL))`,
+    ),
+    check(
+      'password_reset_intake_initiator_known',
+      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text]))`,
+    ),
+    check(
+      'password_reset_intake_initiator_recorded',
+      sql`((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL))`,
+    ),
+    check(
+      'password_reset_intake_lease_paired',
+      sql`((claim_token IS NULL) = (lease_expires_at IS NULL))`,
+    ),
+    check(
       'password_reset_intake_outcome_known',
-      sql`((outcome IS NULL) OR (outcome = ANY (ARRAY['sent'::text, 'ignored'::text, 'throttled'::text, 'unavailable'::text])))`,
+      sql`((outcome IS NULL) OR (outcome = ANY (ARRAY['sent'::text, 'ignored'::text, 'throttled'::text, 'unavailable'::text, 'dead_letter'::text])))`,
     ),
     check(
       'password_reset_intake_processed_has_time',
-      sql`((state = 'PROCESSED'::text) = (processed_at IS NOT NULL))`,
+      sql`((state = ANY (ARRAY['PROCESSED'::text, 'DEAD_LETTER'::text])) = (processed_at IS NOT NULL))`,
     ),
     check(
       'password_reset_intake_state_known',
-      sql`(state = ANY (ARRAY['PENDING'::text, 'PROCESSED'::text]))`,
+      sql`(state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text, 'PROCESSED'::text, 'DEAD_LETTER'::text]))`,
     ),
-    index('password_reset_intake_queue_idx').on(table.state, table.requestedAt),
+    foreignKey({
+      name: 'password_reset_intake_initiator_fkey',
+      columns: [table.initiatedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    index('password_reset_intake_queue_idx').on(table.state, table.nextAttemptAt),
+    index('password_reset_intake_lease_idx')
+      .on(table.leaseExpiresAt)
+      .where(sql`state = 'CLAIMED'::text`),
   ],
 );
 
@@ -1150,18 +1196,21 @@ export const workHandoffDiscovery = platform
       attempts: integer('attempts')
         .notNull()
         .default(sql`0`),
-      completedAt: timestamp('completed_at', { withTimezone: true }),
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .default(sql`now()`),
       discoveryId: uuid('discovery_id')
         .primaryKey()
         .default(sql`gen_random_uuid()`),
+      expectedState: text('expected_state').notNull(),
       hotelId: uuid('hotel_id').notNull(),
       idempotencySeed: text('idempotency_seed').notNull(),
       lastError: text('last_error'),
       membershipId: uuid('membership_id').notNull(),
+      membershipRevision: integer('membership_revision').notNull(),
       openedReason: text('opened_reason').notNull(),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      settledReason: text('settled_reason'),
       state: text('state')
         .notNull()
         .default(sql`'PENDING'::text`),
@@ -1172,20 +1221,29 @@ export const workHandoffDiscovery = platform
     (table) => [
       check('work_handoff_discovery_attempts_non_negative', sql`(attempts >= 0)`),
       check(
-        'work_handoff_discovery_completed_has_time',
-        sql`((state = 'COMPLETED'::text) = (completed_at IS NOT NULL))`,
+        'work_handoff_discovery_expected_state_known',
+        sql`(expected_state = ANY (ARRAY['SUSPENDED'::text, 'TERMINATED'::text]))`,
       ),
       check(
         'work_handoff_discovery_reason_known',
         sql`(opened_reason = ANY (ARRAY['suspension'::text, 'termination'::text]))`,
       ),
       check(
+        'work_handoff_discovery_reason_matches_state',
+        sql`(((opened_reason = 'suspension'::text) AND (expected_state = 'SUSPENDED'::text)) OR ((opened_reason = 'termination'::text) AND (expected_state = 'TERMINATED'::text)))`,
+      ),
+      check('work_handoff_discovery_revision_non_negative', sql`(membership_revision >= 0)`),
+      check(
         'work_handoff_discovery_seed_shape',
         sql`((length(idempotency_seed) >= 8) AND (length(idempotency_seed) <= 200))`,
       ),
       check(
+        'work_handoff_discovery_settled_has_time',
+        sql`((state <> 'PENDING'::text) = (settled_at IS NOT NULL))`,
+      ),
+      check(
         'work_handoff_discovery_state_known',
-        sql`(state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text]))`,
+        sql`(state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text, 'SUPERSEDED'::text]))`,
       ),
       unique('work_handoff_discovery_scope_uq').on(table.hotelId, table.discoveryId),
       foreignKey({
@@ -1196,7 +1254,7 @@ export const workHandoffDiscovery = platform
       index('work_handoff_discovery_queue_idx').on(table.hotelId, table.state, table.createdAt),
       uniqueIndex('work_handoff_discovery_open_uq')
         .on(table.hotelId, table.membershipId)
-        .where(sql`state <> 'COMPLETED'::text`),
+        .where(sql`state = 'PENDING'::text`),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,

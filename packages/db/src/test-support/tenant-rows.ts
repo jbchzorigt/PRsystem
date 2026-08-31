@@ -303,8 +303,9 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
               RETURNING membership_id
             )
             INSERT INTO platform.work_handoff_discovery
-              (hotel_id, membership_id, opened_reason, idempotency_seed)
-            SELECT $1, mem.membership_id, 'suspension', $3 FROM mem`,
+              (hotel_id, membership_id, opened_reason, expected_state, membership_revision,
+               idempotency_seed)
+            SELECT $1, mem.membership_id, 'suspension', 'SUSPENDED', 1, $3 FROM mem`,
       values: [
         hotelId,
         `fixture-discovery-${String(n)}@example.test`,

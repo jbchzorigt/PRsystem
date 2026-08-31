@@ -66,7 +66,11 @@ export interface HandoffDiscoveryRow {
   readonly hotelId: string;
   readonly membershipId: string;
   readonly openedReason: 'suspension' | 'termination';
-  readonly state: 'PENDING' | 'COMPLETED';
+  /** The membership state this marker was raised against. */
+  readonly expectedState: 'SUSPENDED' | 'TERMINATED';
+  /** The revision it was raised against. A later transition invalidates it. */
+  readonly membershipRevision: number;
+  readonly state: 'PENDING' | 'COMPLETED' | 'SUPERSEDED';
   readonly attempts: number;
   readonly idempotencySeed: string;
 }
@@ -78,14 +82,16 @@ function mapDiscovery(row: Record<string, unknown> | undefined): HandoffDiscover
     hotelId: String(row['hotel_id']),
     membershipId: String(row['membership_id']),
     openedReason: row['opened_reason'] as 'suspension' | 'termination',
-    state: row['state'] as 'PENDING' | 'COMPLETED',
+    expectedState: row['expected_state'] as 'SUSPENDED' | 'TERMINATED',
+    membershipRevision: Number(row['membership_revision']),
+    state: row['state'] as 'PENDING' | 'COMPLETED' | 'SUPERSEDED',
     attempts: Number(row['attempts']),
     idempotencySeed: String(row['idempotency_seed']),
   };
 }
 
-const DISCOVERY_COLUMNS = `discovery_id, hotel_id, membership_id, opened_reason, state,
-                           attempts, idempotency_seed`;
+const DISCOVERY_COLUMNS = `discovery_id, hotel_id, membership_id, opened_reason, expected_state,
+                           membership_revision, state, attempts, idempotency_seed`;
 
 /**
  * The durable marker that a suspended membership's open work still has to be
@@ -110,23 +116,62 @@ export class HandoffDiscoveryRepository extends ScopedRepository {
   async open(input: {
     membershipId: string;
     openedReason: 'suspension' | 'termination';
+    expectedState: 'SUSPENDED' | 'TERMINATED';
+    membershipRevision: number;
     idempotencySeed: string;
   }): Promise<HandoffDiscoveryRow> {
     await this.uow.query(
       `INSERT INTO platform.work_handoff_discovery
-         (hotel_id, membership_id, opened_reason, idempotency_seed)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (hotel_id, membership_id) WHERE state <> 'COMPLETED' DO NOTHING`,
-      [this.hotelId, input.membershipId, input.openedReason, input.idempotencySeed],
+         (hotel_id, membership_id, opened_reason, expected_state, membership_revision,
+          idempotency_seed)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (hotel_id, membership_id) WHERE state = 'PENDING' DO NOTHING`,
+      [
+        this.hotelId,
+        input.membershipId,
+        input.openedReason,
+        input.expectedState,
+        input.membershipRevision,
+        input.idempotencySeed,
+      ],
     );
     const existing = await this.uow.query<Record<string, unknown>>(
       `SELECT ${DISCOVERY_COLUMNS} FROM platform.work_handoff_discovery
-        WHERE hotel_id = $1 AND membership_id = $2 AND state <> 'COMPLETED'`,
+        WHERE hotel_id = $1 AND membership_id = $2 AND state = 'PENDING'`,
       [this.hotelId, input.membershipId],
     );
     const row = mapDiscovery(existing.rows[0]);
     if (row === undefined) throw new Error('the discovery marker insert returned no row');
     return row;
+  }
+
+  /**
+   * Settles every open marker for one membership as superseded.
+   *
+   * Called by a reactivation, in the same transaction as the state change: the
+   * moment the person is working again, the question their suspension raised is
+   * no longer a question anybody should answer.
+   */
+  async supersedeOpen(membershipId: string, reason: string): Promise<number> {
+    const result = await this.uow.query(
+      `UPDATE platform.work_handoff_discovery
+          SET state = 'SUPERSEDED', settled_at = now(), settled_reason = $3, updated_at = now()
+        WHERE hotel_id = $1 AND membership_id = $2 AND state = 'PENDING'`,
+      [this.hotelId, membershipId, reason],
+    );
+    return result.rowCount;
+  }
+
+  /** Settles one marker as superseded. Terminal, and it creates nothing. */
+  async supersede(discoveryId: string, reason: string): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.work_handoff_discovery
+          SET state = 'SUPERSEDED', settled_at = now(), settled_reason = $3,
+              attempts = attempts + 1, updated_at = now()
+        WHERE hotel_id = $1 AND discovery_id = $2 AND state = 'PENDING'`,
+      [this.hotelId, discoveryId, reason],
+    );
+    return result.rowCount === 1;
   }
 
   /** Every marker still awaiting enumeration, optionally for one membership. */
@@ -156,7 +201,7 @@ export class HandoffDiscoveryRepository extends ScopedRepository {
   async complete(discoveryId: string): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.work_handoff_discovery
-          SET state = 'COMPLETED', completed_at = now(),
+          SET state = 'COMPLETED', settled_at = now(),
               attempts = attempts + 1, last_error = NULL, updated_at = now()
         WHERE hotel_id = $1 AND discovery_id = $2 AND state = 'PENDING'`,
       [this.hotelId, discoveryId],

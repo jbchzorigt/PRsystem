@@ -8,7 +8,7 @@ import {
   completeIdempotencyKey,
   recordPlatformAudit,
 } from '@prsystem/db';
-import type { ResetIntakeOutcome } from '../repositories/account.repository';
+import type { ResetIntakeOutcome, ResetIntakeRow } from '../repositories/account.repository';
 import { AccountRepository, normaliseEmail } from '../repositories/account.repository';
 import type { InvitationRow, MembershipRow } from '../repositories/membership.repository';
 import { MembershipRepository } from '../repositories/membership.repository';
@@ -17,7 +17,11 @@ import type { CommandActor, HotelGate, IamDependencies, RequestContext } from '.
 import { IamServiceBase, establishAccountScope, newRequestContext } from './iam-context';
 import { HandoffService } from './handoff.service';
 import { HandoffDiscoveryRepository } from '../repositories/handoff.repository';
+import { derivedIdempotencyKey } from './derived-key';
 import { assertPasswordAcceptable, derivePassword } from './password.service';
+import { randomUUID } from 'node:crypto';
+import type { KeyScope } from '@prsystem/ports';
+import { decryptValue, encryptValue } from '@prsystem/ports';
 
 /**
  * The staff lifecycle (doc 19, `STAFF-DEC-001`…`009`).
@@ -620,7 +624,7 @@ export class StaffService extends IamServiceBase {
         {
           hotelId: input.hotelId,
           membershipId: input.membershipId,
-          idempotencyKey: `${input.idempotencyKey}:discovery`,
+          idempotencyKey: derivedIdempotencyKey('handoff.discovery', input.idempotencyKey),
         },
         request,
       );
@@ -694,9 +698,17 @@ export class StaffService extends IamServiceBase {
         // the security effect it belongs to, and answering it is a separate
         // retryable step. The marker is what keeps the third possibility — an
         // unreachable provider quietly meaning "no open work" — off the table.
+        //
+        // Bound to the revision this very transition produced, and to the state
+        // it produced. `transition` advances the revision by exactly one, so a
+        // later reactivation or termination makes this marker recognisably
+        // stale rather than silently applicable to whatever the membership
+        // became.
         await new HandoffDiscoveryRepository(uow).open({
           membershipId: membership.membershipId,
           openedReason: input.state === 'SUSPENDED' ? 'suspension' : 'termination',
+          expectedState: input.state,
+          membershipRevision: membership.membershipRevision + 1,
           idempotencySeed: input.idempotencyKey,
         });
         discoveryOpened = true;
@@ -707,6 +719,12 @@ export class StaffService extends IamServiceBase {
         // restores an old session — the scope grants stay revoked and the holder
         // signs in again.
         await memberships.revokeScopeGrants(membership.membershipId, 'reactivated');
+        // And the suspension's unanswered question is closed in the same
+        // transaction. The person is working; their work is theirs.
+        await new HandoffDiscoveryRepository(uow).supersedeOpen(
+          membership.membershipId,
+          'membership_reactivated',
+        );
       }
 
       await recordPlatformAudit(uow, {
@@ -775,58 +793,256 @@ export class StaffService extends IamServiceBase {
    * Drains the queued public reset requests.
    *
    * Everything the public path deliberately does not do: resolve the address,
-   * apply the resend interval, supersede a live token, mint a new one and hand
-   * it to the provider. Each entry is settled in its own transaction, so one
-   * unreachable delivery neither rolls back another nor blocks the queue, and
-   * every entry is settled exactly once whatever the outcome.
+   * apply the resend interval, record the reset and its delivery intent, hand
+   * the link to the provider and acknowledge it. Each entry is *owned* through a
+   * lease before any of that starts, and every settlement is a compare-and-set
+   * on the lease token, so two workers can drain at once and one entry is still
+   * processed once.
    *
-   * Invoked by the scheduled job that lands with the email provider; until then
-   * the only sender is a simulator, and `INT-MAIL-01` still records the gap.
+   * Invoked by the scheduled worker that lands with the email provider; until
+   * then the only sender is a simulator and `INT-MAIL-01` still records the gap.
    */
   async drainPasswordResetIntake(limit = 32): Promise<number> {
     const request = newRequestContext();
+    const parameters = this.parameters;
     const claimed = await this.inAccountScope(request, (uow) =>
-      new AccountRepository(uow).claimResetIntake(limit),
+      new AccountRepository(uow).claimResetIntake(limit, parameters.passwordResetLeaseSeconds),
     );
 
     let processed = 0;
     for (const entry of claimed) {
-      const outcome = await this.processResetIntake(entry.emailNormalized, request);
-      await this.inAccountScope(request, async (uow) => {
-        await new AccountRepository(uow).settleResetIntake(entry.intakeId, outcome);
-        await recordPlatformAudit(uow, {
-          action: 'iam.password.reset_intake_settled',
-          outcome: 'allowed',
-          targetType: 'password_reset_intake',
-          targetRef: entry.intakeId,
-          reason: outcome,
-        });
-      });
+      const outcome = await this.processResetIntake(entry, request);
+      await this.settleResetIntake(entry, outcome, request);
       processed += 1;
     }
     return processed;
   }
 
+  /**
+   * Settles one owned entry: terminal for a decision, retryable for an outage.
+   *
+   * A provider that could not be reached says nothing about the request, so it
+   * must not end it. What it does end is patience: after the configured number
+   * of attempts the entry becomes a dead letter an operator can see, because an
+   * address the provider never accepts should stop consuming retries and start
+   * being a fact somebody knows.
+   */
+  private async settleResetIntake(
+    entry: ResetIntakeRow,
+    outcome: ResetIntakeOutcome,
+    request: RequestContext,
+  ): Promise<void> {
+    const parameters = this.parameters;
+    const retryable = outcome === 'unavailable';
+    const exhausted = entry.attempts >= parameters.passwordResetDeliveryMaxAttempts;
+
+    await this.inAccountScope(request, async (uow) => {
+      const accounts = new AccountRepository(uow);
+      let settled: boolean;
+      let recorded: ResetIntakeOutcome = outcome;
+
+      if (retryable && !exhausted) {
+        settled = await accounts.retryResetIntake(
+          entry.intakeId,
+          entry.claimToken,
+          outcome,
+          backoffSeconds(entry.attempts, parameters),
+          'the notification provider did not accept the delivery',
+        );
+      } else if (retryable) {
+        recorded = 'dead_letter';
+        settled = await accounts.settleResetIntake(
+          entry.intakeId,
+          entry.claimToken,
+          recorded,
+          'DEAD_LETTER',
+        );
+      } else {
+        settled = await accounts.settleResetIntake(entry.intakeId, entry.claimToken, outcome);
+      }
+
+      // The lease is the only thing that entitles this worker to settle. If it
+      // was reclaimed while the delivery was in flight, the row belongs to
+      // somebody else and this worker writes nothing — including no second
+      // settlement audit.
+      if (!settled) {
+        throw new ApiError('CONFLICT', 'the reset intake lease is no longer held');
+      }
+
+      await recordPlatformAudit(uow, {
+        action: 'iam.password.reset_intake_settled',
+        outcome: 'allowed',
+        targetType: 'password_reset_intake',
+        targetRef: entry.intakeId,
+        reason: recorded,
+        payload: { attempts: entry.attempts, retryable: retryable && !exhausted },
+      });
+    });
+  }
+
+  /**
+   * Resolves one queued address and delivers its link.
+   *
+   * The reset and its delivery intent are committed **before** the provider is
+   * contacted, and the one-time secret is held under envelope encryption until
+   * it has been. Delivering from inside the recording transaction was the
+   * failure this avoids: a provider that accepted a link the transaction then
+   * failed to commit sent a link to nothing.
+   */
   private async processResetIntake(
-    emailNormalized: string,
+    entry: ResetIntakeRow,
     request: RequestContext,
   ): Promise<ResetIntakeOutcome> {
+    let intent: PreparedDelivery | 'ignored' | 'throttled';
     try {
-      return await this.inAccountScope(request, async (uow) => {
-        const accounts = new AccountRepository(uow);
-        const account = await accounts.findByEmail('hotel', emailNormalized);
-        // Unknown or not active: nothing to send, and nobody to tell.
-        if (account === undefined || account.state !== 'ACTIVE') return 'ignored';
-        await establishAccountScope(uow, account.accountId);
-        await this.issueReset(uow, account.accountId, account.emailNormalized, 'self', null);
-        return 'sent';
-      });
-    } catch (error) {
-      // The resend interval and an unreachable provider are both ordinary
-      // outcomes here — recorded for an operator, invisible to the requester.
-      if (error instanceof ApiError && error.code === 'RATE_LIMITED') return 'throttled';
+      intent = await this.prepareResetDelivery(entry, request);
+    } catch {
       return 'unavailable';
     }
+    if (intent === 'ignored' || intent === 'throttled') return intent;
+
+    try {
+      await this.deps.notifications.deliver({
+        kind: 'password_reset',
+        // Stable across retries, so a provider that already sent this message
+        // recognises the repeat and does not send a second visible one.
+        deliveryId: intent.deliveryId,
+        accountId: intent.accountId,
+        resetId: intent.resetId,
+        emailNormalized: intent.emailNormalized,
+        expiresAt: intent.expiresAt,
+        token: intent.token,
+      });
+    } catch {
+      return 'unavailable';
+    }
+
+    try {
+      await this.inAccountScope(request, async (uow) => {
+        await establishAccountScope(uow, intent.accountId);
+        await new AccountRepository(uow).markResetDelivered(intent.resetId);
+      });
+    } catch {
+      // The provider took it; the acknowledgement did not land. The entry stays
+      // retryable and the next attempt recovers the same intent, so the
+      // recipient still sees one message.
+      return 'unavailable';
+    }
+    return 'sent';
+  }
+
+  /**
+   * Commits the reset and the delivery intent, or says why there is none.
+   *
+   * An intent that is already recorded and not yet delivered is *reused* — that
+   * is what a retry after a lost acknowledgement finds — and the resend interval
+   * is not consulted for it, because it is the same request, not a new one.
+   */
+  private async prepareResetDelivery(
+    entry: ResetIntakeRow,
+    request: RequestContext,
+  ): Promise<PreparedDelivery | 'ignored' | 'throttled'> {
+    return this.inAccountScope(request, async (uow) => {
+      const accounts = new AccountRepository(uow);
+      const account = await accounts.findByEmail('hotel', entry.emailNormalized);
+      if (account === undefined || account.state !== 'ACTIVE') return 'ignored';
+      await establishAccountScope(uow, account.accountId);
+
+      const undelivered = await accounts.undeliveredResetFor(account.accountId);
+      if (undelivered !== undefined) {
+        const token = await decryptValue(
+          this.deps.keys,
+          DELIVERY_SECRET_SCOPE,
+          {
+            ciphertext: Buffer.from(undelivered.ciphertext, 'base64'),
+            wrappedDek: Buffer.from(undelivered.wrappedDek, 'base64'),
+            keyVersion: undelivered.keyVersion,
+          },
+          deliveryAad(undelivered.resetId),
+        );
+        return {
+          accountId: account.accountId,
+          emailNormalized: account.emailNormalized,
+          resetId: undelivered.resetId,
+          deliveryId: undelivered.deliveryId,
+          expiresAt: undelivered.expiresAt,
+          token,
+        };
+      }
+
+      const live = await accounts.activeResetFor(account.accountId);
+      if (live !== undefined) {
+        const sinceLast = uow.serverNow.getTime() - live.createdAt.getTime();
+        if (sinceLast < this.parameters.passwordResetResendIntervalSeconds * 1000) {
+          return 'throttled';
+        }
+        await accounts.terminaliseReset(live.resetId, 'SUPERSEDED', 'superseded_by_new_request');
+      }
+
+      const resetId = randomUUID();
+      const issued = await this.tokens.issue('password_reset', RESET_TOKEN_SUBJECT);
+      const sealed = await encryptValue(
+        this.deps.keys,
+        DELIVERY_SECRET_SCOPE,
+        issued.token,
+        deliveryAad(resetId),
+      );
+      const created = await accounts.createReset({
+        resetId,
+        accountId: account.accountId,
+        tokenHash: issued.tokenHash,
+        tokenKeyVersion: issued.keyVersion,
+        ttlSeconds: this.parameters.passwordResetTtlSeconds,
+        initiatedBy: entry.initiatedBy,
+        initiatedByAccountId: entry.initiatedByAccountId,
+        secret: {
+          ciphertext: Buffer.from(sealed.ciphertext).toString('base64'),
+          wrappedDek: Buffer.from(sealed.wrappedDek).toString('base64'),
+          keyVersion: sealed.keyVersion,
+        },
+      });
+
+      await recordPlatformAudit(uow, {
+        action: 'iam.password.reset_requested',
+        outcome: 'allowed',
+        targetType: 'password_reset_request',
+        targetRef: created.resetId,
+        payload: { accountId: account.accountId, initiatedBy: entry.initiatedBy },
+      });
+      await appendOutboxEvent(uow, {
+        aggregateType: 'password_reset_request',
+        aggregateId: created.resetId,
+        eventType: 'iam.password_reset.email_requested',
+        payload: {
+          resetId: created.resetId,
+          deliveryId: created.deliveryId,
+          accountId: account.accountId,
+          emailNormalized: account.emailNormalized,
+          initiatedBy: entry.initiatedBy,
+        },
+      });
+
+      return {
+        accountId: account.accountId,
+        emailNormalized: account.emailNormalized,
+        resetId: created.resetId,
+        deliveryId: created.deliveryId,
+        expiresAt: created.expiresAt,
+        token: issued.token,
+      };
+    });
+  }
+
+  /** Claims entries without processing them. Test surface for the lease. */
+  claimResetIntakeForTest(limit: number): Promise<readonly ResetIntakeRow[]> {
+    return this.inAccountScope(newRequestContext(), (uow) =>
+      new AccountRepository(uow).claimResetIntake(limit, this.parameters.passwordResetLeaseSeconds),
+    );
+  }
+
+  /** Processes one claimed entry without settling it. Test surface for a lost ack. */
+  processClaimedIntakeForTest(entry: ResetIntakeRow): Promise<ResetIntakeOutcome> {
+    return this.processResetIntake(entry, newRequestContext());
   }
 
   /**
@@ -863,17 +1079,23 @@ export class StaffService extends IamServiceBase {
       const account = await accounts.findById(membership.accountId);
       if (account === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
-      // Operational failures stay visible here: the initiator is authenticated,
-      // holds the permission, and already knows this member exists — so a
-      // rate-limit or an unreachable provider is information they are entitled
-      // to, not an oracle.
-      await this.issueReset(
-        uow,
-        account.accountId,
-        account.emailNormalized,
-        'hotel_admin',
-        gate.principal.accountId,
-      );
+      // Queued through the same durable path the public request uses, so one
+      // delivery mechanism carries both and a Hotel Admin cannot produce a
+      // second live link by another route. What differs is what the initiator
+      // may see: they are authenticated, hold the permission and already know
+      // this member exists, so an operational failure here is information they
+      // are entitled to rather than an oracle — and queueing failing is one.
+      await new AccountRepository(uow).queueResetIntake(account.emailNormalized, {
+        by: 'hotel_admin',
+        accountId: gate.principal.accountId,
+      });
+      await recordPlatformAudit(uow, {
+        action: 'iam.password.reset_queued',
+        outcome: 'allowed',
+        targetType: 'staff_membership',
+        targetRef: membership.membershipId,
+        reason: 'hotel_admin',
+      });
 
       const result = { initiated: true };
       await completeIdempotencyKey(uow, claimed.idempotencyId, 202, result);
@@ -1092,56 +1314,6 @@ export class StaffService extends IamServiceBase {
       membershipId: input.membership.membershipId,
       expiresAt: invitation.expiresAt,
     };
-  }
-
-  private async issueReset(
-    uow: UnitOfWork,
-    accountId: string,
-    emailNormalized: string,
-    initiatedBy: 'self' | 'hotel_admin',
-    initiatedByAccountId: string | null,
-  ): Promise<void> {
-    const accounts = new AccountRepository(uow);
-    const live = await accounts.activeResetFor(accountId);
-    if (live !== undefined) {
-      const sinceLast = uow.serverNow.getTime() - live.createdAt.getTime();
-      if (sinceLast < this.parameters.passwordResetResendIntervalSeconds * 1000) {
-        throw new ApiError('RATE_LIMITED', 'a reset link was requested too recently');
-      }
-      await accounts.terminaliseReset(live.resetId, 'SUPERSEDED', 'superseded_by_new_request');
-    }
-
-    const issued = await this.tokens.issue('password_reset', RESET_TOKEN_SUBJECT);
-    const resetId = await accounts.createReset({
-      accountId,
-      tokenHash: issued.tokenHash,
-      tokenKeyVersion: issued.keyVersion,
-      ttlSeconds: this.parameters.passwordResetTtlSeconds,
-      initiatedBy,
-      initiatedByAccountId,
-    });
-
-    await recordPlatformAudit(uow, {
-      action: 'iam.password.reset_requested',
-      outcome: 'allowed',
-      targetType: 'password_reset_request',
-      targetRef: resetId,
-      payload: { accountId, initiatedBy },
-    });
-    await appendOutboxEvent(uow, {
-      aggregateType: 'password_reset_request',
-      aggregateId: resetId,
-      eventType: 'iam.password_reset.email_requested',
-      payload: { resetId, accountId, emailNormalized, initiatedBy },
-    });
-    await this.deps.notifications.deliver({
-      kind: 'password_reset',
-      accountId,
-      resetId,
-      emailNormalized,
-      expiresAt: new Date(uow.serverNow.getTime() + this.parameters.passwordResetTtlSeconds * 1000),
-      token: issued.token,
-    });
   }
 
   /**
@@ -1372,4 +1544,38 @@ function assertPrimaryProtected(
       'the Primary Hotel Admin is transferred by the Platform offline process, not by a staff action',
     );
   }
+}
+
+/** The scope the one-time delivery secret is sealed under (ADR-0020 §5). */
+const DELIVERY_SECRET_SCOPE: KeyScope = 'auth.delivery_secret';
+
+/** Binds a sealed secret to its row, column and id (ADR-0020 §4). */
+function deliveryAad(resetId: string): { table: string; column: string; rowRef: string } {
+  return {
+    table: 'platform.password_reset_request',
+    column: 'secret_ciphertext',
+    rowRef: resetId,
+  };
+}
+
+/** A committed delivery intent, ready to hand to a provider. */
+interface PreparedDelivery {
+  readonly accountId: string;
+  readonly emailNormalized: string;
+  readonly resetId: string;
+  readonly deliveryId: string;
+  readonly expiresAt: Date;
+  readonly token: string;
+}
+
+/** Exponential, capped. Provisional with the rest of P1-06. */
+function backoffSeconds(
+  attempts: number,
+  parameters: {
+    passwordResetRetryBackoffSeconds: number;
+    passwordResetRetryBackoffCeilingSeconds: number;
+  },
+): number {
+  const raw = parameters.passwordResetRetryBackoffSeconds * 2 ** Math.max(0, attempts - 1);
+  return Math.min(raw, parameters.passwordResetRetryBackoffCeilingSeconds);
 }
