@@ -1,4 +1,11 @@
 import type { UnitOfWork } from '@prsystem/db';
+import { ApiError } from '@prsystem/contracts';
+import {
+  isOperationRole,
+  isRealmRole,
+  operationGrantablePermissions,
+  policeGrantablePermissions,
+} from '@prsystem/authz';
 
 /**
  * The account-scoped half of IAM: accounts, credentials, sessions, reset
@@ -14,6 +21,9 @@ import type { UnitOfWork } from '@prsystem/db';
 export interface AccountRow {
   readonly accountId: string;
   readonly realm: string;
+  /** doc 18 §5 / §6. `null` for a Hotel account, which has no matrix column. */
+  readonly realmRole: string | null;
+  readonly policeScopeRef: string | null;
   readonly emailNormalized: string;
   readonly state: 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
   readonly authEpoch: number;
@@ -41,6 +51,9 @@ export interface ResetRow {
   readonly createdAt: Date;
 }
 
+const ACCOUNT_COLUMNS = `account_id, realm, realm_role, police_scope_ref, email_normalized,
+                         state, auth_epoch, email_verified_at, revision`;
+
 /** Lower-cased and trimmed. The stored form, and the only form compared. */
 export function normaliseEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -51,7 +64,7 @@ export class AccountRepository {
 
   async findByEmail(realm: string, email: string): Promise<AccountRow | undefined> {
     const result = await this.uow.query<Record<string, unknown>>(
-      `SELECT account_id, realm, email_normalized, state, auth_epoch, email_verified_at, revision
+      `SELECT ${ACCOUNT_COLUMNS}
          FROM platform.user_account
         WHERE realm = $1 AND email_normalized = $2`,
       [realm, normaliseEmail(email)],
@@ -61,7 +74,7 @@ export class AccountRepository {
 
   async findById(accountId: string): Promise<AccountRow | undefined> {
     const result = await this.uow.query<Record<string, unknown>>(
-      `SELECT account_id, realm, email_normalized, state, auth_epoch, email_verified_at, revision
+      `SELECT ${ACCOUNT_COLUMNS}
          FROM platform.user_account
         WHERE account_id = $1`,
       [accountId],
@@ -72,7 +85,7 @@ export class AccountRepository {
   /** Locks the row, so an epoch bump and a session issue cannot interleave. */
   async lockById(accountId: string): Promise<AccountRow | undefined> {
     const result = await this.uow.query<Record<string, unknown>>(
-      `SELECT account_id, realm, email_normalized, state, auth_epoch, email_verified_at, revision
+      `SELECT ${ACCOUNT_COLUMNS}
          FROM platform.user_account
         WHERE account_id = $1
           FOR UPDATE`,
@@ -85,7 +98,7 @@ export class AccountRepository {
     const result = await this.uow.query<Record<string, unknown>>(
       `INSERT INTO platform.user_account (realm, email_normalized, email_verified_at)
        VALUES ($1, $2, CASE WHEN $3 THEN now() ELSE NULL END)
-       RETURNING account_id, realm, email_normalized, state, auth_epoch, email_verified_at, revision`,
+       RETURNING ${ACCOUNT_COLUMNS}`,
       [realm, normaliseEmail(email), verified],
     );
     const row = mapAccount(result.rows[0]);
@@ -220,10 +233,21 @@ export class AccountRepository {
     };
   }
 
+  /**
+   * Extends the idle window, never past the absolute one.
+   *
+   * doc 19 §10 gives a session two independent limits, and the absolute limit is
+   * the one activity cannot move. `LEAST` is not a convenience here: without it
+   * a request arriving inside the last idle-window before the absolute expiry
+   * writes `idle > absolute`, which the row's own CHECK refuses — so an ordinary
+   * request near the end of a long session failed with a constraint violation
+   * rather than being served.
+   */
   async touchSession(sessionId: string, idleSeconds: number): Promise<void> {
     await this.uow.query(
       `UPDATE platform.server_session
-          SET last_seen_at = now(), idle_expires_at = now() + make_interval(secs => $2)
+          SET last_seen_at = now(),
+              idle_expires_at = LEAST(now() + make_interval(secs => $2), absolute_expires_at)
         WHERE session_id = $1 AND revoked_at IS NULL`,
       [sessionId, idleSeconds],
     );
@@ -321,17 +345,36 @@ export class AccountRepository {
     return result.rows.map((row) => row.permission);
   }
 
+  /**
+   * Grants one explicitly named permission (doc 18 §5, §6).
+   *
+   * Checked twice, deliberately. Here against the canonical matrix, so the
+   * refusal names what is wrong; and again by the table's own CHECK and its
+   * composite foreign key, so a permission the document refuses to a column is
+   * unrepresentable however the row is written — by this method, by a later
+   * phase, or by a direct statement.
+   */
   async grantPermission(
-    accountId: string,
+    account: AccountRow,
     permission: string,
     grantedBy: string,
   ): Promise<boolean> {
+    const role = account.realmRole;
+    if (role === null || !isRealmRole(role)) {
+      throw new ApiError('FORBIDDEN', 'this account holds no realm role to grant against');
+    }
+    const grantable = isOperationRole(role)
+      ? operationGrantablePermissions(role)
+      : policeGrantablePermissions(role);
+    if (!grantable.includes(permission)) {
+      throw new ApiError('FORBIDDEN', 'the matrix does not grant that permission to this role');
+    }
     const result = await this.uow.query(
       `INSERT INTO platform.account_permission_grant
-         (account_id, permission, granted_by_account_id)
-       VALUES ($1, $2, $3)
+         (account_id, realm, realm_role, permission, granted_by_account_id)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT DO NOTHING`,
-      [accountId, permission, grantedBy],
+      [account.accountId, account.realm, role, permission, grantedBy],
     );
     return result.rowCount === 1;
   }
@@ -357,6 +400,8 @@ function mapAccount(row: Record<string, unknown> | undefined): AccountRow | unde
   return {
     accountId: String(row['account_id']),
     realm: String(row['realm']),
+    realmRole: (row['realm_role'] as string | null) ?? null,
+    policeScopeRef: (row['police_scope_ref'] as string | null) ?? null,
     emailNormalized: String(row['email_normalized']),
     state: row['state'] as AccountRow['state'],
     authEpoch: Number(row['auth_epoch']),

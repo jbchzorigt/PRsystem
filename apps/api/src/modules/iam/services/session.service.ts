@@ -83,6 +83,32 @@ export class SessionService extends IamServiceBase {
         stepUp: true,
       });
 
+      // The scope this session may act in, one row per active membership,
+      // stamped with the revision it was issued against (doc 19 §10).
+      //
+      // Issuing them here is what makes the revocation matrix real: a role
+      // change, a suspension or a termination revokes the row and bumps the
+      // revision, so the authority this token carries in that hotel ends at
+      // once — while the same token keeps working in the account's other
+      // hotels, and while the credential itself is untouched.
+      //
+      // A membership that becomes active *after* this moment has no grant, so
+      // the holder signs in again: a token never silently acquires a scope, or
+      // a role, it was not issued with.
+      await establishAccountScope(uow, account.accountId);
+      const memberships = new MembershipRepository(uow);
+      const scopes = await memberships.forAccount(account.accountId);
+      for (const membership of scopes) {
+        if (membership.state !== 'ACTIVE') continue;
+        await memberships.grantScopeIn({
+          hotelId: membership.hotelId,
+          accountId: account.accountId,
+          sessionId,
+          membershipId: membership.membershipId,
+          membershipRevision: membership.membershipRevision,
+        });
+      }
+
       await recordPlatformAudit(uow, {
         action: 'iam.session.sign_in',
         outcome: 'allowed',
@@ -109,7 +135,11 @@ export class SessionService extends IamServiceBase {
       // The account is known only once the token has been verified, so the
       // scope its own membership rows are read under is established here.
       await establishAccountScope(uow, session.accountId);
-      const principal = await resolvePrincipal(uow, session.accountId);
+      const principal = await resolvePrincipal(
+        uow,
+        session.accountId,
+        session.stepUpAt ?? undefined,
+      );
       if (principal === undefined || principal.accountState !== 'ACTIVE') {
         throw new ApiError('UNAUTHENTICATED', 'the session is no longer valid');
       }
@@ -117,14 +147,7 @@ export class SessionService extends IamServiceBase {
         session.sessionId,
         this.parameters.sessionIdleSeconds,
       );
-      return {
-        sessionId: session.sessionId,
-        stepUpAt: session.stepUpAt,
-        principal: {
-          ...principal,
-          ...(session.stepUpAt === null ? {} : { stepUpAt: session.stepUpAt }),
-        },
-      };
+      return { sessionId: session.sessionId, stepUpAt: session.stepUpAt, principal };
     });
   }
 
@@ -152,45 +175,6 @@ export class SessionService extends IamServiceBase {
       accountId: session.accountId,
       stepUpAt: session.stepUpAt,
     };
-  }
-
-  /**
-   * Binds a session to one hotel scope, recording the membership revision it was
-   * granted against.
-   *
-   * The grant is what a role change or a suspension revokes, so authority inside
-   * that hotel ends immediately while the same session keeps working elsewhere.
-   */
-  async establishScope(
-    hotelId: string,
-    membershipId: string,
-    membershipRevision: number,
-    sessionId: string,
-    accountId: string,
-    request: RequestContext,
-  ): Promise<void> {
-    await this.inHotelScope(hotelId, request, async (uow) => {
-      await new MembershipRepository(uow).grantScope({
-        accountId,
-        sessionId,
-        membershipId,
-        membershipRevision,
-      });
-    });
-  }
-
-  /** True when this session still holds live authority in that membership. */
-  async hasLiveScope(
-    hotelId: string,
-    sessionId: string,
-    membershipId: string,
-    membershipRevision: number,
-    request: RequestContext,
-  ): Promise<boolean> {
-    return this.inHotelScope(hotelId, request, async (uow) => {
-      const grant = await new MembershipRepository(uow).liveScopeGrant(sessionId, membershipId);
-      return grant !== undefined && grant.membershipRevision === membershipRevision;
-    });
   }
 
   /** Signs one session out. Server-side: clearing a browser store is not logout. */

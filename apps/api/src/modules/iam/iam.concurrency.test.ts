@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { quietPool } from '@prsystem/testing';
 import { ApiError } from '@prsystem/contracts';
-import type { Principal } from '@prsystem/authz';
 import type { IamHarness, SeededMembership } from './test-support/iam-harness';
-import { createIamHarness, principalFor } from './test-support/iam-harness';
+import { createIamHarness, actorFor } from './test-support/iam-harness';
+import type { CommandActor } from './services/iam-context';
 import { newRequestContext } from './services/iam-context';
 import { StaffService } from './services/staff.service';
 import { HandoffService } from './services/handoff.service';
@@ -71,8 +71,12 @@ function syntheticPassword(label: string): string {
   return ['synthetic', label, 'passphrase'].join('-');
 }
 
-async function actor(member: SeededMembership): Promise<Principal> {
-  return principalFor(env, member);
+/**
+ * The actor a command runs as: a real sign-in and a real authentication, so the
+ * session's per-hotel scope grants exist exactly as a request would create them.
+ */
+async function actor(member: SeededMembership): Promise<CommandActor> {
+  return actorFor(env, member);
 }
 
 function isApiError(value: unknown, code?: string): boolean {
@@ -84,6 +88,8 @@ async function openHandoffItem(
   subject: 'reception_shift' | 'cleaner_task',
   member: SeededMembership,
 ): Promise<string> {
+  // The open work comes from the module that owns it, never from the request.
+  env.openWork.set(hotelId, member.membershipId, [{ kind: subject, ref: crypto.randomUUID() }]);
   const result = await env.staff.setMembershipState(
     await actor(admin),
     {
@@ -91,7 +97,6 @@ async function openHandoffItem(
       membershipId: member.membershipId,
       state: 'SUSPENDED',
       reason: 'concurrency fixture',
-      openWork: [{ kind: subject, ref: crypto.randomUUID() }],
       idempotencyKey: idem('open-item'),
     },
     newRequestContext(admin.accountId),
@@ -249,13 +254,27 @@ describe('invitation concurrency (STAFF-DEC-009)', () => {
       [created.membershipId],
     );
     const state = membership.rows[0]?.state;
-    // Whichever committed first, the two never both applied: an ACTIVE
-    // membership means the accept won and the terminate was refused, and a
-    // TERMINATED one means the accept was refused.
+    const accountId = membership.rows[0]?.account_id ?? null;
+    // The two serialise on the membership row, so exactly one of the two orders
+    // happened and the stored state matches the answer each caller was given.
+    //
+    //  - the accept was refused  → the terminate reached a still-PENDING
+    //    membership, and no account was ever bound to it;
+    //  - the accept succeeded    → the account is bound, and the membership is
+    //    ACTIVE if the terminate lost the row or TERMINATED if it ran after.
+    //    That second case is an ordinary sequence, not an interleaving: a Hotel
+    //    Admin terminating a membership that has just been accepted is exactly
+    //    what the queue of one row lock produces.
+    //
+    // What must never happen — and is what this asserts — is a state that
+    // matches neither answer: a TERMINATED membership carrying an account the
+    // accept was told it did not get, or an ACTIVE one with no account at all.
     expect(['ACTIVE', 'TERMINATED']).toContain(state);
-    if (state === 'TERMINATED') {
-      expect(isApiError(acceptOutcome)).toBe(true);
-      expect(membership.rows[0]?.account_id).toBeNull();
+    if (isApiError(acceptOutcome)) {
+      expect({ state, accountId }).toEqual({ state: 'TERMINATED', accountId: null });
+    } else {
+      const accepted = acceptOutcome as { membershipId: string; accountId: string };
+      expect(accountId).toBe(accepted.accountId);
     }
   });
 
@@ -361,7 +380,7 @@ describe('the handoff queue under concurrency (doc 19 §8.4)', () => {
 
     const claim = async (
       service: HandoffService,
-      principal: Principal,
+      principal: CommandActor,
       accountId: string,
     ): Promise<unknown> => {
       await gate();
@@ -453,6 +472,9 @@ describe('the handoff queue under concurrency (doc 19 §8.4)', () => {
       email: 'partial-cleaner@conc.test',
       roles: ['CLEANER'],
     });
+    env.openWork.set(hotelId, suspended.membershipId, [
+      { kind: 'cleaner_task', ref: crypto.randomUUID(), movementStarted: true },
+    ]);
     const opened = await env.staff.setMembershipState(
       await actor(admin),
       {
@@ -460,7 +482,6 @@ describe('the handoff queue under concurrency (doc 19 §8.4)', () => {
         membershipId: suspended.membershipId,
         state: 'SUSPENDED',
         reason: 'partial work',
-        openWork: [{ kind: 'cleaner_task', ref: crypto.randomUUID(), movementStarted: true }],
         idempotencyKey: idem('partial-open'),
       },
       newRequestContext(admin.accountId),

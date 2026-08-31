@@ -8,6 +8,8 @@ import { UnavailableKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
 import { UnavailableSubscriptionState } from './modules/iam/contracts/subscription-state.port';
 import { UnavailableStaffNotification } from './modules/iam/contracts/staff-notification.port';
+import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
+import { UnavailableRestaurantDirectory } from './modules/iam/contracts/restaurant-directory.port';
 import { buildOpenApiDocument } from './openapi-document';
 
 /**
@@ -29,6 +31,8 @@ async function generate(): Promise<void> {
         keys: new UnavailableKeyManagement(),
         subscription: new UnavailableSubscriptionState(),
         notifications: new UnavailableStaffNotification(),
+        openWork: new UnregisteredOpenWork(),
+        restaurants: new UnavailableRestaurantDirectory(),
       },
     }),
     new FastifyAdapter(),

@@ -7,8 +7,9 @@ export {
   isHotelRole,
   isOperationRole,
   isPoliceRole,
+  isRealmRole,
 } from './roles';
-export type { GuestRole, HotelRole, OperationRole, PoliceRole } from './roles';
+export type { GuestRole, HotelRole, OperationRole, PoliceRole, RealmRole } from './roles';
 
 export {
   ALL_PACKAGES,
@@ -39,10 +40,20 @@ export type { Cell, CellCondition, CellScope, DerivedSuffix } from './cells';
 export { GUEST_ACTIONS, HOTEL_ACTIONS, MATRIX_COLUMNS } from './actions';
 export type { GuestAction, HotelAction } from './actions';
 
-export { OPERATION_ACTIONS, OPERATION_PERMISSIONS } from './operation';
+export {
+  OPERATION_ACTIONS,
+  OPERATION_PERMISSIONS,
+  operationAction,
+  operationGrantablePermissions,
+} from './operation';
 export type { OperationAction } from './operation';
 
-export { POLICE_ACTIONS, POLICE_PERMISSIONS } from './police';
+export {
+  POLICE_ACTIONS,
+  POLICE_PERMISSIONS,
+  policeAction,
+  policeGrantablePermissions,
+} from './police';
 export type { PoliceAction, PoliceCell, Separation } from './police';
 
 export {
@@ -54,7 +65,12 @@ export {
 } from './catalog';
 export type { AuthzRealm, CatalogEntry } from './catalog';
 
-export { cellFor, effectiveHotelPermissions, grantedHotelPermissions } from './effective';
+export {
+  cellFor,
+  effectiveHotelPermissions,
+  grantedHotelPermissions,
+  permissionScopes,
+} from './effective';
 
 export {
   ALWAYS_AVAILABLE_PERMISSIONS,

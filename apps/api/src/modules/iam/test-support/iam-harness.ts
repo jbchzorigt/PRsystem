@@ -14,7 +14,9 @@ import type { AuthSecurityParameters } from '../contracts/security-parameters';
 import { AUTH_SECURITY_PARAMETERS } from '../contracts/security-parameters';
 import { SimulatedStaffNotification } from '../contracts/staff-notification.port';
 import { SimulatedSubscriptionState } from '../contracts/subscription-state.port';
-import type { IamDependencies } from '../services/iam-context';
+import { SimulatedOpenWork } from '../contracts/open-work.port';
+import { SimulatedRestaurantDirectory } from '../contracts/restaurant-directory.port';
+import type { CommandActor, IamDependencies } from '../services/iam-context';
 import { HandoffService } from '../services/handoff.service';
 import { SessionService } from '../services/session.service';
 import { StaffService } from '../services/staff.service';
@@ -52,6 +54,10 @@ export interface IamHarness {
   readonly handoff: HandoffService;
   readonly subscription: SimulatedSubscriptionState;
   readonly notifications: SimulatedStaffNotification;
+  /** What the owning modules would report as unfinished work (doc 19 §8). */
+  readonly openWork: SimulatedOpenWork;
+  /** The hotel → restaurant linkage Phase 15 will own. */
+  readonly restaurants: SimulatedRestaurantDirectory;
   /**
    * The live parameter set the services read.
    *
@@ -89,6 +95,8 @@ export interface IamHarnessOverrides {
    */
   readonly subscription?: SimulatedSubscriptionState;
   readonly notifications?: SimulatedStaffNotification;
+  readonly openWork?: SimulatedOpenWork;
+  readonly restaurants?: SimulatedRestaurantDirectory;
   readonly parameters?: AuthSecurityParameters;
 }
 
@@ -116,11 +124,21 @@ export function attachIamHarness(
   const api = quietPool({ connectionString: db.loginUrl(TEST_LOGIN_PRINCIPALS.api), max: 8 });
   const subscription = overrides.subscription ?? new SimulatedSubscriptionState();
   const notifications = overrides.notifications ?? new SimulatedStaffNotification();
+  const openWork = overrides.openWork ?? new SimulatedOpenWork();
+  const restaurants = overrides.restaurants ?? new SimulatedRestaurantDirectory();
   const keys = new LocalKeyManagement({ seed: `iam-harness-${suite}`, appEnv: 'test' });
   const parameters: AuthSecurityParameters = overrides.parameters ?? {
     ...AUTH_SECURITY_PARAMETERS,
   };
-  const deps: IamDependencies = { pool: api, keys, subscription, notifications, parameters };
+  const deps: IamDependencies = {
+    pool: api,
+    keys,
+    subscription,
+    notifications,
+    openWork,
+    restaurants,
+    parameters,
+  };
 
   return {
     db,
@@ -132,6 +150,8 @@ export function attachIamHarness(
     handoff: new HandoffService(deps),
     subscription,
     notifications,
+    openWork,
+    restaurants,
     parameters,
 
     async createHotel(name: string, packageCode: PackageCode): Promise<string> {
@@ -212,16 +232,30 @@ export async function createIamHarness(
   return attachIamHarness(db, suite, overrides);
 }
 
-/** The principal a command runs as, resolved the way the guard resolves it. */
-export async function principalFor(
+/**
+ * The actor a command runs as, resolved exactly the way the guard resolves it.
+ *
+ * A real sign-in, then a real authentication: that is what issues the session's
+ * per-hotel scope grants, and a test that fabricated a principal instead would
+ * be exercising a path no request can take.
+ */
+export async function actorFor(
   harness: IamHarness,
   member: SeededMembership,
-): Promise<Principal> {
+): Promise<CommandActor> {
   const signedIn = await harness.sessions.signIn(
     member.email,
     member.password,
     newRequestContext(),
   );
   const session = await harness.sessions.authenticate(signedIn.token, newRequestContext());
-  return session.principal;
+  return { principal: session.principal, sessionId: session.sessionId };
+}
+
+/** The principal alone, for the assertions that only look at identity. */
+export async function principalFor(
+  harness: IamHarness,
+  member: SeededMembership,
+): Promise<Principal> {
+  return (await actorFor(harness, member)).principal;
 }

@@ -1,10 +1,14 @@
 import type { Pool } from 'pg';
-import type { SubscriptionStatePort } from '@prsystem/authz';
+import type { Principal, ResolvedMembership, SubscriptionStatePort } from '@prsystem/authz';
+import { ApiError } from '@prsystem/contracts';
 import type { TenantContext, UnitOfWork } from '@prsystem/db';
 import { PLATFORM_SCOPE, recordPlatformAudit, withTenantTransaction } from '@prsystem/db';
-import { AuthorizationDenied } from './authorization.service';
+import { AuthorizationDenied, resolvePrincipal } from './authorization.service';
+import { MembershipRepository } from '../repositories/membership.repository';
 import { newCorrelationId } from '@prsystem/contracts';
 import type { StaffNotificationPort } from '../contracts/staff-notification.port';
+import type { OpenWorkPort } from '../contracts/open-work.port';
+import type { RestaurantDirectoryPort } from '../contracts/restaurant-directory.port';
 import type { AuthSecurityParameters } from '../contracts/security-parameters';
 import { AUTH_SECURITY_PARAMETERS } from '../contracts/security-parameters';
 import { TokenService } from './token.service';
@@ -28,6 +32,10 @@ export interface IamDependencies {
   readonly keys: KeyManagementPort;
   readonly subscription: SubscriptionStatePort;
   readonly notifications: StaffNotificationPort;
+  /** The authoritative source of a suspended member's unfinished work. */
+  readonly openWork: OpenWorkPort;
+  /** The authoritative hotel → restaurant linkage (Phase 15 owns the aggregate). */
+  readonly restaurants: RestaurantDirectoryPort;
   /**
    * The security parameter set in force.
    *
@@ -42,6 +50,33 @@ export interface RequestContext {
   readonly correlationId: string;
   /** The authenticated account, where there is one. */
   readonly accountId?: string;
+}
+
+/**
+ * The authenticated actor a command runs as.
+ *
+ * The session id travels with the principal because authority inside a hotel is
+ * the session's scope grant (doc 19 §10) — a principal alone says who the person
+ * is, not what this device may still do.
+ */
+export interface CommandActor {
+  readonly principal: Principal;
+  readonly sessionId: string;
+}
+
+/** What the scope gate proved, and what the command may rely on. */
+export interface HotelGate {
+  readonly principal: Principal;
+  readonly membership: ResolvedMembership;
+  readonly sessionId: string;
+}
+
+/** The exact restaurant scope sorts before the hotel-wide one. */
+function scopeRank(membership: ResolvedMembership, target: { restaurantId?: string }): number {
+  if (target.restaurantId !== undefined && membership.restaurantId === target.restaurantId) {
+    return 0;
+  }
+  return 1;
 }
 
 export function newRequestContext(accountId?: string): RequestContext {
@@ -98,8 +133,87 @@ export abstract class IamServiceBase {
   }
 
   /**
-   * Runs a hotel-scoped command and records a denial that the command's own
-   * transaction could not.
+   * Resolves the scope a session actually holds in a hotel — before any hotel
+   * RLS context is bound (doc 06 §2, `RBAC-DEC-006`).
+   *
+   * This runs in the **account** scope, where the only rows visible are the
+   * principal's own. It answers one question: does this account hold an active
+   * membership covering the requested target, and does *this session* still hold
+   * a live scope grant on it at its current revision? Nothing about the target
+   * resource is read, locked or claimed until it does.
+   *
+   * A `hotel_id` in a URL therefore never binds tenant authority. It selects
+   * which of the actor's own memberships to look for, and if there is none the
+   * refusal is the same `NOT_FOUND` a missing hotel gets — so a foreign hotel
+   * that exists is indistinguishable from one that does not, and no lock is ever
+   * taken on another tenant's rows.
+   */
+  protected async gateHotelScope(
+    actor: CommandActor,
+    target: { hotelId: string; restaurantId?: string },
+    request: RequestContext,
+  ): Promise<HotelGate> {
+    const denied = (): AuthorizationDenied =>
+      new AuthorizationDenied(
+        new ApiError('NOT_FOUND', 'not found'),
+        'hotel.scope',
+        'account_and_membership',
+        'NOT_AUTHORIZED',
+        'hotel',
+        target.hotelId,
+      );
+
+    const gate = await this.inAccountScope(
+      { ...request, accountId: actor.principal.accountId },
+      async (uow) => {
+        const principal = await resolvePrincipal(
+          uow,
+          actor.principal.accountId,
+          actor.principal.stepUpAt,
+        );
+        if (principal === undefined || principal.accountState !== 'ACTIVE') return undefined;
+
+        // A hotel-scoped membership covers any target in its hotel; a
+        // restaurant-scoped one covers only its own restaurant (doc 06 §4.1).
+        // The exact restaurant is preferred, so a person who holds both is
+        // evaluated as the narrower one first — and never as the union.
+        const covering = principal.memberships
+          .filter(
+            (membership) =>
+              membership.hotelId === target.hotelId &&
+              membership.state === 'ACTIVE' &&
+              (membership.restaurantId === undefined ||
+                membership.restaurantId === target.restaurantId),
+          )
+          .sort((left, right) => scopeRank(left, target) - scopeRank(right, target));
+        if (covering.length === 0) return undefined;
+
+        const memberships = new MembershipRepository(uow);
+        for (const membership of covering) {
+          const grant = await memberships.liveScopeGrantForAccount(
+            actor.principal.accountId,
+            actor.sessionId,
+            membership.membershipId,
+          );
+          if (grant !== undefined && grant.membershipRevision === membership.revision) {
+            return { principal, membership, sessionId: actor.sessionId };
+          }
+        }
+        return undefined;
+      },
+    );
+
+    if (gate === undefined) {
+      const refusal = denied();
+      await this.recordDenial(target.hotelId, request, refusal);
+      throw refusal;
+    }
+    return gate;
+  }
+
+  /**
+   * Runs a hotel-scoped command behind that gate, and records a denial that the
+   * command's own transaction could not.
    *
    * doc 05 §7 requires a denied high-risk attempt to be audited, and a denial
    * aborts the transaction it was detected in — so an audit written there rolls
@@ -109,6 +223,31 @@ export abstract class IamServiceBase {
    * attempt leaves a trace.
    */
   protected async runHotelCommand<T>(
+    actor: CommandActor,
+    target: { hotelId: string; restaurantId?: string },
+    request: RequestContext,
+    work: (uow: UnitOfWork, gate: HotelGate) => Promise<T>,
+  ): Promise<T> {
+    const gate = await this.gateHotelScope(actor, target, request);
+    try {
+      return await this.inHotelScope(target.hotelId, request, (uow) => work(uow, gate));
+    } catch (error) {
+      if (error instanceof AuthorizationDenied) {
+        await this.recordDenial(target.hotelId, request, error);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * A hotel-scoped transaction a **token** rather than a membership admits.
+   *
+   * Invitation inspection and acceptance are the two flows whose whole purpose
+   * is that the actor is not yet a member, so there is no membership to gate
+   * them with. The one-time secret is the gate, and it is checked before
+   * anything else is read, locked or claimed.
+   */
+  protected async runTokenGatedCommand<T>(
     hotelId: string,
     request: RequestContext,
     work: (uow: UnitOfWork) => Promise<T>,

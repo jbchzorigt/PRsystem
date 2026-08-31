@@ -1326,6 +1326,9 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
         (phase) => phase.number !== '03' && phase.state !== GOVERNED_STATE.currentPhaseState,
       ).map((phase) => [`Phase ${phase.number} state`, `\`${phase.state}\``]),
       ['Customer acceptance', `\`${manifest.customerAcceptance}\``],
+      // Phase 04's own acceptance, distinct from its ledger state: a repaired
+      // phase whose battery is green is still a phase nobody has accepted.
+      ['Phase 04 acceptance', `\`${GOVERNED_STATE.completedPhaseAcceptance}\``],
       ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
       ['Latest implemented repair number', String(manifest.latestRepairNumber)],

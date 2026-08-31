@@ -8,5 +8,7 @@
  */
 export const SUBSCRIPTION_STATE = Symbol('iam.subscriptionState');
 export const STAFF_NOTIFICATION = Symbol('iam.staffNotification');
+export const OPEN_WORK = Symbol('iam.openWork');
+export const RESTAURANT_DIRECTORY = Symbol('iam.restaurantDirectory');
 export const IAM_POOL = Symbol('iam.pool');
 export const KEY_MANAGEMENT = Symbol('iam.keyManagement');

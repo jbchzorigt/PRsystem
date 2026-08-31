@@ -70,6 +70,15 @@ export const GOVERNED_STATE = {
   governedReviewNumber: 19,
   completedPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
   completedPhaseState: 'DONE',
+  /**
+   * Phase 04 is implemented and its battery is green; it is **not** accepted.
+   *
+   * `DONE` above says the work is finished and measured. It does not say the
+   * customer has taken it, and after a bounded security repair the difference
+   * matters: the ledger token and the acceptance are separate facts, and this
+   * document may no more grant the second than it could grant Phase 03's.
+   */
+  completedPhaseAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
   currentPhase: '05 — Hotel onboarding and subscription',
   currentPhaseState: 'NOT STARTED',
 };

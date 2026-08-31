@@ -351,7 +351,17 @@ export class MembershipRepository extends ScopedRepository {
   }
 
   // -------------------------------------------------------- session scope grants
-  async grantScope(input: {
+  /**
+   * Issues one session's authority in one membership.
+   *
+   * Written with the hotel it belongs to rather than `this.hotelId`, because
+   * sign-in establishes every scope the account holds in one account-scoped
+   * transaction — it has no single hotel scope, and the composite foreign keys
+   * are what keep the row honest: the session must be this account's, in the
+   * hotel realm, and the membership must be this account's in that hotel.
+   */
+  async grantScopeIn(input: {
+    hotelId: string;
     accountId: string;
     sessionId: string;
     membershipId: string;
@@ -359,17 +369,38 @@ export class MembershipRepository extends ScopedRepository {
   }): Promise<void> {
     await this.uow.query(
       `INSERT INTO platform.session_scope_grant
-         (hotel_id, account_id, session_id, membership_id, membership_revision)
-       VALUES ($1, $2, $3, $4, $5)
+         (hotel_id, account_id, session_id, realm, membership_id, membership_revision)
+       VALUES ($1, $2, $3, 'hotel', $4, $5)
        ON CONFLICT DO NOTHING`,
       [
-        this.hotelId,
+        input.hotelId,
         input.accountId,
         input.sessionId,
         input.membershipId,
         input.membershipRevision,
       ],
     );
+  }
+
+  /**
+   * The live grant, read under the **account** scope.
+   *
+   * Used by the pre-hotel gate, where no tenant context exists yet: the
+   * `own_account_scope` policy carries exactly the principal's own rows, and
+   * only under the platform sentinel.
+   */
+  async liveScopeGrantForAccount(
+    accountId: string,
+    sessionId: string,
+    membershipId: string,
+  ): Promise<{ membershipRevision: number } | undefined> {
+    const result = await this.uow.query<{ membership_revision: number }>(
+      `SELECT membership_revision FROM platform.session_scope_grant
+        WHERE account_id = $1 AND session_id = $2 AND membership_id = $3 AND revoked_at IS NULL`,
+      [accountId, sessionId, membershipId],
+    );
+    const row = result.rows[0];
+    return row === undefined ? undefined : { membershipRevision: Number(row.membership_revision) };
   }
 
   async liveScopeGrant(
@@ -400,6 +431,16 @@ export class MembershipRepository extends ScopedRepository {
       [this.hotelId, membershipId, reason],
     );
     return result.rowCount;
+  }
+
+  /** How many live scope grants an account holds, in any hotel. */
+  async liveScopeGrantCountForAccount(accountId: string): Promise<number> {
+    const result = await this.uow.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM platform.session_scope_grant
+        WHERE account_id = $1 AND revoked_at IS NULL`,
+      [accountId],
+    );
+    return Number(result.rows[0]?.count ?? '0');
   }
 
   /** Closes every scope grant an account holds, in any hotel. */

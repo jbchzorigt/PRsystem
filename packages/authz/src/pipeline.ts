@@ -1,8 +1,11 @@
 import type { AuthzRealm } from './catalog';
 import { catalogEntry } from './catalog';
 import { effectiveHotelPermissions, grantedHotelPermissions } from './effective';
+import { operationAction } from './operation';
+import { policeAction } from './police';
 import type { PackageCode } from './packages';
-import type { HotelRole } from './roles';
+import type { HotelRole, OperationRole, PoliceRole, RealmRole } from './roles';
+import { isOperationRole, isPoliceRole } from './roles';
 import type { SubscriptionSnapshot } from './subscription';
 import { ALWAYS_AVAILABLE_PERMISSIONS, RENEWAL_PERMISSION, isOperational } from './subscription';
 
@@ -41,6 +44,7 @@ export const DENIAL_CODES = [
   'ACCOUNT_SUSPENDED',
   'STEP_UP_REQUIRED',
   'UNKNOWN_PERMISSION',
+  'SEPARATION_OF_DUTIES',
 ] as const;
 export type DenialCode = (typeof DENIAL_CODES)[number];
 
@@ -75,6 +79,15 @@ export interface Principal {
   readonly memberships: readonly ResolvedMembership[];
   /** Operation and Police realms: explicit per-account permission grants. */
   readonly directPermissions: readonly string[];
+  /**
+   * Operation and Police realms: the column of doc 18 §5 / §6 this account is
+   * evaluated against. Absent for a Hotel or Guest principal, and absent for a
+   * realm account that has not been given one — which denies, rather than
+   * defaulting to the weaker column.
+   */
+  readonly realmRole?: RealmRole;
+  /** doc 18 §6: the unit/scope an Officer's `own_police_scope` rows are confined to. */
+  readonly policeScopeRef?: string;
   /** When the principal last completed a step-up challenge. */
   readonly stepUpAt?: Date;
 }
@@ -93,6 +106,14 @@ export interface AuthorizationInput {
   readonly subscription?: SubscriptionSnapshot;
   /** Guest realm: the account that owns the addressed resource (doc 06 §4.3). */
   readonly resourceOwnerAccountId?: string;
+  /**
+   * doc 05 §3.2: the account on the other side of an approval — the requester of
+   * a correction, or the creator of a manual identity. Required by every row the
+   * matrix marks with a separation rule, and its absence denies.
+   */
+  readonly separationCounterpartAccountId?: string;
+  /** The police scope the addressed resource belongs to, for `own_police_scope` rows. */
+  readonly resourceScopeRef?: string;
   readonly now: Date;
 }
 
@@ -141,8 +162,20 @@ export function authorize(input: AuthorizationInput): AuthorizationDecision {
   }
 
   if (entry.realm === 'hotel') return authorizeHotel(input, entry.entitledPackages);
-  if (entry.realm === 'guest') return authorizeGuest(input);
-  return authorizeDirect(input);
+  if (entry.realm === 'guest') return authorizeGuest(input, entry.ownershipScope !== undefined);
+  if (entry.realm === 'operation') return authorizeOperation(input);
+  return authorizePolice(input);
+}
+
+/** The exact restaurant scope is evaluated before the hotel-wide one. */
+function coverRank(
+  membership: ResolvedMembership,
+  target: { readonly restaurantId?: string },
+): number {
+  if (target.restaurantId !== undefined && membership.restaurantId === target.restaurantId) {
+    return 0;
+  }
+  return 1;
 }
 
 function authorizeHotel(
@@ -189,18 +222,27 @@ function authorizeHotel(
   }
 
   // ------------------------------------------------------------ 4. scope
-  // The exact scope row the request addresses: the hotel-scoped membership, or
-  // the membership for the named restaurant (doc 06 §4.1). A Restaurant Manager
-  // asking about another restaurant resolves to no row and is refused here.
-  const membership =
-    target.restaurantId === undefined
-      ? inHotel.find((entry) => entry.restaurantId === undefined)
-      : inHotel.find((entry) => entry.restaurantId === target.restaurantId);
+  // The membership whose scope **covers** the request (doc 06 §4.1). A
+  // hotel-scoped membership covers any target in its hotel — including one that
+  // names a restaurant, because a row like `Restaurant Manager account үүсгэх`
+  // is a Manager Plus action *about* a restaurant, and doc 19 §3 is explicit
+  // that the inviter needs no membership inside it. A restaurant-scoped
+  // membership covers only its own restaurant, so a Restaurant Manager asking
+  // about another one is refused here.
+  //
+  // The exact restaurant is tried first, so a person holding both is evaluated
+  // as the narrower one before the wider. Each candidate is evaluated **on its
+  // own**: this is "does any single membership authorise this?", never a union
+  // of two memberships' roles, which doc 06 §6 forbids.
+  const covering = inHotel
+    .filter(
+      (entry) => entry.restaurantId === undefined || entry.restaurantId === target.restaurantId,
+    )
+    .sort((left, right) => coverRank(left, target) - coverRank(right, target));
+  const membership = covering.find(
+    (entry) => alwaysAvailable || packageCode === undefined || grantsOf(entry).has(permission),
+  );
   if (membership === undefined) {
-    return deny(permission, 'scope', 'NOT_AUTHORIZED');
-  }
-  // And the decision is made against that one row, never against the union.
-  if (!alwaysAvailable && packageCode !== undefined && !grantsOf(membership).has(permission)) {
     return deny(permission, 'scope', 'NOT_AUTHORIZED');
   }
 
@@ -249,11 +291,19 @@ function authorizeHotel(
   };
 }
 
-function authorizeGuest(input: AuthorizationInput): AuthorizationDecision {
+function authorizeGuest(input: AuthorizationInput, ownershipRow: boolean): AuthorizationDecision {
   const { permission, principal } = input;
   // Guest authorization is ownership-based (doc 06 §4.3). There is no
   // membership, no role and no package: the only question is whether the
-  // addressed resource belongs to this account.
+  // addressed resource belongs to this account — and on a row the matrix marks
+  // with an ownership scope that question cannot be skipped. An owner the caller
+  // did not load is refused, not waved through: `booking.cancel_own` without an
+  // explicitly loaded owner would otherwise cancel any booking at all.
+  if (ownershipRow) {
+    if (input.resourceOwnerAccountId === undefined) {
+      return deny(permission, 'scope', 'NOT_AUTHORIZED');
+    }
+  }
   if (
     input.resourceOwnerAccountId !== undefined &&
     input.resourceOwnerAccountId !== principal.accountId
@@ -265,13 +315,85 @@ function authorizeGuest(input: AuthorizationInput): AuthorizationDecision {
   return { allowed: true, permission };
 }
 
-function authorizeDirect(input: AuthorizationInput): AuthorizationDecision {
+/**
+ * Operation and Platform Super Admin (doc 18 §5).
+ *
+ * Three independent conditions, none of which a stored row can supply on its
+ * own: the table must grant the row to *some* column, the account's realm role
+ * must be one of those columns, and the account must hold the row's **canonical
+ * named permission**. The dotted action id is an identifier, never a grant — a
+ * row stored under it satisfies nothing, which is what makes
+ * `permission: null` / `grantableTo: []` structurally impossible rather than
+ * merely unassigned.
+ */
+function authorizeOperation(input: AuthorizationInput): AuthorizationDecision {
   const { permission, principal } = input;
-  // Operation, Platform and Police: a role name grants nothing. The account
-  // either holds the named permission explicitly or it does not.
-  if (!principal.directPermissions.includes(permission)) {
+  const action = operationAction(permission);
+  if (action === undefined) return deny(permission, 'named_permission', 'UNKNOWN_PERMISSION');
+
+  // A row the document refuses to both columns. There is no permission to hold.
+  if (action.permission === null || action.grantableTo.length === 0) {
     return deny(permission, 'named_permission', 'NOT_AUTHORIZED');
   }
+
+  const role = principal.realmRole;
+  if (role === undefined || !isOperationRole(role)) {
+    return deny(permission, 'account_and_membership', 'NOT_AUTHORIZED');
+  }
+  if (!action.grantableTo.includes(role as OperationRole)) {
+    return deny(permission, 'named_permission', 'NOT_AUTHORIZED');
+  }
+  if (!principal.directPermissions.includes(action.permission)) {
+    return deny(permission, 'named_permission', 'NOT_AUTHORIZED');
+  }
+
+  const stepUp = stepUpDecision(input);
+  if (stepUp !== undefined) return stepUp;
+  return { allowed: true, permission };
+}
+
+/**
+ * Police (doc 18 §6).
+ *
+ * The cell for the account's own column decides, in the four forms the table
+ * uses: refused, allowed, allowed-within-own-scope, or allowed only to an
+ * account holding a named permission. A separation rule on the cell is compared
+ * on immutable account ids and **fails closed** when the counterpart was not
+ * loaded: an unknown requester is not a different requester.
+ */
+function authorizePolice(input: AuthorizationInput): AuthorizationDecision {
+  const { permission, principal } = input;
+  const action = policeAction(permission);
+  if (action === undefined) return deny(permission, 'named_permission', 'UNKNOWN_PERMISSION');
+
+  const role = principal.realmRole;
+  if (role === undefined || !isPoliceRole(role)) {
+    return deny(permission, 'account_and_membership', 'NOT_AUTHORIZED');
+  }
+  const cell = action.cells[role as PoliceRole];
+
+  if (cell.kind === 'deny') return deny(permission, 'named_permission', 'NOT_AUTHORIZED');
+
+  if (cell.kind === 'named') {
+    if (!principal.directPermissions.includes(cell.permission)) {
+      return deny(permission, 'named_permission', 'NOT_AUTHORIZED');
+    }
+    if (cell.separation !== undefined) {
+      const counterpart = input.separationCounterpartAccountId;
+      if (counterpart === undefined || counterpart === principal.accountId) {
+        return deny(permission, 'scope', 'SEPARATION_OF_DUTIES');
+      }
+    }
+  }
+
+  if (cell.kind === 'allow' && cell.scope === 'own_police_scope') {
+    const own = principal.policeScopeRef;
+    const addressed = input.resourceScopeRef;
+    if (own === undefined || addressed === undefined || own !== addressed) {
+      return deny(permission, 'scope', 'NOT_AUTHORIZED');
+    }
+  }
+
   const stepUp = stepUpDecision(input);
   if (stepUp !== undefined) return stepUp;
   return { allowed: true, permission };

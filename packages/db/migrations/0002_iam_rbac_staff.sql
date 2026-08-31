@@ -59,6 +59,15 @@ CREATE TABLE platform.hotel (
 CREATE TABLE platform.user_account (
   account_id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   realm             text NOT NULL,
+  -- doc 18 §5 / §6: the column of its realm's matrix this account is evaluated
+  -- against. A Hotel account has no such column — its authority is a membership
+  -- — and an Operation or Police account cannot exist without one, because an
+  -- account with no column would have to be defaulted into the weaker of the
+  -- two. The role selects the column and grants nothing (`RBAC-DEC-004`).
+  realm_role        text,
+  -- doc 18 §6: the unit an Officer's `own_police_scope` rows are confined to.
+  -- Opaque to Phase 04; Phase 18 owns the Police organisational model.
+  police_scope_ref  text,
   email_normalized  text NOT NULL,
   state             text NOT NULL DEFAULT 'ACTIVE',
   email_verified_at timestamptz,
@@ -71,12 +80,26 @@ CREATE TABLE platform.user_account (
   CONSTRAINT user_account_email_normalised CHECK (email_normalized = lower(email_normalized)),
   CONSTRAINT user_account_email_shape
     CHECK (email_normalized ~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'::text),
+  CONSTRAINT user_account_police_scope_is_police
+    CHECK ((police_scope_ref IS NULL) OR (realm = 'police'::text)),
   CONSTRAINT user_account_realm_known
     CHECK (realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text])),
+  CONSTRAINT user_account_realm_role_matches_realm
+    CHECK (CASE realm
+             WHEN 'operation'::text THEN
+               realm_role = ANY (ARRAY['OPERATION_ADMIN'::text, 'PLATFORM_SUPER_ADMIN'::text])
+             WHEN 'police'::text THEN
+               realm_role = ANY (ARRAY['POLICE_OFFICER'::text, 'POLICE_ADMIN'::text])
+             ELSE realm_role IS NULL
+           END),
   CONSTRAINT user_account_revision_non_negative CHECK (revision >= 0),
   CONSTRAINT user_account_state_known
     CHECK (state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text])),
-  CONSTRAINT user_account_realm_email_uq UNIQUE (realm, email_normalized)
+  CONSTRAINT user_account_realm_email_uq UNIQUE (realm, email_normalized),
+  -- The referenced key of the permission-grant principal FK below. Trivially
+  -- unique because `account_id` is the primary key; declared so a grant row
+  -- cannot name a realm or a role its account does not actually have.
+  CONSTRAINT user_account_principal_uq UNIQUE (account_id, realm, realm_role)
 );
 --> statement-breakpoint
 
@@ -134,7 +157,12 @@ CREATE TABLE platform.server_session (
   CONSTRAINT server_session_revoked_has_reason
     CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL)),
   CONSTRAINT server_session_token_shape CHECK (token_hash ~ '^[0-9a-f]{64}$'::text),
-  CONSTRAINT server_session_token_uq UNIQUE (token_hash)
+  CONSTRAINT server_session_token_uq UNIQUE (token_hash),
+  -- The referenced key of the scope-grant FK below: a scope grant names the
+  -- session, the account it belongs to and the realm it was issued in, all
+  -- three at once, so a grant cannot be attached to another account's session
+  -- or to a session issued in another realm.
+  CONSTRAINT server_session_identity_uq UNIQUE (session_id, account_id, realm)
 );
 --> statement-breakpoint
 
@@ -182,7 +210,11 @@ CREATE TABLE platform.staff_membership (
     CHECK (state = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'SUSPENDED'::text, 'TERMINATED'::text])),
   -- doc 06 §3.1: children carry `hotel_id` so a cross-hotel reference is
   -- unrepresentable rather than merely prevented.
-  CONSTRAINT staff_membership_scope_uq UNIQUE (hotel_id, membership_id)
+  CONSTRAINT staff_membership_scope_uq UNIQUE (hotel_id, membership_id),
+  -- The referenced key of the scope-grant FK below. `account_id` is nullable
+  -- while a membership is PENDING, and a NULL never matches a foreign key, so a
+  -- scope grant can only ever name a membership that has an account.
+  CONSTRAINT staff_membership_account_scope_uq UNIQUE (hotel_id, membership_id, account_id)
 );
 --> statement-breakpoint
 
@@ -351,20 +383,68 @@ CREATE UNIQUE INDEX password_reset_request_one_active_uq
 CREATE TABLE platform.account_permission_grant (
   permission_grant_id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id            uuid NOT NULL,
+  -- Carried on the grant so the whitelist below can be a CHECK. They are not a
+  -- second copy of the account's realm and role: the composite foreign key ties
+  -- all three to the one `user_account` row, so a grant that names a realm or a
+  -- role the account does not hold has no referent and cannot be inserted.
+  realm                 text NOT NULL,
+  realm_role            text NOT NULL,
   permission            text NOT NULL,
   granted_at            timestamptz NOT NULL DEFAULT now(),
   granted_by_account_id uuid NOT NULL,
   revoked_at            timestamptz,
   revoked_by_account_id uuid,
   revoked_reason        text,
-  CONSTRAINT account_permission_grant_account_id_fkey FOREIGN KEY (account_id)
-    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
+  CONSTRAINT account_permission_grant_principal_fkey FOREIGN KEY (account_id, realm, realm_role)
+    REFERENCES platform.user_account (account_id, realm, realm_role) ON DELETE RESTRICT,
   CONSTRAINT account_permission_grant_granted_by_fkey FOREIGN KEY (granted_by_account_id)
     REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
   CONSTRAINT account_permission_grant_revoked_by_fkey FOREIGN KEY (revoked_by_account_id)
     REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
-  CONSTRAINT account_permission_grant_permission_shape
-    CHECK (permission ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'::text),
+  -- doc 18 §5 and §6, inverted: the exact set of permissions each column may
+  -- ever be granted. A row the document refuses to both columns names no
+  -- permission and therefore appears nowhere here, which is what makes it
+  -- *unrepresentable* rather than merely unassigned — `Hotel operational data
+  -- удирдах`, `Police data харах` and `password/OTP/token харах` cannot be
+  -- granted to anybody by writing a row, and neither can a dotted action id.
+  CONSTRAINT account_permission_grant_grantable CHECK (
+    CASE realm_role
+      WHEN 'OPERATION_ADMIN'::text THEN permission = ANY (ARRAY[
+        'DEPOSIT_REFUND_RECONCILE'::text,
+        'ONBOARDING_PROVISION_RETRY'::text,
+        'OPERATION_READ'::text,
+        'REVIEW_MODERATE'::text,
+        'SUBSCRIPTION_EBARIMT_RETRY'::text,
+        'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text,
+        'SUBSCRIPTION_PAYMENT_RECONCILE'::text,
+        'SUBSCRIPTION_REMINDER_SEND'::text])
+      WHEN 'PLATFORM_SUPER_ADMIN'::text THEN permission = ANY (ARRAY[
+        'ACCOUNT_OWNERSHIP_RECOVERY_APPROVE'::text,
+        'DEPOSIT_REFUND_RECONCILE'::text,
+        'ONBOARDING_PROVISION_RETRY'::text,
+        'OPERATION_READ'::text,
+        'PLATFORM_OPERATION_ACCESS_MANAGE'::text,
+        'REVIEW_MODERATE'::text,
+        'SUBSCRIPTION_CONTACT_CHANGE_APPROVE'::text,
+        'SUBSCRIPTION_EBARIMT_RETRY'::text,
+        'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text,
+        'SUBSCRIPTION_PAYMENT_RECONCILE'::text,
+        'SUBSCRIPTION_REMINDER_SEND'::text,
+        'SUBSCRIPTION_SUSPEND'::text])
+      WHEN 'POLICE_OFFICER'::text THEN permission = ANY (ARRAY[
+        'FALSE_MATCH_APPROVE'::text,
+        'FOUND_CORRECTION_APPROVE'::text,
+        'WANTED_CASE_STATE_MANAGE'::text,
+        'WANTED_IDENTITY_APPROVE'::text])
+      WHEN 'POLICE_ADMIN'::text THEN permission = ANY (ARRAY[
+        'FALSE_MATCH_APPROVE'::text,
+        'FOUND_CORRECTION_APPROVE'::text,
+        'WANTED_CASE_CREATE'::text,
+        'WANTED_CASE_EXPORT'::text,
+        'WANTED_CASE_STATE_MANAGE'::text,
+        'WANTED_IDENTITY_APPROVE'::text])
+      ELSE false
+    END),
   CONSTRAINT account_permission_grant_revocation_complete
     CHECK ((revoked_at IS NULL) = (revoked_by_account_id IS NULL))
 );
@@ -388,17 +468,23 @@ CREATE TABLE platform.session_scope_grant (
   hotel_id            uuid NOT NULL,
   account_id          uuid NOT NULL,
   session_id          uuid NOT NULL,
+  realm               text NOT NULL,
   membership_id       uuid NOT NULL,
   membership_revision integer NOT NULL,
   granted_at          timestamptz NOT NULL DEFAULT now(),
   revoked_at          timestamptz,
   revoked_reason      text,
-  CONSTRAINT session_scope_grant_session_fkey FOREIGN KEY (session_id)
-    REFERENCES platform.server_session (session_id) ON DELETE RESTRICT,
-  CONSTRAINT session_scope_grant_account_id_fkey FOREIGN KEY (account_id)
-    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
-  CONSTRAINT session_scope_grant_membership_fkey FOREIGN KEY (hotel_id, membership_id)
-    REFERENCES platform.staff_membership (hotel_id, membership_id) ON DELETE RESTRICT,
+  -- The three-column keys are the point of this table. A grant names one
+  -- session *of one account in one realm*, and one membership *of that same
+  -- account in one hotel*; there is no combination of rows in which a session
+  -- carries authority over a membership that is not its own account's.
+  CONSTRAINT session_scope_grant_session_fkey FOREIGN KEY (session_id, account_id, realm)
+    REFERENCES platform.server_session (session_id, account_id, realm) ON DELETE RESTRICT,
+  CONSTRAINT session_scope_grant_membership_fkey
+    FOREIGN KEY (hotel_id, membership_id, account_id)
+    REFERENCES platform.staff_membership (hotel_id, membership_id, account_id)
+    ON DELETE RESTRICT,
+  CONSTRAINT session_scope_grant_realm_is_hotel CHECK (realm = 'hotel'::text),
   CONSTRAINT session_scope_grant_revision_non_negative CHECK (membership_revision >= 0),
   CONSTRAINT session_scope_grant_revoked_has_reason
     CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL))
@@ -547,6 +633,13 @@ BEGIN
     RAISE EXCEPTION 'the Primary Hotel Admin is not demoted by a staff action (STAFF-DEC-006)'
       USING ERRCODE = '42501';
   END IF;
+  IF NEW.is_primary_admin AND NOT OLD.is_primary_admin THEN
+    -- doc 19 §9: the Primary is established at provisioning and transferred by
+    -- the offline Platform process. A membership that could promote itself would
+    -- make the protections below reachable by first acquiring them.
+    RAISE EXCEPTION 'the Primary Hotel Admin is not appointed by a staff action (STAFF-DEC-006)'
+      USING ERRCODE = '42501';
+  END IF;
   IF OLD.is_primary_admin AND NEW.state <> 'ACTIVE'::text THEN
     RAISE EXCEPTION 'the Primary Hotel Admin is not suspended or terminated by a staff action'
       USING ERRCODE = '42501';
@@ -577,9 +670,42 @@ $$;
 -- revocation of a live grant, and it touches nothing else.
 CREATE OR REPLACE FUNCTION platform.membership_role_grant_guard() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_restaurant_id uuid;
+  v_is_primary    boolean;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     RAISE EXCEPTION 'a role grant is revoked, never deleted (doc 19 §7)' USING ERRCODE = '42501';
+  END IF;
+
+  -- doc 19 §3 / doc 06 §4.1: a restaurant-scoped membership holds exactly the
+  -- Restaurant Manager role and no general hotel role, and the Restaurant
+  -- Manager role exists only inside a restaurant scope. Enforced on the grant
+  -- rather than only in the service, so no path — a later phase's, or a direct
+  -- statement — can produce the combination.
+  --
+  -- The lookup is invoker-rights on purpose: `membership_role_grant`'s own
+  -- tenant policy has already established that this statement runs under the
+  -- row's hotel scope, so the membership is visible. A membership that is *not*
+  -- visible refuses the write rather than passing it.
+  IF TG_OP = 'INSERT' THEN
+    SELECT m.restaurant_id, m.is_primary_admin
+      INTO v_restaurant_id, v_is_primary
+      FROM platform.staff_membership m
+     WHERE m.hotel_id = NEW.hotel_id AND m.membership_id = NEW.membership_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'the membership a role grant names is not visible in this scope'
+        USING ERRCODE = '42501';
+    END IF;
+    IF v_restaurant_id IS NULL AND NEW.role = 'RESTAURANT_MANAGER'::text THEN
+      RAISE EXCEPTION 'RESTAURANT_MANAGER is granted only inside a restaurant scope (doc 19 §3)'
+        USING ERRCODE = '22023';
+    END IF;
+    IF v_restaurant_id IS NOT NULL AND NEW.role <> 'RESTAURANT_MANAGER'::text THEN
+      RAISE EXCEPTION 'a restaurant-scoped membership holds only RESTAURANT_MANAGER, not %',
+        NEW.role USING ERRCODE = '22023';
+    END IF;
+    RETURN NEW;
   END IF;
 
   IF NEW.role_grant_id IS DISTINCT FROM OLD.role_grant_id
@@ -597,6 +723,24 @@ BEGIN
   END IF;
   IF NEW.revoked_at IS NULL THEN
     RAISE EXCEPTION 'the only update to a role grant is its revocation' USING ERRCODE = '22023';
+  END IF;
+
+  -- `STAFF-DEC-006`: the Primary Hotel Admin's own HOTEL_ADMIN grant is not
+  -- revocable by a staff action — not by the API, and not by a broad UPDATE
+  -- that happens to match the row. A hotel with no administrator is the state
+  -- doc 19 §9 exists to make unreachable.
+  IF OLD.role = 'HOTEL_ADMIN'::text THEN
+    SELECT m.is_primary_admin INTO v_is_primary
+      FROM platform.staff_membership m
+     WHERE m.hotel_id = OLD.hotel_id AND m.membership_id = OLD.membership_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'the membership a role grant names is not visible in this scope'
+        USING ERRCODE = '42501';
+    END IF;
+    IF v_is_primary THEN
+      RAISE EXCEPTION 'the Primary Hotel Admin keeps the HOTEL_ADMIN role (STAFF-DEC-006)'
+        USING ERRCODE = '42501';
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -713,6 +857,134 @@ END;
 $$;
 --> statement-breakpoint
 
+-- doc 19 §4 / doc 06 §4.1, the invitation half of the same rule: an invitation
+-- cannot *ask* for a role combination a grant would refuse, so the refusal
+-- happens before a token is minted rather than at acceptance.
+CREATE OR REPLACE FUNCTION platform.invitation_requested_role_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_restaurant_id uuid;
+BEGIN
+  SELECT m.restaurant_id
+    INTO v_restaurant_id
+    FROM platform.staff_invitation i
+    JOIN platform.staff_membership m
+      ON m.hotel_id = i.hotel_id AND m.membership_id = i.membership_id
+   WHERE i.hotel_id = NEW.hotel_id AND i.invitation_id = NEW.invitation_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'the invitation a requested role names is not visible in this scope'
+      USING ERRCODE = '42501';
+  END IF;
+  IF v_restaurant_id IS NULL AND NEW.role = 'RESTAURANT_MANAGER'::text THEN
+    RAISE EXCEPTION 'RESTAURANT_MANAGER is invited only into a restaurant scope (doc 19 §3)'
+      USING ERRCODE = '22023';
+  END IF;
+  IF v_restaurant_id IS NOT NULL AND NEW.role <> 'RESTAURANT_MANAGER'::text THEN
+    RAISE EXCEPTION 'a restaurant-scoped invitation asks only for RESTAURANT_MANAGER, not %',
+      NEW.role USING ERRCODE = '22023';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
+-- doc 19 §10: revocation is terminal at the database boundary. The API role
+-- holds UPDATE on these three tables because it must be able to revoke; what it
+-- must never be able to do is *un*-revoke, or rewrite whose session, scope or
+-- authority a revoked row recorded. A single compromised statement therefore
+-- cannot resurrect a closed session.
+CREATE OR REPLACE FUNCTION platform.server_session_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'a session is revoked, never deleted (doc 19 §10)' USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.session_id IS DISTINCT FROM OLD.session_id
+     OR NEW.account_id IS DISTINCT FROM OLD.account_id
+     OR NEW.realm IS DISTINCT FROM OLD.realm
+     OR NEW.token_hash IS DISTINCT FROM OLD.token_hash
+     OR NEW.token_key_version IS DISTINCT FROM OLD.token_key_version
+     OR NEW.account_epoch IS DISTINCT FROM OLD.account_epoch
+     OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
+     OR NEW.absolute_expires_at IS DISTINCT FROM OLD.absolute_expires_at THEN
+    RAISE EXCEPTION 'a session identity and its absolute expiry are immutable'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.revoked_at IS NOT NULL THEN
+    RAISE EXCEPTION 'session % is already revoked', OLD.session_id USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION platform.session_scope_grant_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'a scope grant is revoked, never deleted' USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.scope_grant_id IS DISTINCT FROM OLD.scope_grant_id
+     OR NEW.hotel_id IS DISTINCT FROM OLD.hotel_id
+     OR NEW.account_id IS DISTINCT FROM OLD.account_id
+     OR NEW.session_id IS DISTINCT FROM OLD.session_id
+     OR NEW.realm IS DISTINCT FROM OLD.realm
+     OR NEW.membership_id IS DISTINCT FROM OLD.membership_id
+     OR NEW.membership_revision IS DISTINCT FROM OLD.membership_revision
+     OR NEW.granted_at IS DISTINCT FROM OLD.granted_at THEN
+    RAISE EXCEPTION 'a scope grant records what a session was given, and is not rewritten'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.revoked_at IS NOT NULL THEN
+    RAISE EXCEPTION 'scope grant % is already revoked', OLD.scope_grant_id USING ERRCODE = '22023';
+  END IF;
+  IF NEW.revoked_at IS NULL THEN
+    RAISE EXCEPTION 'the only update to a scope grant is its revocation' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
+CREATE OR REPLACE FUNCTION platform.account_permission_grant_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'a permission grant is revoked, never deleted (RBAC-DEC-017)'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.permission_grant_id IS DISTINCT FROM OLD.permission_grant_id
+     OR NEW.account_id IS DISTINCT FROM OLD.account_id
+     OR NEW.realm IS DISTINCT FROM OLD.realm
+     OR NEW.realm_role IS DISTINCT FROM OLD.realm_role
+     OR NEW.permission IS DISTINCT FROM OLD.permission
+     OR NEW.granted_at IS DISTINCT FROM OLD.granted_at
+     OR NEW.granted_by_account_id IS DISTINCT FROM OLD.granted_by_account_id THEN
+    RAISE EXCEPTION 'a permission grant records who was given what, and is not rewritten'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.revoked_at IS NOT NULL THEN
+    RAISE EXCEPTION 'permission grant % is already revoked', OLD.permission_grant_id
+      USING ERRCODE = '22023';
+  END IF;
+  IF NEW.revoked_at IS NULL THEN
+    RAISE EXCEPTION 'the only update to a permission grant is its revocation'
+      USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
 CREATE TRIGGER staff_membership_no_delete
   BEFORE DELETE ON platform.staff_membership
   FOR EACH ROW EXECUTE FUNCTION platform.staff_membership_guard();
@@ -733,6 +1005,10 @@ CREATE TRIGGER membership_role_grant_transition_guard
   BEFORE UPDATE ON platform.membership_role_grant
   FOR EACH ROW EXECUTE FUNCTION platform.membership_role_grant_guard();
 --> statement-breakpoint
+CREATE TRIGGER membership_role_grant_scope_guard
+  BEFORE INSERT ON platform.membership_role_grant
+  FOR EACH ROW EXECUTE FUNCTION platform.membership_role_grant_guard();
+--> statement-breakpoint
 CREATE TRIGGER staff_invitation_no_delete
   BEFORE DELETE ON platform.staff_invitation
   FOR EACH ROW EXECUTE FUNCTION platform.staff_invitation_guard();
@@ -744,6 +1020,10 @@ CREATE TRIGGER staff_invitation_transition_guard
 CREATE TRIGGER invitation_requested_role_append_only
   BEFORE UPDATE OR DELETE ON platform.invitation_requested_role
   FOR EACH ROW EXECUTE FUNCTION platform.reject_mutation();
+--> statement-breakpoint
+CREATE TRIGGER invitation_requested_role_scope_guard
+  BEFORE INSERT ON platform.invitation_requested_role
+  FOR EACH ROW EXECUTE FUNCTION platform.invitation_requested_role_guard();
 --> statement-breakpoint
 CREATE TRIGGER password_reset_request_no_delete
   BEFORE DELETE ON platform.password_reset_request
@@ -767,7 +1047,27 @@ CREATE TRIGGER work_handoff_event_append_only
 --> statement-breakpoint
 CREATE TRIGGER account_permission_grant_no_delete
   BEFORE DELETE ON platform.account_permission_grant
-  FOR EACH ROW EXECUTE FUNCTION platform.reject_mutation();
+  FOR EACH ROW EXECUTE FUNCTION platform.account_permission_grant_guard();
+--> statement-breakpoint
+CREATE TRIGGER account_permission_grant_transition_guard
+  BEFORE UPDATE ON platform.account_permission_grant
+  FOR EACH ROW EXECUTE FUNCTION platform.account_permission_grant_guard();
+--> statement-breakpoint
+CREATE TRIGGER server_session_no_delete
+  BEFORE DELETE ON platform.server_session
+  FOR EACH ROW EXECUTE FUNCTION platform.server_session_guard();
+--> statement-breakpoint
+CREATE TRIGGER server_session_transition_guard
+  BEFORE UPDATE ON platform.server_session
+  FOR EACH ROW EXECUTE FUNCTION platform.server_session_guard();
+--> statement-breakpoint
+CREATE TRIGGER session_scope_grant_no_delete
+  BEFORE DELETE ON platform.session_scope_grant
+  FOR EACH ROW EXECUTE FUNCTION platform.session_scope_grant_guard();
+--> statement-breakpoint
+CREATE TRIGGER session_scope_grant_transition_guard
+  BEFORE UPDATE ON platform.session_scope_grant
+  FOR EACH ROW EXECUTE FUNCTION platform.session_scope_grant_guard();
 --> statement-breakpoint
 
 -- ---------------------------------------------------------- row level security
@@ -816,21 +1116,35 @@ CREATE POLICY tenant_isolation ON platform.staff_membership
 -- doc 06 §2: scope is derived from membership, so a principal must be able to
 -- read its own membership rows before any hotel scope exists. SELECT only: a
 -- write still requires the tenant scope above.
+--
+-- Confined to the platform sentinel, and that confinement is the point.
+-- PostgreSQL composes permissive policies with OR, so an unconditional account
+-- policy would *widen* every real hotel transaction: a query inside hotel A
+-- would additionally return the actor's rows in hotel B, and a repository whose
+-- own `hotel_id` predicate was ever dropped would silently read across tenants.
+-- Confined this way the two policies are disjoint by construction — no hotel
+-- carries the sentinel as its id, so inside a hotel scope this policy matches
+-- nothing at all.
 CREATE POLICY own_membership_read ON platform.staff_membership
-  FOR SELECT USING (account_id = platform.current_account_id());
+  FOR SELECT USING (
+    platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid
+    AND account_id = platform.current_account_id()
+  );
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON platform.membership_role_grant
   USING (hotel_id = platform.current_hotel_id())
   WITH CHECK (hotel_id = platform.current_hotel_id());
 --> statement-breakpoint
--- The same reason as the membership policy above: the effective permission set
--- for a session is the union of the roles on one membership, and it has to be
--- readable before any hotel scope exists. SELECT only, and only for the grants
--- on the principal's own memberships — the subquery is itself subject to
--- `staff_membership`'s policies, so it can widen nothing.
+-- The same reason as the membership policy above, and the same confinement: the
+-- effective permission set for a session is the union of the roles on one
+-- membership and has to be readable before any hotel scope exists. SELECT only,
+-- only for grants on the principal's own memberships, and only under the
+-- platform sentinel — inside a hotel scope this policy matches nothing, so the
+-- tenant predicate is the only one that decides.
 CREATE POLICY own_membership_roles_read ON platform.membership_role_grant
   FOR SELECT USING (
-    EXISTS (
+    platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid
+    AND EXISTS (
       SELECT 1 FROM platform.staff_membership m
        WHERE m.hotel_id = membership_role_grant.hotel_id
          AND m.membership_id = membership_role_grant.membership_id
@@ -852,10 +1166,18 @@ CREATE POLICY tenant_isolation ON platform.session_scope_grant
 --> statement-breakpoint
 -- Account-wide revocation crosses every hotel the account is a member of, so it
 -- cannot run under one hotel's scope. The row is about the account, and the
--- account is the one the transaction authenticated as.
+-- account is the one the transaction authenticated as — and, again, only under
+-- the platform sentinel, so a hotel-scoped statement can revoke only within its
+-- own tenant.
 CREATE POLICY own_account_scope ON platform.session_scope_grant
-  USING (account_id = platform.current_account_id())
-  WITH CHECK (account_id = platform.current_account_id());
+  USING (
+    platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid
+    AND account_id = platform.current_account_id()
+  )
+  WITH CHECK (
+    platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid
+    AND account_id = platform.current_account_id()
+  );
 --> statement-breakpoint
 CREATE POLICY tenant_isolation ON platform.work_handoff_item
   USING (hotel_id = platform.current_hotel_id())
@@ -945,7 +1267,9 @@ GRANT EXECUTE ON FUNCTION platform.current_account_id()
 GRANT EXECUTE ON FUNCTION
   platform.staff_membership_guard(), platform.membership_role_grant_guard(),
   platform.staff_invitation_guard(), platform.password_reset_guard(),
-  platform.work_handoff_item_guard(), platform.reject_mutation()
+  platform.work_handoff_item_guard(), platform.reject_mutation(),
+  platform.invitation_requested_role_guard(), platform.server_session_guard(),
+  platform.session_scope_grant_guard(), platform.account_permission_grant_guard()
   TO prsystem_api;
 --> statement-breakpoint
 

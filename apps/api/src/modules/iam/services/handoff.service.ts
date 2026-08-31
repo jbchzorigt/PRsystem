@@ -1,5 +1,5 @@
-import type { HotelRole, Principal } from '@prsystem/authz';
-import { isRoleAssignableIn } from '@prsystem/authz';
+import type { HotelRole } from '@prsystem/authz';
+import { isRoleAssignableIn, permissionScopes } from '@prsystem/authz';
 import { ApiError } from '@prsystem/contracts';
 import type { UnitOfWork } from '@prsystem/db';
 import {
@@ -9,11 +9,12 @@ import {
   recordPlatformAudit,
 } from '@prsystem/db';
 import type { HandoffItemRow, HandoffSubjectKind } from '../repositories/handoff.repository';
+import type { OpenWorkItem } from '../contracts/open-work.port';
 import { HandoffRepository } from '../repositories/handoff.repository';
 import type { MembershipRow } from '../repositories/membership.repository';
 import { MembershipRepository } from '../repositories/membership.repository';
 import { authorizeCommand } from './authorization.service';
-import type { IamDependencies, RequestContext } from './iam-context';
+import type { CommandActor, HotelGate, IamDependencies, RequestContext } from './iam-context';
 import { IamServiceBase } from './iam-context';
 
 /**
@@ -42,17 +43,13 @@ const CLAIM_PERMISSION: Readonly<Record<HandoffSubjectKind, string>> = {
   restaurant_order: 'hotel.handoff.restaurant_reassign',
 };
 
-export interface OpenWork {
-  readonly kind: HandoffSubjectKind;
-  readonly ref: string;
-  /**
-   * True when an immutable movement, an actual count or a partial completion has
-   * already been posted (doc 19 §8.2). Such an item is never reassigned: the
-   * remaining work becomes a linked `CONTINUATION`.
-   */
-  readonly movementStarted?: boolean;
-  readonly restaurantId?: string;
-}
+/**
+ * Open work, as the owning module reports it.
+ *
+ * The shape lives with the port that produces it — this alias is kept so the
+ * call sites read as the domain concept they are.
+ */
+export type OpenWork = OpenWorkItem;
 
 export class HandoffService extends IamServiceBase {
   constructor(deps: IamDependencies) {
@@ -129,11 +126,26 @@ export class HandoffService extends IamServiceBase {
    * winner (doc 19 §8.1 rule 2).
    */
   async claim(
-    actor: Principal,
+    actor: CommandActor,
     input: { hotelId: string; itemId: string; idempotencyKey: string },
     request: RequestContext,
   ): Promise<{ claimed: boolean; claimantMembershipId: string }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
+      const items = new HandoffRepository(uow);
+      const item = await items.lock(input.itemId);
+      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
+      const decision = await this.authorize(gate, {
+        uow,
+        permission: CLAIM_PERMISSION[item.subjectKind],
+        hotelId: input.hotelId,
+        restaurantId: item.restaurantId,
+        targetRef: item.itemId,
+      });
+      const claimant = decision.membership;
+      if (claimant === undefined)
+        throw new ApiError('INTERNAL_ERROR', 'no membership was resolved');
+
       const claimed = await this.claimIdempotency(
         uow,
         'iam.handoff.claim',
@@ -143,27 +155,6 @@ export class HandoffService extends IamServiceBase {
       if (claimed.replay !== undefined) {
         return claimed.replay as { claimed: boolean; claimantMembershipId: string };
       }
-
-      const items = new HandoffRepository(uow);
-      const item = await items.lock(input.itemId);
-      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-      const decision = await authorizeCommand({
-        uow,
-        endpointRealm: 'hotel',
-        permission: CLAIM_PERMISSION[item.subjectKind],
-        principal: actor,
-        target: {
-          hotelId: input.hotelId,
-          ...(item.restaurantId === null ? {} : { restaurantId: item.restaurantId }),
-        },
-        subscription: this.deps.subscription,
-        targetType: 'work_handoff_item',
-        targetRef: item.itemId,
-      });
-      const claimant = decision.membership;
-      if (claimant === undefined)
-        throw new ApiError('INTERNAL_ERROR', 'no membership was resolved');
 
       if (item.state !== 'TAKEOVER_REQUIRED' && item.state !== 'REASSIGNMENT_REQUIRED') {
         if (item.claimantMembershipId === claimant.membershipId) {
@@ -204,6 +195,77 @@ export class HandoffService extends IamServiceBase {
   }
 
   /**
+   * Releases a claim, so another Manager may take the item on.
+   *
+   * doc 19 §8.4 records `released` as a movement of its own: a claim is not
+   * abandoned silently and it is not taken from its holder. This is the only
+   * route from one claimant to another, which is what makes "an item claimed by
+   * A cannot be assigned by B" a rule rather than a race.
+   */
+  async release(
+    actor: CommandActor,
+    input: { hotelId: string; itemId: string; reason: string; idempotencyKey: string },
+    request: RequestContext,
+  ): Promise<{ released: boolean }> {
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
+      const items = new HandoffRepository(uow);
+      const item = await items.lock(input.itemId);
+      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
+      const decision = await this.authorize(gate, {
+        uow,
+        permission: CLAIM_PERMISSION[item.subjectKind],
+        hotelId: input.hotelId,
+        restaurantId: item.restaurantId,
+        targetRef: item.itemId,
+      });
+      const actorMembership = requireMembership(decision.membership);
+      if (item.state !== 'CLAIMED') {
+        throw new ApiError('CONFLICT', 'only a claimed item is released');
+      }
+      assertClaimant(item, actorMembership.membershipId);
+
+      const claimed = await this.claimIdempotency(
+        uow,
+        'iam.handoff.release',
+        input.idempotencyKey,
+        input,
+      );
+      if (claimed.replay !== undefined) return claimed.replay as { released: boolean };
+
+      const moved = await items.transition({
+        itemId: item.itemId,
+        expectedVersion: item.assignmentVersion,
+        state:
+          item.subjectKind === 'reception_shift' ? 'TAKEOVER_REQUIRED' : 'REASSIGNMENT_REQUIRED',
+        claimantMembershipId: null,
+        assigneeMembershipId: null,
+      });
+      if (!moved) throw new ApiError('CONFLICT', 'this item changed concurrently');
+
+      await items.appendEvent({
+        itemId: item.itemId,
+        kind: 'released',
+        actorMembershipId: actorMembership.membershipId,
+        reason: input.reason,
+        idempotencyKey: input.idempotencyKey,
+      });
+      await recordPlatformAudit(uow, {
+        action: 'iam.handoff.released',
+        outcome: 'allowed',
+        targetType: 'work_handoff_item',
+        targetRef: item.itemId,
+        reason: input.reason,
+        payload: { claimantMembershipId: actorMembership.membershipId },
+      });
+
+      const result = { released: true };
+      await completeIdempotencyKey(uow, claimed.idempotencyId, 200, result);
+      return result;
+    });
+  }
+
+  /**
    * Assigns the replacement.
    *
    * Every guard of doc 19 §8.4 is checked at commit: same hotel scope, active
@@ -212,7 +274,7 @@ export class HandoffService extends IamServiceBase {
    * never reassigned — the caller must create a linked continuation instead.
    */
   async assign(
-    actor: Principal,
+    actor: CommandActor,
     input: {
       hotelId: string;
       itemId: string;
@@ -221,7 +283,34 @@ export class HandoffService extends IamServiceBase {
     },
     request: RequestContext,
   ): Promise<{ assigned: boolean; assigneeMembershipId: string }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
+      const items = new HandoffRepository(uow);
+      const item = await items.lock(input.itemId);
+      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
+      const decision = await this.authorize(gate, {
+        uow,
+        permission: CLAIM_PERMISSION[item.subjectKind],
+        hotelId: input.hotelId,
+        restaurantId: item.restaurantId,
+        targetRef: item.itemId,
+      });
+      const actorMembership = requireMembership(decision.membership);
+
+      if (item.state !== 'CLAIMED') {
+        throw new ApiError('CONFLICT', 'an item is assigned only after it has been claimed');
+      }
+      // doc 19 §8.4: the Manager who took the item on is the one who resolves
+      // it. Another Manager holding the same permission may not step into a
+      // claim that is not theirs — they release it, or the holder does.
+      assertClaimant(item, actorMembership.membershipId);
+      if (item.movementStarted) {
+        throw new ApiError(
+          'CONFLICT',
+          'a posted movement is never reassigned; create a linked continuation instead',
+        );
+      }
+
       const claimed = await this.claimIdempotency(
         uow,
         'iam.handoff.assign',
@@ -231,33 +320,6 @@ export class HandoffService extends IamServiceBase {
       if (claimed.replay !== undefined) {
         return claimed.replay as { assigned: boolean; assigneeMembershipId: string };
       }
-
-      const items = new HandoffRepository(uow);
-      const item = await items.lock(input.itemId);
-      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
-      if (item.state !== 'CLAIMED') {
-        throw new ApiError('CONFLICT', 'an item is assigned only after it has been claimed');
-      }
-      if (item.movementStarted) {
-        throw new ApiError(
-          'CONFLICT',
-          'a posted movement is never reassigned; create a linked continuation instead',
-        );
-      }
-
-      await authorizeCommand({
-        uow,
-        endpointRealm: 'hotel',
-        permission: CLAIM_PERMISSION[item.subjectKind],
-        principal: actor,
-        target: {
-          hotelId: input.hotelId,
-          ...(item.restaurantId === null ? {} : { restaurantId: item.restaurantId }),
-        },
-        subscription: this.deps.subscription,
-        targetType: 'work_handoff_item',
-        targetRef: item.itemId,
-      });
 
       await this.assertReplacementEligible(uow, input.hotelId, input.replacementMembershipId, item);
 
@@ -272,7 +334,10 @@ export class HandoffService extends IamServiceBase {
       await items.appendEvent({
         itemId: item.itemId,
         kind: 'assigned',
-        actorMembershipId: item.claimantMembershipId,
+        // The account that performed the action, not the person the work was
+        // taken from: an audit trail that names the previous actor as the actor
+        // attributes the decision to the wrong person (ADR-0018 §2).
+        actorMembershipId: actorMembership.membershipId,
         previousAssigneeMembershipId: item.previousActorMembershipId,
         newAssigneeMembershipId: input.replacementMembershipId,
         idempotencyKey: input.idempotencyKey,
@@ -283,6 +348,7 @@ export class HandoffService extends IamServiceBase {
         targetType: 'work_handoff_item',
         targetRef: item.itemId,
         payload: {
+          actorMembershipId: actorMembership.membershipId,
           previousActorMembershipId: item.previousActorMembershipId,
           assigneeMembershipId: input.replacementMembershipId,
         },
@@ -313,7 +379,7 @@ export class HandoffService extends IamServiceBase {
    * action can never be executed twice.
    */
   async createContinuation(
-    actor: Principal,
+    actor: CommandActor,
     input: {
       hotelId: string;
       itemId: string;
@@ -323,18 +389,20 @@ export class HandoffService extends IamServiceBase {
     },
     request: RequestContext,
   ): Promise<{ continuationItemId: string }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const claimed = await this.claimIdempotency(
-        uow,
-        'iam.handoff.continuation',
-        input.idempotencyKey,
-        input,
-      );
-      if (claimed.replay !== undefined) return claimed.replay as { continuationItemId: string };
-
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const items = new HandoffRepository(uow);
       const original = await items.lock(input.itemId);
       if (original === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
+      const decision = await this.authorize(gate, {
+        uow,
+        permission: 'hotel.handoff.cleaner_continuation_create',
+        hotelId: input.hotelId,
+        restaurantId: null,
+        targetRef: original.itemId,
+      });
+      const actorMembership = requireMembership(decision.membership);
+
       if (original.subjectKind !== 'cleaner_task') {
         throw new ApiError('CONFLICT', 'only a Cleaner task produces a linked continuation');
       }
@@ -344,17 +412,15 @@ export class HandoffService extends IamServiceBase {
           'an item with no posted movement is reassigned, not continued',
         );
       }
+      assertClaimant(original, actorMembership.membershipId);
 
-      await authorizeCommand({
+      const claimed = await this.claimIdempotency(
         uow,
-        endpointRealm: 'hotel',
-        permission: 'hotel.handoff.cleaner_continuation_create',
-        principal: actor,
-        target: { hotelId: input.hotelId },
-        subscription: this.deps.subscription,
-        targetType: 'work_handoff_item',
-        targetRef: original.itemId,
-      });
+        'iam.handoff.continuation',
+        input.idempotencyKey,
+        input,
+      );
+      if (claimed.replay !== undefined) return claimed.replay as { continuationItemId: string };
 
       await this.assertReplacementEligible(
         uow,
@@ -381,13 +447,13 @@ export class HandoffService extends IamServiceBase {
         itemId: continuation.itemId,
         expectedVersion: continuation.assignmentVersion,
         state: 'ASSIGNED',
-        claimantMembershipId: original.claimantMembershipId,
+        claimantMembershipId: actorMembership.membershipId,
         assigneeMembershipId: input.replacementMembershipId,
       });
       await items.appendEvent({
         itemId: continuation.itemId,
         kind: 'continuation_created',
-        actorMembershipId: original.claimantMembershipId,
+        actorMembershipId: actorMembership.membershipId,
         newAssigneeMembershipId: input.replacementMembershipId,
         idempotencyKey: input.idempotencyKey,
       });
@@ -396,7 +462,10 @@ export class HandoffService extends IamServiceBase {
         outcome: 'allowed',
         targetType: 'work_handoff_item',
         targetRef: continuation.itemId,
-        payload: { continuationOfItemId: original.itemId },
+        payload: {
+          continuationOfItemId: original.itemId,
+          actorMembershipId: actorMembership.membershipId,
+        },
       });
 
       const result = { continuationItemId: continuation.itemId };
@@ -412,11 +481,27 @@ export class HandoffService extends IamServiceBase {
    * downstream blocker stays in force.
    */
   async markUnassignable(
-    actor: Principal,
+    actor: CommandActor,
     input: { hotelId: string; itemId: string; reason: string; idempotencyKey: string },
     request: RequestContext,
   ): Promise<{ state: string }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
+      const items = new HandoffRepository(uow);
+      const item = await items.lock(input.itemId);
+      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
+      const decision = await this.authorize(gate, {
+        uow,
+        permission: CLAIM_PERMISSION[item.subjectKind],
+        hotelId: input.hotelId,
+        restaurantId: item.restaurantId,
+        targetRef: item.itemId,
+      });
+      const actorMembership = requireMembership(decision.membership);
+      if (item.state === 'CLAIMED' || item.state === 'ASSIGNED') {
+        assertClaimant(item, actorMembership.membershipId);
+      }
+
       const claimed = await this.claimIdempotency(
         uow,
         'iam.handoff.unassignable',
@@ -424,24 +509,6 @@ export class HandoffService extends IamServiceBase {
         input,
       );
       if (claimed.replay !== undefined) return claimed.replay as { state: string };
-
-      const items = new HandoffRepository(uow);
-      const item = await items.lock(input.itemId);
-      if (item === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-      await authorizeCommand({
-        uow,
-        endpointRealm: 'hotel',
-        permission: CLAIM_PERMISSION[item.subjectKind],
-        principal: actor,
-        target: {
-          hotelId: input.hotelId,
-          ...(item.restaurantId === null ? {} : { restaurantId: item.restaurantId }),
-        },
-        subscription: this.deps.subscription,
-        targetType: 'work_handoff_item',
-        targetRef: item.itemId,
-      });
 
       const moved = await items.transition({
         itemId: item.itemId,
@@ -455,6 +522,7 @@ export class HandoffService extends IamServiceBase {
       await items.appendEvent({
         itemId: item.itemId,
         kind: 'unassigned',
+        actorMembershipId: actorMembership.membershipId,
         reason: input.reason,
         idempotencyKey: input.idempotencyKey,
       });
@@ -464,6 +532,7 @@ export class HandoffService extends IamServiceBase {
         targetType: 'work_handoff_item',
         targetRef: item.itemId,
         reason: input.reason,
+        payload: { actorMembershipId: actorMembership.membershipId },
       });
 
       const result = { state: 'UNASSIGNED_REQUIRES_ACTION' };
@@ -472,22 +541,40 @@ export class HandoffService extends IamServiceBase {
     });
   }
 
+  /**
+   * The queue, confined to what the caller's own cell allows them to see.
+   *
+   * doc 18 §3.2 does not grant `hotel.handoff.queue_view` flatly: a Manager sees
+   * the queue, Reception sees the items assigned to it as a replacement, a
+   * Cleaner its own task, a Restaurant Manager its own restaurant. The limit is
+   * part of the grant, so it is read off the very cells that granted it rather
+   * than restated here — and a role that carries no limit lifts it, because
+   * roles union within one membership.
+   */
   async list(
-    actor: Principal,
+    actor: CommandActor,
     hotelId: string,
     request: RequestContext,
   ): Promise<readonly HandoffItemRow[]> {
-    return this.runHotelCommand(hotelId, request, async (uow) => {
-      await authorizeCommand({
+    return this.runHotelCommand(actor, { hotelId }, request, async (uow, gate) => {
+      const decision = await this.authorize(gate, {
         uow,
-        endpointRealm: 'hotel',
         permission: 'hotel.handoff.queue_view',
-        principal: actor,
-        target: { hotelId },
-        subscription: this.deps.subscription,
+        hotelId,
+        restaurantId: null,
         targetType: 'work_handoff_item',
       });
-      return new HandoffRepository(uow).listOpen();
+      const membership = requireMembership(decision.membership);
+      const packageCode = decision.effectivePackage;
+      if (packageCode === undefined) {
+        throw new ApiError('INTERNAL_ERROR', 'no package was resolved');
+      }
+
+      const open = await new HandoffRepository(uow).listOpen();
+      const limits = permissionScopes(membership.roles, packageCode, 'hotel.handoff.queue_view');
+      if (limits.unrestricted) return open;
+
+      return open.filter((item) => limits.scopes.some((scope) => visible(scope, item, membership)));
     });
   }
 
@@ -532,6 +619,35 @@ export class HandoffService extends IamServiceBase {
     }
   }
 
+  /** The same gate-derived commit-time authorization the staff service uses. */
+  private authorize(
+    gate: HotelGate,
+    input: {
+      uow: UnitOfWork;
+      permission: string;
+      hotelId: string;
+      restaurantId: string | null;
+      targetType?: string;
+      targetRef?: string;
+    },
+  ): ReturnType<typeof authorizeCommand> {
+    return authorizeCommand({
+      uow: input.uow,
+      endpointRealm: 'hotel',
+      permission: input.permission,
+      principal: gate.principal,
+      sessionId: gate.sessionId,
+      ...(gate.principal.stepUpAt === undefined ? {} : { stepUpAt: gate.principal.stepUpAt }),
+      target: {
+        hotelId: input.hotelId,
+        ...(input.restaurantId === null ? {} : { restaurantId: input.restaurantId }),
+      },
+      subscription: this.deps.subscription,
+      targetType: input.targetType ?? 'work_handoff_item',
+      ...(input.targetRef === undefined ? {} : { targetRef: input.targetRef }),
+    });
+  }
+
   private async claimIdempotency(
     uow: UnitOfWork,
     operation: string,
@@ -554,5 +670,53 @@ export class HandoffService extends IamServiceBase {
       default:
         throw new ApiError('IDEMPOTENCY_KEY_REUSED', 'the key was used with a different request');
     }
+  }
+}
+
+/** The membership a hotel decision is always made against. */
+function requireMembership(
+  membership: { membershipId: string; roles: readonly HotelRole[] } | undefined,
+): { membershipId: string; roles: readonly HotelRole[] } {
+  if (membership === undefined) {
+    throw new ApiError('INTERNAL_ERROR', 'no membership was resolved');
+  }
+  return membership;
+}
+
+/**
+ * doc 19 §8.4: the claim belongs to the Manager who took it.
+ *
+ * Two Managers hold the same permission, and that is deliberate — the queue is a
+ * shared responsibility. What it does not make them is interchangeable once one
+ * has taken an item on: the second must release it, or the holder must, and
+ * either way the movement is recorded.
+ */
+function assertClaimant(item: HandoffItemRow, actorMembershipId: string): void {
+  if (item.claimantMembershipId !== null && item.claimantMembershipId !== actorMembershipId) {
+    throw new ApiError('CONFLICT', 'this item is claimed by another account');
+  }
+}
+
+/** Whether one cell scope lets this membership see this item (doc 18 §3.2). */
+function visible(
+  scope: string,
+  item: HandoffItemRow,
+  membership: { membershipId: string; restaurantId?: string },
+): boolean {
+  switch (scope) {
+    case 'assigned_replacement':
+      return item.assigneeMembershipId === membership.membershipId;
+    case 'own_task':
+      // The Cleaner's own work: the task taken from them, or handed to them.
+      return (
+        item.previousActorMembershipId === membership.membershipId ||
+        item.assigneeMembershipId === membership.membershipId
+      );
+    case 'own_restaurant':
+      return item.restaurantId !== null && item.restaurantId === membership.restaurantId;
+    default:
+      // An unmodelled limit denies. A scope this function does not understand is
+      // one nobody implemented, and showing the row would be the failure.
+      return false;
   }
 }

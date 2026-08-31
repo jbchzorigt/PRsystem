@@ -5,7 +5,8 @@
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3. Approved and immutable —
 no phase may be dropped, merged, renumbered or reordered.
 
-Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAIR_REQUIRED`
+Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAIR_REQUIRED` ·
+`AWAITING_CUSTOMER_ACCEPTANCE`
 
 ---
 
@@ -17,6 +18,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase state | `NOT STARTED` — implementation requires explicit authorization to begin |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
+| Phase 04 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -33,7 +35,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
-| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff` | the Phase 04 battery — counts in [Phase 04 record](#phase-04-record) | see the Phase 04 record |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediation 1 | the Phase 04 battery — counts in [Phase 04 remediation 1](#phase-04-remediation-1) | see the Phase 04 record and remediation 1 |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
@@ -68,8 +70,9 @@ The accepted phase, its state, the acceptance itself and the commit it was given
 the manifest that reports them, and `validate-governance` check 15 holds both to them. This document
 can no more withdraw the acceptance than it could have granted it.
 
-Phase 04 — IAM, tenancy, RBAC, and staff lifecycle — is the current phase and has **not started**.
-Beginning it requires a further explicit authorization and a change to the same module.
+Phase 04 has since been implemented and then repaired once; it is recorded as `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`. Phase 05 is the current phase and has **not started**. Beginning it
+requires a further explicit authorization.
 
 Carried forward into Phase 04 and beyond, unchanged by the acceptance:
 
@@ -1788,3 +1791,167 @@ both halves of the declaration.
 - **Selecting `GATE-SEC` as a required GitHub status check**, an external
   repository-settings action needing push authorisation. Not attempted.
 
+
+---
+
+## Phase 04 remediation 1
+
+A bounded runtime, authorization, database and lifecycle security repair on top
+of `62fd743`. Phase 04 was **not** customer-accepted; it was recorded
+`SECURITY_REPAIR_REQUIRED` while this work ran, and is now `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`. Phase 03 was not reopened and `0001_kernel` was
+not touched.
+
+This section is titled *remediation* rather than *repair* deliberately: the
+governance validator reserves the word for the canonical Phase 03 repair-record
+form, and borrowing that vocabulary for a different phase's record would make the
+two indistinguishable to every check that reads them.
+
+Every defect below was reproduced by a regression that failed against `62fd743`
+for the stated reason before anything was changed.
+
+### A — the direct realms and Guest ownership
+
+| Defect at `62fd743` | Repair |
+| --- | --- |
+| `authorizeDirect` allowed any Operation or Police action whose **dotted action id** appeared in `account_permission_grant`. `operation.credential_material_view`, `operation.hotel_operational_data_manage`, `operation.police_data_view` and `police.all_hotel_checkin_export` — rows doc 18 refuses to *both* columns — were all executable by storing one string | The pipeline now evaluates the canonical §5 and §6 matrices. A row with `permission: null` / `grantableTo: []` names no permission and is unreachable; a Police `deny` cell refuses whatever is stored; the account's **realm role** selects the column and an account with none is refused; and the row's canonical name (`SUBSCRIPTION_SUSPEND`, `REVIEW_MODERATE`, `WANTED_CASE_EXPORT`) must be held, never its action id |
+| Nothing stopped an unknown, denied, wrong-realm or non-grantable permission being written | `user_account` now carries `realm_role`; `account_permission_grant` carries `(realm, realm_role)` with a composite foreign key to that one account row and a CHECK enumerating the exact permissions each column may ever hold. Wrong realm, wrong column, unknown name and dotted id are all unrepresentable. `AccountRepository.grantPermission` checks the same matrix first, so the refusal has a reason |
+| Separation of duties and `own_police_scope` were metadata nothing read | Both are enforced. An approval whose counterpart is the actor is refused, and so is one whose counterpart the caller did not load — an unknown requester is not a different requester |
+| `booking.cancel_own` was **allowed** when `resourceOwnerAccountId` was absent | A Guest row the matrix marks with an ownership scope denies without an explicitly loaded owner |
+| `authorizeCommand` re-resolved the principal and dropped `stepUpAt`, so every step-up-gated action was refused and no fresh challenge could satisfy it | The session's step-up recency is carried into the commit-time re-resolution |
+
+### B — the tenant context is server-derived
+
+The command shape bound RLS to the URL's `hotelId`, claimed the idempotency key
+and took `FOR UPDATE` on the target **before** membership was proven. A caller
+with no membership in a hotel could make its rows queue behind a lock, which is
+itself the disclosure the opaque denial exists to prevent.
+
+Every hotel command now passes a gate that runs in the account scope first:
+resolve the account, find a membership covering the target, and require a live
+scope grant on it. Only then is the hotel context bound; nothing about the target
+is read, locked or claimed before that. The three account policies —
+`own_membership_read`, `own_membership_roles_read`, `own_account_scope` — are
+confined to the platform sentinel, because PostgreSQL composes permissive
+policies with OR and an unconditional account policy **widened every real hotel
+transaction** to the actor's rows in other hotels. That confinement is proved to
+be load-bearing by a test that removes it and observes the widening.
+
+### C — a scope session is authority, not a record
+
+`session_scope_grant` was written and revoked but never issued and never
+consulted. Sign-in now issues one row per active membership, stamped with the
+revision it was granted against; the gate and the commit-time re-evaluation both
+require it live at the current revision. So a newly granted role needs a new
+login, a suspension-then-reactivation never revives the old bearer, and the same
+session keeps working in the account's other hotels. Composite foreign keys tie
+account, session realm, membership and hotel together. `touchSession` uses
+`LEAST(now() + idle, absolute_expires_at)` — without it an ordinary request near
+the end of a long session failed on the row's own CHECK. The self-service reset
+establishes the token-derived account context before revoking scope grants and
+asserts the count it handled; previously the UPDATE matched nothing and reported
+success. Revoked sessions, scope grants and permission grants are terminal at the
+database boundary: the API role can revoke and can never un-revoke.
+
+### D — invitation and role lifecycle
+
+Acceptance read `request.principal` on a route with no guard, so the
+existing-account path was unreachable: an `OptionalSessionGuard` now verifies a
+bearer when one is presented and refuses an invalid one rather than downgrading
+it. The Primary Hotel Admin's `HOTEL_ADMIN` grant is refused to the staff API and
+to a broad SQL revocation. Restaurant scope is correct in both directions: a
+hotel-scoped Manager Plus invites the first Restaurant Manager without holding a
+restaurant membership, a Restaurant Manager stays inside their own restaurant,
+and the role/scope combinations are refused at the service, at the role grant and
+at the requested role. The restaurant's linkage to the hotel is a typed
+fail-closed contract, because Phase 15 owns that aggregate.
+
+### E — secrets and reset
+
+Invitation inspection was a `GET` with the token in the query string; it is now a
+`POST` with the secret in the body. The accept-time idempotency payload recorded
+the literal `token: 'redacted'`, so two different invitations under one key
+replayed the first one's result; it now records a purpose-bound keyed digest of
+the presented token — never the token — and a different secret under the same key
+is a key reuse. The self-service reset returns an identical `202` and an
+identical body for an unknown address, an inactive one, a registered one, a
+throttled resend and an unreachable provider. The Hotel-Admin-initiated reset
+keeps its operational failures visible, because there the initiator is
+authenticated and already inside the tenant.
+
+### F — the handoff queue
+
+The queue listing returned every open item to anyone holding `queue_view`; it now
+applies the cell's own scope — Reception sees the items assigned to it, a Cleaner
+its own task, a Restaurant Manager its own restaurant, a Manager the queue. An
+item claimed by one Manager could be assigned or resolved by another; it now
+requires an explicit `released` transition. The movement history recorded the
+**previous claimant** as the actor of an assignment; it records the account that
+acted. And `openWork` was trusted request data — a caller could fabricate or omit
+authoritative work. It comes from an injected `OpenWorkPort` owned by the domain
+modules; with none registered yet the answer is a determinate empty list, and a
+registered provider that cannot answer refuses rather than reporting nothing.
+
+### G — migration decision
+
+`0002_iam_rbac_staff.sql` is corrected **in place**, not by a forward migration.
+It belongs to the phase under repair: it has never been customer-accepted and has
+never been applied to a deployed cluster, so ADR-0004's immutability — which
+attaches to *accepted* migrations — does not attach to it, and correcting it
+keeps the Phase 04 delta at exactly one migration, which is what a deployment
+applies. `0000_baseline` and `0001_kernel` are untouched and are now pinned by
+checksum in `src/test-support/frozen-phase-03/`.
+
+The upgrade tested is therefore the real one: a frozen accepted Phase 03 database
+(`0000_baseline + 0001_kernel`, 0 → 2 migrations) receiving only the Phase 04
+migration (2 → 3), then a repeat application that applies nothing and mutates no
+ledger row, with the normalized `pg_dump` of the upgraded database compared to a
+fresh install and the live catalogue compared to the declaration on both.
+
+### One assertion corrected rather than satisfied
+
+`iam.concurrency.test.ts` asserted that a suspension racing an acceptance meant
+the acceptance must have failed. That conflated *interleaving* with *sequence*:
+the two serialise on the membership row, and "accept committed, then the Hotel
+Admin terminated" is an ordinary order, not a violation. The test now asserts the
+invariant that matters — the stored state matches the answer each caller was
+given — and would still fail on a genuine interleaving.
+
+### Test gates — Phase 04 remediation 1
+
+Every command below was run on the committed tree.
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 114 of 114 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
+| `node tools/scan-secrets.mjs` | 382 indexed files, none reported |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 17 of 17 projects |
+| `pnpm run typecheck` | 27 of 27 graphs |
+| `pnpm run test:unit` | 1 240 across 11 projects |
+| `pnpm run test:migrations` | 142 |
+| `pnpm run test:integration` | 108 — db 41, outbox 5, api 62 |
+| `pnpm run test:concurrency` | 26 — db 16, api 10 |
+| `pnpm run test:regression` | 51 |
+| `pnpm run test:security` | 18 of 18 sub-gates, 619 tests |
+| `pnpm run test:e2e` | 15 |
+| `pnpm run build` | 17 of 17 projects |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | none at high or critical; one moderate, `DSR-01` |
+| `git diff --check` | clean |
+
+### Remaining blockers — unchanged by this remediation
+
+`INT-MAIL-01`; the Phase 05 subscription contract; the new Phase 15 restaurant
+directory contract and the Phase 09/11/15 open-work providers, all fail-closed;
+17 P1 configuration items; 11 EXT gates seeded closed; `DSR-01` OPEN and
+contained with its Phase 23 review; and `GATE-SEC` as a required GitHub status
+check, which needs push authorisation and was not attempted.

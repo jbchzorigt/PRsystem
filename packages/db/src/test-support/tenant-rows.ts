@@ -276,13 +276,17 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
               RETURNING session_id
             )
             INSERT INTO platform.session_scope_grant
-              (hotel_id, account_id, session_id, membership_id, membership_revision)
-            SELECT $1, (SELECT account_id FROM acct), sess.session_id,
+              (hotel_id, account_id, session_id, realm, membership_id, membership_revision)
+            SELECT $1, (SELECT account_id FROM acct), sess.session_id, 'hotel',
                    (SELECT membership_id FROM mem), 1
             FROM sess`,
       values: [hotelId, `fixture-scope-${String(n)}@example.test`, `scope-${String(n)}`],
     }),
     updateColumn: 'revoked_reason',
+    // The one legal update: a revocation. The guard refuses anything else — a
+    // rewritten identity, or an update that leaves the row live — so the ACL
+    // probe has to make the transition the table actually permits.
+    updateSet: `revoked_at = now(), revoked_reason = 'acl-probe'`,
   },
   {
     name: 'platform.work_handoff_item',

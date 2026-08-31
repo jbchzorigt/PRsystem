@@ -285,6 +285,18 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'account_permission_grant',
+      column: 'realm',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'account_permission_grant',
+      column: 'realm_role',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'account_permission_grant',
       column: 'revoked_at',
       shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
     },
@@ -1173,6 +1185,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'session_scope_grant',
+      column: 'realm',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'session_scope_grant',
       column: 'revoked_at',
       shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
     },
@@ -1383,8 +1401,20 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'user_account',
+      column: 'police_scope_ref',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
       column: 'realm',
       shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
+      column: 'realm_role',
+      shape: 'text | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -1686,10 +1716,10 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'account_permission_grant',
-      name: 'account_permission_grant_account_id_fkey',
-      kind: 'f',
+      name: 'account_permission_grant_grantable',
+      kind: 'c',
       definition:
-        'FOREIGN KEY (account_id) REFERENCES platform.user_account(account_id) ON DELETE RESTRICT',
+        "CHECK (\nCASE realm_role\n    WHEN 'OPERATION_ADMIN'::text THEN (permission = ANY (ARRAY['DEPOSIT_REFUND_RECONCILE'::text, 'ONBOARDING_PROVISION_RETRY'::text, 'OPERATION_READ'::text, 'REVIEW_MODERATE'::text, 'SUBSCRIPTION_EBARIMT_RETRY'::text, 'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text, 'SUBSCRIPTION_PAYMENT_RECONCILE'::text, 'SUBSCRIPTION_REMINDER_SEND'::text]))\n    WHEN 'PLATFORM_SUPER_ADMIN'::text THEN (permission = ANY (ARRAY['ACCOUNT_OWNERSHIP_RECOVERY_APPROVE'::text, 'DEPOSIT_REFUND_RECONCILE'::text, 'ONBOARDING_PROVISION_RETRY'::text, 'OPERATION_READ'::text, 'PLATFORM_OPERATION_ACCESS_MANAGE'::text, 'REVIEW_MODERATE'::text, 'SUBSCRIPTION_CONTACT_CHANGE_APPROVE'::text, 'SUBSCRIPTION_EBARIMT_RETRY'::text, 'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text, 'SUBSCRIPTION_PAYMENT_RECONCILE'::text, 'SUBSCRIPTION_REMINDER_SEND'::text, 'SUBSCRIPTION_SUSPEND'::text]))\n    WHEN 'POLICE_OFFICER'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_IDENTITY_APPROVE'::text]))\n    WHEN 'POLICE_ADMIN'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_CREATE'::text, 'WANTED_CASE_EXPORT'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_IDENTITY_APPROVE'::text]))\n    ELSE false\nEND)",
     },
     {
       schema: 'platform',
@@ -1702,16 +1732,17 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'account_permission_grant',
-      name: 'account_permission_grant_permission_shape',
-      kind: 'c',
-      definition: "CHECK ((permission ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'::text))",
+      name: 'account_permission_grant_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (permission_grant_id)',
     },
     {
       schema: 'platform',
       table: 'account_permission_grant',
-      name: 'account_permission_grant_pkey',
-      kind: 'p',
-      definition: 'PRIMARY KEY (permission_grant_id)',
+      name: 'account_permission_grant_principal_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (account_id, realm, realm_role) REFERENCES platform.user_account(account_id, realm, realm_role) ON DELETE RESTRICT',
     },
     {
       schema: 'platform',
@@ -2241,6 +2272,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'server_session',
+      name: 'server_session_identity_uq',
+      kind: 'u',
+      definition: 'UNIQUE (session_id, account_id, realm)',
+    },
+    {
+      schema: 'platform',
+      table: 'server_session',
       name: 'server_session_revision_non_negative',
       kind: 'c',
       definition: 'CHECK ((revision >= 0))',
@@ -2269,18 +2307,10 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'session_scope_grant',
-      name: 'session_scope_grant_account_id_fkey',
-      kind: 'f',
-      definition:
-        'FOREIGN KEY (account_id) REFERENCES platform.user_account(account_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'session_scope_grant',
       name: 'session_scope_grant_membership_fkey',
       kind: 'f',
       definition:
-        'FOREIGN KEY (hotel_id, membership_id) REFERENCES platform.staff_membership(hotel_id, membership_id) ON DELETE RESTRICT',
+        'FOREIGN KEY (hotel_id, membership_id, account_id) REFERENCES platform.staff_membership(hotel_id, membership_id, account_id) ON DELETE RESTRICT',
     },
     {
       schema: 'platform',
@@ -2288,6 +2318,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'session_scope_grant_pkey',
       kind: 'p',
       definition: 'PRIMARY KEY (scope_grant_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'session_scope_grant',
+      name: 'session_scope_grant_realm_is_hotel',
+      kind: 'c',
+      definition: "CHECK ((realm = 'hotel'::text))",
     },
     {
       schema: 'platform',
@@ -2309,7 +2346,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'session_scope_grant_session_fkey',
       kind: 'f',
       definition:
-        'FOREIGN KEY (session_id) REFERENCES platform.server_session(session_id) ON DELETE RESTRICT',
+        'FOREIGN KEY (session_id, account_id, realm) REFERENCES platform.server_session(session_id, account_id, realm) ON DELETE RESTRICT',
     },
     {
       schema: 'platform',
@@ -2399,6 +2436,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'f',
       definition:
         'FOREIGN KEY (account_id) REFERENCES platform.user_account(account_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'staff_membership',
+      name: 'staff_membership_account_scope_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, membership_id, account_id)',
     },
     {
       schema: 'platform',
@@ -2504,6 +2548,20 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'user_account',
+      name: 'user_account_police_scope_is_police',
+      kind: 'c',
+      definition: "CHECK (((police_scope_ref IS NULL) OR (realm = 'police'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
+      name: 'user_account_principal_uq',
+      kind: 'u',
+      definition: 'UNIQUE (account_id, realm, realm_role)',
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
       name: 'user_account_realm_email_uq',
       kind: 'u',
       definition: 'UNIQUE (realm, email_normalized)',
@@ -2514,6 +2572,14 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'user_account_realm_known',
       kind: 'c',
       definition: "CHECK ((realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
+      name: 'user_account_realm_role_matches_realm',
+      kind: 'c',
+      definition:
+        "CHECK (\nCASE realm\n    WHEN 'operation'::text THEN (realm_role = ANY (ARRAY['OPERATION_ADMIN'::text, 'PLATFORM_SUPER_ADMIN'::text]))\n    WHEN 'police'::text THEN (realm_role = ANY (ARRAY['POLICE_OFFICER'::text, 'POLICE_ADMIN'::text]))\n    ELSE (realm_role IS NULL)\nEND)",
     },
     {
       schema: 'platform',
@@ -2960,6 +3026,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'server_session',
+      name: 'server_session_identity_uq',
+      definition:
+        'CREATE UNIQUE INDEX server_session_identity_uq ON platform.server_session USING btree (session_id, account_id, realm)',
+    },
+    {
+      schema: 'platform',
+      table: 'server_session',
       name: 'server_session_pkey',
       definition:
         'CREATE UNIQUE INDEX server_session_pkey ON platform.server_session USING btree (session_id)',
@@ -3023,6 +3096,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'staff_membership',
+      name: 'staff_membership_account_scope_uq',
+      definition:
+        'CREATE UNIQUE INDEX staff_membership_account_scope_uq ON platform.staff_membership USING btree (hotel_id, membership_id, account_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'staff_membership',
       name: 'staff_membership_hotel_account_uq',
       definition:
         'CREATE UNIQUE INDEX staff_membership_hotel_account_uq ON platform.staff_membership USING btree (hotel_id, account_id) WHERE ((restaurant_id IS NULL) AND (account_id IS NOT NULL))',
@@ -3075,6 +3155,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'user_account_pkey',
       definition:
         'CREATE UNIQUE INDEX user_account_pkey ON platform.user_account USING btree (account_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
+      name: 'user_account_principal_uq',
+      definition:
+        'CREATE UNIQUE INDEX user_account_principal_uq ON platform.user_account USING btree (account_id, realm, realm_role)',
     },
     {
       schema: 'platform',
@@ -3305,7 +3392,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       command: 'SELECT',
       to: ['public'],
       using:
-        '(EXISTS ( SELECT 1\n   FROM platform.staff_membership m\n  WHERE ((m.hotel_id = membership_role_grant.hotel_id) AND (m.membership_id = membership_role_grant.membership_id) AND (m.account_id = platform.current_account_id()))))',
+        "((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (EXISTS ( SELECT 1\n   FROM platform.staff_membership m\n  WHERE ((m.hotel_id = membership_role_grant.hotel_id) AND (m.membership_id = membership_role_grant.membership_id) AND (m.account_id = platform.current_account_id())))))",
       withCheck: null,
     },
     {
@@ -3355,8 +3442,10 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       as: 'PERMISSIVE',
       command: 'ALL',
       to: ['public'],
-      using: '(account_id = platform.current_account_id())',
-      withCheck: '(account_id = platform.current_account_id())',
+      using:
+        "((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))",
+      withCheck:
+        "((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))",
     },
     {
       schema: 'platform',
@@ -3385,7 +3474,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       as: 'PERMISSIVE',
       command: 'SELECT',
       to: ['public'],
-      using: '(account_id = platform.current_account_id())',
+      using:
+        "((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))",
       withCheck: null,
     },
     {

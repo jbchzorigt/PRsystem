@@ -15,8 +15,19 @@ import { selectSubscriptionState } from './contracts/subscription-state.port';
 import type { AuthSecurityParameters } from './contracts/security-parameters';
 import type { StaffNotificationPort } from './contracts/staff-notification.port';
 import { selectStaffNotification } from './contracts/staff-notification.port';
+import type { OpenWorkPort } from './contracts/open-work.port';
+import { selectOpenWork } from './contracts/open-work.port';
+import type { RestaurantDirectoryPort } from './contracts/restaurant-directory.port';
+import { selectRestaurantDirectory } from './contracts/restaurant-directory.port';
 import { AUTH_SECURITY_PARAMETERS } from './contracts/security-parameters';
-import { IAM_POOL, KEY_MANAGEMENT, STAFF_NOTIFICATION, SUBSCRIPTION_STATE } from './iam.tokens';
+import {
+  IAM_POOL,
+  KEY_MANAGEMENT,
+  OPEN_WORK,
+  RESTAURANT_DIRECTORY,
+  STAFF_NOTIFICATION,
+  SUBSCRIPTION_STATE,
+} from './iam.tokens';
 
 /**
  * IAM, tenancy, RBAC and the staff lifecycle (Phase 04).
@@ -48,6 +59,8 @@ export interface IamModuleOptions {
   readonly keys?: KeyManagementPort;
   readonly subscription?: SubscriptionStatePort;
   readonly notifications?: StaffNotificationPort;
+  readonly openWork?: OpenWorkPort;
+  readonly restaurants?: RestaurantDirectoryPort;
   readonly parameters?: AuthSecurityParameters;
 }
 
@@ -96,11 +109,16 @@ export class IamModule {
       options.subscription ?? selectSubscriptionState(requiredConfig(config).appEnv);
     const notifications =
       options.notifications ?? selectStaffNotification(requiredConfig(config).appEnv);
+    const openWork = options.openWork ?? selectOpenWork(requiredConfig(config).appEnv);
+    const restaurants =
+      options.restaurants ?? selectRestaurantDirectory(requiredConfig(config).appEnv);
     const deps: IamDependencies = {
       pool,
       keys,
       subscription,
       notifications,
+      openWork,
+      restaurants,
       parameters: options.parameters ?? AUTH_SECURITY_PARAMETERS,
     };
     // The module ends only a pool it created. A pool a test supplied belongs to
@@ -119,6 +137,8 @@ export class IamModule {
         { provide: KEY_MANAGEMENT, useValue: keys },
         { provide: SUBSCRIPTION_STATE, useValue: subscription },
         { provide: STAFF_NOTIFICATION, useValue: notifications },
+        { provide: OPEN_WORK, useValue: openWork },
+        { provide: RESTAURANT_DIRECTORY, useValue: restaurants },
         { provide: SessionService, useValue: new SessionService(deps) },
         { provide: StaffService, useValue: new StaffService(deps) },
         { provide: HandoffService, useValue: new HandoffService(deps) },
@@ -130,6 +150,8 @@ export class IamModule {
         HandoffService,
         SUBSCRIPTION_STATE,
         STAFF_NOTIFICATION,
+        OPEN_WORK,
+        RESTAURANT_DIRECTORY,
       ],
     };
   }

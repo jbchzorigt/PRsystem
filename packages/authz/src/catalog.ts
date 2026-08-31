@@ -1,6 +1,6 @@
 import type { HotelAction } from './actions';
 import { GUEST_ACTIONS, HOTEL_ACTIONS } from './actions';
-import type { Cell } from './cells';
+import type { Cell, CellScope } from './cells';
 import { OPERATION_ACTIONS } from './operation';
 import { POLICE_ACTIONS } from './police';
 import type { PackageCode } from './packages';
@@ -42,6 +42,14 @@ export interface CatalogEntry {
   readonly explicitGrantOnly: boolean;
   /** doc 05 §5: recent step-up required before the action. */
   readonly stepUp: boolean;
+  /**
+   * Guest rows only: the ownership limit the grant carries.
+   *
+   * doc 06 §4.3 — a Guest action is authorised by ownership, so a row with an
+   * ownership scope cannot be decided without the resource's owner. The pipeline
+   * refuses when the caller did not load one.
+   */
+  readonly ownershipScope?: CellScope;
 }
 
 const HOTEL_ROLE_COLUMNS: readonly HotelRole[] = [
@@ -134,6 +142,7 @@ function buildCatalog(): readonly CatalogEntry[] {
   // lists them to say no hotel role holds them, and the realm that can hold the
   // permission is the one the catalog must record.
   for (const action of GUEST_ACTIONS) {
+    const scope = action.cell.kind === 'allow' ? action.cell.scope : undefined;
     entries.set(action.id, {
       permission: action.id,
       realm: 'guest',
@@ -143,6 +152,7 @@ function buildCatalog(): readonly CatalogEntry[] {
       grantedByRoles: [],
       explicitGrantOnly: false,
       stepUp: false,
+      ...(scope === undefined ? {} : { ownershipScope: scope }),
     });
   }
 

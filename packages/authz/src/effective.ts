@@ -1,6 +1,6 @@
 import { HOTEL_ACTIONS } from './actions';
 import type { HotelAction } from './actions';
-import type { Cell } from './cells';
+import type { Cell, CellScope } from './cells';
 import { catalogEntry } from './catalog';
 import type { PackageCode } from './packages';
 import { isRoleAssignableIn } from './packages';
@@ -90,4 +90,47 @@ export function cellFor(action: HotelAction, role: HotelRole): Cell {
     throw new Error(`the matrix has no ${role} column for ${action.id}`);
   }
   return cell;
+}
+
+/**
+ * The resource limits a membership's grant of one permission carries
+ * (doc 18 §3, the `scope` annotations).
+ *
+ * A cell may grant an action *and* confine it — Reception sees only the items it
+ * was assigned as a replacement, a Cleaner only its own task, a Restaurant
+ * Manager only its own restaurant. The confinement belongs to the grant, so it
+ * is derived here from the very cells that produced it rather than restated by
+ * the module that reads the queue.
+ *
+ * Roles union **within one membership**, so a person who holds an unconfined
+ * cell for the same action is unconfined: `unrestricted` is true as soon as any
+ * granting cell carries no scope. That is the union the document describes, not
+ * a widening — the cells being unioned are all on the one membership.
+ */
+export function permissionScopes(
+  roles: readonly HotelRole[],
+  packageCode: PackageCode,
+  permission: string,
+  actions: readonly HotelAction[] = HOTEL_ACTIONS,
+): { readonly unrestricted: boolean; readonly scopes: readonly CellScope[] } {
+  const scopes = new Set<CellScope>();
+  let unrestricted = false;
+
+  for (const role of roles) {
+    if (!isRoleAssignableIn(role, packageCode)) continue;
+    for (const action of actions) {
+      const cell: Cell | undefined = action.cells[role];
+      if (cell === undefined) continue;
+      const granted =
+        (cell.kind === 'allow' && action.id === permission) ||
+        (cell.kind === 'derived' && `${action.id}.${cell.suffix}` === permission);
+      if (!granted) continue;
+      if (!cell.packages.includes(packageCode)) continue;
+      const scope = cell.kind === 'allow' || cell.kind === 'derived' ? cell.scope : undefined;
+      if (scope === undefined) unrestricted = true;
+      else scopes.add(scope);
+    }
+  }
+
+  return { unrestricted, scopes: [...scopes].sort() };
 }

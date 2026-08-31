@@ -2,10 +2,10 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Inject,
   Param,
   Post,
-  Query,
   Req,
   Res,
   UseGuards,
@@ -13,14 +13,13 @@ import {
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import type { AuthenticatedRequest } from './session.guard';
-import { SessionGuard, principalOf } from './session.guard';
+import { OptionalSessionGuard, SessionGuard, actorOf, principalOf } from './session.guard';
 import { StaffService } from '../services/staff.service';
 import { HandoffService } from '../services/handoff.service';
 import { newRequestContext } from '../services/iam-context';
 import {
   body,
   idempotencyKey,
-  optionalOpenWork,
   optionalUuid,
   requireMembershipState,
   requireRole,
@@ -59,7 +58,7 @@ export class StaffController {
     const payload = body(request);
     const restaurantId = optionalUuid(payload['restaurantId'], 'restaurantId');
     const created = await this.staff.createInvitation(
-      principalOf(request),
+      actorOf(request),
       {
         hotelId,
         ...(restaurantId === undefined ? {} : { restaurantId }),
@@ -87,7 +86,7 @@ export class StaffController {
   ): Promise<{ invitationId: string; expiresAt: string }> {
     const principal = principalOf(request);
     const created = await this.staff.resendInvitation(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         membershipId: requireUuid(membershipIdParam, 'membershipId'),
@@ -112,7 +111,7 @@ export class StaffController {
     const principal = principalOf(request);
     const payload = body(request);
     return this.staff.revokeInvitation(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         membershipId: requireUuid(membershipIdParam, 'membershipId'),
@@ -126,12 +125,19 @@ export class StaffController {
   /**
    * Unauthenticated: the recipient has no account yet. The token proves nothing
    * beyond itself, and the response carries no token and no other hotel's data.
+   *
+   * A POST with the secret in the body, never a GET with it in the query string.
+   * A URL is logged by the server, by every proxy in front of it, by the
+   * browser's history and by the `Referer` of whatever the page loads next —
+   * CLAUDE.md §8 puts one-time secrets out of all of those, and "it is only a
+   * read" does not change where the token ends up.
    */
-  @Get('invitations/inspect')
+  @Post('invitations/inspect')
+  @HttpCode(200)
   @ApiOperation({ summary: 'What an invitation link points at, before accepting it' })
   async inspect(
     @Param('hotelId') hotelIdParam: string,
-    @Query('token') token: string,
+    @Req() request: AuthenticatedRequest,
   ): Promise<{
     invitationId: string;
     emailNormalized: string;
@@ -139,10 +145,11 @@ export class StaffController {
     expiresAt: string;
     accountExists: boolean;
   }> {
+    const payload = body(request);
     const result = await this.staff.inspectInvitation(
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
-        token: requireString(token, 'token', 4096),
+        token: requireString(payload['token'], 'token', 4096),
       },
       newRequestContext(),
     );
@@ -157,6 +164,8 @@ export class StaffController {
    * platform never issues a password either way.
    */
   @Post('invitations/accept')
+  @HttpCode(200)
+  @UseGuards(OptionalSessionGuard)
   @ApiOperation({ summary: 'Accept an invitation, creating an account or using an existing one' })
   @ApiResponse({ status: 200, description: 'The membership is active' })
   @ApiResponse({ status: 409, description: 'The invitation can no longer be accepted' })
@@ -167,7 +176,10 @@ export class StaffController {
     const payload = body(request);
     const password = payload['password'];
     // An existing account accepts as itself, which requires a session; a new one
-    // has none. Both paths are here, and the command decides which applies.
+    // has none. `OptionalSessionGuard` is what makes the first path reachable:
+    // it verifies a bearer when one is presented and leaves the request
+    // anonymous when none is, so this value is a resolved session or nothing —
+    // never an unpopulated field that silently made every acceptance anonymous.
     const existingAccountId = request.principal?.accountId;
     return this.staff.acceptInvitation(
       {
@@ -192,7 +204,7 @@ export class StaffController {
     const principal = principalOf(request);
     const payload = body(request);
     return this.staff.addRole(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         membershipId: requireUuid(membershipIdParam, 'membershipId'),
@@ -214,7 +226,7 @@ export class StaffController {
   ): Promise<{ granted: boolean }> {
     const principal = principalOf(request);
     return this.staff.removeRole(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         membershipId: requireUuid(membershipIdParam, 'membershipId'),
@@ -242,15 +254,16 @@ export class StaffController {
   ): Promise<{ state: string; handoffItems: readonly string[] }> {
     const principal = principalOf(request);
     const payload = body(request);
-    const openWork = optionalOpenWork(payload['openWork']);
+    // `openWork` is deliberately not read from the body. What work a suspended
+    // member still holds is asked of the modules that own it (doc 19 §8.1); a
+    // caller who could name it could also omit it.
     return this.staff.setMembershipState(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         membershipId: requireUuid(membershipIdParam, 'membershipId'),
         state: requireMembershipState(payload['state']),
         reason: requireString(payload['reason'], 'reason', 500),
-        ...(openWork === undefined ? {} : { openWork }),
         idempotencyKey: idempotencyKey(request),
       },
       newRequestContext(principal.accountId),
@@ -270,7 +283,7 @@ export class StaffController {
   ): Promise<{ initiated: boolean }> {
     const principal = principalOf(request);
     const result = await this.staff.initiatePasswordReset(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         membershipId: requireUuid(membershipIdParam, 'membershipId'),
@@ -292,7 +305,7 @@ export class StaffController {
   ): Promise<{ items: readonly Record<string, unknown>[] }> {
     const principal = principalOf(request);
     const items = await this.handoff.list(
-      principal,
+      actorOf(request),
       requireUuid(hotelIdParam, 'hotelId'),
       newRequestContext(principal.accountId),
     );
@@ -309,10 +322,32 @@ export class StaffController {
   ): Promise<{ claimed: boolean; claimantMembershipId: string }> {
     const principal = principalOf(request);
     return this.handoff.claim(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         itemId: requireUuid(itemIdParam, 'itemId'),
+        idempotencyKey: idempotencyKey(request),
+      },
+      newRequestContext(principal.accountId),
+    );
+  }
+
+  @Post('handoff/items/:itemId/release')
+  @UseGuards(SessionGuard)
+  @ApiOperation({ summary: 'Give up a claim, so another Manager may take the item on' })
+  async release(
+    @Param('hotelId') hotelIdParam: string,
+    @Param('itemId') itemIdParam: string,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ released: boolean }> {
+    const principal = principalOf(request);
+    const payload = body(request);
+    return this.handoff.release(
+      actorOf(request),
+      {
+        hotelId: requireUuid(hotelIdParam, 'hotelId'),
+        itemId: requireUuid(itemIdParam, 'itemId'),
+        reason: requireString(payload['reason'], 'reason', 500),
         idempotencyKey: idempotencyKey(request),
       },
       newRequestContext(principal.accountId),
@@ -330,7 +365,7 @@ export class StaffController {
     const principal = principalOf(request);
     const payload = body(request);
     return this.handoff.assign(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         itemId: requireUuid(itemIdParam, 'itemId'),
@@ -355,7 +390,7 @@ export class StaffController {
     const principal = principalOf(request);
     const payload = body(request);
     return this.handoff.createContinuation(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         itemId: requireUuid(itemIdParam, 'itemId'),
@@ -381,7 +416,7 @@ export class StaffController {
     const principal = principalOf(request);
     const payload = body(request);
     return this.handoff.markUnassignable(
-      principal,
+      actorOf(request),
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         itemId: requireUuid(itemIdParam, 'itemId'),

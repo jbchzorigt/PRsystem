@@ -66,8 +66,24 @@ export class UnavailableStaffNotification implements StaffNotificationPort {
  */
 export class SimulatedStaffNotification implements StaffNotificationPort {
   private readonly delivered: StaffNotification[] = [];
+  private failures = 0;
+
+  /**
+   * Makes the next delivery fail.
+   *
+   * Exists so a test can show that an unreachable provider changes nothing a
+   * caller can observe on the self-service reset path — the surface must not
+   * become an account oracle by way of an error body.
+   */
+  failNext(times = 1): void {
+    this.failures += times;
+  }
 
   deliver(message: StaffNotification): Promise<void> {
+    if (this.failures > 0) {
+      this.failures -= 1;
+      return Promise.reject(new StaffNotificationUnavailableError());
+    }
     this.delivered.push(message);
     return Promise.resolve();
   }
@@ -87,6 +103,16 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
     return undefined;
   }
 
+  lastResetForEmail(emailNormalized: string): PasswordResetMessage | undefined {
+    for (let index = this.delivered.length - 1; index >= 0; index -= 1) {
+      const message = this.delivered[index];
+      if (message?.kind === 'password_reset' && message.emailNormalized === emailNormalized) {
+        return message;
+      }
+    }
+    return undefined;
+  }
+
   lastResetFor(accountId: string): PasswordResetMessage | undefined {
     for (let index = this.delivered.length - 1; index >= 0; index -= 1) {
       const message = this.delivered[index];
@@ -97,6 +123,7 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
 
   reset(): void {
     this.delivered.length = 0;
+    this.failures = 0;
   }
 }
 

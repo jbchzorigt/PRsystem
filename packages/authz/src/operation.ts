@@ -178,3 +178,27 @@ export const OPERATION_PERMISSIONS: readonly string[] = [
     ),
   ),
 ].sort();
+
+const OPERATION_BY_ID = new Map(OPERATION_ACTIONS.map((action) => [action.id, action]));
+
+/** The doc 18 §5 row an action id names, or `undefined` if the table has none. */
+export function operationAction(id: string): OperationAction | undefined {
+  return OPERATION_BY_ID.get(id);
+}
+
+/**
+ * Every Operation permission one role may be granted at all.
+ *
+ * The inverse of the table, and the only list a grant is allowed to come from:
+ * a row the document refuses to both columns has `permission: null` and appears
+ * in neither, so it cannot be granted to anybody by writing a row.
+ */
+export function operationGrantablePermissions(role: OperationRole): readonly string[] {
+  return [
+    ...new Set(
+      OPERATION_ACTIONS.filter(
+        (action) => action.permission !== null && action.grantableTo.includes(role),
+      ).map((action) => action.permission as string),
+    ),
+  ].sort();
+}

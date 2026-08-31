@@ -3,10 +3,10 @@ import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { resetEnvCache } from '@prsystem/config';
 import { TEST_LOGIN_PRINCIPALS } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
-import type { Principal } from '@prsystem/authz';
 import { ApiError } from '@prsystem/contracts';
 import type { IamHarness, SeededMembership } from './test-support/iam-harness';
-import { attachIamHarness, principalFor, provisionIamDatabase } from './test-support/iam-harness';
+import { attachIamHarness, actorFor, provisionIamDatabase } from './test-support/iam-harness';
+import type { CommandActor } from './services/iam-context';
 import { newRequestContext } from './services/iam-context';
 import { SimulatedStaffNotification } from './contracts/staff-notification.port';
 import { SimulatedSubscriptionState } from './contracts/subscription-state.port';
@@ -56,8 +56,28 @@ function syntheticPassword(label: string): string {
   return ['synthetic', label, 'passphrase'].join('-');
 }
 
-async function actor(member: SeededMembership): Promise<Principal> {
-  return principalFor(env, member);
+/**
+ * The actor a command runs as: a real sign-in and a real authentication, so the
+ * session's per-hotel scope grants exist exactly as a request would create them.
+ */
+async function actor(member: SeededMembership): Promise<CommandActor> {
+  return actorFor(env, member);
+}
+
+/**
+ * Whether a session still holds live authority in one membership.
+ *
+ * Read straight from the table rather than through a service call: sign-in is
+ * what issues these rows now, so a helper that could *create* one would let a
+ * test prove a revocation the application never performed.
+ */
+async function liveScope(sessionId: string, membershipId: string): Promise<boolean> {
+  const result = await env.admin.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM platform.session_scope_grant
+      WHERE session_id = $1 AND membership_id = $2 AND revoked_at IS NULL`,
+    [sessionId, membershipId],
+  );
+  return result.rows[0]?.count === '1';
 }
 
 async function expectApiError(work: Promise<unknown>, code: string): Promise<ApiError> {
@@ -520,13 +540,13 @@ describe('package entitlement above role (doc 18 §4, RBAC-DEC-003)', () => {
        VALUES ($1, $2, 'MANAGER_PLUS')`,
       [hotel25, manager.membershipId],
     );
-    const principal = await actor(manager);
-    const roles = principal.memberships[0]?.roles ?? [];
+    const acting = await actor(manager);
+    const roles = acting.principal.memberships[0]?.roles ?? [];
     expect(roles).toContain('MANAGER_PLUS');
 
     await expectApiError(
       env.staff.createInvitation(
-        principal,
+        acting,
         {
           hotelId: hotel25,
           restaurantId: '11111111-1111-4111-8111-111111111111',
@@ -683,8 +703,8 @@ describe('tenant and realm isolation (doc 06)', () => {
   });
 
   it('shows an account only its own memberships under the account scope', async () => {
-    const principal = await actor(admin30);
-    expect(principal.memberships.map((m) => m.hotelId)).toEqual([hotel30]);
+    const { principal } = await actor(admin30);
+    expect(principal.memberships.map((membership) => membership.hotelId)).toEqual([hotel30]);
   });
 });
 
@@ -753,24 +773,11 @@ describe('the session revocation matrix (doc 19 §10)', () => {
     );
     const otherMembershipId = otherMembership.rows[0]?.membership_id as string;
 
+    // Signing in is what issues the scope grants — one per active membership,
+    // in both hotels, stamped with the revision each was granted against.
     const signedIn = await env.sessions.signIn(email, member.password, newRequestContext());
-    const request = newRequestContext(member.accountId);
-    await env.sessions.establishScope(
-      hotel30,
-      member.membershipId,
-      1,
-      signedIn.sessionId,
-      member.accountId,
-      request,
-    );
-    await env.sessions.establishScope(
-      otherHotel,
-      otherMembershipId,
-      1,
-      signedIn.sessionId,
-      member.accountId,
-      request,
-    );
+    expect(await liveScope(signedIn.sessionId, member.membershipId)).toBe(true);
+    expect(await liveScope(signedIn.sessionId, otherMembershipId)).toBe(true);
 
     await env.staff.setMembershipState(
       await actor(admin30),
@@ -786,18 +793,8 @@ describe('the session revocation matrix (doc 19 §10)', () => {
 
     // The suspended hotel's scope is gone; the other hotel's is untouched, and
     // the account's credential is unaffected.
-    expect(
-      await env.sessions.hasLiveScope(hotel30, signedIn.sessionId, member.membershipId, 1, request),
-    ).toBe(false);
-    expect(
-      await env.sessions.hasLiveScope(
-        otherHotel,
-        signedIn.sessionId,
-        otherMembershipId,
-        1,
-        request,
-      ),
-    ).toBe(true);
+    expect(await liveScope(signedIn.sessionId, member.membershipId)).toBe(false);
+    expect(await liveScope(signedIn.sessionId, otherMembershipId)).toBe(true);
     await expect(
       env.sessions.authenticate(signedIn.token, newRequestContext()),
     ).resolves.toBeDefined();
@@ -807,15 +804,7 @@ describe('the session revocation matrix (doc 19 §10)', () => {
     const email = 'rolechange@thirty.test';
     const member = await env.seedMembership({ hotelId: hotel30, email, roles: ['RECEPTION'] });
     const signedIn = await env.sessions.signIn(email, member.password, newRequestContext());
-    const request = newRequestContext(member.accountId);
-    await env.sessions.establishScope(
-      hotel30,
-      member.membershipId,
-      1,
-      signedIn.sessionId,
-      member.accountId,
-      request,
-    );
+    expect(await liveScope(signedIn.sessionId, member.membershipId)).toBe(true);
 
     await env.staff.addRole(
       await actor(admin30),
@@ -827,9 +816,7 @@ describe('the session revocation matrix (doc 19 §10)', () => {
       },
       newRequestContext(admin30.accountId),
     );
-    expect(
-      await env.sessions.hasLiveScope(hotel30, signedIn.sessionId, member.membershipId, 1, request),
-    ).toBe(false);
+    expect(await liveScope(signedIn.sessionId, member.membershipId)).toBe(false);
 
     await env.staff.setMembershipState(
       await actor(admin30),

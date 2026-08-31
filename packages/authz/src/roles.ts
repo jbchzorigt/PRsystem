@@ -43,6 +43,21 @@ export function isPoliceRole(value: string): value is PoliceRole {
 }
 
 /**
+ * The role a non-Hotel account carries in its own realm.
+ *
+ * Operation and Police accounts hold no membership: their realm role is what
+ * selects the column of doc 18 §5 or §6 the account is evaluated against. It is
+ * still not an authority — the column it selects may itself refuse, and every
+ * high-risk row additionally needs an explicitly named permission
+ * (`RBAC-DEC-004`, `RBAC-DEC-017`).
+ */
+export type RealmRole = OperationRole | PoliceRole;
+
+export function isRealmRole(value: string): value is RealmRole {
+  return isOperationRole(value) || isPoliceRole(value);
+}
+
+/**
  * The role a Restaurant membership carries, and the only one it may carry.
  *
  * doc 19 §3: Manager Plus invites a Restaurant Manager into one `restaurant_id`

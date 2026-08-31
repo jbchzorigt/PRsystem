@@ -224,6 +224,19 @@ widened for a capability Phase 03 explicitly deferred.
 Phase 04 owns **26 DEC IDs** — `RBAC-DEC-001`–`017` and `STAFF-DEC-001`–`009` — and all 26 move to
 `COVERED` in [requirements-traceability.md](requirements-traceability.md) §16 and §17.
 
+### 3.5 Phase 04 remediation 1 — decisions taken while repairing
+
+Five decisions were taken during the bounded security remediation recorded in
+[phase-status.md](phase-status.md#phase-04-remediation-1). None resolves a P0 conflict.
+
+| # | Question | Resolution |
+| --- | --- | --- |
+| 1 | [ADR-0004](../architecture/adr/ADR-0004-versioned-migrations-only.md) says a mistake is corrected by a new migration, never by rewriting an applied one. `0002_iam_rbac_staff` needed structural corrections. | **Corrected in place, not by a forward migration.** The immutability ADR-0004 asserts attaches to an *accepted, applied* migration; `0002` had never been customer-accepted and had never reached a deployed cluster. Correcting it keeps the Phase 04 delta at exactly one migration, which is what a deployment applies and what the upgrade gate now tests. `0000_baseline` and `0001_kernel` are untouched and are pinned by checksum in `packages/db/src/test-support/frozen-phase-03/`, so an in-place edit to either fails the gate. |
+| 2 | doc 19 §3 has a hotel-scoped Manager Plus invite the *first* Restaurant Manager, but doc 06 §4.1 scopes a Restaurant action by `restaurant_id`. Read together the inviter would need a membership in a restaurant that has no staff yet. | **A membership covers a request if its scope contains the target.** A hotel-scoped membership covers a row that *names* a restaurant, because there the restaurant is the subject of the action; a restaurant-scoped membership covers only its own. Candidates are evaluated narrowest-first and each on its own, so this is "does any single membership authorise this?", never a union of two — which doc 06 §6 forbids. |
+| 3 | doc 19 §3 requires the restaurant to be one the hotel registered, and Phase 15 owns the `restaurant` aggregate. | **A typed, fail-closed contract**, the same shape as the subscription port: the production implementation answers nothing and the invitation is refused, rather than assuming the restaurant belongs to the hotel. `RestaurantDirectoryPort`; Phase 15 supplies the adapter. |
+| 4 | doc 19 §8.1 requires a suspension to hand over the suspended member's open work, and Phases 09, 11 and 15 own that work. Phase 04 had taken it from the request body. | **An injected `OpenWorkPort` owned by the domain modules.** With none registered the answer is a determinate empty list — there is no such work in the system yet — and a registered provider that cannot answer refuses rather than reporting nothing. A caller can neither fabricate open work nor omit it. |
+| 5 | The governance validator reserves the words *repair* and *customer review* in headings for the canonical Phase 03 repair-record form, and Phase 04 now has a security repair of its own to record. | **Phase 04's record is titled a *remediation*.** Borrowing the Phase 03 vocabulary would make two different kinds of record indistinguishable to every check that reads them. The prose says plainly that it was a security repair; only the heading vocabulary is reserved. |
+
 ---
 
 ## 4. P1 configuration register

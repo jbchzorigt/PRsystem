@@ -2,6 +2,7 @@ import type {
   AuthorizationDecision,
   AuthzRealm,
   Principal,
+  RealmRole,
   ResolvedMembership,
   SubscriptionStatePort,
 } from '@prsystem/authz';
@@ -49,9 +50,18 @@ export class AuthorizationDenied extends ApiError {
   }
 }
 
+/**
+ * Reads the whole principal from server state.
+ *
+ * `stepUpAt` is **not** server state of the account — it is a property of the
+ * session that authenticated, so the caller passes the value the session row
+ * carried. Dropping it here is what would silently turn every step-up-gated
+ * action into a refusal no fresh challenge could satisfy.
+ */
 export async function resolvePrincipal(
   uow: UnitOfWork,
   accountId: string,
+  stepUpAt?: Date,
 ): Promise<Principal | undefined> {
   const accounts = new AccountRepository(uow);
   const account = await accounts.findById(accountId);
@@ -77,6 +87,9 @@ export async function resolvePrincipal(
     accountState: account.state,
     memberships: resolved,
     directPermissions,
+    ...(account.realmRole === null ? {} : { realmRole: account.realmRole as RealmRole }),
+    ...(account.policeScopeRef === null ? {} : { policeScopeRef: account.policeScopeRef }),
+    ...(stepUpAt === undefined ? {} : { stepUpAt }),
   };
 }
 
@@ -88,6 +101,20 @@ export interface AuthorizeCommandInput {
   readonly target: { readonly hotelId?: string; readonly restaurantId?: string };
   readonly subscription: SubscriptionStatePort;
   readonly resourceOwnerAccountId?: string;
+  /**
+   * The verified session the command is running under.
+   *
+   * doc 19 §10: authority inside a hotel is the session's scope grant, not the
+   * session itself. Passing it here is what lets the commit-time re-evaluation
+   * check that the grant is still live at the membership's current revision — so
+   * a role change or a suspension that commits first wins over a request that
+   * was authorised a moment earlier.
+   */
+  readonly sessionId?: string;
+  /** The step-up recency the authenticated session carried. */
+  readonly stepUpAt?: Date;
+  readonly separationCounterpartAccountId?: string;
+  readonly resourceScopeRef?: string;
   /** Recorded on the audit event so a denial can be traced to a request. */
   readonly targetType?: string;
   readonly targetRef?: string;
@@ -115,7 +142,11 @@ export async function authorizeCommand(
       ? undefined
       : await input.subscription.snapshot(input.target.hotelId, now);
 
-  const principal = await resolvePrincipal(input.uow, input.principal.accountId);
+  const principal = await resolvePrincipal(
+    input.uow,
+    input.principal.accountId,
+    input.stepUpAt ?? input.principal.stepUpAt,
+  );
   if (principal === undefined) {
     throw new AuthorizationDenied(
       new ApiError('NOT_FOUND', OPAQUE_DENIAL),
@@ -136,10 +167,36 @@ export async function authorizeCommand(
     ...(input.resourceOwnerAccountId === undefined
       ? {}
       : { resourceOwnerAccountId: input.resourceOwnerAccountId }),
+    ...(input.separationCounterpartAccountId === undefined
+      ? {}
+      : { separationCounterpartAccountId: input.separationCounterpartAccountId }),
+    ...(input.resourceScopeRef === undefined ? {} : { resourceScopeRef: input.resourceScopeRef }),
     now,
   });
 
-  if (decision.allowed) return decision;
+  if (decision.allowed) {
+    // The last gate, and the one a concurrent lifecycle command wins: the
+    // session must still hold a live scope grant on the very membership the
+    // decision was made against, at that membership's current revision.
+    const membership = decision.membership;
+    if (membership !== undefined && input.sessionId !== undefined) {
+      const grant = await new MembershipRepository(input.uow).liveScopeGrant(
+        input.sessionId,
+        membership.membershipId,
+      );
+      if (grant === undefined || grant.membershipRevision !== membership.revision) {
+        throw new AuthorizationDenied(
+          new ApiError('NOT_FOUND', OPAQUE_DENIAL),
+          input.permission,
+          'scope',
+          'NOT_AUTHORIZED',
+          input.targetType,
+          input.targetRef,
+        );
+      }
+    }
+    return decision;
+  }
 
   throw new AuthorizationDenied(
     denialToApiError(decision),
@@ -178,6 +235,10 @@ export function denialToApiError(
       return new ApiError('DEPENDENCY_UNAVAILABLE', 'the subscription state cannot be determined');
     case 'STEP_UP_REQUIRED':
       return new ApiError('PRECONDITION_FAILED', 'a recent step-up authentication is required');
+    case 'SEPARATION_OF_DUTIES':
+      // doc 05 §3.2: an approver is never the requester or the creator. The
+      // caller is legitimately inside the realm, so the reason is actionable.
+      return new ApiError('FORBIDDEN', 'this decision belongs to a different account');
     case 'UNKNOWN_PERMISSION':
     default:
       // A permission the catalog does not carry is a defect in this service, not

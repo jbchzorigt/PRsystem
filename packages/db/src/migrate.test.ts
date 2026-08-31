@@ -1,7 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  copyFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Pool } from 'pg';
@@ -42,6 +49,8 @@ const FRESH_DATABASE = 'prsystem_migration_fresh';
 const UPGRADE_DATABASE = 'prsystem_migration_upgrade';
 /** A throwaway database the fingerprint sensitivity tests are allowed to tamper with. */
 const SENSITIVITY_DATABASE = 'prsystem_migration_sensitivity';
+/** The accepted Phase 03 database that receives only the Phase 04 migration. */
+const PHASE_04_DATABASE = 'prsystem_migration_phase04';
 /** A pristine database for the comparator mutation tests. */
 const COMPARATOR_DATABASE = 'prsystem_migration_comparator';
 
@@ -57,6 +66,16 @@ interface LedgerRow {
   readonly id: number;
   readonly hash: string;
   readonly created_at: string;
+}
+
+/** Runs `work` against a short-lived pool, and always closes it. */
+async function withPool<T>(url: string, work: (pool: Pool) => Promise<T>): Promise<T> {
+  const pool = quietPool({ connectionString: url, max: 1 });
+  try {
+    return await work(pool);
+  } finally {
+    await pool.end();
+  }
 }
 
 async function ledgerRows(pool: Pool): Promise<LedgerRow[]> {
@@ -81,10 +100,28 @@ async function ledgerRows(pool: Pool): Promise<LedgerRow[]> {
 const FROZEN_BASELINE = resolve(__dirname, 'test-support', 'frozen-baseline');
 const FROZEN_BASELINE_SHA256 = '2a202d67ce10c9f8fa74166c38616c16e95216ff9f00c8cd6bf28bbb025858bc';
 
-function frozenBaselineChecksum(): string {
+/**
+ * The accepted Phase 03 state: `0000_baseline` + `0001_kernel`, as accepted.
+ *
+ * The upgrade a real cluster performs is not "Phase 02 to head" — it is "the
+ * accepted release, plus exactly the one migration the new phase adds". This
+ * artefact is that accepted release, pinned by checksum so an in-place edit to
+ * either accepted file fails the gate instead of silently re-baselining it.
+ */
+const FROZEN_PHASE_03 = resolve(__dirname, 'test-support', 'frozen-phase-03');
+const FROZEN_PHASE_03_SHA256: Readonly<Record<string, string>> = {
+  '0000_baseline.sql': '2a202d67ce10c9f8fa74166c38616c16e95216ff9f00c8cd6bf28bbb025858bc',
+  '0001_kernel.sql': '00c5f11768cc1b274209465526f016f397f88d18d4343220ea0279db9a3fbff4',
+};
+
+function checksumOf(folder: string, file: string): string {
   return createHash('sha256')
-    .update(readFileSync(join(FROZEN_BASELINE, '0000_baseline.sql')))
+    .update(readFileSync(join(folder, file)))
     .digest('hex');
+}
+
+function frozenBaselineChecksum(): string {
+  return checksumOf(FROZEN_BASELINE, '0000_baseline.sql');
 }
 
 beforeAll(async () => {
@@ -110,6 +147,7 @@ beforeAll(async () => {
   for (const database of [
     FRESH_DATABASE,
     UPGRADE_DATABASE,
+    PHASE_04_DATABASE,
     SENSITIVITY_DATABASE,
     COMPARATOR_DATABASE,
   ]) {
@@ -131,6 +169,7 @@ afterAll(async () => {
   for (const database of [
     FRESH_DATABASE,
     UPGRADE_DATABASE,
+    PHASE_04_DATABASE,
     SENSITIVITY_DATABASE,
     COMPARATOR_DATABASE,
   ]) {
@@ -149,6 +188,7 @@ function asMigrationLogin(url: string): string {
 describe('migration runner', () => {
   const freshUrl = asMigrationLogin(withDatabase(ADMIN_URL, FRESH_DATABASE));
   const upgradeUrl = asMigrationLogin(withDatabase(ADMIN_URL, UPGRADE_DATABASE));
+  const phase04Url = asMigrationLogin(withDatabase(ADMIN_URL, PHASE_04_DATABASE));
   let freshLedger: LedgerRow[] = [];
 
   it('applies the whole journal to a fresh database', async () => {
@@ -178,6 +218,65 @@ describe('migration runner', () => {
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
     expect(upgradeOutcome.appliedAfter).toBe(3);
+  }, 60000);
+
+  it('holds the accepted Phase 03 migrations byte-for-byte, and only those', () => {
+    // ADR-0004: an accepted migration is immutable. Pinning both checksums is
+    // what makes that testable — an in-place edit to `0000` or `0001` fails
+    // here rather than re-baselining the upgrade path onto whatever they became.
+    for (const [file, expected] of Object.entries(FROZEN_PHASE_03_SHA256)) {
+      expect({ file, sha256: checksumOf(FROZEN_PHASE_03, file) }).toEqual({
+        file,
+        sha256: expected,
+      });
+    }
+    const frozen = readdirSync(FROZEN_PHASE_03)
+      .filter((name) => name.endsWith('.sql'))
+      .sort();
+    // Phase 04's own migration is deliberately absent: it is the one thing the
+    // upgrade below is supposed to apply.
+    expect(frozen).toEqual(['0000_baseline.sql', '0001_kernel.sql']);
+  });
+
+  it('applies exactly the Phase 04 migration to an accepted Phase 03 database', async () => {
+    // The deployment step a running cluster actually takes.
+    const accepted = await runMigrations(phase04Url, { migrationsFolder: FROZEN_PHASE_03 });
+    expect({ before: accepted.appliedBefore, after: accepted.appliedAfter }).toEqual({
+      before: 0,
+      after: 2,
+    });
+
+    const phase04 = await runMigrations(phase04Url);
+    expect({ before: phase04.appliedBefore, after: phase04.appliedAfter }).toEqual({
+      before: 2,
+      after: 3,
+    });
+
+    // Applying it again is a no-op, and mutates no ledger row.
+    const ledgerAfter = await withPool(phase04Url, ledgerRows);
+    const repeat = await runMigrations(phase04Url);
+    expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
+      before: 3,
+      after: 3,
+    });
+    expect(await withPool(phase04Url, ledgerRows)).toEqual(ledgerAfter);
+  }, 120000);
+
+  it('reaches the same schema by the Phase 04 upgrade as by a fresh install', async () => {
+    const container = pinnedContainer();
+    const fresh = schemaDump({ container, user: 'prsystem', database: FRESH_DATABASE });
+    const upgraded = schemaDump({ container, user: 'prsystem', database: PHASE_04_DATABASE });
+
+    expect(upgraded).toBe(fresh);
+  }, 60000);
+
+  it('matches the declaration on the Phase 04 upgraded database', async () => {
+    const pool = quietPool({ connectionString: phase04Url, max: 1 }, 'comparator-phase04');
+    try {
+      expect(await compareSchema(pool)).toEqual([]);
+    } finally {
+      await pool.end();
+    }
   }, 60000);
 
   it('produces a byte-identical normalized schema dump by upgrade and by fresh install', async () => {

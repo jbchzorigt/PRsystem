@@ -309,12 +309,16 @@ describe('the seven-stage pipeline', () => {
 });
 
 describe('Operation and Police realms', () => {
+  // A Platform Super Admin: the column the §5 rows below are evaluated against.
+  // The role selects the column and grants nothing — every row still needs its
+  // canonical named permission, which is what `permissions` carries.
   const operation = (permissions: readonly string[], stepUpAt?: Date): Principal => ({
     accountId: ACCOUNT,
     realm: 'operation',
     accountState: 'ACTIVE',
     memberships: [],
     directPermissions: permissions,
+    realmRole: 'PLATFORM_SUPER_ADMIN',
     ...(stepUpAt === undefined ? {} : { stepUpAt }),
   });
 
@@ -322,7 +326,7 @@ describe('Operation and Police realms', () => {
     const allowed = authorize({
       endpointRealm: 'operation',
       permission: 'operation.subscription_reminder_send',
-      principal: operation(['operation.subscription_reminder_send'], NOW),
+      principal: operation(['SUBSCRIPTION_REMINDER_SEND'], NOW),
       target: {},
       now: NOW,
     });
@@ -343,7 +347,7 @@ describe('Operation and Police realms', () => {
     const decision = authorize({
       endpointRealm: 'operation',
       permission: 'operation.subscription_suspend',
-      principal: operation(['operation.subscription_suspend'], stale),
+      principal: operation(['SUBSCRIPTION_SUSPEND'], stale),
       target: {},
       now: NOW,
     });
@@ -354,7 +358,7 @@ describe('Operation and Police realms', () => {
     const decision = authorize({
       endpointRealm: 'operation',
       permission: 'operation.subscription_suspend',
-      principal: operation(['operation.subscription_suspend']),
+      principal: operation(['SUBSCRIPTION_SUSPEND']),
       target: {},
       now: NOW,
     });
@@ -379,7 +383,8 @@ describe('Operation and Police realms', () => {
       realm: 'police',
       accountState: 'ACTIVE',
       memberships: [],
-      directPermissions: ['police.wanted_active_view'],
+      directPermissions: [],
+      realmRole: 'POLICE_OFFICER',
       stepUpAt: NOW,
     };
     expect(
@@ -448,5 +453,87 @@ describe('the Guest realm', () => {
       );
       expect(decision).toMatchObject({ allowed: false, code: 'REALM_MISMATCH' });
     }
+  });
+});
+
+describe('doc 06 §4.1 — which membership covers a request', () => {
+  const restaurant = '66666666-6666-4666-8666-666666666666';
+  const otherRestaurant = '77777777-7777-4777-8777-777777777777';
+
+  it('lets a hotel-scoped Manager Plus act on a row that names a restaurant', () => {
+    // doc 19 §3: Manager Plus invites the *first* Restaurant Manager, so there
+    // is no restaurant membership to hold — the restaurant is the subject of the
+    // action, not the actor's scope.
+    const decision = authorize(
+      input({
+        permission: 'hotel.restaurant.manager_invite',
+        principal: principal({ memberships: [membership(HOTEL_A, ['MANAGER_PLUS'])] }),
+        target: { hotelId: HOTEL_A, restaurantId: restaurant },
+      }),
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
+  it('keeps a Restaurant Manager inside their own restaurant', () => {
+    const scoped = principal({
+      memberships: [
+        membership(HOTEL_A, ['RESTAURANT_MANAGER'], {
+          membershipId: 'm-restaurant',
+          restaurantId: restaurant,
+        }),
+      ],
+    });
+    expect(
+      authorize(
+        input({
+          permission: 'restaurant.menu_manage',
+          principal: scoped,
+          target: { hotelId: HOTEL_A, restaurantId: restaurant },
+        }),
+      ).allowed,
+    ).toBe(true);
+    expect(
+      authorize(
+        input({
+          permission: 'restaurant.menu_manage',
+          principal: scoped,
+          target: { hotelId: HOTEL_A, restaurantId: otherRestaurant },
+        }),
+      ),
+    ).toMatchObject({ allowed: false, stage: 'scope' });
+    // And a hotel-wide request is not covered by a restaurant membership either.
+    expect(
+      authorize(
+        input({
+          permission: 'restaurant.menu_manage',
+          principal: scoped,
+          target: { hotelId: HOTEL_A },
+        }),
+      ),
+    ).toMatchObject({ allowed: false });
+  });
+
+  it('never unions two memberships to reach a decision', () => {
+    // A hotel-scoped Reception and a restaurant-scoped Restaurant Manager. The
+    // Restaurant Manager row is not reachable by the Reception membership, and
+    // the Reception row is not reachable by the restaurant one.
+    const both = principal({
+      memberships: [
+        membership(HOTEL_A, ['RECEPTION']),
+        membership(HOTEL_A, ['RESTAURANT_MANAGER'], {
+          membershipId: 'm-restaurant',
+          restaurantId: restaurant,
+        }),
+      ],
+    });
+    const decision = authorize(
+      input({
+        permission: 'restaurant.menu_manage',
+        principal: both,
+        target: { hotelId: HOTEL_A, restaurantId: restaurant },
+      }),
+    );
+    expect(decision.allowed).toBe(true);
+    if (decision.allowed) expect(decision.membership?.membershipId).toBe('m-restaurant');
   });
 });

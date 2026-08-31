@@ -159,3 +159,27 @@ export const POLICE_PERMISSIONS: readonly string[] = [
     ),
   ),
 ].sort();
+
+const POLICE_BY_ID = new Map(POLICE_ACTIONS.map((action) => [action.id, action]));
+
+/** The doc 18 §6 row an action id names, or `undefined` if the table has none. */
+export function policeAction(id: string): PoliceAction | undefined {
+  return POLICE_BY_ID.get(id);
+}
+
+/**
+ * Every Police permission one role may be granted at all.
+ *
+ * A row denied to a role contributes nothing, so `WANTED_CASE_EXPORT` is
+ * grantable to a Police Admin and to nobody else, and the bulk check-in export
+ * — denied to both — names no permission and so appears in neither list.
+ */
+export function policeGrantablePermissions(role: PoliceRole): readonly string[] {
+  return [
+    ...new Set(
+      POLICE_ACTIONS.map((action) => action.cells[role]).flatMap((cell) =>
+        cell.kind === 'named' ? [cell.permission] : [],
+      ),
+    ),
+  ].sort();
+}

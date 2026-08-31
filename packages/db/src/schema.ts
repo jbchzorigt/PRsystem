@@ -597,7 +597,9 @@ export const userAccount = platform.table(
       .default(sql`now()`),
     emailNormalized: text('email_normalized').notNull(),
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+    policeScopeRef: text('police_scope_ref'),
     realm: text('realm').notNull(),
+    realmRole: text('realm_role'),
     revision: integer('revision')
       .notNull()
       .default(sql`0`),
@@ -613,14 +615,28 @@ export const userAccount = platform.table(
       sql`(email_normalized ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'::text)`,
     ),
     check(
+      'user_account_police_scope_is_police',
+      sql`((police_scope_ref IS NULL) OR (realm = 'police'::text))`,
+    ),
+    check(
       'user_account_realm_known',
       sql`(realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text]))`,
+    ),
+    check(
+      'user_account_realm_role_matches_realm',
+      sql`
+CASE realm
+    WHEN 'operation'::text THEN (realm_role = ANY (ARRAY['OPERATION_ADMIN'::text, 'PLATFORM_SUPER_ADMIN'::text]))
+    WHEN 'police'::text THEN (realm_role = ANY (ARRAY['POLICE_OFFICER'::text, 'POLICE_ADMIN'::text]))
+    ELSE (realm_role IS NULL)
+END`,
     ),
     check('user_account_revision_non_negative', sql`(revision >= 0)`),
     check(
       'user_account_state_known',
       sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text]))`,
     ),
+    unique('user_account_principal_uq').on(table.accountId, table.realm, table.realmRole),
     unique('user_account_realm_email_uq').on(table.realm, table.emailNormalized),
   ],
 );
@@ -706,6 +722,7 @@ export const serverSession = platform.table(
       sql`((revoked_at IS NULL) = (revoked_reason IS NULL))`,
     ),
     check('server_session_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+    unique('server_session_identity_uq').on(table.sessionId, table.accountId, table.realm),
     unique('server_session_token_uq').on(table.tokenHash),
     foreignKey({
       name: 'server_session_account_id_fkey',
@@ -765,6 +782,11 @@ export const staffMembership = platform
         'staff_membership_state_known',
         sql`(state = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'SUSPENDED'::text, 'TERMINATED'::text]))`,
       ),
+      unique('staff_membership_account_scope_uq').on(
+        table.hotelId,
+        table.membershipId,
+        table.accountId,
+      ),
       unique('staff_membership_scope_uq').on(table.hotelId, table.membershipId),
       foreignKey({
         name: 'staff_membership_account_id_fkey',
@@ -801,7 +823,7 @@ export const staffMembership = platform
         .where(sql`restaurant_id IS NOT NULL`),
       pgPolicy('own_membership_read', {
         for: 'select',
-        using: sql`(account_id = platform.current_account_id())`,
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
       }),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
@@ -822,6 +844,7 @@ export const sessionScopeGrant = platform
       hotelId: uuid('hotel_id').notNull(),
       membershipId: uuid('membership_id').notNull(),
       membershipRevision: integer('membership_revision').notNull(),
+      realm: text('realm').notNull(),
       revokedAt: timestamp('revoked_at', { withTimezone: true }),
       revokedReason: text('revoked_reason'),
       scopeGrantId: uuid('scope_grant_id')
@@ -830,32 +853,32 @@ export const sessionScopeGrant = platform
       sessionId: uuid('session_id').notNull(),
     },
     (table) => [
+      check('session_scope_grant_realm_is_hotel', sql`(realm = 'hotel'::text)`),
       check('session_scope_grant_revision_non_negative', sql`(membership_revision >= 0)`),
       check(
         'session_scope_grant_revoked_has_reason',
         sql`((revoked_at IS NULL) = (revoked_reason IS NULL))`,
       ),
       foreignKey({
-        name: 'session_scope_grant_account_id_fkey',
-        columns: [table.accountId],
-        foreignColumns: [userAccount.accountId],
-      }).onDelete('restrict'),
-      foreignKey({
         name: 'session_scope_grant_membership_fkey',
-        columns: [table.hotelId, table.membershipId],
-        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+        columns: [table.hotelId, table.membershipId, table.accountId],
+        foreignColumns: [
+          staffMembership.hotelId,
+          staffMembership.membershipId,
+          staffMembership.accountId,
+        ],
       }).onDelete('restrict'),
       foreignKey({
         name: 'session_scope_grant_session_fkey',
-        columns: [table.sessionId],
-        foreignColumns: [serverSession.sessionId],
+        columns: [table.sessionId, table.accountId, table.realm],
+        foreignColumns: [serverSession.sessionId, serverSession.accountId, serverSession.realm],
       }).onDelete('restrict'),
       uniqueIndex('session_scope_grant_live_uq')
         .on(table.sessionId, table.membershipId)
         .where(sql`revoked_at IS NULL`),
       pgPolicy('own_account_scope', {
-        using: sql`(account_id = platform.current_account_id())`,
-        withCheck: sql`(account_id = platform.current_account_id())`,
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
+        withCheck: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
       }),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
@@ -915,9 +938,9 @@ export const membershipRoleGrant = platform
       // `staff_membership`'s policies.
       pgPolicy('own_membership_roles_read', {
         for: 'select',
-        using: sql`(EXISTS ( SELECT 1
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (EXISTS ( SELECT 1
    FROM platform.staff_membership m
-  WHERE ((m.hotel_id = membership_role_grant.hotel_id) AND (m.membership_id = membership_role_grant.membership_id) AND (m.account_id = platform.current_account_id()))))`,
+  WHERE ((m.hotel_id = membership_role_grant.hotel_id) AND (m.membership_id = membership_role_grant.membership_id) AND (m.account_id = platform.current_account_id())))))`,
       }),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
@@ -1090,23 +1113,32 @@ export const accountPermissionGrant = platform.table(
     permissionGrantId: uuid('permission_grant_id')
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    realm: text('realm').notNull(),
+    realmRole: text('realm_role').notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokedByAccountId: uuid('revoked_by_account_id'),
     revokedReason: text('revoked_reason'),
   },
   (table) => [
     check(
-      'account_permission_grant_permission_shape',
-      sql`(permission ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'::text)`,
+      'account_permission_grant_grantable',
+      sql`
+CASE realm_role
+    WHEN 'OPERATION_ADMIN'::text THEN (permission = ANY (ARRAY['DEPOSIT_REFUND_RECONCILE'::text, 'ONBOARDING_PROVISION_RETRY'::text, 'OPERATION_READ'::text, 'REVIEW_MODERATE'::text, 'SUBSCRIPTION_EBARIMT_RETRY'::text, 'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text, 'SUBSCRIPTION_PAYMENT_RECONCILE'::text, 'SUBSCRIPTION_REMINDER_SEND'::text]))
+    WHEN 'PLATFORM_SUPER_ADMIN'::text THEN (permission = ANY (ARRAY['ACCOUNT_OWNERSHIP_RECOVERY_APPROVE'::text, 'DEPOSIT_REFUND_RECONCILE'::text, 'ONBOARDING_PROVISION_RETRY'::text, 'OPERATION_READ'::text, 'PLATFORM_OPERATION_ACCESS_MANAGE'::text, 'REVIEW_MODERATE'::text, 'SUBSCRIPTION_CONTACT_CHANGE_APPROVE'::text, 'SUBSCRIPTION_EBARIMT_RETRY'::text, 'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text, 'SUBSCRIPTION_PAYMENT_RECONCILE'::text, 'SUBSCRIPTION_REMINDER_SEND'::text, 'SUBSCRIPTION_SUSPEND'::text]))
+    WHEN 'POLICE_OFFICER'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_IDENTITY_APPROVE'::text]))
+    WHEN 'POLICE_ADMIN'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_CREATE'::text, 'WANTED_CASE_EXPORT'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_IDENTITY_APPROVE'::text]))
+    ELSE false
+END`,
     ),
     check(
       'account_permission_grant_revocation_complete',
       sql`((revoked_at IS NULL) = (revoked_by_account_id IS NULL))`,
     ),
     foreignKey({
-      name: 'account_permission_grant_account_id_fkey',
-      columns: [table.accountId],
-      foreignColumns: [userAccount.accountId],
+      name: 'account_permission_grant_principal_fkey',
+      columns: [table.accountId, table.realm, table.realmRole],
+      foreignColumns: [userAccount.accountId, userAccount.realm, userAccount.realmRole],
     }).onDelete('restrict'),
     foreignKey({
       name: 'account_permission_grant_granted_by_fkey',

@@ -1,4 +1,4 @@
-import type { HotelRole, PackageCode, Principal } from '@prsystem/authz';
+import type { HotelRole, PackageCode } from '@prsystem/authz';
 import { authorize, isRoleAssignableIn } from '@prsystem/authz';
 import { ApiError } from '@prsystem/contracts';
 import type { UnitOfWork } from '@prsystem/db';
@@ -12,8 +12,8 @@ import { AccountRepository, normaliseEmail } from '../repositories/account.repos
 import type { InvitationRow, MembershipRow } from '../repositories/membership.repository';
 import { MembershipRepository } from '../repositories/membership.repository';
 import { authorizeCommand, resolvePrincipal } from './authorization.service';
-import type { IamDependencies, RequestContext } from './iam-context';
-import { IamServiceBase } from './iam-context';
+import type { CommandActor, HotelGate, IamDependencies, RequestContext } from './iam-context';
+import { IamServiceBase, establishAccountScope } from './iam-context';
 import { HandoffService } from './handoff.service';
 import { assertPasswordAcceptable, derivePassword } from './password.service';
 
@@ -96,74 +96,83 @@ export class StaffService extends IamServiceBase {
    * result instead of an error.
    */
   async createInvitation(
-    actor: Principal,
+    actor: CommandActor,
     input: InvitationInput,
     request: RequestContext,
   ): Promise<InvitationCreated> {
     const email = normaliseEmail(input.email);
     const restaurantId = input.restaurantId ?? null;
     const permission = invitePermissionFor(input.roles, restaurantId);
+    assertScopeAllowsRoles(input.roles, restaurantId);
 
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const claimed = await this.claim(uow, 'iam.invitation.create', input.idempotencyKey, input);
-      if (claimed.replay !== undefined) return claimed.replay as InvitationCreated;
+    return this.runHotelCommand(
+      actor,
+      { hotelId: input.hotelId, ...(restaurantId === null ? {} : { restaurantId }) },
+      request,
+      async (uow, gate) => {
+        // doc 19 §3: the restaurant must be one this hotel registered. Phase 15
+        // owns that aggregate, so the linkage is a contract — and a contract
+        // that cannot answer refuses rather than assuming.
+        if (restaurantId !== null) {
+          const belongs = await this.deps.restaurants.belongsToHotel(input.hotelId, restaurantId);
+          if (!belongs) throw new ApiError('NOT_FOUND', 'not found');
+        }
 
-      const decision = await authorizeCommand({
-        uow,
-        endpointRealm: 'hotel',
-        permission,
-        principal: actor,
-        target: {
+        const decision = await this.authorize(gate, {
+          uow,
+          permission,
           hotelId: input.hotelId,
-          ...(restaurantId === null ? {} : { restaurantId }),
-        },
-        subscription: this.deps.subscription,
-        targetType: 'staff_membership',
-      });
-
-      const entitled = decision.effectivePackage;
-      if (entitled === undefined) throw new ApiError('INTERNAL_ERROR', 'no package was resolved');
-      // `STAFF-DEC-006`: nothing here can create a Primary Hotel Admin.
-      // `is_primary_admin` is a column no invitation path writes, and the
-      // partial unique index means a hotel could not acquire a second one even
-      // if a path did.
-      assertRolesEntitled(input.roles, entitled);
-
-      const memberships = new MembershipRepository(uow);
-      const existing = await memberships.findByScopeEmail(restaurantId, email);
-      const membership =
-        existing ??
-        (await memberships.create({
           restaurantId,
-          invitedEmailNormalized: email,
-          createdByAccountId: actor.accountId,
-        }));
+          targetType: 'staff_membership',
+        });
 
-      if (existing !== undefined && existing.state !== 'PENDING') {
-        // doc 19 §4: a scope already holds a canonical membership. Re-inviting an
-        // active, suspended or terminated person is the reactivation of §8, not a
-        // second membership row.
-        throw new ApiError(
-          'CONFLICT',
-          `this scope already holds a ${existing.state.toLowerCase()} membership for that address`,
-        );
-      }
-      if (existing !== undefined && (await memberships.activeInvitation(existing.membershipId))) {
-        throw new ApiError('CONFLICT', 'this membership already has a live invitation');
-      }
+        const claimed = await this.claim(uow, 'iam.invitation.create', input.idempotencyKey, input);
+        if (claimed.replay !== undefined) return claimed.replay as InvitationCreated;
 
-      const created = await this.issueInvitation(uow, {
-        hotelId: input.hotelId,
-        membership,
-        email,
-        roles: input.roles,
-        actorAccountId: actor.accountId,
-        action: 'iam.invitation.created',
-      });
+        const entitled = decision.effectivePackage;
+        if (entitled === undefined) throw new ApiError('INTERNAL_ERROR', 'no package was resolved');
+        // `STAFF-DEC-006`: nothing here can create a Primary Hotel Admin.
+        // `is_primary_admin` is a column no invitation path writes, and the
+        // partial unique index means a hotel could not acquire a second one even
+        // if a path did.
+        assertRolesEntitled(input.roles, entitled);
 
-      await completeIdempotencyKey(uow, claimed.idempotencyId, 201, created);
-      return created;
-    });
+        const memberships = new MembershipRepository(uow);
+        const existing = await memberships.findByScopeEmail(restaurantId, email);
+        const membership =
+          existing ??
+          (await memberships.create({
+            restaurantId,
+            invitedEmailNormalized: email,
+            createdByAccountId: gate.principal.accountId,
+          }));
+
+        if (existing !== undefined && existing.state !== 'PENDING') {
+          // doc 19 §4: a scope already holds a canonical membership. Re-inviting
+          // an active, suspended or terminated person is the reactivation of §8,
+          // not a second membership row.
+          throw new ApiError(
+            'CONFLICT',
+            `this scope already holds a ${existing.state.toLowerCase()} membership for that address`,
+          );
+        }
+        if (existing !== undefined && (await memberships.activeInvitation(existing.membershipId))) {
+          throw new ApiError('CONFLICT', 'this membership already has a live invitation');
+        }
+
+        const created = await this.issueInvitation(uow, {
+          hotelId: input.hotelId,
+          membership,
+          email,
+          roles: input.roles,
+          actorAccountId: gate.principal.accountId,
+          action: 'iam.invitation.created',
+        });
+
+        await completeIdempotencyKey(uow, claimed.idempotencyId, 201, created);
+        return created;
+      },
+    );
   }
 
   /**
@@ -172,14 +181,11 @@ export class StaffService extends IamServiceBase {
    * commits, which is the whole point of `SUPERSEDED` being a state.
    */
   async resendInvitation(
-    actor: Principal,
+    actor: CommandActor,
     input: { hotelId: string; membershipId: string; idempotencyKey: string },
     request: RequestContext,
   ): Promise<InvitationCreated> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const claimed = await this.claim(uow, 'iam.invitation.resend', input.idempotencyKey, input);
-      if (claimed.replay !== undefined) return claimed.replay as InvitationCreated;
-
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const memberships = new MembershipRepository(uow);
       const membership = await memberships.lock(input.membershipId);
       if (membership === undefined || membership.state !== 'PENDING') {
@@ -192,21 +198,19 @@ export class StaffService extends IamServiceBase {
       }
       const roles = await memberships.invitationRoles(live.invitationId);
 
-      const decision = await authorizeCommand({
+      const decision = await this.authorize(gate, {
         uow,
-        endpointRealm: 'hotel',
         permission: invitePermissionFor(roles, membership.restaurantId),
-        principal: actor,
-        target: {
-          hotelId: input.hotelId,
-          ...(membership.restaurantId === null ? {} : { restaurantId: membership.restaurantId }),
-        },
-        subscription: this.deps.subscription,
+        hotelId: input.hotelId,
+        restaurantId: membership.restaurantId,
         targetType: 'staff_membership',
         targetRef: membership.membershipId,
       });
       const entitled = decision.effectivePackage;
       if (entitled === undefined) throw new ApiError('INTERNAL_ERROR', 'no package was resolved');
+
+      const claimed = await this.claim(uow, 'iam.invitation.resend', input.idempotencyKey, input);
+      if (claimed.replay !== undefined) return claimed.replay as InvitationCreated;
 
       assertRolesEntitled(roles, entitled);
 
@@ -220,7 +224,7 @@ export class StaffService extends IamServiceBase {
         membership,
         email: membership.invitedEmailNormalized,
         roles,
-        actorAccountId: actor.accountId,
+        actorAccountId: gate.principal.accountId,
         action: 'iam.invitation.resent',
         supersede: live.invitationId,
       });
@@ -232,28 +236,26 @@ export class StaffService extends IamServiceBase {
 
   /** Revokes the live invitation. The membership stays `PENDING` and unarmed. */
   async revokeInvitation(
-    actor: Principal,
+    actor: CommandActor,
     input: { hotelId: string; membershipId: string; reason: string; idempotencyKey: string },
     request: RequestContext,
   ): Promise<{ revoked: boolean }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const claimed = await this.claim(uow, 'iam.invitation.revoke', input.idempotencyKey, input);
-      if (claimed.replay !== undefined) return claimed.replay as { revoked: boolean };
-
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const memberships = new MembershipRepository(uow);
       const membership = await memberships.lock(input.membershipId);
       if (membership === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
-      await authorizeCommand({
+      await this.authorize(gate, {
         uow,
-        endpointRealm: 'hotel',
         permission: 'hotel.staff.invite_suspend',
-        principal: actor,
-        target: { hotelId: input.hotelId },
-        subscription: this.deps.subscription,
+        hotelId: input.hotelId,
+        restaurantId: null,
         targetType: 'staff_membership',
         targetRef: membership.membershipId,
       });
+
+      const claimed = await this.claim(uow, 'iam.invitation.revoke', input.idempotencyKey, input);
+      if (claimed.replay !== undefined) return claimed.replay as { revoked: boolean };
 
       const live = await memberships.activeInvitation(membership.membershipId);
       if (live === undefined)
@@ -297,7 +299,7 @@ export class StaffService extends IamServiceBase {
     accountExists: boolean;
   }> {
     return this.terminalisingExpiry(request, () =>
-      this.runHotelCommand(input.hotelId, request, async (uow) => {
+      this.runTokenGatedCommand(input.hotelId, request, async (uow) => {
         const { invitation } = await this.resolveInvitation(uow, input.hotelId, input.token);
         const memberships = new MembershipRepository(uow);
         const roles = await memberships.invitationRoles(invitation.invitationId);
@@ -359,19 +361,18 @@ export class StaffService extends IamServiceBase {
     }
     if (input.password !== undefined) assertPasswordAcceptable(input.password);
 
-    return this.terminalisingExpiry(request, () =>
-      this.runHotelCommand(input.hotelId, request, async (uow) => {
-        const claimed = await this.claim(uow, 'iam.invitation.accept', input.idempotencyKey, {
-          hotelId: input.hotelId,
-          // The token is hashed into the request digest, never stored: the record
-          // must distinguish two different accepts without holding either secret.
-          token: 'redacted',
-          accountId: input.accountId ?? null,
-        });
-        if (claimed.replay !== undefined) {
-          return claimed.replay as { membershipId: string; accountId: string };
-        }
+    // The idempotency record must tell two different tokens apart without ever
+    // holding either. A keyed digest of the presented token does exactly that:
+    // a genuine retry carries the same secret and replays; a second, different
+    // invitation under the same key is a key reuse, not a replay, and must be
+    // refused rather than answered with the first invitation's result.
+    const presented = await this.tokens.digest('invitation', ACCEPT_DIGEST_SUBJECT, input.token);
 
+    return this.terminalisingExpiry(request, () =>
+      this.runTokenGatedCommand(input.hotelId, request, async (uow) => {
+        // The token is the gate here — there is no membership to gate with, and
+        // that is the point of the flow. Nothing is claimed or locked until it
+        // has resolved to a live invitation in this hotel.
         const { invitation, membership } = await this.resolveInvitation(
           uow,
           input.hotelId,
@@ -380,6 +381,15 @@ export class StaffService extends IamServiceBase {
         );
         if (membership.state !== 'PENDING') {
           throw new ApiError('CONFLICT', 'this invitation can no longer be accepted');
+        }
+
+        const claimed = await this.claim(uow, 'iam.invitation.accept', input.idempotencyKey, {
+          hotelId: input.hotelId,
+          tokenDigest: presented.tokenHash,
+          accountId: input.accountId ?? null,
+        });
+        if (claimed.replay !== undefined) {
+          return claimed.replay as { membershipId: string; accountId: string };
         }
 
         const memberships = new MembershipRepository(uow);
@@ -398,6 +408,7 @@ export class StaffService extends IamServiceBase {
           );
         }
         assertRolesEntitled(roles, snapshot.effectivePackage);
+        assertScopeAllowsRoles(roles, membership.restaurantId);
 
         const accounts = new AccountRepository(uow);
         const accountId = await this.resolveAcceptingAccount(uow, accounts, invitation, input);
@@ -441,7 +452,7 @@ export class StaffService extends IamServiceBase {
 
   // ------------------------------------------------------------- role changes
   async addRole(
-    actor: Principal,
+    actor: CommandActor,
     input: { hotelId: string; membershipId: string; role: HotelRole; idempotencyKey: string },
     request: RequestContext,
   ): Promise<{ granted: boolean }> {
@@ -449,7 +460,7 @@ export class StaffService extends IamServiceBase {
   }
 
   async removeRole(
-    actor: Principal,
+    actor: CommandActor,
     input: {
       hotelId: string;
       membershipId: string;
@@ -463,7 +474,7 @@ export class StaffService extends IamServiceBase {
   }
 
   private async changeRole(
-    actor: Principal,
+    actor: CommandActor,
     input: {
       hotelId: string;
       membershipId: string;
@@ -474,51 +485,61 @@ export class StaffService extends IamServiceBase {
     direction: 'add' | 'remove',
     request: RequestContext,
   ): Promise<{ granted: boolean }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const operation = `iam.role.${direction}`;
-      const claimed = await this.claim(uow, operation, input.idempotencyKey, input);
-      if (claimed.replay !== undefined) return claimed.replay as { granted: boolean };
-
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const memberships = new MembershipRepository(uow);
       const membership = await memberships.lock(input.membershipId);
       if (membership === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
-      const decision = await authorizeCommand({
+      const decision = await this.authorize(gate, {
         uow,
-        endpointRealm: 'hotel',
         permission:
           membership.restaurantId === null
             ? 'hotel.staff.role_manage'
             : 'hotel.restaurant.manager_invite',
-        principal: actor,
-        target: {
-          hotelId: input.hotelId,
-          ...(membership.restaurantId === null ? {} : { restaurantId: membership.restaurantId }),
-        },
-        subscription: this.deps.subscription,
+        hotelId: input.hotelId,
+        restaurantId: membership.restaurantId,
         targetType: 'staff_membership',
         targetRef: membership.membershipId,
       });
       const entitled = decision.effectivePackage;
       if (entitled === undefined) throw new ApiError('INTERNAL_ERROR', 'no package was resolved');
 
+      const operation = `iam.role.${direction}`;
+      const claimed = await this.claim(uow, operation, input.idempotencyKey, input);
+      if (claimed.replay !== undefined) return claimed.replay as { granted: boolean };
+
       if (direction === 'add') {
         // The package gate applies to the *assignment*, not only to the action:
         // a Manager Plus grant on a 25,000₮ hotel is refused here as well as at
         // every API the role would have opened (doc 18 §4).
         assertRolesEntitled([input.role], entitled);
+        // …and the scope gate applies too: doc 19 §3 gives a restaurant-scoped
+        // membership exactly one role, and gives that role to nobody else.
+        assertScopeAllowsRoles([input.role], membership.restaurantId);
         if (input.role === 'HOTEL_ADMIN' && membership.isPrimaryAdmin) {
           throw new ApiError('CONFLICT', 'the Primary Hotel Admin already holds this role');
         }
       }
+      if (direction === 'remove' && input.role === 'HOTEL_ADMIN' && membership.isPrimaryAdmin) {
+        // `STAFF-DEC-006`. Refused here so the caller gets a reason, and refused
+        // again by the role-grant guard so no other path can do it either.
+        throw new ApiError(
+          'FORBIDDEN',
+          'the Primary Hotel Admin keeps the HOTEL_ADMIN role; the transfer is the Platform process',
+        );
+      }
 
       const changed =
         direction === 'add'
-          ? await memberships.grantRole(membership.membershipId, input.role, actor.accountId)
+          ? await memberships.grantRole(
+              membership.membershipId,
+              input.role,
+              gate.principal.accountId,
+            )
           : await memberships.revokeRole(
               membership.membershipId,
               input.role,
-              actor.accountId,
+              gate.principal.accountId,
               input.reason ?? 'role_removed',
             );
 
@@ -556,19 +577,12 @@ export class StaffService extends IamServiceBase {
    * becomes a handoff item in the same one.
    */
   async setMembershipState(
-    actor: Principal,
+    actor: CommandActor,
     input: {
       hotelId: string;
       membershipId: string;
       state: 'SUSPENDED' | 'TERMINATED' | 'ACTIVE';
       reason: string;
-      /** Open work the owning module reports, as opaque references. */
-      openWork?: readonly {
-        kind: 'reception_shift' | 'cleaner_task' | 'restaurant_order';
-        ref: string;
-        movementStarted?: boolean;
-        restaurantId?: string;
-      }[];
       idempotencyKey: string;
     },
     request: RequestContext,
@@ -577,29 +591,27 @@ export class StaffService extends IamServiceBase {
       throw new ApiError('VALIDATION_FAILED', 'a state change needs a reason');
     }
 
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const claimed = await this.claim(uow, 'iam.membership.state', input.idempotencyKey, input);
-      if (claimed.replay !== undefined) {
-        return claimed.replay as { state: string; handoffItems: readonly string[] };
-      }
-
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const memberships = new MembershipRepository(uow);
       const membership = await memberships.lock(input.membershipId);
       if (membership === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
-      await authorizeCommand({
+      await this.authorize(gate, {
         uow,
-        endpointRealm: 'hotel',
         permission: 'hotel.staff.invite_suspend',
-        principal: actor,
-        target: { hotelId: input.hotelId },
-        subscription: this.deps.subscription,
+        hotelId: input.hotelId,
+        restaurantId: null,
         targetType: 'staff_membership',
         targetRef: membership.membershipId,
       });
 
-      assertNotSelfAction(actor, membership, input.state);
+      assertNotSelfAction(gate.principal.accountId, membership, input.state);
       assertPrimaryProtected(membership, input.state);
+
+      const claimed = await this.claim(uow, 'iam.membership.state', input.idempotencyKey, input);
+      if (claimed.replay !== undefined) {
+        return claimed.replay as { state: string; handoffItems: readonly string[] };
+      }
 
       const moved = await memberships.transition({
         membershipId: membership.membershipId,
@@ -617,11 +629,19 @@ export class StaffService extends IamServiceBase {
         if (input.state === 'TERMINATED') {
           await memberships.revokeAllRoles(
             membership.membershipId,
-            actor.accountId,
+            gate.principal.accountId,
             'membership_terminated',
           );
         }
-        for (const work of input.openWork ?? []) {
+        // What work this person still holds is asked of the modules that own it
+        // (doc 19 §8.1). It is never taken from the request: a caller who could
+        // name the open work could also omit it, and an omitted item is a
+        // blocker silently dropped rather than handed over.
+        const openWork = await this.deps.openWork.openWorkFor(
+          input.hotelId,
+          membership.membershipId,
+        );
+        for (const work of openWork) {
           const item = await this.handoff.openForMembership(uow, {
             membership,
             work,
@@ -669,12 +689,28 @@ export class StaffService extends IamServiceBase {
    * that works.
    */
   async requestPasswordReset(email: string, request: RequestContext): Promise<void> {
-    await this.inAccountScope(request, async (uow) => {
-      const accounts = new AccountRepository(uow);
-      const account = await accounts.findByEmail('hotel', email);
-      if (account === undefined || account.state !== 'ACTIVE') return;
-      await this.issueReset(uow, account.accountId, account.emailNormalized, 'self', null);
-    });
+    // Every outcome is the same outcome. An unknown address, a disabled account,
+    // a live request still inside its resend interval and an unreachable
+    // notification provider all return exactly what a successful request
+    // returns: doc 19 §6 makes this surface unauthenticated, so any difference a
+    // caller can observe — a status, a body, a distinguishable error — is an
+    // account-enumeration oracle.
+    //
+    // The failure is swallowed here rather than at the edge on purpose: the
+    // *authenticated* Hotel Admin path below keeps its operational failures
+    // visible, because there the initiator is known and already inside the
+    // tenant, so an error tells them nothing they could not already ask for.
+    try {
+      await this.inAccountScope(request, async (uow) => {
+        const accounts = new AccountRepository(uow);
+        const account = await accounts.findByEmail('hotel', email);
+        if (account === undefined || account.state !== 'ACTIVE') return;
+        await establishAccountScope(uow, account.accountId);
+        await this.issueReset(uow, account.accountId, account.emailNormalized, 'self', null);
+      });
+    } catch {
+      // Deliberately silent. The caller must not learn that anything happened.
+    }
   }
 
   /**
@@ -684,41 +720,43 @@ export class StaffService extends IamServiceBase {
    * chooses the address and never sees the token or either password.
    */
   async initiatePasswordReset(
-    actor: Principal,
+    actor: CommandActor,
     input: { hotelId: string; membershipId: string; idempotencyKey: string },
     request: RequestContext,
   ): Promise<{ initiated: boolean }> {
-    return this.runHotelCommand(input.hotelId, request, async (uow) => {
-      const claimed = await this.claim(uow, 'iam.reset.initiate', input.idempotencyKey, input);
-      if (claimed.replay !== undefined) return claimed.replay as { initiated: boolean };
-
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const memberships = new MembershipRepository(uow);
       const membership = await memberships.lock(input.membershipId);
       if (membership === undefined || membership.accountId === null) {
         throw new ApiError('NOT_FOUND', 'not found');
       }
 
-      await authorizeCommand({
+      await this.authorize(gate, {
         uow,
-        endpointRealm: 'hotel',
         permission: 'hotel.staff.invite_suspend',
-        principal: actor,
-        target: { hotelId: input.hotelId },
-        subscription: this.deps.subscription,
+        hotelId: input.hotelId,
+        restaurantId: null,
         targetType: 'staff_membership',
         targetRef: membership.membershipId,
       });
+
+      const claimed = await this.claim(uow, 'iam.reset.initiate', input.idempotencyKey, input);
+      if (claimed.replay !== undefined) return claimed.replay as { initiated: boolean };
 
       const accounts = new AccountRepository(uow);
       const account = await accounts.findById(membership.accountId);
       if (account === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
+      // Operational failures stay visible here: the initiator is authenticated,
+      // holds the permission, and already knows this member exists — so a
+      // rate-limit or an unreachable provider is information they are entitled
+      // to, not an oracle.
       await this.issueReset(
         uow,
         account.accountId,
         account.emailNormalized,
         'hotel_admin',
-        actor.accountId,
+        gate.principal.accountId,
       );
 
       const result = { initiated: true };
@@ -767,10 +805,24 @@ export class StaffService extends IamServiceBase {
       const sessionsClosed = await accounts.revokeAllSessions(account.accountId, 'password_reset');
       const bumped = await accounts.bumpAuthEpoch(account.accountId, account.revision);
       if (!bumped) throw new ApiError('REVISION_MISMATCH', 'the account changed concurrently');
-      await new MembershipRepository(uow).revokeAllScopeGrantsForAccount(
+
+      // The scope grants are the account's own rows, and `own_account_scope`
+      // carries them only to a transaction that has said which account it is
+      // acting as. The reset arrives unauthenticated — the token is what
+      // identifies the account — so the context is established from the *reset
+      // row* before the revocation, and the result is asserted: without this the
+      // UPDATE matched nothing and reported success, leaving every scoped
+      // session alive after a password change (doc 19 §10, `STAFF-DEC-003`).
+      await establishAccountScope(uow, account.accountId);
+      const memberships = new MembershipRepository(uow);
+      const live = await memberships.liveScopeGrantCountForAccount(account.accountId);
+      const scopesClosed = await memberships.revokeAllScopeGrantsForAccount(
         account.accountId,
         'password_reset',
       );
+      if (scopesClosed !== live) {
+        throw new ApiError('INTERNAL_ERROR', 'the scope revocation did not cover every grant');
+      }
       await accounts.markEmailVerified(account.accountId);
 
       await recordPlatformAudit(uow, {
@@ -778,7 +830,7 @@ export class StaffService extends IamServiceBase {
         outcome: 'allowed',
         targetType: 'user_account',
         targetRef: account.accountId,
-        payload: { sessionsClosed },
+        payload: { sessionsClosed, scopesClosed },
       });
 
       return { accountId: account.accountId, sessionsClosed };
@@ -786,6 +838,42 @@ export class StaffService extends IamServiceBase {
   }
 
   // ------------------------------------------------------------------ helpers
+  /**
+   * Commit-time authorization, against the state this transaction has locked.
+   *
+   * Everything the pipeline needs comes from the gate — the session, its
+   * step-up recency, the account it proved — and nothing from the request. The
+   * decision is re-derived here rather than carried over from the gate, so a
+   * suspension or a role change that committed in between wins.
+   */
+  private authorize(
+    gate: HotelGate,
+    input: {
+      uow: UnitOfWork;
+      permission: string;
+      hotelId: string;
+      restaurantId: string | null;
+      targetType?: string;
+      targetRef?: string;
+    },
+  ): ReturnType<typeof authorizeCommand> {
+    return authorizeCommand({
+      uow: input.uow,
+      endpointRealm: 'hotel',
+      permission: input.permission,
+      principal: gate.principal,
+      sessionId: gate.sessionId,
+      ...(gate.principal.stepUpAt === undefined ? {} : { stepUpAt: gate.principal.stepUpAt }),
+      target: {
+        hotelId: input.hotelId,
+        ...(input.restaurantId === null ? {} : { restaurantId: input.restaurantId }),
+      },
+      subscription: this.deps.subscription,
+      ...(input.targetType === undefined ? {} : { targetType: input.targetType }),
+      ...(input.targetRef === undefined ? {} : { targetRef: input.targetRef }),
+    });
+  }
+
   private async claim(
     uow: UnitOfWork,
     operation: string,
@@ -1074,6 +1162,17 @@ export class StaffService extends IamServiceBase {
 const RESET_TOKEN_SUBJECT = 'password_reset';
 
 /**
+ * The subject the accept-time idempotency digest is bound to.
+ *
+ * Distinct from the per-membership subject the invitation token itself is minted
+ * under: this digest exists only to tell two presented secrets apart inside an
+ * idempotency record, and binding it to a fixed subject means it can be computed
+ * before the membership is known — while still never being the stored token
+ * digest, so a leaked idempotency payload is not a usable invitation.
+ */
+const ACCEPT_DIGEST_SUBJECT = 'invitation_accept_request';
+
+/**
  * Which permission an invitation needs.
  *
  * doc 19 §3: a Hotel Admin invites hotel staff; a Manager Plus invites a
@@ -1084,6 +1183,31 @@ function invitePermissionFor(roles: readonly HotelRole[], restaurantId: string |
   const restaurantOnly =
     restaurantId !== null && roles.every((role) => role === 'RESTAURANT_MANAGER');
   return restaurantOnly ? 'hotel.restaurant.manager_invite' : 'hotel.staff.invite_suspend';
+}
+
+/**
+ * The scope gate on a role assignment (doc 19 §3, doc 06 §4.1).
+ *
+ * A restaurant-scoped membership holds exactly `RESTAURANT_MANAGER`, and that
+ * role exists nowhere else. Refused here so the caller learns why, and refused
+ * again by the role-grant and requested-role guards so no path can produce the
+ * combination — including one a later phase writes.
+ */
+function assertScopeAllowsRoles(roles: readonly HotelRole[], restaurantId: string | null): void {
+  for (const role of roles) {
+    if (restaurantId === null && role === 'RESTAURANT_MANAGER') {
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        'RESTAURANT_MANAGER belongs to a restaurant scope, not to a hotel-wide membership',
+      );
+    }
+    if (restaurantId !== null && role !== 'RESTAURANT_MANAGER') {
+      throw new ApiError(
+        'VALIDATION_FAILED',
+        `a restaurant-scoped membership holds only RESTAURANT_MANAGER, not ${role}`,
+      );
+    }
+  }
 }
 
 /**
@@ -1102,12 +1226,12 @@ function assertRolesEntitled(roles: readonly HotelRole[], packageCode: PackageCo
 }
 
 function assertNotSelfAction(
-  actor: Principal,
+  actorAccountId: string,
   membership: MembershipRow,
   state: 'SUSPENDED' | 'TERMINATED' | 'ACTIVE',
 ): void {
   if (state === 'ACTIVE') return;
-  if (membership.accountId !== null && membership.accountId === actor.accountId) {
+  if (membership.accountId !== null && membership.accountId === actorAccountId) {
     throw new ApiError('FORBIDDEN', 'an account cannot suspend or terminate its own membership');
   }
 }
