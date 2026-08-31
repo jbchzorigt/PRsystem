@@ -312,6 +312,33 @@ export class StaffController {
     return { items: items.map((item) => ({ ...item })) };
   }
 
+  /**
+   * Finishes a suspension whose open-work enumeration could not run.
+   *
+   * doc 19 §8.1: the security effect never waits for the owning modules, so when
+   * they are unreachable the suspension commits with a durable marker and this
+   * turns those markers into handoff items once they answer. Safe to call at any
+   * time: it settles what it can and leaves the rest queued.
+   */
+  @Post('handoff/discovery/reconcile')
+  @HttpCode(200)
+  @UseGuards(SessionGuard)
+  @ApiOperation({ summary: 'Enumerate the open work a suspension could not reach' })
+  async reconcileDiscovery(
+    @Param('hotelId') hotelIdParam: string,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ resolved: number; pending: number; items: readonly string[] }> {
+    const principal = principalOf(request);
+    return this.handoff.reconcileDiscovery(
+      actorOf(request),
+      {
+        hotelId: requireUuid(hotelIdParam, 'hotelId'),
+        idempotencyKey: idempotencyKey(request),
+      },
+      newRequestContext(principal.accountId),
+    );
+  }
+
   @Post('handoff/items/:itemId/claim')
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'Claim one open item; exactly one claimant wins' })

@@ -61,6 +61,110 @@ function mapItem(row: Record<string, unknown> | undefined): HandoffItemRow | und
   };
 }
 
+export interface HandoffDiscoveryRow {
+  readonly discoveryId: string;
+  readonly hotelId: string;
+  readonly membershipId: string;
+  readonly openedReason: 'suspension' | 'termination';
+  readonly state: 'PENDING' | 'COMPLETED';
+  readonly attempts: number;
+  readonly idempotencySeed: string;
+}
+
+function mapDiscovery(row: Record<string, unknown> | undefined): HandoffDiscoveryRow | undefined {
+  if (row === undefined) return undefined;
+  return {
+    discoveryId: String(row['discovery_id']),
+    hotelId: String(row['hotel_id']),
+    membershipId: String(row['membership_id']),
+    openedReason: row['opened_reason'] as 'suspension' | 'termination',
+    state: row['state'] as 'PENDING' | 'COMPLETED',
+    attempts: Number(row['attempts']),
+    idempotencySeed: String(row['idempotency_seed']),
+  };
+}
+
+const DISCOVERY_COLUMNS = `discovery_id, hotel_id, membership_id, opened_reason, state,
+                           attempts, idempotency_seed`;
+
+/**
+ * The durable marker that a suspended membership's open work still has to be
+ * enumerated (doc 19 §8.1).
+ *
+ * Separate from the queue itself because it records a *question* rather than a
+ * piece of work: which items exist is not yet known, and the security effect
+ * that raised the question has already committed.
+ */
+export class HandoffDiscoveryRepository extends ScopedRepository {
+  constructor(uow: UnitOfWork) {
+    super(uow);
+  }
+
+  /**
+   * Opens a marker, or returns the open one this membership already has.
+   *
+   * The partial unique index is the arbiter, so a second suspension of the same
+   * person before the first was enumerated advances one marker rather than
+   * queueing two enumerations of the same work.
+   */
+  async open(input: {
+    membershipId: string;
+    openedReason: 'suspension' | 'termination';
+    idempotencySeed: string;
+  }): Promise<HandoffDiscoveryRow> {
+    await this.uow.query(
+      `INSERT INTO platform.work_handoff_discovery
+         (hotel_id, membership_id, opened_reason, idempotency_seed)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (hotel_id, membership_id) WHERE state <> 'COMPLETED' DO NOTHING`,
+      [this.hotelId, input.membershipId, input.openedReason, input.idempotencySeed],
+    );
+    const existing = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${DISCOVERY_COLUMNS} FROM platform.work_handoff_discovery
+        WHERE hotel_id = $1 AND membership_id = $2 AND state <> 'COMPLETED'`,
+      [this.hotelId, input.membershipId],
+    );
+    const row = mapDiscovery(existing.rows[0]);
+    if (row === undefined) throw new Error('the discovery marker insert returned no row');
+    return row;
+  }
+
+  /** Every marker still awaiting enumeration, optionally for one membership. */
+  async listPending(membershipId?: string): Promise<readonly HandoffDiscoveryRow[]> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${DISCOVERY_COLUMNS} FROM platform.work_handoff_discovery
+        WHERE hotel_id = $1 AND state = 'PENDING'
+          AND ($2::uuid IS NULL OR membership_id = $2::uuid)
+        ORDER BY created_at
+          FOR UPDATE`,
+      [this.hotelId, membershipId ?? null],
+    );
+    return result.rows.map((row) => mapDiscovery(row)!);
+  }
+
+  /** Records that the owning module could not answer. The marker stays open. */
+  async recordAttempt(discoveryId: string, reason: string): Promise<void> {
+    await this.uow.query(
+      `UPDATE platform.work_handoff_discovery
+          SET attempts = attempts + 1, last_error = $3, updated_at = now()
+        WHERE hotel_id = $1 AND discovery_id = $2 AND state = 'PENDING'`,
+      [this.hotelId, discoveryId, reason.slice(0, 500)],
+    );
+  }
+
+  /** The work has been enumerated and its items exist. Terminal. */
+  async complete(discoveryId: string): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.work_handoff_discovery
+          SET state = 'COMPLETED', completed_at = now(),
+              attempts = attempts + 1, last_error = NULL, updated_at = now()
+        WHERE hotel_id = $1 AND discovery_id = $2 AND state = 'PENDING'`,
+      [this.hotelId, discoveryId],
+    );
+    return result.rowCount === 1;
+  }
+}
+
 export class HandoffRepository extends ScopedRepository {
   constructor(uow: UnitOfWork) {
     super(uow);

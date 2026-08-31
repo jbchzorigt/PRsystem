@@ -85,6 +85,11 @@ export class SimulatedOpenWork implements OpenWorkPort {
     this.failing.add(SimulatedOpenWork.keyOf(hotelId, membershipId));
   }
 
+  /** Brings it back, so the recovery path can be exercised on the same subject. */
+  recoverFor(hotelId: string, membershipId: string): void {
+    this.failing.delete(SimulatedOpenWork.keyOf(hotelId, membershipId));
+  }
+
   clear(): void {
     this.byMembership.clear();
     this.failing.clear();

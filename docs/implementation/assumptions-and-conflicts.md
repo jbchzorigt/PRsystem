@@ -237,6 +237,14 @@ Five decisions were taken during the bounded security remediation recorded in
 | 4 | doc 19 §8.1 requires a suspension to hand over the suspended member's open work, and Phases 09, 11 and 15 own that work. Phase 04 had taken it from the request body. | **An injected `OpenWorkPort` owned by the domain modules.** With none registered the answer is a determinate empty list — there is no such work in the system yet — and a registered provider that cannot answer refuses rather than reporting nothing. A caller can neither fabricate open work nor omit it. |
 | 5 | The governance validator reserves the words *repair* and *customer review* in headings for the canonical Phase 03 repair-record form, and Phase 04 now has a security repair of its own to record. | **Phase 04's record is titled a *remediation*.** Borrowing the Phase 03 vocabulary would make two different kinds of record indistinguishable to every check that reads them. The prose says plainly that it was a security repair; only the heading vocabulary is reserved. |
 
+### 3.6 Phase 04 remediation 2 — decisions taken while repairing
+
+| # | Question | Resolution |
+| --- | --- | --- |
+| 1 | doc 19 §8.1 requires a suspension to hand over the suspended member's open work, and the modules that own that work can be unreachable. Enumerating it inside the security transaction made a provider outage roll the suspension back. | **The question is persisted, not the answer.** The transition commits with a durable `work_handoff_discovery` marker beside it, atomically; enumeration is a separate retryable step that runs immediately and again on demand. An unanswerable provider leaves the marker open with its attempts counted — it is never rendered as "no open work", which is the one outcome that would silently drop a blocker. |
+| 2 | The reset-intake drain and the discovery reconciliation are durable processors with no scheduled invoker in Phase 04. | **Recorded rather than improvised.** Scheduling the drain belongs with the email provider it would deliver through (`INT-MAIL-01`, no adapter exists), and scheduling the reconciliation belongs with Phases 09, 11 and 15, which own the work it enumerates. Both are reachable now as explicit commands, and both are listed as carried forward in [phase-status.md](phase-status.md#phase-04-remediation-2). |
+| 3 | doc 19 §6 makes the reset endpoint unauthenticated and indistinguishable, but the account-specific work behind it — a lookup, a keyed derivation, a provider call — is unbounded in time and only happens for addresses that exist. | **Indistinguishable means the work, not just the answer.** The public path performs one bounded insert and returns; everything account-specific moves behind a durable queue. Normalising the status and body alone left a timing oracle that a slow or unreachable provider widened from microseconds to seconds. |
+
 ---
 
 ## 4. P1 configuration register

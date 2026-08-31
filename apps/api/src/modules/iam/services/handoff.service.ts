@@ -10,7 +10,7 @@ import {
 } from '@prsystem/db';
 import type { HandoffItemRow, HandoffSubjectKind } from '../repositories/handoff.repository';
 import type { OpenWorkItem } from '../contracts/open-work.port';
-import { HandoffRepository } from '../repositories/handoff.repository';
+import { HandoffDiscoveryRepository, HandoffRepository } from '../repositories/handoff.repository';
 import type { MembershipRow } from '../repositories/membership.repository';
 import { MembershipRepository } from '../repositories/membership.repository';
 import { authorizeCommand } from './authorization.service';
@@ -115,6 +115,105 @@ export class HandoffService extends IamServiceBase {
       });
     }
     return item.itemId;
+  }
+
+  /**
+   * Enumerates the open work behind every marker a suspension left, and turns it
+   * into handoff items.
+   *
+   * This is the second half of a suspension, deliberately separated from the
+   * first. Asking another module what a person still holds is a call that can
+   * fail, and doing it inside the security transaction meant a provider outage
+   * rolled the suspension back — the member stayed active, with live sessions,
+   * because a *different* system was down. So the transition commits with a
+   * marker, and this runs afterwards: on the same request when the provider
+   * answers, and on a later call when it does not.
+   *
+   * Idempotent by construction. The items are opened under the marker's stored
+   * seed, the open-item index is one row per subject, and the marker's
+   * completion is a compare-and-set — so running this twice creates nothing
+   * twice, and a marker that has been settled is never reopened.
+   */
+  async reconcileDiscovery(
+    actor: CommandActor,
+    input: { hotelId: string; membershipId?: string; idempotencyKey: string },
+    request: RequestContext,
+  ): Promise<{ resolved: number; pending: number; items: readonly string[] }> {
+    return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
+      await this.authorize(gate, {
+        uow,
+        // The same authority the suspension itself needed: this creates nothing
+        // the suspension did not already decide, it only finishes it.
+        permission: 'hotel.staff.invite_suspend',
+        hotelId: input.hotelId,
+        restaurantId: null,
+        targetType: 'work_handoff_discovery',
+      });
+
+      const claimed = await this.claimIdempotency(
+        uow,
+        'iam.handoff.discovery',
+        input.idempotencyKey,
+        input,
+      );
+      if (claimed.replay !== undefined) {
+        return claimed.replay as { resolved: number; pending: number; items: readonly string[] };
+      }
+
+      const discovery = new HandoffDiscoveryRepository(uow);
+      const memberships = new MembershipRepository(uow);
+      const markers = await discovery.listPending(input.membershipId);
+
+      const items: string[] = [];
+      let resolved = 0;
+      let pending = 0;
+
+      for (const marker of markers) {
+        let work: readonly OpenWork[];
+        try {
+          work = await this.deps.openWork.openWorkFor(input.hotelId, marker.membershipId);
+        } catch (error) {
+          // The marker stays open and the attempt is counted. Nothing here
+          // treats an unanswerable provider as "no open work": that is the
+          // difference between a queue that will be drained and a blocker that
+          // was silently dropped.
+          await discovery.recordAttempt(marker.discoveryId, describe(error));
+          pending += 1;
+          continue;
+        }
+
+        const membership = await memberships.lock(marker.membershipId);
+        if (membership === undefined) {
+          await discovery.recordAttempt(marker.discoveryId, 'the membership is not visible');
+          pending += 1;
+          continue;
+        }
+
+        for (const entry of work) {
+          items.push(
+            await this.openForMembership(uow, {
+              membership,
+              work: entry,
+              reason: marker.openedReason,
+              idempotencyKey: `${marker.idempotencySeed}:${entry.kind}:${entry.ref}`,
+            }),
+          );
+        }
+        await discovery.complete(marker.discoveryId);
+        resolved += 1;
+      }
+
+      await recordPlatformAudit(uow, {
+        action: 'iam.handoff.discovery_reconciled',
+        outcome: 'allowed',
+        targetType: 'work_handoff_discovery',
+        payload: { resolved, pending, items: [...items] },
+      });
+
+      const result = { resolved, pending, items };
+      await completeIdempotencyKey(uow, claimed.idempotencyId, 200, result);
+      return result;
+    });
   }
 
   /**
@@ -719,4 +818,10 @@ function visible(
       // one nobody implemented, and showing the row would be the failure.
       return false;
   }
+}
+
+/** A provider failure, reduced to something safe to store beside the marker. */
+function describe(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return 'the owning module reported an unknown failure';
 }

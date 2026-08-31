@@ -4,6 +4,7 @@ import { resetEnvCache } from '@prsystem/config';
 import { TEST_LOGIN_PRINCIPALS } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
 import type { IamHarness, SeededMembership } from './test-support/iam-harness';
+import { StaffService } from './services/staff.service';
 import { attachIamHarness, provisionIamDatabase } from './test-support/iam-harness';
 import { authorize } from '@prsystem/authz';
 import { PLATFORM_SCOPE, withTenantTransaction } from '@prsystem/db';
@@ -34,6 +35,15 @@ let db: TestDatabase;
 let env: IamHarness;
 let app: NestFastifyApplication;
 let baseUrl: string;
+/**
+ * The application's own staff service.
+ *
+ * Draining the reset queue must run with the key material the running
+ * application holds: the harness has its own, so a token minted by one and
+ * redeemed through the other would never match — the keyed digest is bound to
+ * the key, which is the point of it.
+ */
+let appStaff: StaffService;
 
 let hotelA: string;
 let hotelB: string;
@@ -199,6 +209,7 @@ beforeAll(async () => {
   const notifications = app.get<SimulatedStaffNotification>(STAFF_NOTIFICATION);
   const openWork = app.get<SimulatedOpenWork>(OPEN_WORK);
   const restaurants = app.get<SimulatedRestaurantDirectory>(RESTAURANT_DIRECTORY);
+  appStaff = app.get<StaffService>(StaffService);
   // And they are the deterministic simulators, not a production adapter that
   // happened to be selected: no such adapter exists for any of the four.
   expect(subscription).toBeInstanceOf(SimulatedSubscriptionState);
@@ -414,6 +425,10 @@ describe('C — a scope session is real authority, not a record', () => {
       body: { email: member.email },
     });
     expect(requested.status).toBe(202);
+    // The public request only queues; the link is minted and delivered when the
+    // queue is drained, which is what keeps the endpoint's work identical for
+    // every address.
+    expect(await appStaff.drainPasswordResetIntake(16)).toBeGreaterThan(0);
     const delivered = env.notifications.lastResetForEmail(member.email);
     expect(delivered).toBeDefined();
     const confirmed = await call('POST', '/auth/password-reset/confirm', {
@@ -614,17 +629,23 @@ describe('E — secrets never travel in a URL, a key or an oracle', () => {
     });
     seen.push({ status: throttled.status, text: throttled.text });
 
-    // And with the notification provider refusing — a *registered* address, so
-    // the delivery is genuinely attempted and genuinely fails.
+    // Everything queued so far settles, and nothing the caller saw depended on
+    // how it settled.
+    await appStaff.drainPasswordResetIntake(32);
+    expect(env.notifications.lastResetForEmail(disabled.email)).toBeUndefined();
+    expect(env.notifications.lastResetForEmail('nobody@repair.test')).toBeUndefined();
+
+    // And once more with the provider refusing — the failure happens during the
+    // drain, long after the caller was answered, and is invisible to them.
     const unreachable = await onboard(await signIn(adminA), hotelA, 'oracle-3@repair.test', [
       'MANAGER',
     ]);
-    env.notifications.failNext();
     const unavailable = await call('POST', '/auth/password-reset/request', {
       body: { email: unreachable.email },
     });
     seen.push({ status: unavailable.status, text: unavailable.text });
-    // The refusal must have been consumed by that request and nothing else.
+    env.notifications.failNext();
+    await appStaff.drainPasswordResetIntake(32);
     expect(env.notifications.lastResetForEmail(unreachable.email)).toBeUndefined();
 
     expect(new Set(seen.map((entry) => entry.status))).toEqual(new Set([202]));

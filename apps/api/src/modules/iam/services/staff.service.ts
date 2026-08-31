@@ -8,13 +8,15 @@ import {
   completeIdempotencyKey,
   recordPlatformAudit,
 } from '@prsystem/db';
+import type { ResetIntakeOutcome } from '../repositories/account.repository';
 import { AccountRepository, normaliseEmail } from '../repositories/account.repository';
 import type { InvitationRow, MembershipRow } from '../repositories/membership.repository';
 import { MembershipRepository } from '../repositories/membership.repository';
 import { authorizeCommand, resolvePrincipal } from './authorization.service';
 import type { CommandActor, HotelGate, IamDependencies, RequestContext } from './iam-context';
-import { IamServiceBase, establishAccountScope } from './iam-context';
+import { IamServiceBase, establishAccountScope, newRequestContext } from './iam-context';
 import { HandoffService } from './handoff.service';
+import { HandoffDiscoveryRepository } from '../repositories/handoff.repository';
 import { assertPasswordAcceptable, derivePassword } from './password.service';
 
 /**
@@ -65,6 +67,20 @@ class InvitationExpiredError extends Error {
   ) {
     super('the invitation has expired');
   }
+}
+
+/**
+ * What a suspension or termination reports.
+ *
+ * `handoffDiscovery` is the honest half: `COMPLETED` when the owning modules
+ * answered and the items exist, `PENDING` when the question is queued and
+ * durable, `NOT_REQUIRED` for a reactivation. The security effect is unrelated
+ * to all three — it has already committed by the time this is built.
+ */
+export interface MembershipStateResult {
+  readonly state: string;
+  readonly handoffItems: readonly string[];
+  readonly handoffDiscovery: 'COMPLETED' | 'PENDING' | 'NOT_REQUIRED';
 }
 
 export interface AcceptInvitationInput {
@@ -586,11 +602,48 @@ export class StaffService extends IamServiceBase {
       idempotencyKey: string;
     },
     request: RequestContext,
-  ): Promise<{ state: string; handoffItems: readonly string[] }> {
+  ): Promise<MembershipStateResult> {
     if (input.reason.trim().length === 0) {
       throw new ApiError('VALIDATION_FAILED', 'a state change needs a reason');
     }
 
+    const committed = await this.applyMembershipState(actor, input, request);
+    if (committed.handoffDiscovery !== 'PENDING') return committed;
+
+    // The security effect is already committed and cannot be undone from here.
+    // This is the same reconciliation a later call performs, run once
+    // immediately because the provider is usually up — and when it is not, the
+    // marker stays and the caller is told so.
+    try {
+      const reconciled = await this.handoff.reconcileDiscovery(
+        actor,
+        {
+          hotelId: input.hotelId,
+          membershipId: input.membershipId,
+          idempotencyKey: `${input.idempotencyKey}:discovery`,
+        },
+        request,
+      );
+      if (reconciled.resolved === 0) return committed;
+      return { ...committed, handoffItems: reconciled.items, handoffDiscovery: 'COMPLETED' };
+    } catch {
+      // Reconciliation is retryable and its marker is durable. A failure here
+      // changes nothing about the suspension, which is the point.
+      return committed;
+    }
+  }
+
+  private async applyMembershipState(
+    actor: CommandActor,
+    input: {
+      hotelId: string;
+      membershipId: string;
+      state: 'SUSPENDED' | 'TERMINATED' | 'ACTIVE';
+      reason: string;
+      idempotencyKey: string;
+    },
+    request: RequestContext,
+  ): Promise<MembershipStateResult> {
     return this.runHotelCommand(actor, { hotelId: input.hotelId }, request, async (uow, gate) => {
       const memberships = new MembershipRepository(uow);
       const membership = await memberships.lock(input.membershipId);
@@ -609,9 +662,7 @@ export class StaffService extends IamServiceBase {
       assertPrimaryProtected(membership, input.state);
 
       const claimed = await this.claim(uow, 'iam.membership.state', input.idempotencyKey, input);
-      if (claimed.replay !== undefined) {
-        return claimed.replay as { state: string; handoffItems: readonly string[] };
-      }
+      if (claimed.replay !== undefined) return claimed.replay as MembershipStateResult;
 
       const moved = await memberships.transition({
         membershipId: membership.membershipId,
@@ -621,7 +672,7 @@ export class StaffService extends IamServiceBase {
       });
       if (!moved) throw new ApiError('REVISION_MISMATCH', 'the membership changed concurrently');
 
-      const handoffItems: string[] = [];
+      let discoveryOpened = false;
       if (input.state === 'SUSPENDED' || input.state === 'TERMINATED') {
         // Immediately: the scope's sessions, and every role the membership held
         // if this is a termination.
@@ -634,22 +685,21 @@ export class StaffService extends IamServiceBase {
           );
         }
         // What work this person still holds is asked of the modules that own it
-        // (doc 19 §8.1). It is never taken from the request: a caller who could
-        // name the open work could also omit it, and an omitted item is a
-        // blocker silently dropped rather than handed over.
-        const openWork = await this.deps.openWork.openWorkFor(
-          input.hotelId,
-          membership.membershipId,
-        );
-        for (const work of openWork) {
-          const item = await this.handoff.openForMembership(uow, {
-            membership,
-            work,
-            reason: input.state === 'SUSPENDED' ? 'suspension' : 'termination',
-            idempotencyKey: `${input.idempotencyKey}:${work.kind}:${work.ref}`,
-          });
-          handoffItems.push(item);
-        }
+        // (doc 19 §8.1) — and that question is *not* asked here. It is a call to
+        // another system, and a call to another system can fail; asking it
+        // inside this transaction meant a provider outage rolled the suspension
+        // back and left the member active with live sessions.
+        //
+        // So this transaction records that the question exists, atomically with
+        // the security effect it belongs to, and answering it is a separate
+        // retryable step. The marker is what keeps the third possibility — an
+        // unreachable provider quietly meaning "no open work" — off the table.
+        await new HandoffDiscoveryRepository(uow).open({
+          membershipId: membership.membershipId,
+          openedReason: input.state === 'SUSPENDED' ? 'suspension' : 'termination',
+          idempotencySeed: input.idempotencyKey,
+        });
+        discoveryOpened = true;
       }
 
       if (input.state === 'ACTIVE') {
@@ -665,7 +715,7 @@ export class StaffService extends IamServiceBase {
         targetType: 'staff_membership',
         targetRef: membership.membershipId,
         reason: input.reason,
-        payload: { previousState: membership.state, handoffItems },
+        payload: { previousState: membership.state, handoffDiscovery: discoveryOpened },
       });
       await appendOutboxEvent(uow, {
         aggregateType: 'staff_membership',
@@ -674,7 +724,15 @@ export class StaffService extends IamServiceBase {
         payload: { membershipId: membership.membershipId, state: input.state },
       });
 
-      const result = { state: input.state, handoffItems };
+      // The recorded result is the *security* transition, which is all this
+      // transaction decided. What discovery then found is added to the live
+      // response below; a retry of this key replays the transition and does not
+      // re-apply it, which is what an idempotency record is for.
+      const result: MembershipStateResult = {
+        state: input.state,
+        handoffItems: [],
+        handoffDiscovery: discoveryOpened ? 'PENDING' : 'NOT_REQUIRED',
+      };
       await completeIdempotencyKey(uow, claimed.idempotencyId, 200, result);
       return result;
     });
@@ -689,27 +747,85 @@ export class StaffService extends IamServiceBase {
    * that works.
    */
   async requestPasswordReset(email: string, request: RequestContext): Promise<void> {
-    // Every outcome is the same outcome. An unknown address, a disabled account,
-    // a live request still inside its resend interval and an unreachable
-    // notification provider all return exactly what a successful request
-    // returns: doc 19 §6 makes this surface unauthenticated, so any difference a
-    // caller can observe — a status, a body, a distinguishable error — is an
-    // account-enumeration oracle.
+    // One bounded write, and nothing else.
     //
-    // The failure is swallowed here rather than at the edge on purpose: the
-    // *authenticated* Hotel Admin path below keeps its operational failures
-    // visible, because there the initiator is known and already inside the
-    // tenant, so an error tells them nothing they could not already ask for.
-    try {
+    // Normalising the status and the body was necessary but not sufficient: the
+    // previous shape still looked the address up, derived a keyed token and
+    // waited on a notification provider — but only when the account existed. A
+    // caller who could not read the response could still *time* it, and an
+    // unreachable or merely slow provider widened that gap from microseconds to
+    // seconds. The work itself has to be identical, so the account-specific part
+    // moves behind a durable queue and this path never touches KMS, the account
+    // tables, or the provider.
+    const normalized = normaliseEmail(email);
+    await this.inAccountScope(request, async (uow) => {
+      const intakeId = await new AccountRepository(uow).queueResetIntake(normalized);
+      // Audited without an account reference, because none has been resolved —
+      // and resolving one to write a nicer audit row would be the oracle again.
+      await recordPlatformAudit(uow, {
+        action: 'iam.password.reset_queued',
+        outcome: 'allowed',
+        targetType: 'password_reset_intake',
+        targetRef: intakeId,
+      });
+    });
+  }
+
+  /**
+   * Drains the queued public reset requests.
+   *
+   * Everything the public path deliberately does not do: resolve the address,
+   * apply the resend interval, supersede a live token, mint a new one and hand
+   * it to the provider. Each entry is settled in its own transaction, so one
+   * unreachable delivery neither rolls back another nor blocks the queue, and
+   * every entry is settled exactly once whatever the outcome.
+   *
+   * Invoked by the scheduled job that lands with the email provider; until then
+   * the only sender is a simulator, and `INT-MAIL-01` still records the gap.
+   */
+  async drainPasswordResetIntake(limit = 32): Promise<number> {
+    const request = newRequestContext();
+    const claimed = await this.inAccountScope(request, (uow) =>
+      new AccountRepository(uow).claimResetIntake(limit),
+    );
+
+    let processed = 0;
+    for (const entry of claimed) {
+      const outcome = await this.processResetIntake(entry.emailNormalized, request);
       await this.inAccountScope(request, async (uow) => {
+        await new AccountRepository(uow).settleResetIntake(entry.intakeId, outcome);
+        await recordPlatformAudit(uow, {
+          action: 'iam.password.reset_intake_settled',
+          outcome: 'allowed',
+          targetType: 'password_reset_intake',
+          targetRef: entry.intakeId,
+          reason: outcome,
+        });
+      });
+      processed += 1;
+    }
+    return processed;
+  }
+
+  private async processResetIntake(
+    emailNormalized: string,
+    request: RequestContext,
+  ): Promise<ResetIntakeOutcome> {
+    try {
+      return await this.inAccountScope(request, async (uow) => {
         const accounts = new AccountRepository(uow);
-        const account = await accounts.findByEmail('hotel', email);
-        if (account === undefined || account.state !== 'ACTIVE') return;
+        const account = await accounts.findByEmail('hotel', emailNormalized);
+        // Unknown or not active: nothing to send, and nobody to tell.
+        if (account === undefined || account.state !== 'ACTIVE') return 'ignored';
         await establishAccountScope(uow, account.accountId);
         await this.issueReset(uow, account.accountId, account.emailNormalized, 'self', null);
+        return 'sent';
       });
-    } catch {
-      // Deliberately silent. The caller must not learn that anything happened.
+    } catch (error) {
+      // The resend interval and an unreachable provider are both ordinary
+      // outcomes here — recorded for an operator, invisible to the requester.
+      if (error instanceof ApiError && error.code === 'RATE_LIMITED') return 'throttled';
+      return 'unavailable';
     }
   }
 
@@ -1124,12 +1240,21 @@ export class StaffService extends IamServiceBase {
       // doc 19 §5: an address that already has an account never gets a second
       // one, and the signed-in account's verified address must be the invited
       // one.
+      // Active, the invited address, and an address this account has actually
+      // proved. Without the last condition a membership could be bound to an
+      // address nobody demonstrated control of: anyone who registered
+      // `someone@else` and was never challenged could accept an invitation
+      // addressed to the real holder. The identity is the session's, never the
+      // request body's — `input.accountId` comes from the verified bearer.
       const account = await accounts.findById(input.accountId);
       if (
         account === undefined ||
         account.state !== 'ACTIVE' ||
+        account.emailVerifiedAt === null ||
         account.emailNormalized !== invitation.emailNormalized
       ) {
+        // The same refusal an unknown token gets: nothing here says which of
+        // the four conditions failed, or that the account exists at all.
         throw new ApiError('NOT_FOUND', 'not found');
       }
       return account.accountId;

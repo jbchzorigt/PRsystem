@@ -289,6 +289,34 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     updateSet: `revoked_at = now(), revoked_reason = 'acl-probe'`,
   },
   {
+    name: 'platform.work_handoff_discovery',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `WITH acct AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('hotel', $2) RETURNING account_id
+            ), mem AS (
+              INSERT INTO platform.staff_membership
+                (hotel_id, account_id, invited_email_normalized, state,
+                 membership_revision, activated_at)
+              SELECT $1, acct.account_id, $2, 'ACTIVE', 1, now() FROM acct
+              RETURNING membership_id
+            )
+            INSERT INTO platform.work_handoff_discovery
+              (hotel_id, membership_id, opened_reason, idempotency_seed)
+            SELECT $1, mem.membership_id, 'suspension', $3 FROM mem`,
+      values: [
+        hotelId,
+        `fixture-discovery-${String(n)}@example.test`,
+        `fixture-discovery-seed-${String(n)}`,
+      ],
+    }),
+    updateColumn: 'last_error',
+    // The only legal update is an attempt advancing: the guard refuses a
+    // rewritten identity and refuses a marker that never moved.
+    updateSet: `attempts = attempts + 1, last_error = 'acl-probe', updated_at = now()`,
+  },
+  {
     name: 'platform.work_handoff_item',
     grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
     insert: (hotelId, n) => ({

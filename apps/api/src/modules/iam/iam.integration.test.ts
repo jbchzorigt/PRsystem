@@ -732,6 +732,9 @@ describe('the session revocation matrix (doc 19 §10)', () => {
     const second = await env.sessions.signIn(email, member.password, newRequestContext());
 
     await env.staff.requestPasswordReset(email, newRequestContext());
+    // The public request queues; the token is minted and delivered when the
+    // queue drains, so the endpoint does the same work for every address.
+    expect(await env.staff.drainPasswordResetIntake(16)).toBeGreaterThan(0);
     const link = env.notifications.lastResetFor(member.accountId);
     expect(link).toBeDefined();
 

@@ -124,6 +124,12 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
   },
   {
     schema: 'platform',
+    table: 'password_reset_intake',
+    classification: 'ACCOUNT_GLOBAL',
+    why: 'a queued reset request names an address, which may belong to no account at all and to no hotel',
+  },
+  {
+    schema: 'platform',
     table: 'account_permission_grant',
     classification: 'ACCOUNT_GLOBAL',
     why: 'Operation, Platform and Police permissions are per account and cross no tenant (RBAC-DEC-004)',
@@ -169,6 +175,12 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     table: 'work_handoff_event',
     classification: 'TENANT_RLS',
     why: 'carries hotel_id; append-only movement history for one hotel',
+  },
+  {
+    schema: 'platform',
+    table: 'work_handoff_discovery',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the retryable marker that a suspended membership\u2019s open work still has to be enumerated (STAFF-DEC-007)',
   },
   {
     schema: 'audit',

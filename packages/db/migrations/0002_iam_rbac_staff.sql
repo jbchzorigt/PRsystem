@@ -96,6 +96,11 @@ CREATE TABLE platform.user_account (
   CONSTRAINT user_account_state_known
     CHECK (state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text])),
   CONSTRAINT user_account_realm_email_uq UNIQUE (realm, email_normalized),
+  -- The referenced key of the session FK below. A session carries a realm of its
+  -- own, and without this the two were independent: a `hotel` account could be
+  -- given a `police` session by a single insert, and every realm check
+  -- downstream would then be reading a realm nobody's account ever had.
+  CONSTRAINT user_account_realm_identity_uq UNIQUE (account_id, realm),
   -- The referenced key of the permission-grant principal FK below. Trivially
   -- unique because `account_id` is the primary key; declared so a grant row
   -- cannot name a realm or a role its account does not actually have.
@@ -147,8 +152,11 @@ CREATE TABLE platform.server_session (
   revoked_at          timestamptz,
   revoked_reason      text,
   revision            integer NOT NULL DEFAULT 0,
-  CONSTRAINT server_session_account_id_fkey FOREIGN KEY (account_id)
-    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
+  -- Composite, not just `account_id`: the session's realm must be the account's
+  -- own (ADR-0005 — realms never merge). This supersedes the single-column
+  -- reference, which it already implies.
+  CONSTRAINT server_session_account_realm_fkey FOREIGN KEY (account_id, realm)
+    REFERENCES platform.user_account (account_id, realm) ON DELETE RESTRICT,
   CONSTRAINT server_session_epoch_non_negative CHECK (account_epoch >= 0),
   CONSTRAINT server_session_expiry_ordered CHECK (idle_expires_at <= absolute_expires_at),
   CONSTRAINT server_session_realm_known
@@ -376,6 +384,48 @@ CREATE UNIQUE INDEX password_reset_request_one_active_uq
   WHERE state = 'ACTIVE'::text;
 --> statement-breakpoint
 
+-- ------------------------------------------------ password reset intake
+-- doc 19 §6, the unauthenticated half.
+--
+-- The public endpoint must be indistinguishable for every address, and a
+-- response is only indistinguishable if the *work* behind it is. Looking an
+-- account up, deriving a keyed token and handing a message to a provider are
+-- account-specific and unbounded in time; doing them only for addresses that
+-- exist is an enumeration oracle a normalised status code does not close.
+--
+-- So the request writes one row here and returns. Eligibility, throttling,
+-- token issue and delivery all happen when this queue is drained, where taking
+-- longer for one address than another tells nobody anything.
+--
+-- Deliberately **not** append-only: this is a work queue, not history. What
+-- happened is recorded in the audit stream and in `password_reset_request`,
+-- which are.
+CREATE TABLE platform.password_reset_intake (
+  intake_id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email_normalized text NOT NULL,
+  state            text NOT NULL DEFAULT 'PENDING',
+  attempts         integer NOT NULL DEFAULT 0,
+  outcome          text,
+  requested_at     timestamptz NOT NULL DEFAULT now(),
+  processed_at     timestamptz,
+  CONSTRAINT password_reset_intake_attempts_non_negative CHECK (attempts >= 0),
+  CONSTRAINT password_reset_intake_email_normalised
+    CHECK (email_normalized = lower(email_normalized)),
+  -- The outcome vocabulary is closed, and none of its values is ever returned to
+  -- the requester: it exists so an operator can see that the queue is draining.
+  CONSTRAINT password_reset_intake_outcome_known
+    CHECK ((outcome IS NULL) OR (outcome = ANY (ARRAY['sent'::text, 'ignored'::text,
+                                                      'throttled'::text, 'unavailable'::text]))),
+  CONSTRAINT password_reset_intake_processed_has_time
+    CHECK ((state = 'PROCESSED'::text) = (processed_at IS NOT NULL)),
+  CONSTRAINT password_reset_intake_state_known
+    CHECK (state = ANY (ARRAY['PENDING'::text, 'PROCESSED'::text]))
+);
+--> statement-breakpoint
+CREATE INDEX password_reset_intake_queue_idx
+  ON platform.password_reset_intake (state, requested_at);
+--> statement-breakpoint
+
 -- ------------------------------------------------ explicit permission grants
 -- doc 18 §5 and §6 / `RBAC-DEC-004`, `RBAC-DEC-017`, `POL-DEC-021`: a role name
 -- grants nothing. Operation, Platform and Police authority is a named permission
@@ -565,6 +615,56 @@ CREATE UNIQUE INDEX work_handoff_item_open_subject_uq
 --> statement-breakpoint
 CREATE INDEX work_handoff_item_queue_idx
   ON platform.work_handoff_item (hotel_id, state, created_at);
+--> statement-breakpoint
+
+-- ------------------------------------------------ handoff discovery markers
+-- doc 19 §8.1 / `STAFF-DEC-007`: the security effect of a suspension is never
+-- delayed by open work — and, just as importantly, is never *undone* by it.
+--
+-- Enumerating what a suspended member still holds means asking another module,
+-- and another module can be unreachable. Doing that inside the suspension's own
+-- transaction made a provider outage roll the suspension back and leave the
+-- member active with live sessions, which is the opposite of the rule. So the
+-- transition commits with this marker beside it, atomically, and discovery is a
+-- separate retryable step. The marker is what stops the third possibility —
+-- treating an unanswerable provider as "no open work" — from ever being what
+-- happens by default.
+CREATE TABLE platform.work_handoff_discovery (
+  discovery_id     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  hotel_id         uuid NOT NULL,
+  membership_id    uuid NOT NULL,
+  opened_reason    text NOT NULL,
+  state            text NOT NULL DEFAULT 'PENDING',
+  attempts         integer NOT NULL DEFAULT 0,
+  last_error       text,
+  -- The suspension's own idempotency key. Every retry derives the handoff
+  -- items' keys from it, so a second attempt reopens nothing.
+  idempotency_seed text NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  completed_at     timestamptz,
+  CONSTRAINT work_handoff_discovery_membership_fkey FOREIGN KEY (hotel_id, membership_id)
+    REFERENCES platform.staff_membership (hotel_id, membership_id) ON DELETE RESTRICT,
+  CONSTRAINT work_handoff_discovery_attempts_non_negative CHECK (attempts >= 0),
+  CONSTRAINT work_handoff_discovery_completed_has_time
+    CHECK ((state = 'COMPLETED'::text) = (completed_at IS NOT NULL)),
+  CONSTRAINT work_handoff_discovery_reason_known
+    CHECK (opened_reason = ANY (ARRAY['suspension'::text, 'termination'::text])),
+  CONSTRAINT work_handoff_discovery_seed_shape
+    CHECK (length(idempotency_seed) BETWEEN 8 AND 200),
+  CONSTRAINT work_handoff_discovery_state_known
+    CHECK (state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text])),
+  CONSTRAINT work_handoff_discovery_scope_uq UNIQUE (hotel_id, discovery_id)
+);
+--> statement-breakpoint
+-- One open marker per membership: repeated attempts advance the same row rather
+-- than queueing a second enumeration of the same person's work.
+CREATE UNIQUE INDEX work_handoff_discovery_open_uq
+  ON platform.work_handoff_discovery (hotel_id, membership_id)
+  WHERE state <> 'COMPLETED'::text;
+--> statement-breakpoint
+CREATE INDEX work_handoff_discovery_queue_idx
+  ON platform.work_handoff_discovery (hotel_id, state, created_at);
 --> statement-breakpoint
 
 -- Append-only movement history. `created_by`, a historical assignee and a posted
@@ -985,6 +1085,66 @@ END;
 $$;
 --> statement-breakpoint
 
+-- The marker advances and completes; it is never rewritten and never reopened.
+-- `attempts` is monotonic so a retry loop cannot hide how many times a provider
+-- has refused.
+CREATE OR REPLACE FUNCTION platform.work_handoff_discovery_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'a handoff discovery marker is completed, never deleted'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.discovery_id IS DISTINCT FROM OLD.discovery_id
+     OR NEW.hotel_id IS DISTINCT FROM OLD.hotel_id
+     OR NEW.membership_id IS DISTINCT FROM OLD.membership_id
+     OR NEW.opened_reason IS DISTINCT FROM OLD.opened_reason
+     OR NEW.idempotency_seed IS DISTINCT FROM OLD.idempotency_seed
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'a handoff discovery marker records what must be enumerated, and is not rewritten'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.state = 'COMPLETED'::text THEN
+    RAISE EXCEPTION 'handoff discovery % is already completed', OLD.discovery_id
+      USING ERRCODE = '22023';
+  END IF;
+  IF NEW.attempts < OLD.attempts THEN
+    RAISE EXCEPTION 'attempts must not decrease (was %, offered %)',
+      OLD.attempts, NEW.attempts USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
+-- A queue entry is claimed once and settled once. It may not be un-processed,
+-- and the address it was queued for may not be swapped for another.
+CREATE OR REPLACE FUNCTION platform.password_reset_intake_guard() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.intake_id IS DISTINCT FROM OLD.intake_id
+     OR NEW.email_normalized IS DISTINCT FROM OLD.email_normalized
+     OR NEW.requested_at IS DISTINCT FROM OLD.requested_at THEN
+    RAISE EXCEPTION 'a reset intake records the address it was queued for, and is not rewritten'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF OLD.state = 'PROCESSED'::text THEN
+    RAISE EXCEPTION 'reset intake % is already processed', OLD.intake_id USING ERRCODE = '22023';
+  END IF;
+  IF NEW.attempts < OLD.attempts THEN
+    RAISE EXCEPTION 'attempts must not decrease (was %, offered %)',
+      OLD.attempts, NEW.attempts USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+
 CREATE TRIGGER staff_membership_no_delete
   BEFORE DELETE ON platform.staff_membership
   FOR EACH ROW EXECUTE FUNCTION platform.staff_membership_guard();
@@ -1040,6 +1200,18 @@ CREATE TRIGGER work_handoff_item_no_delete
 CREATE TRIGGER work_handoff_item_transition_guard
   BEFORE UPDATE ON platform.work_handoff_item
   FOR EACH ROW EXECUTE FUNCTION platform.work_handoff_item_guard();
+--> statement-breakpoint
+CREATE TRIGGER work_handoff_discovery_no_delete
+  BEFORE DELETE ON platform.work_handoff_discovery
+  FOR EACH ROW EXECUTE FUNCTION platform.work_handoff_discovery_guard();
+--> statement-breakpoint
+CREATE TRIGGER work_handoff_discovery_transition_guard
+  BEFORE UPDATE ON platform.work_handoff_discovery
+  FOR EACH ROW EXECUTE FUNCTION platform.work_handoff_discovery_guard();
+--> statement-breakpoint
+CREATE TRIGGER password_reset_intake_transition_guard
+  BEFORE UPDATE ON platform.password_reset_intake
+  FOR EACH ROW EXECUTE FUNCTION platform.password_reset_intake_guard();
 --> statement-breakpoint
 CREATE TRIGGER work_handoff_event_append_only
   BEFORE UPDATE OR DELETE ON platform.work_handoff_event
@@ -1103,6 +1275,10 @@ ALTER TABLE platform.work_handoff_item         FORCE ROW LEVEL SECURITY;
 ALTER TABLE platform.work_handoff_event        ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 ALTER TABLE platform.work_handoff_event        FORCE ROW LEVEL SECURITY;
+--> statement-breakpoint
+ALTER TABLE platform.work_handoff_discovery    ENABLE ROW LEVEL SECURITY;
+--> statement-breakpoint
+ALTER TABLE platform.work_handoff_discovery    FORCE ROW LEVEL SECURITY;
 --> statement-breakpoint
 
 CREATE POLICY tenant_isolation ON platform.hotel
@@ -1187,6 +1363,10 @@ CREATE POLICY tenant_isolation ON platform.work_handoff_event
   USING (hotel_id = platform.current_hotel_id())
   WITH CHECK (hotel_id = platform.current_hotel_id());
 --> statement-breakpoint
+CREATE POLICY tenant_isolation ON platform.work_handoff_discovery
+  USING (hotel_id = platform.current_hotel_id())
+  WITH CHECK (hotel_id = platform.current_hotel_id());
+--> statement-breakpoint
 
 -- ---------------------------------------------------------------- ownership
 ALTER TABLE platform.hotel                     OWNER TO prsystem_migrate;
@@ -1215,6 +1395,10 @@ ALTER TABLE platform.work_handoff_item         OWNER TO prsystem_migrate;
 --> statement-breakpoint
 ALTER TABLE platform.work_handoff_event        OWNER TO prsystem_migrate;
 --> statement-breakpoint
+ALTER TABLE platform.work_handoff_discovery    OWNER TO prsystem_migrate;
+--> statement-breakpoint
+ALTER TABLE platform.password_reset_intake     OWNER TO prsystem_migrate;
+--> statement-breakpoint
 
 -- ------------------------------------------------------------------- grants
 -- PUBLIC gets nothing, and no role holds DELETE anywhere in this migration:
@@ -1225,7 +1409,8 @@ REVOKE ALL ON platform.hotel, platform.user_account, platform.account_credential
               platform.staff_membership, platform.membership_role_grant,
               platform.staff_invitation, platform.invitation_requested_role,
               platform.password_reset_request, platform.account_permission_grant,
-              platform.work_handoff_item, platform.work_handoff_event
+              platform.work_handoff_item, platform.work_handoff_event,
+              platform.work_handoff_discovery, platform.password_reset_intake
   FROM PUBLIC;
 --> statement-breakpoint
 
@@ -1257,6 +1442,10 @@ GRANT SELECT, INSERT, UPDATE ON platform.work_handoff_item TO prsystem_api;
 --> statement-breakpoint
 GRANT SELECT, INSERT ON platform.work_handoff_event TO prsystem_api;
 --> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE ON platform.work_handoff_discovery TO prsystem_api;
+--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE ON platform.password_reset_intake TO prsystem_api;
+--> statement-breakpoint
 
 -- The context function the policies evaluate, and the guards the API's own
 -- statements fire. A missing EXECUTE would refuse the write with a privilege
@@ -1269,7 +1458,8 @@ GRANT EXECUTE ON FUNCTION
   platform.staff_invitation_guard(), platform.password_reset_guard(),
   platform.work_handoff_item_guard(), platform.reject_mutation(),
   platform.invitation_requested_role_guard(), platform.server_session_guard(),
-  platform.session_scope_grant_guard(), platform.account_permission_grant_guard()
+  platform.session_scope_grant_guard(), platform.account_permission_grant_guard(),
+  platform.work_handoff_discovery_guard(), platform.password_reset_intake_guard()
   TO prsystem_api;
 --> statement-breakpoint
 

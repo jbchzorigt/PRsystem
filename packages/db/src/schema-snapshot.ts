@@ -920,6 +920,48 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     },
     {
       schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'attempts',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'email_normalized',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'intake_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'outcome',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'processed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'requested_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      column: 'state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
       table: 'password_reset_request',
       column: 'account_id',
       shape: 'uuid | NOT NULL | no default | no identity | not generated',
@@ -1427,6 +1469,72 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'user_account',
       column: 'state',
       shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'attempts',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'completed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'discovery_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'idempotency_seed',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'last_error',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'membership_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'opened_reason',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      column: 'updated_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -2112,6 +2220,49 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     },
     {
       schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_attempts_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((attempts >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_email_normalised',
+      kind: 'c',
+      definition: 'CHECK ((email_normalized = lower(email_normalized)))',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_outcome_known',
+      kind: 'c',
+      definition:
+        "CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['sent'::text, 'ignored'::text, 'throttled'::text, 'unavailable'::text]))))",
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (intake_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_processed_has_time',
+      kind: 'c',
+      definition: "CHECK (((state = 'PROCESSED'::text) = (processed_at IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_state_known',
+      kind: 'c',
+      definition: "CHECK ((state = ANY (ARRAY['PENDING'::text, 'PROCESSED'::text])))",
+    },
+    {
+      schema: 'platform',
       table: 'password_reset_request',
       name: 'password_reset_request_account_id_fkey',
       kind: 'f',
@@ -2236,10 +2387,10 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'server_session',
-      name: 'server_session_account_id_fkey',
+      name: 'server_session_account_realm_fkey',
       kind: 'f',
       definition:
-        'FOREIGN KEY (account_id) REFERENCES platform.user_account(account_id) ON DELETE RESTRICT',
+        'FOREIGN KEY (account_id, realm) REFERENCES platform.user_account(account_id, realm) ON DELETE RESTRICT',
     },
     {
       schema: 'platform',
@@ -2569,6 +2720,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'user_account',
+      name: 'user_account_realm_identity_uq',
+      kind: 'u',
+      definition: 'UNIQUE (account_id, realm)',
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
       name: 'user_account_realm_known',
       kind: 'c',
       definition: "CHECK ((realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text])))",
@@ -2595,6 +2753,63 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'c',
       definition:
         "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_attempts_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((attempts >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_completed_has_time',
+      kind: 'c',
+      definition: "CHECK (((state = 'COMPLETED'::text) = (completed_at IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_membership_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, membership_id) REFERENCES platform.staff_membership(hotel_id, membership_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (discovery_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_reason_known',
+      kind: 'c',
+      definition: "CHECK ((opened_reason = ANY (ARRAY['suspension'::text, 'termination'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_scope_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, discovery_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_seed_shape',
+      kind: 'c',
+      definition: 'CHECK (((length(idempotency_seed) >= 8) AND (length(idempotency_seed) <= 200)))',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_state_known',
+      kind: 'c',
+      definition: "CHECK ((state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text])))",
     },
     {
       schema: 'platform',
@@ -2983,6 +3198,20 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     },
     {
       schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_pkey',
+      definition:
+        'CREATE UNIQUE INDEX password_reset_intake_pkey ON platform.password_reset_intake USING btree (intake_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_intake',
+      name: 'password_reset_intake_queue_idx',
+      definition:
+        'CREATE INDEX password_reset_intake_queue_idx ON platform.password_reset_intake USING btree (state, requested_at)',
+    },
+    {
+      schema: 'platform',
       table: 'password_reset_request',
       name: 'password_reset_request_one_active_uq',
       definition:
@@ -3172,6 +3401,41 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     },
     {
       schema: 'platform',
+      table: 'user_account',
+      name: 'user_account_realm_identity_uq',
+      definition:
+        'CREATE UNIQUE INDEX user_account_realm_identity_uq ON platform.user_account USING btree (account_id, realm)',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_open_uq',
+      definition:
+        "CREATE UNIQUE INDEX work_handoff_discovery_open_uq ON platform.work_handoff_discovery USING btree (hotel_id, membership_id) WHERE (state <> 'COMPLETED'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_pkey',
+      definition:
+        'CREATE UNIQUE INDEX work_handoff_discovery_pkey ON platform.work_handoff_discovery USING btree (discovery_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_queue_idx',
+      definition:
+        'CREATE INDEX work_handoff_discovery_queue_idx ON platform.work_handoff_discovery USING btree (hotel_id, state, created_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
+      name: 'work_handoff_discovery_scope_uq',
+      definition:
+        'CREATE UNIQUE INDEX work_handoff_discovery_scope_uq ON platform.work_handoff_discovery USING btree (hotel_id, discovery_id)',
+    },
+    {
+      schema: 'platform',
       table: 'work_handoff_event',
       name: 'work_handoff_event_idempotency_uq',
       definition:
@@ -3312,6 +3576,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'work_handoff_event',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
       enabled: true,
       forced: true,
     },
@@ -3481,6 +3751,16 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'staff_membership',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'work_handoff_discovery',
       name: 'tenant_isolation',
       as: 'PERMISSIVE',
       command: 'ALL',

@@ -638,6 +638,7 @@ END`,
     ),
     unique('user_account_principal_uq').on(table.accountId, table.realm, table.realmRole),
     unique('user_account_realm_email_uq').on(table.realm, table.emailNormalized),
+    unique('user_account_realm_identity_uq').on(table.accountId, table.realm),
   ],
 );
 
@@ -725,9 +726,9 @@ export const serverSession = platform.table(
     unique('server_session_identity_uq').on(table.sessionId, table.accountId, table.realm),
     unique('server_session_token_uq').on(table.tokenHash),
     foreignKey({
-      name: 'server_session_account_id_fkey',
-      columns: [table.accountId],
-      foreignColumns: [userAccount.accountId],
+      name: 'server_session_account_realm_fkey',
+      columns: [table.accountId, table.realm],
+      foreignColumns: [userAccount.accountId, userAccount.realm],
     }).onDelete('restrict'),
   ],
 );
@@ -1101,6 +1102,109 @@ export const passwordResetRequest = platform.table(
   ],
 );
 
+export const passwordResetIntake = platform.table(
+  'password_reset_intake',
+  {
+    attempts: integer('attempts')
+      .notNull()
+      .default(sql`0`),
+    emailNormalized: text('email_normalized').notNull(),
+    intakeId: uuid('intake_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    outcome: text('outcome'),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+    requestedAt: timestamp('requested_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    state: text('state')
+      .notNull()
+      .default(sql`'PENDING'::text`),
+  },
+  (table) => [
+    check('password_reset_intake_attempts_non_negative', sql`(attempts >= 0)`),
+    check(
+      'password_reset_intake_email_normalised',
+      sql`(email_normalized = lower(email_normalized))`,
+    ),
+    check(
+      'password_reset_intake_outcome_known',
+      sql`((outcome IS NULL) OR (outcome = ANY (ARRAY['sent'::text, 'ignored'::text, 'throttled'::text, 'unavailable'::text])))`,
+    ),
+    check(
+      'password_reset_intake_processed_has_time',
+      sql`((state = 'PROCESSED'::text) = (processed_at IS NOT NULL))`,
+    ),
+    check(
+      'password_reset_intake_state_known',
+      sql`(state = ANY (ARRAY['PENDING'::text, 'PROCESSED'::text]))`,
+    ),
+    index('password_reset_intake_queue_idx').on(table.state, table.requestedAt),
+  ],
+);
+
+export const workHandoffDiscovery = platform
+  .table(
+    'work_handoff_discovery',
+    {
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      completedAt: timestamp('completed_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      discoveryId: uuid('discovery_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      idempotencySeed: text('idempotency_seed').notNull(),
+      lastError: text('last_error'),
+      membershipId: uuid('membership_id').notNull(),
+      openedReason: text('opened_reason').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      check('work_handoff_discovery_attempts_non_negative', sql`(attempts >= 0)`),
+      check(
+        'work_handoff_discovery_completed_has_time',
+        sql`((state = 'COMPLETED'::text) = (completed_at IS NOT NULL))`,
+      ),
+      check(
+        'work_handoff_discovery_reason_known',
+        sql`(opened_reason = ANY (ARRAY['suspension'::text, 'termination'::text]))`,
+      ),
+      check(
+        'work_handoff_discovery_seed_shape',
+        sql`((length(idempotency_seed) >= 8) AND (length(idempotency_seed) <= 200))`,
+      ),
+      check(
+        'work_handoff_discovery_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text]))`,
+      ),
+      unique('work_handoff_discovery_scope_uq').on(table.hotelId, table.discoveryId),
+      foreignKey({
+        name: 'work_handoff_discovery_membership_fkey',
+        columns: [table.hotelId, table.membershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      index('work_handoff_discovery_queue_idx').on(table.hotelId, table.state, table.createdAt),
+      uniqueIndex('work_handoff_discovery_open_uq')
+        .on(table.hotelId, table.membershipId)
+        .where(sql`state <> 'COMPLETED'::text`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 export const accountPermissionGrant = platform.table(
   'account_permission_grant',
   {
@@ -1354,7 +1458,9 @@ export const DECLARED_TABLES = [
   staffInvitation,
   invitationRequestedRole,
   passwordResetRequest,
+  passwordResetIntake,
   accountPermissionGrant,
   workHandoffItem,
   workHandoffEvent,
+  workHandoffDiscovery,
 ] as const;

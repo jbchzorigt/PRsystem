@@ -67,6 +67,7 @@ export class UnavailableStaffNotification implements StaffNotificationPort {
 export class SimulatedStaffNotification implements StaffNotificationPort {
   private readonly delivered: StaffNotification[] = [];
   private failures = 0;
+  private blocked: Promise<void> | undefined;
 
   /**
    * Makes the next delivery fail.
@@ -79,13 +80,32 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
     this.failures += times;
   }
 
-  deliver(message: StaffNotification): Promise<void> {
+  /**
+   * Holds every delivery open until the returned function is called.
+   *
+   * A slow provider is the sharpest test of a boundary that claims not to wait
+   * for one: if the public reset path still delivered synchronously, a request
+   * for a *known* address could not return while this is held, and a request for
+   * an unknown one could — which is the timing oracle in its purest form.
+   */
+  blockNext(): () => void {
+    let release = (): void => undefined;
+    this.blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return () => {
+      this.blocked = undefined;
+      release();
+    };
+  }
+
+  async deliver(message: StaffNotification): Promise<void> {
+    if (this.blocked !== undefined) await this.blocked;
     if (this.failures > 0) {
       this.failures -= 1;
-      return Promise.reject(new StaffNotificationUnavailableError());
+      throw new StaffNotificationUnavailableError();
     }
     this.delivered.push(message);
-    return Promise.resolve();
   }
 
   /** Every message delivered so far, oldest first. */
@@ -124,6 +144,7 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
   reset(): void {
     this.delivered.length = 0;
     this.failures = 0;
+    this.blocked = undefined;
   }
 }
 

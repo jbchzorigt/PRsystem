@@ -35,7 +35,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
-| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediation 1 | the Phase 04 battery — counts in [Phase 04 remediation 1](#phase-04-remediation-1) | see the Phase 04 record and remediation 1 |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1 and 2 | the Phase 04 battery — counts in [Phase 04 remediation 2](#phase-04-remediation-2) | see the Phase 04 record and the two remediations |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
@@ -1955,3 +1955,141 @@ directory contract and the Phase 09/11/15 open-work providers, all fail-closed;
 17 P1 configuration items; 11 EXT gates seeded closed; `DSR-01` OPEN and
 contained with its Phase 23 review; and `GATE-SEC` as a required GitHub status
 check, which needs push authorisation and was not attempted.
+
+---
+
+## Phase 04 remediation 2
+
+A second bounded security remediation on top of `03edeeb`, fixing four defects
+and nothing else. Phase 04 stays `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`;
+Phase 03 was not reopened, Phase 05 was not started, and `0000_baseline` and
+`0001_kernel` are untouched.
+
+Each defect was reproduced first. The failing run against `03edeeb` is in
+`apps/api/src/modules/iam/iam.remediation2.test.ts`: **8 of 9 failed**, each for
+the reason its name states.
+
+### R1 — a suspension survived a provider outage
+
+`setMembershipState` changed the membership, revoked its scope grants and *then*
+asked the owning module what open work the person still held — inside the same
+transaction. The provider failing rolled all of it back: the suspension returned
+`500` and the member stayed **ACTIVE with live sessions**, because a different
+system was down.
+
+The security transition now commits with a durable
+`platform.work_handoff_discovery` marker beside it, atomically. Enumeration is a
+separate retryable step: it runs once immediately, and the response says
+`COMPLETED` or `PENDING` truthfully. A provider that cannot answer is never
+rendered as "no open work" — the marker persists, its attempts are counted and
+monotonic, and `POST …/staff/handoff/discovery/reconcile` settles it when the
+module returns. Recovery is idempotent by three independent mechanisms: the
+items are opened under the marker's stored seed, the open-item index is one row
+per subject, and the marker's completion is a compare-and-set. The inline
+success path is unchanged.
+
+### R2 — a session realm no key bound to its account
+
+`server_session.realm` was independent of the account it referenced, so a
+`hotel` account could be given a `police` session by one insert through the
+runtime login — and every realm check downstream would then have been reading a
+realm nobody's account ever had. `user_account` gained
+`UNIQUE (account_id, realm)`, and the session's single-column reference is now a
+composite `(account_id, realm)` foreign key, which implies the old one. The
+regression inserts a Police session for a Hotel account as `prsystem_api` and
+requires SQLSTATE `23503`; a session in the account's own realm still inserts.
+The scope-grant keys are unchanged.
+
+### R3 — an unverified address could accept an invitation
+
+Authenticated acceptance checked that the account was active and that its
+address matched the invitation, but not that the address had ever been proved.
+`emailVerifiedAt` must now be non-null. Identity still comes only from the
+verified session, and the refusal is the same `not found` an unknown token gets.
+
+### R4 — the reset endpoint's timing oracle
+
+The public endpoint returned an identical `202` for every address while doing
+account-specific work — a lookup, a keyed token derivation and a synchronous
+wait on the notification provider — **only** when the account existed. A caller
+who could not read the response could still time it, and a slow provider widened
+that gap to seconds.
+
+The request now performs one bounded insert into
+`platform.password_reset_intake` and returns; it touches no account table, no
+key material and no provider. Eligibility, the resend interval, superseding a
+live token, minting a new one and delivery all happen when the queue is drained,
+where taking longer for one address than another tells nobody anything. Each
+entry is settled in its own transaction, exactly once, with an operator-facing
+outcome that never reaches the caller. Single-live-token behaviour, throttling,
+auditability and token secrecy are unchanged.
+
+The deterministic test holds the provider's promise open for the whole of a
+known-address request *and* an unknown-address request, and requires both to
+return the same body promptly — no sleeps and no wall-clock thresholds. A second
+test drains the queue and requires that only the eligible address was sent to.
+
+The scheduled invocation of the drain lands with the email provider: no adapter
+exists, `INT-MAIL-01` is still open, and the only sender today is a simulator.
+Recorded as a carry-forward below.
+
+### Migration path
+
+`0002_iam_rbac_staff.sql` corrected **in place** again, for the reason recorded
+in [assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.5: it has
+never been customer-accepted and never applied to a deployed cluster, so the
+Phase 04 delta stays exactly one migration. Two tables added
+(`work_handoff_discovery`, tenant-scoped with `FORCE ROW LEVEL SECURITY`;
+`password_reset_intake`, account-global), two transition guards, one account
+identity key and one composite session key.
+
+Tested exactly as before: the frozen accepted Phase 03 state
+(`0000_baseline + 0001_kernel`, checksum-pinned, 0 → 2) receives only the Phase
+04 migration (2 → 3), a repeat application applies nothing and mutates no ledger
+row, and the normalized `pg_dump` of the upgraded database equals a fresh
+install with the live catalogue matching the declaration on both.
+
+### Test gates — Phase 04 remediation 2
+
+Every command below was run on the committed tree.
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 114 of 114 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
+| `node tools/scan-secrets.mjs` | 383 indexed files, none reported |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 17 of 17 projects |
+| `pnpm run typecheck` | 27 of 27 graphs |
+| `pnpm run test:unit` | 1 240 across 11 projects |
+| `pnpm run test:migrations` | 142 |
+| `pnpm run test:integration` | 117 — db 41, outbox 5, api 71 |
+| `pnpm run test:concurrency` | 26 — db 16, api 10 |
+| `pnpm run test:regression` | 51 |
+| `pnpm run test:security` | 18 of 18 sub-gates, 637 tests |
+| `pnpm run test:e2e` | 15 |
+| `pnpm run build` | 17 of 17 projects |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | none at high or critical; one moderate, `DSR-01` |
+| `git diff --check` | clean |
+
+### Carried forward
+
+Unchanged: `INT-MAIL-01`; the Phase 05 subscription contract; the Phase 15
+restaurant directory; the Phase 09/11/15 open-work providers; 17 P1
+configuration items; 11 EXT gates seeded closed; `DSR-01` OPEN and contained
+with its Phase 23 review; and `GATE-SEC` as a required GitHub status check,
+which needs push authorisation and was not attempted.
+
+New, and small: **scheduling the reset-intake drain and the handoff-discovery
+reconciliation.** Both processors exist, are durable and are tested; neither has
+a scheduled invoker yet. The drain's belongs with the email provider it would
+deliver through, and the reconciliation's with the modules that own the work it
+would enumerate — both of which are the phases already named above.

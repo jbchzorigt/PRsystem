@@ -42,6 +42,15 @@ export interface SessionRow {
   readonly revokedAt: Date | null;
 }
 
+/** What happened to a queued request. Recorded, never returned to the caller. */
+export type ResetIntakeOutcome = 'sent' | 'ignored' | 'throttled' | 'unavailable';
+
+export interface ResetIntakeRow {
+  readonly intakeId: string;
+  readonly emailNormalized: string;
+  readonly attempts: number;
+}
+
 export interface ResetRow {
   readonly resetId: string;
   readonly accountId: string;
@@ -330,6 +339,62 @@ export class AccountRepository {
           SET state = $2, terminal_at = now(), terminal_reason = $3
         WHERE reset_id = $1 AND state = 'ACTIVE'`,
       [resetId, state, reason],
+    );
+    return result.rowCount === 1;
+  }
+
+  // ------------------------------------------------------ reset intake queue
+  /**
+   * Queues one public reset request.
+   *
+   * The whole of what the public endpoint does. It is one insert of one bounded
+   * value, identical for every address, and it looks nothing up: the moment this
+   * path did more work for an address that exists than for one that does not,
+   * the endpoint became an account oracle whatever its status code said.
+   */
+  async queueResetIntake(emailNormalized: string): Promise<string> {
+    const result = await this.uow.query<{ intake_id: string }>(
+      `INSERT INTO platform.password_reset_intake (email_normalized)
+       VALUES ($1)
+       RETURNING intake_id`,
+      [normaliseEmail(emailNormalized)],
+    );
+    const id = result.rows[0]?.intake_id;
+    if (id === undefined) throw new Error('the reset intake insert returned no row');
+    return id;
+  }
+
+  /**
+   * Claims queued requests for processing.
+   *
+   * `SKIP LOCKED` so two drains never take the same row, and `FOR UPDATE` so a
+   * row a drain is holding cannot be settled underneath it.
+   */
+  async claimResetIntake(limit: number): Promise<readonly ResetIntakeRow[]> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT intake_id, email_normalized, attempts
+         FROM platform.password_reset_intake
+        WHERE state = 'PENDING'
+        ORDER BY requested_at
+        LIMIT $1
+          FOR UPDATE SKIP LOCKED`,
+      [limit],
+    );
+    return result.rows.map((row) => ({
+      intakeId: String(row['intake_id']),
+      emailNormalized: String(row['email_normalized']),
+      attempts: Number(row['attempts']),
+    }));
+  }
+
+  /** Settles one queued request. The outcome is for operators, never for callers. */
+  async settleResetIntake(intakeId: string, outcome: ResetIntakeOutcome): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.password_reset_intake
+          SET state = 'PROCESSED', processed_at = now(),
+              attempts = attempts + 1, outcome = $2
+        WHERE intake_id = $1 AND state = 'PENDING'`,
+      [intakeId, outcome],
     );
     return result.rowCount === 1;
   }
