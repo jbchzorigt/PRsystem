@@ -21,6 +21,7 @@ import type { RestaurantDirectoryPort } from './contracts/restaurant-directory.p
 import { selectRestaurantDirectory } from './contracts/restaurant-directory.port';
 import { AUTH_SECURITY_PARAMETERS } from './contracts/security-parameters';
 import {
+  AUTH_PARAMETERS,
   IAM_POOL,
   KEY_MANAGEMENT,
   OPEN_WORK,
@@ -137,6 +138,7 @@ export class IamModule {
         { provide: KEY_MANAGEMENT, useValue: keys },
         { provide: SUBSCRIPTION_STATE, useValue: subscription },
         { provide: STAFF_NOTIFICATION, useValue: notifications },
+        { provide: AUTH_PARAMETERS, useValue: deps.parameters },
         { provide: OPEN_WORK, useValue: openWork },
         { provide: RESTAURANT_DIRECTORY, useValue: restaurants },
         { provide: SessionService, useValue: new SessionService(deps) },
@@ -150,6 +152,7 @@ export class IamModule {
         HandoffService,
         SUBSCRIPTION_STATE,
         STAFF_NOTIFICATION,
+        AUTH_PARAMETERS,
         OPEN_WORK,
         RESTAURANT_DIRECTORY,
       ],

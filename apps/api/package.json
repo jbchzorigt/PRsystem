@@ -7,12 +7,12 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test:unit": "vitest run --exclude 'src/security/**' --exclude 'src/health/health.http.test.ts' --exclude 'src/modules/iam/iam.integration.test.ts' --exclude 'src/modules/iam/iam.repair.test.ts' --exclude 'src/modules/iam/iam.remediation2.test.ts' --exclude 'src/modules/iam/iam.remediation3.test.ts' --exclude 'src/modules/iam/iam.concurrency.test.ts'",
+    "test:unit": "vitest run --exclude 'src/security/**' --exclude 'src/health/health.http.test.ts' --exclude 'src/modules/iam/iam.integration.test.ts' --exclude 'src/modules/iam/iam.repair.test.ts' --exclude 'src/modules/iam/iam.remediation2.test.ts' --exclude 'src/modules/iam/iam.remediation3.test.ts' --exclude 'src/modules/iam/iam.remediation4.test.ts' --exclude 'src/modules/iam/iam.concurrency.test.ts'",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "openapi": "tsx src/openapi.ts",
     "test:security": "vitest run src/security",
-    "test:integration": "vitest run src/health/health.http.test.ts src/modules/iam/iam.integration.test.ts src/modules/iam/iam.repair.test.ts src/modules/iam/iam.remediation2.test.ts src/modules/iam/iam.remediation3.test.ts",
+    "test:integration": "vitest run src/health/health.http.test.ts src/modules/iam/iam.integration.test.ts src/modules/iam/iam.repair.test.ts src/modules/iam/iam.remediation2.test.ts src/modules/iam/iam.remediation3.test.ts src/modules/iam/iam.remediation4.test.ts",
     "test:concurrency": "vitest run src/modules/iam/iam.concurrency.test.ts"
   },
   "dependencies": {

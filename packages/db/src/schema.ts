@@ -1045,75 +1045,6 @@ export const invitationRequestedRole = platform
   )
   .enableRLS();
 
-export const passwordResetRequest = platform.table(
-  'password_reset_request',
-  {
-    accountId: uuid('account_id').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true })
-      .notNull()
-      .default(sql`now()`),
-    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
-    deliveryId: uuid('delivery_id')
-      .notNull()
-      .default(sql`gen_random_uuid()`),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    initiatedBy: text('initiated_by').notNull(),
-    initiatedByAccountId: uuid('initiated_by_account_id'),
-    resetId: uuid('reset_id')
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    secretCiphertext: text('secret_ciphertext'),
-    secretKeyVersion: text('secret_key_version'),
-    secretWrappedDek: text('secret_wrapped_dek'),
-    state: text('state')
-      .notNull()
-      .default(sql`'ACTIVE'::text`),
-    terminalAt: timestamp('terminal_at', { withTimezone: true }),
-    terminalReason: text('terminal_reason'),
-    tokenHash: text('token_hash').notNull(),
-    tokenKeyVersion: text('token_key_version').notNull(),
-  },
-  (table) => [
-    check('password_reset_request_expiry_after_creation', sql`(expires_at > created_at)`),
-    check(
-      'password_reset_request_initiator_known',
-      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text]))`,
-    ),
-    check(
-      'password_reset_request_initiator_recorded',
-      sql`((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL))`,
-    ),
-    check(
-      'password_reset_request_secret_complete',
-      sql`(num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY (ARRAY[0, 3]))`,
-    ),
-    check(
-      'password_reset_request_state_known',
-      sql`(state = ANY (ARRAY['ACTIVE'::text, 'USED'::text, 'SUPERSEDED'::text, 'EXPIRED'::text, 'REVOKED'::text]))`,
-    ),
-    check(
-      'password_reset_request_terminal_has_time',
-      sql`((state = 'ACTIVE'::text) = (terminal_at IS NULL))`,
-    ),
-    check('password_reset_request_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
-    unique('password_reset_request_delivery_uq').on(table.deliveryId),
-    unique('password_reset_request_token_uq').on(table.tokenHash),
-    foreignKey({
-      name: 'password_reset_request_account_id_fkey',
-      columns: [table.accountId],
-      foreignColumns: [userAccount.accountId],
-    }).onDelete('restrict'),
-    foreignKey({
-      name: 'password_reset_request_initiator_fkey',
-      columns: [table.initiatedByAccountId],
-      foreignColumns: [userAccount.accountId],
-    }).onDelete('restrict'),
-    uniqueIndex('password_reset_request_one_active_uq')
-      .on(table.accountId)
-      .where(sql`state = 'ACTIVE'::text`),
-  ],
-);
-
 export const passwordResetIntake = platform.table(
   'password_reset_intake',
   {
@@ -1186,6 +1117,88 @@ export const passwordResetIntake = platform.table(
     index('password_reset_intake_lease_idx')
       .on(table.leaseExpiresAt)
       .where(sql`state = 'CLAIMED'::text`),
+  ],
+);
+
+export const passwordResetRequest = platform.table(
+  'password_reset_request',
+  {
+    accountId: uuid('account_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    initiatedBy: text('initiated_by').notNull(),
+    initiatedByAccountId: uuid('initiated_by_account_id'),
+    intakeId: uuid('intake_id').notNull(),
+    resetId: uuid('reset_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    secretCiphertext: text('secret_ciphertext'),
+    secretKeyVersion: text('secret_key_version'),
+    secretWrappedDek: text('secret_wrapped_dek'),
+    state: text('state')
+      .notNull()
+      .default(sql`'ACTIVE'::text`),
+    terminalAt: timestamp('terminal_at', { withTimezone: true }),
+    terminalReason: text('terminal_reason'),
+    tokenHash: text('token_hash').notNull(),
+    tokenKeyVersion: text('token_key_version').notNull(),
+  },
+  (table) => [
+    check('password_reset_request_expiry_after_creation', sql`(expires_at > created_at)`),
+    check(
+      'password_reset_request_initiator_known',
+      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text]))`,
+    ),
+    check(
+      'password_reset_request_initiator_recorded',
+      sql`((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL))`,
+    ),
+    check(
+      'password_reset_request_secret_complete',
+      sql`(num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY (ARRAY[0, 3]))`,
+    ),
+    check(
+      'password_reset_request_settled_holds_no_secret',
+      sql`((secret_ciphertext IS NULL) OR ((state = 'ACTIVE'::text) AND (delivered_at IS NULL)))`,
+    ),
+    check(
+      'password_reset_request_state_known',
+      sql`(state = ANY (ARRAY['ACTIVE'::text, 'USED'::text, 'SUPERSEDED'::text, 'EXPIRED'::text, 'REVOKED'::text]))`,
+    ),
+    check(
+      'password_reset_request_terminal_has_time',
+      sql`((state = 'ACTIVE'::text) = (terminal_at IS NULL))`,
+    ),
+    check('password_reset_request_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+    unique('password_reset_request_delivery_uq').on(table.deliveryId),
+    unique('password_reset_request_token_uq').on(table.tokenHash),
+    foreignKey({
+      name: 'password_reset_request_account_id_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'password_reset_request_initiator_fkey',
+      columns: [table.initiatedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'password_reset_request_intake_fkey',
+      columns: [table.intakeId],
+      foreignColumns: [passwordResetIntake.intakeId],
+    }).onDelete('restrict'),
+    uniqueIndex('password_reset_request_intake_active_uq')
+      .on(table.intakeId)
+      .where(sql`state = 'ACTIVE'::text`),
+    uniqueIndex('password_reset_request_one_active_uq')
+      .on(table.accountId)
+      .where(sql`state = 'ACTIVE'::text`),
   ],
 );
 

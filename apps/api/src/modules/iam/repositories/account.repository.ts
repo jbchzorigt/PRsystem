@@ -55,13 +55,16 @@ export interface ResetIntakeRow {
   readonly initiatedByAccountId: string | null;
 }
 
-export interface UndeliveredResetRow {
+/** The reset intent one queue entry owns, whatever state it has reached. */
+export interface IntakeResetRow {
   readonly resetId: string;
   readonly deliveryId: string;
+  readonly state: string;
   readonly expiresAt: Date;
-  readonly ciphertext: string;
-  readonly wrappedDek: string;
-  readonly keyVersion: string;
+  readonly deliveredAt: Date | null;
+  readonly ciphertext: string | null;
+  readonly wrappedDek: string | null;
+  readonly keyVersion: string | null;
 }
 
 export interface ResetRow {
@@ -330,6 +333,7 @@ export class AccountRepository {
    */
   async createReset(input: {
     resetId: string;
+    intakeId: string;
     accountId: string;
     tokenHash: string;
     tokenKeyVersion: string;
@@ -340,10 +344,10 @@ export class AccountRepository {
   }): Promise<{ resetId: string; deliveryId: string; expiresAt: Date }> {
     const result = await this.uow.query<Record<string, unknown>>(
       `INSERT INTO platform.password_reset_request
-         (reset_id, account_id, token_hash, token_key_version, initiated_by,
+         (reset_id, intake_id, account_id, token_hash, token_key_version, initiated_by,
           initiated_by_account_id, expires_at,
           secret_ciphertext, secret_wrapped_dek, secret_key_version)
-       VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8, $9, $10)
+       VALUES ($1, $11, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8, $9, $10)
        RETURNING reset_id, delivery_id, expires_at`,
       [
         input.resetId,
@@ -356,6 +360,7 @@ export class AccountRepository {
         input.secret?.ciphertext ?? null,
         input.secret?.wrappedDek ?? null,
         input.secret?.keyVersion ?? null,
+        input.intakeId,
       ],
     );
     const row = result.rows[0];
@@ -368,31 +373,37 @@ export class AccountRepository {
   }
 
   /**
-   * The live reset for an account whose link has not yet been handed over.
+   * The reset intent this queue entry owns.
    *
-   * This is what makes a lost acknowledgement cost a repeat attempt rather than
-   * a second link: the intent is already durable, so a retry re-reads it,
-   * recovers the same secret and delivers under the same identity.
+   * Resolved **by intake**, never by "any undelivered reset for this account".
+   * Two entries can exist for one address — a self-service request and a Hotel
+   * Admin sending the link — and an account-wide lookup let the second adopt the
+   * first's delivery identity and, with it, the wrong attribution. It is also
+   * what makes a retry after a lost acknowledgement recover the *same* intent
+   * rather than mint a second link.
    */
-  async undeliveredResetFor(accountId: string): Promise<UndeliveredResetRow | undefined> {
+  async resetForIntake(intakeId: string): Promise<IntakeResetRow | undefined> {
     const result = await this.uow.query<Record<string, unknown>>(
-      `SELECT reset_id, delivery_id, expires_at,
+      `SELECT reset_id, delivery_id, state, expires_at, delivered_at,
               secret_ciphertext, secret_wrapped_dek, secret_key_version
          FROM platform.password_reset_request
-        WHERE account_id = $1 AND state = 'ACTIVE' AND delivered_at IS NULL
-          AND secret_ciphertext IS NOT NULL
+        WHERE intake_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
           FOR UPDATE`,
-      [accountId],
+      [intakeId],
     );
     const row = result.rows[0];
     if (row === undefined) return undefined;
     return {
       resetId: String(row['reset_id']),
       deliveryId: String(row['delivery_id']),
+      state: String(row['state']),
       expiresAt: row['expires_at'] as Date,
-      ciphertext: String(row['secret_ciphertext']),
-      wrappedDek: String(row['secret_wrapped_dek']),
-      keyVersion: String(row['secret_key_version']),
+      deliveredAt: (row['delivered_at'] as Date | null) ?? null,
+      ciphertext: (row['secret_ciphertext'] as string | null) ?? null,
+      wrappedDek: (row['secret_wrapped_dek'] as string | null) ?? null,
+      keyVersion: (row['secret_key_version'] as string | null) ?? null,
     };
   }
 
@@ -414,10 +425,17 @@ export class AccountRepository {
     return result.rowCount === 1;
   }
 
+  /**
+   * Terminalises a reset and destroys any secret it was still holding.
+   *
+   * The two belong together: a terminal row has no delivery left to make, and a
+   * table CHECK refuses to let it keep one.
+   */
   async terminaliseReset(resetId: string, state: string, reason: string): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.password_reset_request
-          SET state = $2, terminal_at = now(), terminal_reason = $3
+          SET state = $2, terminal_at = now(), terminal_reason = $3,
+              secret_ciphertext = NULL, secret_wrapped_dek = NULL, secret_key_version = NULL
         WHERE reset_id = $1 AND state = 'ACTIVE'`,
       [resetId, state, reason],
     );

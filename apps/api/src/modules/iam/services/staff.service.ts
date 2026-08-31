@@ -704,7 +704,13 @@ export class StaffService extends IamServiceBase {
         // later reactivation or termination makes this marker recognisably
         // stale rather than silently applicable to whatever the membership
         // became.
-        await new HandoffDiscoveryRepository(uow).open({
+        // A transition supersedes whatever question the previous one left open
+        // and asks its own. A direct SUSPENDED → TERMINATED otherwise reused the
+        // suspension's marker — its reason, its revision and its seed — and so
+        // enumerated the termination's work under the wrong transition.
+        const discovery = new HandoffDiscoveryRepository(uow);
+        await discovery.supersedeOpen(membership.membershipId, 'superseded_by_new_transition');
+        await discovery.open({
           membershipId: membership.membershipId,
           openedReason: input.state === 'SUSPENDED' ? 'suspension' : 'termination',
           expectedState: input.state,
@@ -834,7 +840,10 @@ export class StaffService extends IamServiceBase {
   ): Promise<void> {
     const parameters = this.parameters;
     const retryable = outcome === 'unavailable';
-    const exhausted = entry.attempts >= parameters.passwordResetDeliveryMaxAttempts;
+    // `dead_letter` arrives already decided — an intent that expired with no
+    // retry budget left — so it is terminal without another attempt.
+    const exhausted =
+      outcome === 'dead_letter' || entry.attempts >= parameters.passwordResetDeliveryMaxAttempts;
 
     await this.inAccountScope(request, async (uow) => {
       const accounts = new AccountRepository(uow);
@@ -849,7 +858,7 @@ export class StaffService extends IamServiceBase {
           backoffSeconds(entry.attempts, parameters),
           'the notification provider did not accept the delivery',
         );
-      } else if (retryable) {
+      } else if (retryable || outcome === 'dead_letter') {
         recorded = 'dead_letter';
         settled = await accounts.settleResetIntake(
           entry.intakeId,
@@ -893,13 +902,15 @@ export class StaffService extends IamServiceBase {
     entry: ResetIntakeRow,
     request: RequestContext,
   ): Promise<ResetIntakeOutcome> {
-    let intent: PreparedDelivery | 'ignored' | 'throttled';
+    let intent: PreparedDelivery | 'ignored' | 'throttled' | 'already_delivered' | 'dead_letter';
     try {
       intent = await this.prepareResetDelivery(entry, request);
     } catch {
       return 'unavailable';
     }
-    if (intent === 'ignored' || intent === 'throttled') return intent;
+    if (intent === 'ignored' || intent === 'throttled' || intent === 'dead_letter') return intent;
+    // Already in the recipient's hands: settle, and send nothing.
+    if (intent === 'already_delivered') return 'sent';
 
     try {
       await this.deps.notifications.deliver({
@@ -941,33 +952,60 @@ export class StaffService extends IamServiceBase {
   private async prepareResetDelivery(
     entry: ResetIntakeRow,
     request: RequestContext,
-  ): Promise<PreparedDelivery | 'ignored' | 'throttled'> {
+  ): Promise<PreparedDelivery | 'ignored' | 'throttled' | 'already_delivered' | 'dead_letter'> {
     return this.inAccountScope(request, async (uow) => {
       const accounts = new AccountRepository(uow);
       const account = await accounts.findByEmail('hotel', entry.emailNormalized);
       if (account === undefined || account.state !== 'ACTIVE') return 'ignored';
       await establishAccountScope(uow, account.accountId);
 
-      const undelivered = await accounts.undeliveredResetFor(account.accountId);
-      if (undelivered !== undefined) {
-        const token = await decryptValue(
-          this.deps.keys,
-          DELIVERY_SECRET_SCOPE,
-          {
-            ciphertext: Buffer.from(undelivered.ciphertext, 'base64'),
-            wrappedDek: Buffer.from(undelivered.wrappedDek, 'base64'),
-            keyVersion: undelivered.keyVersion,
-          },
-          deliveryAad(undelivered.resetId),
-        );
-        return {
-          accountId: account.accountId,
-          emailNormalized: account.emailNormalized,
-          resetId: undelivered.resetId,
-          deliveryId: undelivered.deliveryId,
-          expiresAt: undelivered.expiresAt,
-          token,
-        };
+      // The intent this queue entry owns, if it has one.
+      const bound = await accounts.resetForIntake(entry.intakeId);
+      if (bound !== undefined) {
+        if (bound.deliveredAt !== null) {
+          // The provider took it and the row says so; only the settlement was
+          // lost. Settle the entry — do not mint or send anything.
+          return 'already_delivered';
+        }
+        if (bound.state !== 'ACTIVE') return 'ignored';
+
+        // Expiry is checked against the database clock, before the secret is
+        // decrypted and long before a provider is contacted. Reusing an intent
+        // without this sent a link that was already dead on arrival.
+        if (bound.expiresAt <= uow.serverNow) {
+          await accounts.terminaliseReset(bound.resetId, 'EXPIRED', 'expired_before_delivery');
+          if (entry.attempts >= this.parameters.passwordResetDeliveryMaxAttempts) {
+            return 'dead_letter';
+          }
+          // …and fall through to mint a replacement for this same entry.
+        } else {
+          const ciphertext = bound.ciphertext;
+          const wrappedDek = bound.wrappedDek;
+          const keyVersion = bound.keyVersion;
+          if (ciphertext === null || wrappedDek === null || keyVersion === null) {
+            // Undelivered, live, and holding no secret: nothing can be sent from
+            // this row and nothing may be invented for it.
+            return 'ignored';
+          }
+          const token = await decryptValue(
+            this.deps.keys,
+            DELIVERY_SECRET_SCOPE,
+            {
+              ciphertext: Buffer.from(ciphertext, 'base64'),
+              wrappedDek: Buffer.from(wrappedDek, 'base64'),
+              keyVersion,
+            },
+            deliveryAad(bound.resetId),
+          );
+          return {
+            accountId: account.accountId,
+            emailNormalized: account.emailNormalized,
+            resetId: bound.resetId,
+            deliveryId: bound.deliveryId,
+            expiresAt: bound.expiresAt,
+            token,
+          };
+        }
       }
 
       const live = await accounts.activeResetFor(account.accountId);
@@ -989,6 +1027,7 @@ export class StaffService extends IamServiceBase {
       );
       const created = await accounts.createReset({
         resetId,
+        intakeId: entry.intakeId,
         accountId: account.accountId,
         tokenHash: issued.tokenHash,
         tokenKeyVersion: issued.keyVersion,

@@ -443,7 +443,9 @@ describe('R4 — the public reset boundary does the same work for every address'
       // Both left the same durable intake shape behind.
       const intake = await env.admin.query<{ email_normalized: string; state: string }>(
         `SELECT email_normalized, state FROM platform.password_reset_intake
+          WHERE email_normalized = ANY($1::text[])
           ORDER BY requested_at`,
+        [[member.email, 'r4-nobody@rem2.test']],
       );
       expect(intake.rows.map((row) => row.state)).toEqual(['PENDING', 'PENDING']);
       expect(intake.rows.map((row) => row.email_normalized)).toEqual([
@@ -462,37 +464,44 @@ describe('R4 — the public reset boundary does the same work for every address'
       `UPDATE platform.user_account SET state = 'DISABLED' WHERE account_id = $1`,
       [disabled.accountId],
     );
-    await env.admin.query(`DELETE FROM platform.password_reset_intake`);
+    // Nothing is deleted: a settled queue entry is evidence, and the guard
+    // refuses. Each case queues its own addresses and asserts only on those.
+    const addresses = [known.email, disabled.email, 'r4-missing@rem2.test'];
     env.notifications.reset();
 
-    for (const email of [known.email, disabled.email, 'r4-missing@rem2.test']) {
+    for (const email of addresses) {
       expect((await call('POST', '/auth/password-reset/request', { body: { email } })).status).toBe(
         202,
       );
     }
 
+    // The queue is shared with the cases before this one, so what matters is
+    // that these three settled — not that nothing else did.
     const processed = await appStaff.drainPasswordResetIntake(16);
-    expect(processed).toBe(3);
+    expect(processed).toBeGreaterThanOrEqual(3);
 
     expect(env.notifications.lastResetForEmail(known.email)).toBeDefined();
     expect(env.notifications.lastResetForEmail(disabled.email)).toBeUndefined();
     expect(env.notifications.lastResetForEmail('r4-missing@rem2.test')).toBeUndefined();
 
     const states = await env.admin.query<{ state: string }>(
-      `SELECT state FROM platform.password_reset_intake ORDER BY requested_at`,
+      `SELECT state FROM platform.password_reset_intake
+        WHERE email_normalized = ANY($1::text[]) ORDER BY requested_at`,
+      [addresses],
     );
     expect(states.rows.map((row) => row.state)).toEqual(['PROCESSED', 'PROCESSED', 'PROCESSED']);
 
     // Exactly one live token, and it belongs to the eligible account.
     const live = await env.admin.query<{ account_id: string }>(
-      `SELECT account_id FROM platform.password_reset_request WHERE state = 'ACTIVE'`,
+      `SELECT account_id FROM platform.password_reset_request
+        WHERE state = 'ACTIVE' AND account_id = ANY($1::uuid[])`,
+      [[known.accountId, disabled.accountId]],
     );
     expect(live.rows.map((row) => row.account_id)).toEqual([known.accountId]);
   }, 90000);
 
   it('keeps the resend interval, and never lets it reach the caller', async () => {
     const member = await onboard(hotelA, 'r4-throttle@rem2.test', ['MANAGER']);
-    await env.admin.query(`DELETE FROM platform.password_reset_intake`);
     env.notifications.reset();
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -501,7 +510,7 @@ describe('R4 — the public reset boundary does the same work for every address'
       });
       expect(response.status).toBe(202);
     }
-    expect(await appStaff.drainPasswordResetIntake(16)).toBe(2);
+    expect(await appStaff.drainPasswordResetIntake(16)).toBeGreaterThanOrEqual(2);
 
     // The second is inside the resend interval, so it neither supersedes the
     // first nor sends a second link.

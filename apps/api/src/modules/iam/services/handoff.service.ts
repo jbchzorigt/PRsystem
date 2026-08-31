@@ -170,17 +170,24 @@ export class HandoffService extends IamServiceBase {
       let pending = 0;
 
       let superseded = 0;
-      for (const marker of markers) {
-        // The membership first, and locked, because the marker describes a
-        // transition rather than a person: if the row has moved on since, this
-        // marker is about a state that no longer exists and enumerating work
-        // under it would hand a working employee's shift to somebody else.
-        const membership = await memberships.lock(marker.membershipId);
+      for (const candidate of markers) {
+        // **Membership first, marker second** — the one lock order every
+        // operation on the pair uses. The candidate above was read without a
+        // lock precisely so this order can be kept; taking the marker first is
+        // what deadlocked against a reactivation.
+        const membership = await memberships.lock(candidate.membershipId);
         if (membership === undefined) {
-          await discovery.recordAttempt(marker.discoveryId, 'the membership is not visible');
+          await discovery.recordAttempt(candidate.discoveryId, 'the membership is not visible');
           pending += 1;
           continue;
         }
+
+        // Now, and only now, the marker itself — re-read under its lock,
+        // because a reactivation may have settled it while this transaction was
+        // waiting for the membership.
+        const marker = await discovery.lockPending(candidate.discoveryId);
+        if (marker === undefined) continue;
+
         if (
           membership.state !== marker.expectedState ||
           membership.membershipRevision !== marker.membershipRevision

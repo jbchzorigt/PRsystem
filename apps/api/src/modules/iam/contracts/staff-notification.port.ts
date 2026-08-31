@@ -78,6 +78,7 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
   private readonly attempted: PasswordResetMessage[] = [];
   private readonly sent = new Set<string>();
   private failures = 0;
+  private lostAcknowledgements = 0;
   private blocked: Promise<void> | undefined;
 
   /**
@@ -99,6 +100,17 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
    * for a *known* address could not return while this is held, and a request for
    * an unknown one could — which is the timing oracle in its purest form.
    */
+  /**
+   * Accepts and records the next delivery, then throws.
+   *
+   * The failure mode a retrying sender must survive: the provider *did* send
+   * the message and the acknowledgement was lost on the way back. A sender that
+   * treats this as "not sent" and mints a fresh link sends the recipient two.
+   */
+  failAcknowledgementNext(times = 1): void {
+    this.lostAcknowledgements += times;
+  }
+
   blockNext(): () => void {
     let release = (): void => undefined;
     this.blocked = new Promise<void>((resolve) => {
@@ -122,8 +134,20 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
     // sees one message.
     if (message.kind === 'password_reset') {
       this.attempted.push(message);
-      if (this.sent.has(message.deliveryId)) return;
+      if (this.sent.has(message.deliveryId)) {
+        if (this.lostAcknowledgements > 0) {
+          this.lostAcknowledgements -= 1;
+          throw new StaffNotificationUnavailableError();
+        }
+        return;
+      }
       this.sent.add(message.deliveryId);
+      this.delivered.push(message);
+      if (this.lostAcknowledgements > 0) {
+        this.lostAcknowledgements -= 1;
+        throw new StaffNotificationUnavailableError();
+      }
+      return;
     }
     this.delivered.push(message);
   }
@@ -176,6 +200,7 @@ export class SimulatedStaffNotification implements StaffNotificationPort {
     this.attempted.length = 0;
     this.sent.clear();
     this.failures = 0;
+    this.lostAcknowledgements = 0;
     this.blocked = undefined;
   }
 }

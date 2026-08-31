@@ -35,7 +35,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
-| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–3 | the Phase 04 battery — counts in [Phase 04 remediation 3](#phase-04-remediation-3) | see the Phase 04 record and the three remediations |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | see the Phase 04 record and the four remediations |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
@@ -2219,3 +2219,129 @@ seeded closed; `DSR-01` OPEN and contained with its Phase 23 review; `GATE-SEC`
 as a required GitHub status check, needing push authorisation and not attempted;
 and the scheduled invokers for the reset drain and the discovery reconciliation,
 which land with the phases that own what they call.
+
+---
+
+## Phase 04 remediation 4
+
+The last bounded remediation, on top of `7acc36f`. Five defects, all in work the
+previous remediations introduced. Phase 04 stays `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`; Phase 03 is untouched and Phase 05 has not
+started.
+
+Reproduced first, in `apps/api/src/modules/iam/iam.remediation4.test.ts`:
+**9 of 11 failed** against `7acc36f` (the two that passed are that file's
+controls — a legitimate worker transition, and the plaintext-token sweep).
+
+### F1 — a lock order that could deadlock, and a marker a termination reused
+
+`listPending` took `FOR UPDATE` on the marker and *then* locked the membership;
+a reactivation locks the membership and then settles the marker. Opposite
+orders, so PostgreSQL resolved it by killing one with `40P01` — the suspension
+path surfaced it as a `500`.
+
+There is now one order everywhere: **membership first, marker second.** The
+candidate read takes no lock at all, and each marker is re-read under its own
+lock once the membership is held, then revalidated against marker state,
+membership state and membership revision. Nothing relies on deadlock-victim
+selection or a retry loop.
+
+Separately, a direct `SUSPENDED → TERMINATED` reused the suspension's marker,
+because the open-marker index made the insert a no-op. A transition now
+supersedes whatever question the previous one left open and asks its own, so the
+termination gets a marker with its own reason, revision and seed — two rows in
+history, not one rewritten.
+
+### F2 — a dead letter a runtime could reopen
+
+`password_reset_intake_guard()` protected only `PROCESSED`. A `prsystem_api`
+probe moved `DEAD_LETTER` back to `PENDING`. Both settled states are now
+terminal, and the table gained a delete guard: the restricted runtime can
+neither reopen, rewrite nor remove either. The owned `CLAIMED → PROCESSED` and
+`CLAIMED → DEAD_LETTER` transitions are unaffected.
+
+### F3 — an intake with no reset of its own
+
+The intent was looked up account-wide, as "any undelivered reset". With two
+entries for one address — a self-service request and a Hotel Admin sending the
+link — the second adopted the first's delivery identity and attribution, and a
+lease reclaimed after a lost settlement could mint a second link.
+
+`password_reset_request` now carries a `NOT NULL intake_id` foreign key, with one
+live intent per intake enforced by a partial unique index. Every lookup,
+retry and reclaim resolves by intake; `initiated_by` and
+`initiated_by_account_id` always come from that intake, and the guard refuses to
+rebind an intent to another one.
+
+### F4 — a lost acknowledgement modelled as a failure to send
+
+The simulator could only fail *before* recording. It now has a mode that accepts
+and records the delivery and then throws, which is the case a retrying sender
+must survive. The first attempt is retryable; the retry recovers the same intent
+by intake, carries the same delivery id, and the provider recognises it — so
+provider attempts are two and visible messages are one, the intake settles
+`sent`, and no second reset row or delivery id exists. The separate case where
+delivery *and* `markResetDelivered` commit but settlement is lost now settles
+from the delivered row without sending again, even once the resend interval has
+passed.
+
+### F5 — an expired intent that would still have been delivered
+
+Reuse never checked `expires_at`. Expiry is now compared against the database
+clock before the secret is decrypted and long before a provider is contacted. An
+expired intent is terminalised with its sealed secret destroyed, and — if the
+entry still has retry budget — replaced by a fresh intent bound to the same
+intake and attribution; otherwise the entry is dead-lettered. The link that is
+actually sent has a future expiry and completes the flow.
+
+Four database rules back it: the encrypted components are complete
+(`num_nonnulls … = ANY (ARRAY[0,3])`) and destroy-only — they cannot be
+rewritten or attached to a row that never had them; a delivered or terminal row
+may hold no secret at all; and `intake_id` is immutable. No plaintext token
+reaches the database, the outbox, the audit stream or a response.
+
+### Migration path
+
+`0002_iam_rbac_staff.sql` corrected in place — Phase 04 is unaccepted and
+undeployed, so the delta stays one migration. `0000_baseline` and `0001_kernel`
+are untouched and still checksum-pinned; the upgrade gate again runs the frozen
+accepted Phase 03 state (0 → 2) plus only the Phase 04 migration (2 → 3), a
+repeat that applies nothing, and fresh/upgrade schema equality.
+
+### Test gates — Phase 04 remediation 4
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 114 of 114 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
+| `node tools/scan-secrets.mjs` | 387 indexed files, none reported |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 17 of 17 projects |
+| `pnpm run typecheck` | 27 of 27 graphs |
+| `pnpm run test:unit` | 1 246 across 11 projects |
+| `pnpm run test:migrations` | 142 |
+| `pnpm run test:integration` | 140 — db 41, outbox 5, api 94 |
+| `pnpm run test:concurrency` | 26 — db 16, api 10 |
+| `pnpm run test:regression` | 51 |
+| `pnpm run test:security` | 18 of 18 sub-gates, 637 tests |
+| `pnpm run test:e2e` | 15 |
+| `pnpm run build` | 17 of 17 projects |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | none at high or critical; one moderate, `DSR-01` |
+| `git diff --check` | clean |
+
+### Carried forward — unchanged
+
+`INT-MAIL-01`; the Phase 05 subscription contract; the Phase 15 restaurant
+directory; the Phase 09/11/15 open-work providers; 17 P1 configuration items,
+including the reset lease, retry and dead-letter numbers; 11 EXT gates seeded
+closed; `DSR-01` OPEN and contained with its Phase 23 review; `GATE-SEC` as a
+required GitHub status check, needing push authorisation and not attempted; and
+the scheduled invokers for the reset drain and the discovery reconciliation.

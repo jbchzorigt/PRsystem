@@ -258,6 +258,16 @@ The lease duration, retry backoff, dead-letter threshold and their ceiling are
 **provisional**, carried in the same versioned record as the rest of P1-06. None
 of them is a customer-approved value.
 
+### 3.8 Phase 04 remediation 4 — decisions taken while repairing
+
+| # | Question | Resolution |
+| --- | --- | --- |
+| 1 | Two operations touched a membership and its discovery marker in opposite orders, and PostgreSQL resolved the resulting cycle by killing one of them. | **One lock order, everywhere: membership first, marker second.** The candidate markers are read without any lock, and each is re-read under its own lock once the membership is held, then revalidated. Deadlock-victim selection and generic transaction retry are both refused as answers — a correct order is not something to be recovered from. |
+| 2 | A settled queue entry could be returned to the queue by the restricted runtime, including one the provider had already refused its full retry budget. | **Both settled states are terminal, and neither is deletable.** A dead letter is a decision an operator must be able to rely on; a runtime that could resurrect one could do it without leaving a trace. |
+| 3 | Two queue entries can exist for one address — a self-service request and a Hotel Admin sending the link — and an account-wide lookup let the second adopt the first's delivery identity and attribution. | **A reset belongs to the intake that created it**, by a `NOT NULL` foreign key with one live intent per intake. Every retry and reclaim resolves by intake, and the guard refuses to rebind an intent to another one. |
+| 4 | "The provider failed" and "the provider sent it and the acknowledgement was lost" are indistinguishable to a sender, and only the second must not produce a second message. | **They are the same retry, made safe by identity rather than by detection.** The sender recovers the same intent and the same delivery id, and the provider recognises the repeat. The simulator gained a mode that records and then throws, so the case is exercised rather than assumed. |
+| 5 | A recorded intent can outlive its own TTL before a provider ever accepts it. | **Expiry is checked on the database clock before the secret is decrypted.** An expired intent is terminalised with its sealed secret destroyed and replaced for the same intake while retry budget remains, and dead-lettered when it does not. Four database rules keep the secret complete, destroy-only, and absent from every delivered or terminal row. |
+
 ---
 
 ## 4. P1 configuration register

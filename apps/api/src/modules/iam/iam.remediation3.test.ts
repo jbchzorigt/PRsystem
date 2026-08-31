@@ -353,28 +353,47 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
   }
 
   async function intakeRows(): Promise<
-    { state: string; outcome: string | null; attempts: string; claim_token: string | null }[]
+    {
+      intake_id: string;
+      state: string;
+      outcome: string | null;
+      attempts: string;
+      claim_token: string | null;
+    }[]
   > {
     const rows = await env.admin.query<{
+      intake_id: string;
       state: string;
       outcome: string | null;
       attempts: string;
       claim_token: string | null;
     }>(
-      `SELECT state, outcome, attempts::text AS attempts, claim_token::text AS claim_token
-         FROM platform.password_reset_intake ORDER BY requested_at`,
+      `SELECT intake_id::text AS intake_id, state, outcome, attempts::text AS attempts,
+              claim_token::text AS claim_token
+         FROM platform.password_reset_intake
+        WHERE email_normalized = ANY($1::text[]) ORDER BY requested_at`,
+      [[...scoped]],
     );
     return rows.rows;
   }
 
-  async function clearQueue(): Promise<void> {
-    await env.admin.query(`DELETE FROM platform.password_reset_intake`);
+  /**
+   * The addresses the current case queued.
+   *
+   * Nothing is deleted between cases — a settled queue entry is evidence and the
+   * guard refuses to remove it — so each case declares what it owns and asserts
+   * only on that.
+   */
+  let scoped: readonly string[] = [];
+
+  function clearQueue(...addresses: readonly string[]): void {
+    scoped = addresses;
     env.notifications.reset();
   }
 
   it('lets exactly one of two concurrent drains own a single intake', async () => {
     const member = await onboard('r4-race@rem3.test', ['MANAGER']);
-    await clearQueue();
+    clearQueue(member.email);
     await queue(member.email);
 
     const [a, b] = await Promise.all([
@@ -382,10 +401,13 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
       appStaff.drainPasswordResetIntake(8),
     ]);
     expect(a + b).toBe(1);
+    expect(Math.min(a, b)).toBe(0);
 
+    const intake = await intakeRows();
     const settlements = await env.admin.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM audit.platform_event
-        WHERE action = 'iam.password.reset_intake_settled'`,
+        WHERE action = 'iam.password.reset_intake_settled' AND target_ref = $1`,
+      [intake[0]?.intake_id],
     );
     expect(settlements.rows[0]?.count).toBe('1');
     expect(
@@ -395,7 +417,7 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
 
   it('reclaims a lease a stopped worker never settled', async () => {
     const member = await onboard('r4-lease@rem3.test', ['MANAGER']);
-    await clearQueue();
+    clearQueue(member.email);
     await queue(member.email);
 
     const claimed = await appStaff.claimResetIntakeForTest(4);
@@ -409,9 +431,11 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
     expect(await appStaff.drainPasswordResetIntake(8)).toBe(0);
     // …until the lease has expired.
     await env.admin.query(
-      `UPDATE platform.password_reset_intake SET lease_expires_at = now() - interval '1 minute'`,
+      `UPDATE platform.password_reset_intake SET lease_expires_at = now() - interval '1 minute'
+        WHERE email_normalized = ANY($1::text[]) AND state = 'CLAIMED'`,
+      [[...scoped]],
     );
-    expect(await appStaff.drainPasswordResetIntake(8)).toBe(1);
+    expect(await appStaff.drainPasswordResetIntake(8)).toBeGreaterThan(0);
     const settled = await intakeRows();
     expect(settled[0]?.state).toBe('PROCESSED');
     expect(settled[0]?.outcome).toBe('sent');
@@ -419,19 +443,23 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
 
   it('keeps a transient provider failure retryable and succeeds on recovery', async () => {
     const member = await onboard('r4-retry@rem3.test', ['MANAGER']);
-    await clearQueue();
+    clearQueue(member.email);
     await queue(member.email);
 
     env.notifications.failNext();
-    expect(await appStaff.drainPasswordResetIntake(8)).toBe(1);
+    expect(await appStaff.drainPasswordResetIntake(8)).toBeGreaterThan(0);
     const afterFailure = await intakeRows();
     // Retryable, not terminal: an unreachable provider is not a decision.
     expect(afterFailure[0]?.state).toBe('PENDING');
     expect(afterFailure[0]?.outcome).toBe('unavailable');
     expect(Number(afterFailure[0]?.attempts)).toBe(1);
 
-    await env.admin.query(`UPDATE platform.password_reset_intake SET next_attempt_at = now()`);
-    expect(await appStaff.drainPasswordResetIntake(8)).toBe(1);
+    await env.admin.query(
+      `UPDATE platform.password_reset_intake SET next_attempt_at = now()
+        WHERE email_normalized = ANY($1::text[]) AND state = 'PENDING'`,
+      [[...scoped]],
+    );
+    expect(await appStaff.drainPasswordResetIntake(8)).toBeGreaterThan(0);
     const afterRecovery = await intakeRows();
     expect(afterRecovery[0]?.state).toBe('PROCESSED');
     expect(afterRecovery[0]?.outcome).toBe('sent');
@@ -442,7 +470,7 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
 
   it('retries a delivered-but-unsettled intake under the same delivery identity', async () => {
     const member = await onboard('r4-ack@rem3.test', ['MANAGER']);
-    await clearQueue();
+    clearQueue(member.email);
     await queue(member.email);
 
     // Claim and deliver, then lose the acknowledgement.
@@ -454,9 +482,11 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
     expect(firstDelivery).toBeDefined();
 
     await env.admin.query(
-      `UPDATE platform.password_reset_intake SET lease_expires_at = now() - interval '1 minute'`,
+      `UPDATE platform.password_reset_intake SET lease_expires_at = now() - interval '1 minute'
+        WHERE email_normalized = ANY($1::text[]) AND state = 'CLAIMED'`,
+      [[...scoped]],
     );
-    expect(await appStaff.drainPasswordResetIntake(8)).toBe(1);
+    expect(await appStaff.drainPasswordResetIntake(8)).toBeGreaterThan(0);
 
     // Same delivery identity, and the recipient saw one message.
     const secondDelivery = env.notifications.lastResetForEmail(member.email);
@@ -466,15 +496,19 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
 
   it('dead-letters an address the provider never accepts, and says so to nobody', async () => {
     const member = await onboard('r4-dead@rem3.test', ['MANAGER']);
-    await clearQueue();
+    clearQueue(member.email);
     await queue(member.email);
 
     const attempts = env.parameters.passwordResetDeliveryMaxAttempts;
     expect(attempts).toBeGreaterThan(1);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       env.notifications.failNext();
-      await env.admin.query(`UPDATE platform.password_reset_intake SET next_attempt_at = now()`);
-      expect(await appStaff.drainPasswordResetIntake(8)).toBe(1);
+      await env.admin.query(
+        `UPDATE platform.password_reset_intake SET next_attempt_at = now()
+        WHERE email_normalized = ANY($1::text[]) AND state = 'PENDING'`,
+        [[...scoped]],
+      );
+      expect(await appStaff.drainPasswordResetIntake(8)).toBeGreaterThan(0);
     }
     const dead = await intakeRows();
     expect(dead[0]?.state).toBe('DEAD_LETTER');
@@ -488,7 +522,8 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
       `UPDATE platform.user_account SET state = 'DISABLED' WHERE account_id = $1`,
       [disabled.accountId],
     );
-    await clearQueue();
+    const addresses = [member.email, disabled.email, 'r4-nobody@rem3.test'];
+    clearQueue(...addresses);
 
     const seen: string[] = [];
     for (const email of [member.email, disabled.email, 'r4-nobody@rem3.test', member.email]) {
@@ -506,9 +541,9 @@ describe('R4 — the reset queue is leased, retryable and delivered once', () =>
 
   it('stores no plaintext reset token anywhere a reader can reach', async () => {
     const member = await onboard('r4-secret@rem3.test', ['MANAGER']);
-    await clearQueue();
+    clearQueue(member.email);
     await queue(member.email);
-    expect(await appStaff.drainPasswordResetIntake(8)).toBe(1);
+    expect(await appStaff.drainPasswordResetIntake(8)).toBeGreaterThan(0);
 
     const delivered = env.notifications.lastResetForEmail(member.email);
     const token = delivered?.token as string;

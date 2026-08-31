@@ -175,16 +175,45 @@ export class HandoffDiscoveryRepository extends ScopedRepository {
   }
 
   /** Every marker still awaiting enumeration, optionally for one membership. */
+  /**
+   * Candidate markers, **without locking any of them**.
+   *
+   * The lock order for anything touching a membership and its markers is:
+   * membership first, marker second. This read takes no lock at all, so
+   * reconciliation cannot arrive at a membership holding a marker that a
+   * reactivation — which locks the membership first — is about to need. The two
+   * used to take them in opposite orders, and PostgreSQL resolved it by killing
+   * one of them with `40P01`.
+   *
+   * The rows this returns are therefore only candidates. Each is re-read under
+   * its lock, after the membership's, by `lockPending` below.
+   */
   async listPending(membershipId?: string): Promise<readonly HandoffDiscoveryRow[]> {
     const result = await this.uow.query<Record<string, unknown>>(
       `SELECT ${DISCOVERY_COLUMNS} FROM platform.work_handoff_discovery
         WHERE hotel_id = $1 AND state = 'PENDING'
           AND ($2::uuid IS NULL OR membership_id = $2::uuid)
-        ORDER BY created_at
-          FOR UPDATE`,
+        ORDER BY created_at`,
       [this.hotelId, membershipId ?? null],
     );
     return result.rows.map((row) => mapDiscovery(row)!);
+  }
+
+  /**
+   * Re-reads one marker under its own lock, once the membership is already held.
+   *
+   * Returns nothing if it is no longer pending: between the candidate read and
+   * this lock, a reactivation may have settled it, and acting on the stale copy
+   * is exactly what must not happen.
+   */
+  async lockPending(discoveryId: string): Promise<HandoffDiscoveryRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${DISCOVERY_COLUMNS} FROM platform.work_handoff_discovery
+        WHERE hotel_id = $1 AND discovery_id = $2 AND state = 'PENDING'
+          FOR UPDATE`,
+      [this.hotelId, discoveryId],
+    );
+    return mapDiscovery(result.rows[0]);
   }
 
   /** Records that the owning module could not answer. The marker stays open. */

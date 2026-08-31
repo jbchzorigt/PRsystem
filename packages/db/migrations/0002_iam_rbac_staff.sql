@@ -345,63 +345,6 @@ CREATE TABLE platform.invitation_requested_role (
 );
 --> statement-breakpoint
 
--- --------------------------------------------------------- password resets
--- doc 19 §6 / `STAFF-DEC-003`. Account-scoped, so it carries no `hotel_id`: a
--- reset revokes sessions across every membership because the credential itself
--- changed. A Hotel Admin may initiate one and never sees the token.
-CREATE TABLE platform.password_reset_request (
-  reset_id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  account_id               uuid NOT NULL,
-  state                    text NOT NULL DEFAULT 'ACTIVE',
-  token_hash               text NOT NULL,
-  token_key_version        text NOT NULL,
-  initiated_by             text NOT NULL,
-  initiated_by_account_id  uuid,
-  created_at               timestamptz NOT NULL DEFAULT now(),
-  expires_at               timestamptz NOT NULL,
-  terminal_at              timestamptz,
-  terminal_reason          text,
-  -- The durable delivery intent, recorded with the reset and before the
-  -- provider is contacted.
-  --
-  -- `delivery_id` is the stable identity a retry carries, so a lost
-  -- acknowledgement costs a repeat attempt rather than a second visible link.
-  -- The one-time secret is held under envelope encryption with its key version
-  -- and AAD (ADR-0020 §2–§4) because delivery happens after this transaction
-  -- commits and the value has to be recoverable — never in plaintext, and
-  -- destroyed once the provider has accepted it.
-  delivery_id              uuid NOT NULL DEFAULT gen_random_uuid(),
-  secret_ciphertext        text,
-  secret_wrapped_dek       text,
-  secret_key_version       text,
-  delivered_at             timestamptz,
-  CONSTRAINT password_reset_request_account_id_fkey FOREIGN KEY (account_id)
-    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
-  CONSTRAINT password_reset_request_initiator_fkey FOREIGN KEY (initiated_by_account_id)
-    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
-  CONSTRAINT password_reset_request_expiry_after_creation CHECK (expires_at > created_at),
-  CONSTRAINT password_reset_request_initiator_known
-    CHECK (initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text])),
-  CONSTRAINT password_reset_request_initiator_recorded
-    CHECK ((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL)),
-  CONSTRAINT password_reset_request_state_known
-    CHECK (state = ANY (ARRAY['ACTIVE'::text, 'USED'::text, 'SUPERSEDED'::text,
-                              'EXPIRED'::text, 'REVOKED'::text])),
-  CONSTRAINT password_reset_request_terminal_has_time
-    CHECK ((state = 'ACTIVE'::text) = (terminal_at IS NULL)),
-  CONSTRAINT password_reset_request_secret_complete
-    CHECK (num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY
-           (ARRAY[0, 3])),
-  CONSTRAINT password_reset_request_token_shape CHECK (token_hash ~ '^[0-9a-f]{64}$'::text),
-  CONSTRAINT password_reset_request_delivery_uq UNIQUE (delivery_id),
-  CONSTRAINT password_reset_request_token_uq UNIQUE (token_hash)
-);
---> statement-breakpoint
-CREATE UNIQUE INDEX password_reset_request_one_active_uq
-  ON platform.password_reset_request (account_id)
-  WHERE state = 'ACTIVE'::text;
---> statement-breakpoint
-
 -- ------------------------------------------------ password reset intake
 -- doc 19 §6, the unauthenticated half.
 --
@@ -478,6 +421,83 @@ CREATE INDEX password_reset_intake_queue_idx
 CREATE INDEX password_reset_intake_lease_idx
   ON platform.password_reset_intake (lease_expires_at)
   WHERE state = 'CLAIMED'::text;
+--> statement-breakpoint
+
+-- --------------------------------------------------------- password resets
+-- doc 19 §6 / `STAFF-DEC-003`. Account-scoped, so it carries no `hotel_id`: a
+-- reset revokes sessions across every membership because the credential itself
+-- changed. A Hotel Admin may initiate one and never sees the token.
+CREATE TABLE platform.password_reset_request (
+  reset_id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id               uuid NOT NULL,
+  state                    text NOT NULL DEFAULT 'ACTIVE',
+  token_hash               text NOT NULL,
+  token_key_version        text NOT NULL,
+  initiated_by             text NOT NULL,
+  initiated_by_account_id  uuid,
+  created_at               timestamptz NOT NULL DEFAULT now(),
+  expires_at               timestamptz NOT NULL,
+  terminal_at              timestamptz,
+  terminal_reason          text,
+  -- The durable delivery intent, recorded with the reset and before the
+  -- provider is contacted.
+  --
+  -- `delivery_id` is the stable identity a retry carries, so a lost
+  -- acknowledgement costs a repeat attempt rather than a second visible link.
+  -- The one-time secret is held under envelope encryption with its key version
+  -- and AAD (ADR-0020 §2–§4) because delivery happens after this transaction
+  -- commits and the value has to be recoverable — never in plaintext, and
+  -- destroyed once the provider has accepted it.
+  delivery_id              uuid NOT NULL DEFAULT gen_random_uuid(),
+  -- The queue entry this reset belongs to. Retry and reclaim resolve the intent
+  -- *by intake*, never by "any undelivered reset for this account": two entries
+  -- for one address — a self-service request and a Hotel Admin sending the link
+  -- — would otherwise adopt each other's link and each other's attribution.
+  intake_id                uuid NOT NULL,
+  secret_ciphertext        text,
+  secret_wrapped_dek       text,
+  secret_key_version       text,
+  delivered_at             timestamptz,
+  CONSTRAINT password_reset_request_account_id_fkey FOREIGN KEY (account_id)
+    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
+  CONSTRAINT password_reset_request_initiator_fkey FOREIGN KEY (initiated_by_account_id)
+    REFERENCES platform.user_account (account_id) ON DELETE RESTRICT,
+  CONSTRAINT password_reset_request_intake_fkey FOREIGN KEY (intake_id)
+    REFERENCES platform.password_reset_intake (intake_id) ON DELETE RESTRICT,
+  CONSTRAINT password_reset_request_expiry_after_creation CHECK (expires_at > created_at),
+  CONSTRAINT password_reset_request_initiator_known
+    CHECK (initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text])),
+  CONSTRAINT password_reset_request_initiator_recorded
+    CHECK ((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL)),
+  CONSTRAINT password_reset_request_state_known
+    CHECK (state = ANY (ARRAY['ACTIVE'::text, 'USED'::text, 'SUPERSEDED'::text,
+                              'EXPIRED'::text, 'REVOKED'::text])),
+  CONSTRAINT password_reset_request_terminal_has_time
+    CHECK ((state = 'ACTIVE'::text) = (terminal_at IS NULL)),
+  CONSTRAINT password_reset_request_secret_complete
+    CHECK (num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY
+           (ARRAY[0, 3])),
+  -- A sealed one-time secret exists only for the gap between recording the
+  -- intent and the provider accepting it. A delivered or terminal row that
+  -- still held one would be a link recoverable long after it stopped being
+  -- needed, which is the thing the encryption exists to bound.
+  CONSTRAINT password_reset_request_settled_holds_no_secret
+    CHECK ((secret_ciphertext IS NULL)
+           OR ((state = 'ACTIVE'::text) AND (delivered_at IS NULL))),
+  CONSTRAINT password_reset_request_token_shape CHECK (token_hash ~ '^[0-9a-f]{64}$'::text),
+  CONSTRAINT password_reset_request_delivery_uq UNIQUE (delivery_id),
+  CONSTRAINT password_reset_request_token_uq UNIQUE (token_hash)
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX password_reset_request_one_active_uq
+  ON platform.password_reset_request (account_id)
+  WHERE state = 'ACTIVE'::text;
+--> statement-breakpoint
+-- One live intent per queue entry. A retry of that entry finds this row and
+-- reuses its delivery identity rather than minting a second link.
+CREATE UNIQUE INDEX password_reset_request_intake_active_uq
+  ON platform.password_reset_request (intake_id)
+  WHERE state = 'ACTIVE'::text;
 --> statement-breakpoint
 
 -- ------------------------------------------------ explicit permission grants
@@ -970,8 +990,22 @@ BEGIN
      OR NEW.initiated_by_account_id IS DISTINCT FROM OLD.initiated_by_account_id
      OR NEW.created_at IS DISTINCT FROM OLD.created_at
      OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
-     OR NEW.delivery_id IS DISTINCT FROM OLD.delivery_id THEN
+     OR NEW.delivery_id IS DISTINCT FROM OLD.delivery_id
+     OR NEW.intake_id IS DISTINCT FROM OLD.intake_id THEN
     RAISE EXCEPTION 'a reset request is immutable apart from its terminal state'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- The sealed secret may be destroyed and nothing else. It cannot be rewritten,
+  -- and it cannot be attached to a row that does not already carry one — a
+  -- delivery intent whose secret could be replaced is a link that could be
+  -- replaced.
+  IF NEW.secret_ciphertext IS NOT NULL
+     AND (OLD.secret_ciphertext IS NULL
+          OR NEW.secret_ciphertext IS DISTINCT FROM OLD.secret_ciphertext
+          OR NEW.secret_wrapped_dek IS DISTINCT FROM OLD.secret_wrapped_dek
+          OR NEW.secret_key_version IS DISTINCT FROM OLD.secret_key_version) THEN
+    RAISE EXCEPTION 'a stored delivery secret is destroyed, never rewritten or attached'
       USING ERRCODE = '42501';
   END IF;
 
@@ -989,13 +1023,6 @@ BEGIN
     END IF;
     IF NEW.delivered_at IS NULL AND OLD.delivered_at IS NOT NULL THEN
       RAISE EXCEPTION 'a recorded delivery is not unrecorded' USING ERRCODE = '42501';
-    END IF;
-    -- The stored secret may only be destroyed, never rewritten: a ciphertext
-    -- that could be replaced is a link that could be replaced.
-    IF NEW.secret_ciphertext IS NOT NULL
-       AND OLD.secret_ciphertext IS DISTINCT FROM NEW.secret_ciphertext THEN
-      RAISE EXCEPTION 'a stored delivery secret is destroyed, never rewritten'
-        USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
   END IF;
@@ -1219,6 +1246,11 @@ $$;
 CREATE OR REPLACE FUNCTION platform.password_reset_intake_guard() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'a settled reset intake is evidence, not scratch space'
+      USING ERRCODE = '42501';
+  END IF;
+
   IF NEW.intake_id IS DISTINCT FROM OLD.intake_id
      OR NEW.email_normalized IS DISTINCT FROM OLD.email_normalized
      OR NEW.initiated_by IS DISTINCT FROM OLD.initiated_by
@@ -1228,8 +1260,13 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  IF OLD.state = 'PROCESSED'::text THEN
-    RAISE EXCEPTION 'reset intake % is already processed', OLD.intake_id USING ERRCODE = '22023';
+  -- Both settled states are terminal. A dead letter is a decision an operator
+  -- must be able to rely on: a runtime that could return it to the queue could
+  -- also resurrect an address the provider has already refused five times, and
+  -- could do it without leaving a trace that it had.
+  IF OLD.state = ANY (ARRAY['PROCESSED'::text, 'DEAD_LETTER'::text]) THEN
+    RAISE EXCEPTION 'reset intake % is already %', OLD.intake_id, OLD.state
+      USING ERRCODE = '22023';
   END IF;
   IF NEW.attempts < OLD.attempts THEN
     RAISE EXCEPTION 'attempts must not decrease (was %, offered %)',
@@ -1307,6 +1344,10 @@ CREATE TRIGGER work_handoff_discovery_transition_guard
 --> statement-breakpoint
 CREATE TRIGGER password_reset_intake_transition_guard
   BEFORE UPDATE ON platform.password_reset_intake
+  FOR EACH ROW EXECUTE FUNCTION platform.password_reset_intake_guard();
+--> statement-breakpoint
+CREATE TRIGGER password_reset_intake_no_delete
+  BEFORE DELETE ON platform.password_reset_intake
   FOR EACH ROW EXECUTE FUNCTION platform.password_reset_intake_guard();
 --> statement-breakpoint
 CREATE TRIGGER work_handoff_event_append_only

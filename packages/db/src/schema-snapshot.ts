@@ -1041,6 +1041,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'password_reset_request',
+      column: 'intake_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_request',
       column: 'reset_id',
       shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
     },
@@ -2430,6 +2436,14 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'password_reset_request',
+      name: 'password_reset_request_intake_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (intake_id) REFERENCES platform.password_reset_intake(intake_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_request',
       name: 'password_reset_request_pkey',
       kind: 'p',
       definition: 'PRIMARY KEY (reset_id)',
@@ -2441,6 +2455,14 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'c',
       definition:
         'CHECK ((num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY (ARRAY[0, 3])))',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_request',
+      name: 'password_reset_request_settled_holds_no_secret',
+      kind: 'c',
+      definition:
+        "CHECK (((secret_ciphertext IS NULL) OR ((state = 'ACTIVE'::text) AND (delivered_at IS NULL))))",
     },
     {
       schema: 'platform',
@@ -3383,6 +3405,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'password_reset_request_delivery_uq',
       definition:
         'CREATE UNIQUE INDEX password_reset_request_delivery_uq ON platform.password_reset_request USING btree (delivery_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'password_reset_request',
+      name: 'password_reset_request_intake_active_uq',
+      definition:
+        "CREATE UNIQUE INDEX password_reset_request_intake_active_uq ON platform.password_reset_request USING btree (intake_id) WHERE (state = 'ACTIVE'::text)",
     },
     {
       schema: 'platform',
