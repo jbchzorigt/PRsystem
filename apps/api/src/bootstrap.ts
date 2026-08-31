@@ -48,7 +48,17 @@ export async function createApp(
   }
 
   const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule.forRoot({ scheduler: config.scheduler }),
+    AppModule.forRoot({
+      scheduler: config.scheduler,
+      iam: {
+        config: {
+          databaseUrl: config.DATABASE_URL,
+          appEnv: config.APP_ENV,
+          kmsAdapter: config.KMS_ADAPTER,
+          ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+        },
+      },
+    }),
     new FastifyAdapter(),
     // Nest's own bootstrap logging is suppressed; the redacting logger is authoritative.
     { logger: false },

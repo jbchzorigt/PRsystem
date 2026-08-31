@@ -56,8 +56,10 @@ export const REQUIRED_BATTERY = [
  * `repairRecordState` is the state every repair record was written under. The
  * records are history and keep saying what was true when they were made.
  *
- * `currentPhase` is now Phase 04, which has not started. Beginning it requires a
- * further explicit authorization and a change to this module.
+ * `completedPhase` is the most recent phase to have finished; `currentPhase` is
+ * the one after it, which has not started. Beginning a phase requires a further
+ * explicit authorization and a change to this module — the document cannot
+ * advance the programme by editing a cell.
  */
 export const GOVERNED_STATE = {
   acceptedPhase: '03 — Platform kernel',
@@ -66,9 +68,24 @@ export const GOVERNED_STATE = {
   acceptedAtCommit: '3ac74a6244a7c350b7489be05778884a9fe65c3c',
   repairRecordState: 'SECURITY_REPAIR_REQUIRED',
   governedReviewNumber: 19,
-  currentPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
+  completedPhase: '04 — IAM, tenancy, RBAC, and staff lifecycle',
+  completedPhaseState: 'DONE',
+  currentPhase: '05 — Hotel onboarding and subscription',
   currentPhaseState: 'NOT STARTED',
 };
+
+/**
+ * Every phase whose ledger row and position cell are governed, in ledger order.
+ *
+ * Derived, so adding a phase to the governed state is one edit rather than
+ * three: the phase number is the leading two digits of the name, which is the
+ * form the ledger's first column uses.
+ */
+export const GOVERNED_PHASES = [
+  { number: '03', name: GOVERNED_STATE.acceptedPhase, state: GOVERNED_STATE.acceptedPhaseState },
+  { number: '04', name: GOVERNED_STATE.completedPhase, state: GOVERNED_STATE.completedPhaseState },
+  { number: '05', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
+];
 
 /** The manifest's exact key set. Anything else is an unreviewed addition. */
 export const MANIFEST_KEYS = [

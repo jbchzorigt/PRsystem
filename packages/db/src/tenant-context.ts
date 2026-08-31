@@ -46,6 +46,16 @@ export interface TenantContext {
   readonly realm: Realm;
   /** Opaque actor reference. Never a name, an email or any other identifier. */
   readonly actorRef: string;
+  /**
+   * The authenticated account, when there is one (Phase 04).
+   *
+   * Carried transaction-locally like the tenant scope, and read by the policies
+   * on the two IAM tables that are about an account rather than about a hotel:
+   * a principal must be able to read its own membership rows before any hotel
+   * scope exists (doc 06 §2), and an account-wide session revocation crosses
+   * every hotel the account belongs to (doc 19 §10).
+   */
+  readonly accountId?: string;
   readonly correlationId: string;
   readonly causationId?: string;
 }
@@ -76,13 +86,36 @@ export function assertTenantContext(context: TenantContext): void {
   if (context.correlationId.length === 0 || context.correlationId.length > 128) {
     throw new TenantScopeError('correlation id is missing or implausible');
   }
-  // The platform sentinel is not a hotel. It is the scope platform-wide
-  // operation work runs in, so it is only meaningful paired with the operation
-  // realm; anything else is a resolver that has widened a tenant request into a
+  if (context.accountId !== undefined && !UUID.test(context.accountId)) {
+    throw new TenantScopeError('the account reference must be a UUID');
+  }
+  // The platform sentinel is not a hotel. It is the scope work that belongs to
+  // no single tenant runs in: platform-wide Operation work, and — from Phase 04
+  // — the account-scoped half of the Hotel realm, where signing in, changing a
+  // password and logging out of every device belong to an account rather than
+  // to one hotel.
+  //
+  // It widens nothing. No hotel carries the sentinel as its id, so every
+  // tenant policy matches zero rows under it; the only rows reachable are the
+  // account-scoped tables, which carry no `hotel_id` at all, and the principal's
+  // own membership and session-scope rows through the account policies.
+  // An account-scoped transaction that has not authenticated anybody yet —
+  // signing in, asking for a reset link, redeeming one — establishes no account
+  // either, and then the account policies match nothing as well. That is the
+  // correct reading of those flows: they touch only the tables that carry no
+  // tenant column at all.
+  //
+  // Anything else is a resolver that has widened a tenant request into a
   // platform one. This is an application-boundary rule, not a database one —
   // see the note on what custom-GUC RLS does and does not protect against.
-  if (context.hotelId === PLATFORM_SCOPE && context.realm !== 'operation') {
-    throw new TenantScopeError('the platform scope is only valid in the operation realm');
+  if (
+    context.hotelId === PLATFORM_SCOPE &&
+    context.realm !== 'operation' &&
+    context.realm !== 'hotel'
+  ) {
+    throw new TenantScopeError(
+      'the platform scope is valid only in the operation realm and for account-scoped hotel work',
+    );
   }
 }
 

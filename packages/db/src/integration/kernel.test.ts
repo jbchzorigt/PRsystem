@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
+import { TABLE_CLASSIFICATION } from '../classification';
 import { DATABASE_ROLES, ROLES_WITHOUT_BYPASSRLS } from '../roles';
 import { PLATFORM_SCOPE, type TenantContext } from '../tenant-context';
 import { withTenantTransaction } from '../unit-of-work';
@@ -499,7 +500,12 @@ describe('platform scope', () => {
 });
 
 describe('no business table exists yet', () => {
-  it('creates only kernel tables', async () => {
+  it('creates only tables a phase has declared and classified', async () => {
+    // Phase 03 could state this as "no business table exists yet". Phase 04
+    // creates the tenancy and IAM aggregates it owns, so the rule that still
+    // holds is the stronger one: every base table is in a kernel schema **and**
+    // in the classification manifest. A table nobody classified is a table
+    // whose tenant isolation nobody decided.
     const result = await pool.query<{ table_schema: string; table_name: string }>(
       `SELECT table_schema, table_name FROM information_schema.tables
         WHERE table_type = 'BASE TABLE'
@@ -508,22 +514,16 @@ describe('no business table exists yet', () => {
         ORDER BY table_schema, table_name`,
     );
 
-    const forbidden = [
-      'hotel',
-      'guest',
-      'room',
-      'staff',
-      'subscription',
-      'booking',
-      'restaurant',
-      'wanted',
-      'stay',
-      'folio',
-    ];
-    const offenders = result.rows.filter((row) =>
-      forbidden.some((word) => row.table_name.includes(word)),
+    const classified = new Set(
+      TABLE_CLASSIFICATION.map((entry) => `${entry.schema}.${entry.table}`),
     );
-    expect(offenders).toEqual([]);
+    const unclassified = result.rows
+      .map((row) => `${row.table_schema}.${row.table_name}`)
+      // Audit partitions inherit their parent's classification.
+      .filter((name) => !/_\d{4}_\d{2}$/.test(name))
+      .filter((name) => !classified.has(name));
+    expect(unclassified).toEqual([]);
+
     expect(
       result.rows.every((row) => ['platform', 'audit', 'police_audit'].includes(row.table_schema)),
     ).toBe(true);

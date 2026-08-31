@@ -20,6 +20,7 @@ export async function validateClassification(pool: Pool): Promise<Classification
   const tables = await pool.query<{
     qualified: string;
     has_tenant_column: boolean;
+    has_restaurant_column: boolean;
     rls_enabled: boolean;
     rls_forced: boolean;
     owner: string;
@@ -28,6 +29,9 @@ export async function validateClassification(pool: Pool): Promise<Classification
             EXISTS (SELECT 1 FROM pg_attribute a
                      WHERE a.attrelid = c.oid AND a.attname = 'hotel_id' AND a.attnum > 0
                        AND NOT a.attisdropped) AS has_tenant_column,
+            EXISTS (SELECT 1 FROM pg_attribute a
+                     WHERE a.attrelid = c.oid AND a.attname = 'restaurant_id' AND a.attnum > 0
+                       AND NOT a.attisdropped) AS has_restaurant_column,
             c.relrowsecurity  AS rls_enabled,
             c.relforcerowsecurity AS rls_forced,
             pg_get_userbyid(c.relowner) AS owner
@@ -91,6 +95,17 @@ export async function validateClassification(pool: Pool): Promise<Classification
           }
         }
       }
+    }
+
+    // An account-scoped table is exempt from tenant RLS because it belongs to
+    // no hotel — and that exemption holds only while it genuinely carries no
+    // tenant column. A `hotel_id` or a `restaurant_id` appearing on one is the
+    // exemption turning into a hiding place, so both are refused by name.
+    if (entry.classification === 'ACCOUNT_GLOBAL' && row.has_restaurant_column) {
+      violations.push({
+        kind: 'account_global_carries_tenant_column',
+        detail: `${row.qualified} is ACCOUNT_GLOBAL but carries restaurant_id`,
+      });
     }
 
     if (entry.classification === 'TENANT_RLS' && !(row.rls_enabled && row.rls_forced)) {

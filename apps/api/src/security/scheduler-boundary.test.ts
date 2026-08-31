@@ -333,7 +333,21 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
     process.env['SCHEDULER_DATABASE_URL'] = schedulerUrl;
 
     const moduleRef = await Test.createTestingModule({
-      imports: [AppModule.forRoot({ scheduler: { enabled: false } })],
+      imports: [
+        AppModule.forRoot({
+          scheduler: { enabled: false },
+          // Stated the same way the scheduler capability is: from the injected
+          // value, never from the ambient environment.
+          iam: {
+            config: {
+              databaseUrl: apiUrl,
+              appEnv: 'ci',
+              kmsAdapter: 'local',
+              kmsSeed: 'synthetic-scheduler-boundary-seed',
+            },
+          },
+        }),
+      ],
     }).compile();
     try {
       expect(tryGet(moduleRef, SCHEDULER_POOL)).toBeUndefined();

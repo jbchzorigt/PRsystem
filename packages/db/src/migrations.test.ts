@@ -64,15 +64,26 @@ describe('migration journal', () => {
     }
   });
 
-  it('creates tables only in the kernel schemas', () => {
-    // Phase 03 introduces kernel tables. Business-domain tables belong to Phase 04
-    // and later, so any CREATE TABLE outside platform/audit/police_audit — or any
-    // table named after a business entity — has landed in the wrong phase.
+  it('creates a business-named table only in the migration whose phase owns it', () => {
+    // The kernel introduces no business-domain table at all; Phase 04 introduces
+    // exactly the tenancy and IAM aggregates doc 03 assigns to `tenancy` and
+    // `iam`. A blanket ban was right while only the kernel existed and would now
+    // read as "Phase 04 may not create its own tables", so the rule is an
+    // ownership manifest instead: each migration names what it may create, and
+    // anything else — in any file — is a table that has landed in the wrong
+    // phase.
     const businessWords =
       /\b(hotel|guest|room|staff|subscription|booking|restaurant|wanted|stay|folio|deposit|drawer|minibar)\b/i;
 
+    const ALLOWED_BUSINESS_TABLES: Readonly<Record<string, readonly string[]>> = {
+      // doc 03 §1: `tenancy` owns the hotel, `iam` owns membership and the
+      // staff lifecycle. Both are introduced in Phase 04.
+      '0002_iam_rbac_staff.sql': ['hotel', 'staff_membership', 'staff_invitation'],
+    };
+
     for (const file of sqlFiles) {
       const sql = readFileSync(join(MIGRATIONS_FOLDER, file), 'utf8').replace(/^\s*--.*$/gm, '');
+      const allowed = ALLOWED_BUSINESS_TABLES[file] ?? [];
 
       for (const [, qualified] of sql.matchAll(
         /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w.]*)/gi,
@@ -82,8 +93,10 @@ describe('migration journal', () => {
           file,
           schema: expect.stringMatching(/^(platform|audit|police_audit)$/),
         });
-        expect({ file, businessNamed: businessWords.test(table ?? '') }).toEqual({
+        const named = businessWords.test(table ?? '');
+        expect({ file, table, businessNamed: named && !allowed.includes(table ?? '') }).toEqual({
           file,
+          table,
           businessNamed: false,
         });
       }

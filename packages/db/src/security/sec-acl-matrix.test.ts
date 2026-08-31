@@ -103,7 +103,7 @@ beforeAll(async () => {
         await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', hotelId]);
         // Two rows per tenant per table: an UPDATE/DELETE cell that affects one
         // row proves less than one that affects the exact number visible.
-        for (let n = 0; n < 2; n += 1) {
+        for (let n = 0; n < (table.rowsPerTenant ?? 2); n += 1) {
           seq += 1;
           const { sql, values } = table.insert(hotelId, seq);
           await client.query(sql, values);
@@ -119,6 +119,19 @@ beforeAll(async () => {
 afterAll(async () => {
   await env.close();
 }, 30000);
+
+/**
+ * The SET clause for a legal UPDATE on this table.
+ *
+ * A self-assignment is what a table with no transition guard accepts; a table
+ * that has one refuses it, so the fixture names a transition instead. Falling
+ * back to the self-assignment keeps the unguarded kernel tables unchanged.
+ */
+function updateSet(table: TenantRowSpec): string {
+  if (table.updateSet !== undefined) return table.updateSet;
+  const column = table.updateColumn ?? 'hotel_id';
+  return `${column} = ${column}`;
+}
 
 describe.each(TENANT_TABLES)('$name', (table) => {
   describe.each(['api', 'worker', 'police'] as const)('as %s', (runtime) => {
@@ -151,7 +164,7 @@ describe.each(TENANT_TABLES)('$name', (table) => {
 
             const verbSql =
               verb === 'UPDATE'
-                ? `UPDATE ${table.name} SET ${table.updateColumn ?? 'hotel_id'} = ${table.updateColumn ?? 'hotel_id'}`
+                ? `UPDATE ${table.name} SET ${updateSet(table)}`
                 : `DELETE FROM ${table.name}`;
             const affected = await query(verbSql);
             expect(affected.rowCount).toBe(expected);
@@ -180,7 +193,7 @@ describe.each(TENANT_TABLES)('$name', (table) => {
             }
             const verbSql =
               verb === 'UPDATE'
-                ? `UPDATE ${table.name} SET ${table.updateColumn ?? 'hotel_id'} = ${table.updateColumn ?? 'hotel_id'} WHERE hotel_id = $1`
+                ? `UPDATE ${table.name} SET ${updateSet(table)} WHERE hotel_id = $1`
                 : `DELETE FROM ${table.name} WHERE hotel_id = $1`;
             const result = await query(verbSql, [B]);
             // Invisible, so nothing matches. Not an error — simply no such row.

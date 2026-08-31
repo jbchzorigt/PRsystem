@@ -100,7 +100,14 @@ describe('connection pool tenant context (ADR-0017 §2)', () => {
         expect(seen.rows[0]?.hotel_id).toBe(HOTEL);
       });
 
-      expect(await readSessionScope(single)).toEqual({ hotelId: null, realm: null });
+      // The account scope is read back too: Phase 04 added a fourth setting, and
+      // a leak check that inspected three of four would pass while the new one
+      // survived on the connection.
+      expect(await readSessionScope(single)).toEqual({
+        hotelId: null,
+        realm: null,
+        accountId: null,
+      });
     } finally {
       await single.end();
     }

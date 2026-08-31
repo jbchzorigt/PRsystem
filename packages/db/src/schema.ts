@@ -531,6 +531,756 @@ export const securityEvent = policeAudit.table(
 );
 
 /**
+ * Phase 04 — IAM, tenancy, RBAC and the staff lifecycle.
+ *
+ * The same contract as the kernel tables above: the migration SQL is
+ * authoritative, and this declaration exists so the shape can be compared
+ * rather than trusted. Triggers, grants and `FORCE ROW LEVEL SECURITY` stay in
+ * `schema-snapshot.ts` because Drizzle 0.45.2 has no form for them; everything
+ * the DSL can state — columns, defaults, keys, foreign keys with their action,
+ * checks, partial unique indexes, RLS enablement and policies — is stated here.
+ *
+ * Two columns deliberately carry no foreign key. `restaurant_id` and
+ * `subject_ref` point at aggregates owned by Phases 15, 11 and 09; creating
+ * those tables here to satisfy a constraint would put IAM in charge of them.
+ * The reference is opaque and the owning phase completes the linkage.
+ */
+
+export const hotel = platform
+  .table(
+    'hotel',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      displayName: text('display_name').notNull(),
+      hotelId: uuid('hotel_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      timezone: text('timezone')
+        .notNull()
+        .default(sql`'Asia/Ulaanbaatar'::text`),
+    },
+    () => [
+      check(
+        'hotel_display_name_bounded',
+        sql`((length(display_name) >= 1) AND (length(display_name) <= 200))`,
+      ),
+      check('hotel_revision_non_negative', sql`(revision >= 0)`),
+      check('hotel_state_known', sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text]))`),
+      check('hotel_timezone_known', sql`(timezone = 'Asia/Ulaanbaatar'::text)`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const userAccount = platform.table(
+  'user_account',
+  {
+    accountId: uuid('account_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    authEpoch: integer('auth_epoch')
+      .notNull()
+      .default(sql`0`),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    emailNormalized: text('email_normalized').notNull(),
+    emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
+    realm: text('realm').notNull(),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    state: text('state')
+      .notNull()
+      .default(sql`'ACTIVE'::text`),
+  },
+  (table) => [
+    check('user_account_auth_epoch_non_negative', sql`(auth_epoch >= 0)`),
+    check('user_account_email_normalised', sql`(email_normalized = lower(email_normalized))`),
+    check(
+      'user_account_email_shape',
+      sql`(email_normalized ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'::text)`,
+    ),
+    check(
+      'user_account_realm_known',
+      sql`(realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text]))`,
+    ),
+    check('user_account_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'user_account_state_known',
+      sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text]))`,
+    ),
+    unique('user_account_realm_email_uq').on(table.realm, table.emailNormalized),
+  ],
+);
+
+export const accountCredential = platform.table(
+  'account_credential',
+  {
+    accountId: uuid('account_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    credentialId: uuid('credential_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    kind: text('kind')
+      .notNull()
+      .default(sql`'password'::text`),
+    paramsVersion: text('params_version').notNull(),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    secretHash: text('secret_hash').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (table) => [
+    check('account_credential_kind_known', sql`(kind = 'password'::text)`),
+    check(
+      'account_credential_params_shape',
+      sql`(params_version ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::text)`,
+    ),
+    check('account_credential_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'account_credential_secret_is_derived',
+      sql`(secret_hash ~ '^scrypt\\$v=[0-9]+\\$n=[0-9]+,r=[0-9]+,p=[0-9]+\\$[A-Za-z0-9+/=]+\\$[A-Za-z0-9+/=]+$'::text)`,
+    ),
+    unique('account_credential_one_per_kind').on(table.accountId, table.kind),
+    foreignKey({
+      name: 'account_credential_account_id_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+  ],
+);
+
+export const serverSession = platform.table(
+  'server_session',
+  {
+    absoluteExpiresAt: timestamp('absolute_expires_at', { withTimezone: true }).notNull(),
+    accountEpoch: integer('account_epoch').notNull(),
+    accountId: uuid('account_id').notNull(),
+    idleExpiresAt: timestamp('idle_expires_at', { withTimezone: true }).notNull(),
+    issuedAt: timestamp('issued_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    realm: text('realm').notNull(),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedReason: text('revoked_reason'),
+    sessionId: uuid('session_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    stepUpAt: timestamp('step_up_at', { withTimezone: true }),
+    tokenHash: text('token_hash').notNull(),
+    tokenKeyVersion: text('token_key_version').notNull(),
+  },
+  (table) => [
+    check('server_session_epoch_non_negative', sql`(account_epoch >= 0)`),
+    check('server_session_expiry_ordered', sql`(idle_expires_at <= absolute_expires_at)`),
+    check(
+      'server_session_realm_known',
+      sql`(realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text]))`,
+    ),
+    check('server_session_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'server_session_revoked_has_reason',
+      sql`((revoked_at IS NULL) = (revoked_reason IS NULL))`,
+    ),
+    check('server_session_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+    unique('server_session_token_uq').on(table.tokenHash),
+    foreignKey({
+      name: 'server_session_account_id_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+  ],
+);
+
+export const staffMembership = platform
+  .table(
+    'staff_membership',
+    {
+      accountId: uuid('account_id'),
+      activatedAt: timestamp('activated_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      invitedEmailNormalized: text('invited_email_normalized').notNull(),
+      isPrimaryAdmin: boolean('is_primary_admin')
+        .notNull()
+        .default(sql`false`),
+      membershipId: uuid('membership_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      membershipRevision: integer('membership_revision')
+        .notNull()
+        .default(sql`0`),
+      restaurantId: uuid('restaurant_id'),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stateChangedAt: timestamp('state_changed_at', { withTimezone: true }),
+      stateReason: text('state_reason'),
+    },
+    (table) => [
+      check(
+        'staff_membership_active_has_account',
+        sql`((state = 'PENDING'::text) OR (account_id IS NOT NULL))`,
+      ),
+      check(
+        'staff_membership_email_normalised',
+        sql`(invited_email_normalized = lower(invited_email_normalized))`,
+      ),
+      check(
+        'staff_membership_primary_is_active',
+        sql`((NOT is_primary_admin) OR (state = 'ACTIVE'::text))`,
+      ),
+      check(
+        'staff_membership_primary_is_hotel_scope',
+        sql`((NOT is_primary_admin) OR (restaurant_id IS NULL))`,
+      ),
+      check('staff_membership_revision_non_negative', sql`(membership_revision >= 0)`),
+      check(
+        'staff_membership_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text, 'SUSPENDED'::text, 'TERMINATED'::text]))`,
+      ),
+      unique('staff_membership_scope_uq').on(table.hotelId, table.membershipId),
+      foreignKey({
+        name: 'staff_membership_account_id_fkey',
+        columns: [table.accountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'staff_membership_created_by_fkey',
+        columns: [table.createdByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'staff_membership_hotel_id_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      index('staff_membership_account_idx')
+        .on(table.accountId, table.hotelId)
+        .where(sql`account_id IS NOT NULL`),
+      uniqueIndex('staff_membership_hotel_account_uq')
+        .on(table.hotelId, table.accountId)
+        .where(sql`(restaurant_id IS NULL) AND (account_id IS NOT NULL)`),
+      uniqueIndex('staff_membership_hotel_email_uq')
+        .on(table.hotelId, table.invitedEmailNormalized)
+        .where(sql`restaurant_id IS NULL`),
+      uniqueIndex('staff_membership_primary_admin_uq')
+        .on(table.hotelId)
+        .where(sql`is_primary_admin IS TRUE`),
+      uniqueIndex('staff_membership_restaurant_account_uq')
+        .on(table.hotelId, table.restaurantId, table.accountId)
+        .where(sql`(restaurant_id IS NOT NULL) AND (account_id IS NOT NULL)`),
+      uniqueIndex('staff_membership_restaurant_email_uq')
+        .on(table.hotelId, table.restaurantId, table.invitedEmailNormalized)
+        .where(sql`restaurant_id IS NOT NULL`),
+      pgPolicy('own_membership_read', {
+        for: 'select',
+        using: sql`(account_id = platform.current_account_id())`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const sessionScopeGrant = platform
+  .table(
+    'session_scope_grant',
+    {
+      accountId: uuid('account_id').notNull(),
+      grantedAt: timestamp('granted_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      membershipId: uuid('membership_id').notNull(),
+      membershipRevision: integer('membership_revision').notNull(),
+      revokedAt: timestamp('revoked_at', { withTimezone: true }),
+      revokedReason: text('revoked_reason'),
+      scopeGrantId: uuid('scope_grant_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      sessionId: uuid('session_id').notNull(),
+    },
+    (table) => [
+      check('session_scope_grant_revision_non_negative', sql`(membership_revision >= 0)`),
+      check(
+        'session_scope_grant_revoked_has_reason',
+        sql`((revoked_at IS NULL) = (revoked_reason IS NULL))`,
+      ),
+      foreignKey({
+        name: 'session_scope_grant_account_id_fkey',
+        columns: [table.accountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'session_scope_grant_membership_fkey',
+        columns: [table.hotelId, table.membershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'session_scope_grant_session_fkey',
+        columns: [table.sessionId],
+        foreignColumns: [serverSession.sessionId],
+      }).onDelete('restrict'),
+      uniqueIndex('session_scope_grant_live_uq')
+        .on(table.sessionId, table.membershipId)
+        .where(sql`revoked_at IS NULL`),
+      pgPolicy('own_account_scope', {
+        using: sql`(account_id = platform.current_account_id())`,
+        withCheck: sql`(account_id = platform.current_account_id())`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const membershipRoleGrant = platform
+  .table(
+    'membership_role_grant',
+    {
+      grantedAt: timestamp('granted_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      grantedByAccountId: uuid('granted_by_account_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      membershipId: uuid('membership_id').notNull(),
+      revokedAt: timestamp('revoked_at', { withTimezone: true }),
+      revokedByAccountId: uuid('revoked_by_account_id'),
+      revokedReason: text('revoked_reason'),
+      role: text('role').notNull(),
+      roleGrantId: uuid('role_grant_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check(
+        'membership_role_grant_revocation_complete',
+        sql`((revoked_at IS NULL) = (revoked_by_account_id IS NULL))`,
+      ),
+      check(
+        'membership_role_grant_role_known',
+        sql`(role = ANY (ARRAY['HOTEL_ADMIN'::text, 'MANAGER'::text, 'MANAGER_PLUS'::text, 'RECEPTION'::text, 'CLEANER'::text, 'RESTAURANT_MANAGER'::text]))`,
+      ),
+      foreignKey({
+        name: 'membership_role_grant_granted_by_fkey',
+        columns: [table.grantedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'membership_role_grant_membership_fkey',
+        columns: [table.hotelId, table.membershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'membership_role_grant_revoked_by_fkey',
+        columns: [table.revokedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      uniqueIndex('membership_role_grant_active_uq')
+        .on(table.hotelId, table.membershipId, table.role)
+        .where(sql`revoked_at IS NULL`),
+      // doc 06 §2: readable before any hotel scope exists, for the principal's
+      // own memberships only. The subquery is itself subject to
+      // `staff_membership`'s policies.
+      pgPolicy('own_membership_roles_read', {
+        for: 'select',
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.staff_membership m
+  WHERE ((m.hotel_id = membership_role_grant.hotel_id) AND (m.membership_id = membership_role_grant.membership_id) AND (m.account_id = platform.current_account_id()))))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const staffInvitation = platform
+  .table(
+    'staff_invitation',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      emailNormalized: text('email_normalized').notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      invitationId: uuid('invitation_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      membershipId: uuid('membership_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      supersededByInvitationId: uuid('superseded_by_invitation_id'),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+      terminalReason: text('terminal_reason'),
+      tokenHash: text('token_hash').notNull(),
+      tokenKeyVersion: text('token_key_version').notNull(),
+    },
+    (table) => [
+      check('staff_invitation_email_normalised', sql`(email_normalized = lower(email_normalized))`),
+      check('staff_invitation_expiry_after_creation', sql`(expires_at > created_at)`),
+      check(
+        'staff_invitation_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'ACCEPTED'::text, 'SUPERSEDED'::text, 'EXPIRED'::text, 'REVOKED'::text]))`,
+      ),
+      check(
+        'staff_invitation_terminal_has_time',
+        sql`((state = 'ACTIVE'::text) = (terminal_at IS NULL))`,
+      ),
+      check('staff_invitation_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+      unique('staff_invitation_scope_uq').on(table.hotelId, table.invitationId),
+      unique('staff_invitation_token_uq').on(table.tokenHash),
+      foreignKey({
+        name: 'staff_invitation_created_by_fkey',
+        columns: [table.createdByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'staff_invitation_membership_fkey',
+        columns: [table.hotelId, table.membershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'staff_invitation_superseded_by_fkey',
+        columns: [table.supersededByInvitationId],
+        foreignColumns: [table.invitationId],
+      }).onDelete('restrict'),
+      uniqueIndex('staff_invitation_one_active_uq')
+        .on(table.hotelId, table.membershipId)
+        .where(sql`state = 'ACTIVE'::text`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const invitationRequestedRole = platform
+  .table(
+    'invitation_requested_role',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      invitationId: uuid('invitation_id').notNull(),
+      role: text('role').notNull(),
+    },
+    (table) => [
+      check(
+        'invitation_requested_role_known',
+        sql`(role = ANY (ARRAY['HOTEL_ADMIN'::text, 'MANAGER'::text, 'MANAGER_PLUS'::text, 'RECEPTION'::text, 'CLEANER'::text, 'RESTAURANT_MANAGER'::text]))`,
+      ),
+      primaryKey({
+        name: 'invitation_requested_role_pk',
+        columns: [table.hotelId, table.invitationId, table.role],
+      }),
+      foreignKey({
+        name: 'invitation_requested_role_invitation_fkey',
+        columns: [table.hotelId, table.invitationId],
+        foreignColumns: [staffInvitation.hotelId, staffInvitation.invitationId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const passwordResetRequest = platform.table(
+  'password_reset_request',
+  {
+    accountId: uuid('account_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    initiatedBy: text('initiated_by').notNull(),
+    initiatedByAccountId: uuid('initiated_by_account_id'),
+    resetId: uuid('reset_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    state: text('state')
+      .notNull()
+      .default(sql`'ACTIVE'::text`),
+    terminalAt: timestamp('terminal_at', { withTimezone: true }),
+    terminalReason: text('terminal_reason'),
+    tokenHash: text('token_hash').notNull(),
+    tokenKeyVersion: text('token_key_version').notNull(),
+  },
+  (table) => [
+    check('password_reset_request_expiry_after_creation', sql`(expires_at > created_at)`),
+    check(
+      'password_reset_request_initiator_known',
+      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text]))`,
+    ),
+    check(
+      'password_reset_request_initiator_recorded',
+      sql`((initiated_by = 'self'::text) = (initiated_by_account_id IS NULL))`,
+    ),
+    check(
+      'password_reset_request_state_known',
+      sql`(state = ANY (ARRAY['ACTIVE'::text, 'USED'::text, 'SUPERSEDED'::text, 'EXPIRED'::text, 'REVOKED'::text]))`,
+    ),
+    check(
+      'password_reset_request_terminal_has_time',
+      sql`((state = 'ACTIVE'::text) = (terminal_at IS NULL))`,
+    ),
+    check('password_reset_request_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+    unique('password_reset_request_token_uq').on(table.tokenHash),
+    foreignKey({
+      name: 'password_reset_request_account_id_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'password_reset_request_initiator_fkey',
+      columns: [table.initiatedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    uniqueIndex('password_reset_request_one_active_uq')
+      .on(table.accountId)
+      .where(sql`state = 'ACTIVE'::text`),
+  ],
+);
+
+export const accountPermissionGrant = platform.table(
+  'account_permission_grant',
+  {
+    accountId: uuid('account_id').notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    grantedByAccountId: uuid('granted_by_account_id').notNull(),
+    permission: text('permission').notNull(),
+    permissionGrantId: uuid('permission_grant_id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedByAccountId: uuid('revoked_by_account_id'),
+    revokedReason: text('revoked_reason'),
+  },
+  (table) => [
+    check(
+      'account_permission_grant_permission_shape',
+      sql`(permission ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'::text)`,
+    ),
+    check(
+      'account_permission_grant_revocation_complete',
+      sql`((revoked_at IS NULL) = (revoked_by_account_id IS NULL))`,
+    ),
+    foreignKey({
+      name: 'account_permission_grant_account_id_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'account_permission_grant_granted_by_fkey',
+      columns: [table.grantedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'account_permission_grant_revoked_by_fkey',
+      columns: [table.revokedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    uniqueIndex('account_permission_grant_active_uq')
+      .on(table.accountId, table.permission)
+      .where(sql`revoked_at IS NULL`),
+  ],
+);
+
+export const workHandoffItem = platform
+  .table(
+    'work_handoff_item',
+    {
+      assigneeMembershipId: uuid('assignee_membership_id'),
+      assignmentVersion: integer('assignment_version')
+        .notNull()
+        .default(sql`0`),
+      claimantMembershipId: uuid('claimant_membership_id'),
+      continuationOfItemId: uuid('continuation_of_item_id'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      itemId: uuid('item_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      movementStarted: boolean('movement_started')
+        .notNull()
+        .default(sql`false`),
+      openedReason: text('opened_reason').notNull(),
+      previousActorMembershipId: uuid('previous_actor_membership_id').notNull(),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+      restaurantId: uuid('restaurant_id'),
+      state: text('state').notNull(),
+      subjectKind: text('subject_kind').notNull(),
+      subjectRef: uuid('subject_ref').notNull(),
+    },
+    (table) => [
+      check(
+        'work_handoff_item_assigned_has_both',
+        sql`((state <> 'ASSIGNED'::text) OR ((claimant_membership_id IS NOT NULL) AND (assignee_membership_id IS NOT NULL)))`,
+      ),
+      check(
+        'work_handoff_item_claimed_has_claimant',
+        sql`((state <> 'CLAIMED'::text) OR (claimant_membership_id IS NOT NULL))`,
+      ),
+      check(
+        'work_handoff_item_continuation_is_cleaner',
+        sql`((continuation_of_item_id IS NULL) OR (subject_kind = 'cleaner_task'::text))`,
+      ),
+      check(
+        'work_handoff_item_open_has_no_actor',
+        sql`((state <> ALL (ARRAY['TAKEOVER_REQUIRED'::text, 'REASSIGNMENT_REQUIRED'::text, 'UNASSIGNED_REQUIRES_ACTION'::text])) OR ((claimant_membership_id IS NULL) AND (assignee_membership_id IS NULL)))`,
+      ),
+      check(
+        'work_handoff_item_reason_known',
+        sql`(opened_reason = ANY (ARRAY['suspension'::text, 'termination'::text]))`,
+      ),
+      check(
+        'work_handoff_item_resolved_has_time',
+        sql`((state = 'RESOLVED'::text) = (resolved_at IS NOT NULL))`,
+      ),
+      check(
+        'work_handoff_item_restaurant_scope',
+        sql`((subject_kind = 'restaurant_order'::text) = (restaurant_id IS NOT NULL))`,
+      ),
+      check(
+        'work_handoff_item_state_known',
+        sql`(state = ANY (ARRAY['TAKEOVER_REQUIRED'::text, 'REASSIGNMENT_REQUIRED'::text, 'CLAIMED'::text, 'ASSIGNED'::text, 'RESOLVED'::text, 'UNASSIGNED_REQUIRES_ACTION'::text]))`,
+      ),
+      check(
+        'work_handoff_item_subject_known',
+        sql`(subject_kind = ANY (ARRAY['reception_shift'::text, 'cleaner_task'::text, 'restaurant_order'::text]))`,
+      ),
+      check('work_handoff_item_version_non_negative', sql`(assignment_version >= 0)`),
+      unique('work_handoff_item_scope_uq').on(table.hotelId, table.itemId),
+      foreignKey({
+        name: 'work_handoff_item_assignee_fkey',
+        columns: [table.hotelId, table.assigneeMembershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'work_handoff_item_claimant_fkey',
+        columns: [table.hotelId, table.claimantMembershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'work_handoff_item_continuation_fkey',
+        columns: [table.continuationOfItemId],
+        foreignColumns: [table.itemId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'work_handoff_item_previous_actor_fkey',
+        columns: [table.hotelId, table.previousActorMembershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      uniqueIndex('work_handoff_item_open_subject_uq')
+        .on(table.hotelId, table.subjectKind, table.subjectRef)
+        .where(sql`state <> 'RESOLVED'::text`),
+      index('work_handoff_item_queue_idx').on(table.hotelId, table.state, table.createdAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const workHandoffEvent = platform
+  .table(
+    'work_handoff_event',
+    {
+      actorMembershipId: uuid('actor_membership_id'),
+      eventId: uuid('event_id')
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      idempotencyKey: text('idempotency_key').notNull(),
+      itemId: uuid('item_id').notNull(),
+      kind: text('kind').notNull(),
+      newAssigneeMembershipId: uuid('new_assignee_membership_id'),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      previousAssigneeMembershipId: uuid('previous_assignee_membership_id'),
+      reason: text('reason'),
+      seq: integer('seq').notNull(),
+    },
+    (table) => [
+      check(
+        'work_handoff_event_idempotency_shape',
+        sql`((length(idempotency_key) >= 8) AND (length(idempotency_key) <= 200))`,
+      ),
+      check(
+        'work_handoff_event_kind_known',
+        sql`(kind = ANY (ARRAY['opened'::text, 'claimed'::text, 'released'::text, 'assigned'::text, 'resolved'::text, 'unassigned'::text, 'continuation_created'::text]))`,
+      ),
+      check('work_handoff_event_seq_positive', sql`(seq >= 1)`),
+      unique('work_handoff_event_idempotency_uq').on(
+        table.hotelId,
+        table.itemId,
+        table.idempotencyKey,
+      ),
+      primaryKey({
+        name: 'work_handoff_event_pk',
+        columns: [table.hotelId, table.itemId, table.seq],
+      }),
+      foreignKey({
+        name: 'work_handoff_event_actor_fkey',
+        columns: [table.hotelId, table.actorMembershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'work_handoff_event_item_fkey',
+        columns: [table.hotelId, table.itemId],
+        foreignColumns: [workHandoffItem.hotelId, workHandoffItem.itemId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
  * The PostgreSQL enum types this declaration covers.
  *
  * An explicit inventory, not something derived from the columns that happen to
@@ -561,4 +1311,18 @@ export const DECLARED_TABLES = [
   operationalAlert,
   platformEvent,
   securityEvent,
+  // Phase 04.
+  hotel,
+  userAccount,
+  accountCredential,
+  serverSession,
+  staffMembership,
+  sessionScopeGrant,
+  membershipRoleGrant,
+  staffInvitation,
+  invitationRequestedRole,
+  passwordResetRequest,
+  accountPermissionGrant,
+  workHandoffItem,
+  workHandoffEvent,
 ] as const;

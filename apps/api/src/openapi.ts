@@ -3,7 +3,11 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { Pool } from 'pg';
+import { UnavailableKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
+import { UnavailableSubscriptionState } from './modules/iam/contracts/subscription-state.port';
+import { UnavailableStaffNotification } from './modules/iam/contracts/staff-notification.port';
 import { buildOpenApiDocument } from './openapi-document';
 
 /**
@@ -16,7 +20,17 @@ async function generate(): Promise<void> {
   // — and stating that here means it cannot acquire one from an ambient
   // variable that happens to be set in the shell running the build.
   const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule.forRoot({ scheduler: { enabled: false } }),
+    // The IAM ports are supplied directly, so document generation constructs no
+    // connection pool and no key material either.
+    AppModule.forRoot({
+      scheduler: { enabled: false },
+      iam: {
+        pool: new Pool({ max: 1 }),
+        keys: new UnavailableKeyManagement(),
+        subscription: new UnavailableSubscriptionState(),
+        notifications: new UnavailableStaffNotification(),
+      },
+    }),
     new FastifyAdapter(),
     { logger: false },
   );

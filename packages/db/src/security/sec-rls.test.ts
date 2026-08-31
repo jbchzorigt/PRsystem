@@ -80,7 +80,11 @@ beforeAll(async () => {
       // connection needs a tenant scope of its own.
       await client.query('SELECT set_config($1, $2, true)', ['app.hotel_id', hotelId]);
       for (const spec of TENANT_ROW_SPECS) {
-        if (spec.insertableByRuntime === false) continue;
+        // Only a row something else creates is skipped. Seeding runs as the
+        // superuser, so a table no *runtime* may insert into is still seeded —
+        // otherwise "tenant B has rows" would be false for exactly the tables
+        // whose isolation matters most.
+        if (spec.seedByAdmin === false) continue;
         seq += 1;
         const { sql, values } = spec.insert(hotelId, seq);
         await client.query(sql, values);
@@ -158,14 +162,9 @@ describe('tenant isolation across CRUD, per runtime login', () => {
       try {
         await client.query('BEGIN');
 
-        if (spec.insertableByRuntime === false) {
-          // No runtime holds INSERT here; the refusal is the grant, exactly.
-          await expect(
-            client.query(`INSERT INTO ${qualified} (event_id, hotel_id) VALUES (1, $1)`, [HOTEL_A]),
-          ).rejects.toMatchObject({ code: '42501' });
-          return;
-        }
-
+        // One probe for every table, whether the refusal comes from the policy
+        // or from a missing grant: both are 42501, and the fixture — not the
+        // test — knows what a complete row for this table looks like.
         const { sql, values } = spec.insert(HOTEL_A, unscopedSeq++);
         // No app.hotel_id is set, so the WITH CHECK predicate cannot be satisfied.
         const error = await client.query(sql, values).then(
@@ -398,25 +397,52 @@ describe('tenant isolation across CRUD, per runtime login', () => {
     });
   });
 
-  it('refuses the platform sentinel outside the operation realm', async () => {
-    // The application context boundary, where the pairing rule lives.
-    expect(() =>
-      assertTenantContext({
-        hotelId: PLATFORM_SCOPE,
-        realm: 'hotel',
-        actorRef: 'actor-sec-rls',
-        correlationId: 'corr-sec-rls',
-      }),
-    ).toThrow(/platform scope is only valid in the operation realm/);
+  it('refuses the platform sentinel in a realm that has no platform-wide work', async () => {
+    // The application context boundary, where the pairing rule lives. Phase 04
+    // added the account-scoped half of the Hotel realm — signing in, changing a
+    // password, logging out of every device — which belongs to an account rather
+    // than to one hotel. The Guest and Police realms have no such work and are
+    // still refused.
+    for (const realm of ['guest', 'police'] as const) {
+      expect(() =>
+        assertTenantContext({
+          hotelId: PLATFORM_SCOPE,
+          realm,
+          actorRef: 'actor-sec-rls',
+          correlationId: 'corr-sec-rls',
+        }),
+      ).toThrow(/platform scope is valid only in the operation realm/);
+    }
 
-    expect(() =>
-      assertTenantContext({
-        hotelId: PLATFORM_SCOPE,
-        realm: 'operation',
-        actorRef: 'actor-sec-rls',
-        correlationId: 'corr-sec-rls',
-      }),
-    ).not.toThrow();
+    for (const realm of ['operation', 'hotel'] as const) {
+      expect(() =>
+        assertTenantContext({
+          hotelId: PLATFORM_SCOPE,
+          realm,
+          actorRef: 'actor-sec-rls',
+          correlationId: 'corr-sec-rls',
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it('reaches no tenant row at all under the platform sentinel', async () => {
+    // The sentinel widens nothing. No hotel carries it as its id, so every
+    // tenant policy matches zero rows there — which is what makes it safe for
+    // the account-scoped work that has no hotel.
+    //
+    // Both tenants have real rows in every one of these tables, seeded above, so
+    // "zero rows" is a statement about the policy rather than about an empty
+    // table.
+    await scoped(env.api, PLATFORM_SCOPE, async (query) => {
+      for (const entry of TENANT_TABLES) {
+        const qualified = `${entry.schema}.${entry.table}`;
+        const spec = TENANT_ROW_SPECS.find((row) => row.name === qualified);
+        if (spec === undefined || !spec.grants.api.includes('SELECT')) continue;
+        const rows = await query(`SELECT 1 FROM ${qualified}`);
+        expect(rows.rowCount, qualified).toBe(0);
+      }
+    });
   });
 });
 

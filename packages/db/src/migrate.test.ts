@@ -155,12 +155,13 @@ describe('migration runner', () => {
     const outcome = await runMigrations(freshUrl);
 
     expect(outcome.appliedBefore).toBe(0);
-    expect(outcome.appliedAfter).toBe(2);
+    // 0000_baseline, 0001_kernel, 0002_iam_rbac_staff.
+    expect(outcome.appliedAfter).toBe(3);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
-      expect(freshLedger).toHaveLength(2);
+      expect(freshLedger).toHaveLength(3);
     } finally {
       await pool.end();
     }
@@ -176,7 +177,7 @@ describe('migration runner', () => {
 
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
-    expect(upgradeOutcome.appliedAfter).toBe(2);
+    expect(upgradeOutcome.appliedAfter).toBe(3);
   }, 60000);
 
   it('produces a byte-identical normalized schema dump by upgrade and by fresh install', async () => {
@@ -378,8 +379,8 @@ describe('migration runner', () => {
   it('treats a second application as a safe no-op', async () => {
     const outcome = await runMigrations(freshUrl);
 
-    expect(outcome.appliedBefore).toBe(2);
-    expect(outcome.appliedAfter).toBe(2);
+    expect(outcome.appliedBefore).toBe(3);
+    expect(outcome.appliedAfter).toBe(3);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
@@ -1271,7 +1272,7 @@ describe('the migration runner requires the canonical migration login', () => {
     const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
     await expect(
       runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
-    ).resolves.toMatchObject({ appliedAfter: 2 });
+    ).resolves.toMatchObject({ appliedAfter: 3 });
   }, 180000);
 });
 

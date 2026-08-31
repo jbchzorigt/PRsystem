@@ -209,6 +209,21 @@ clarification, not a silent resolution.
 
 Phase 03 owns **zero DEC IDs**, so none of these changes requirement coverage.
 
+### 3.4 Phase 04 scope clarifications
+
+Three decisions were taken while implementing Phase 04. None resolves a P0 conflict; each records a
+place where two approved documents point in different directions, or where a Phase 03 rule had to be
+widened for a capability Phase 03 explicitly deferred.
+
+| # | Question | Resolution |
+| --- | --- | --- |
+| 1 | [03-module-ownership-and-dependencies.md](../architecture/03-module-ownership-and-dependencies.md) §1 gives the Phase 04 `tenancy` module a **package entitlement projection**, while [ADR-0019](../architecture/adr/ADR-0019-projection-consistency.md) §4 forbids authorization and entitlement from reading a projection at all. | **The ADR governs; the projection is deferred to Phase 05.** Entitlement is read through a typed, fail-closed subscription contract instead. Its authoritative source is the Phase 05 subscription aggregate, which does not exist yet — so building the projection now would mean an entitlement gate reading eventually-consistent data derived from nothing. Phase 04 owns the port and the rule that a port which cannot answer denies. |
+| 2 | Phase 03 fixed the platform scope sentinel as valid **only** in the Operation realm. Phase 04 introduces account-scoped Hotel-realm work — signing in, changing a password, logging out of every device — which belongs to an account rather than to one hotel and therefore has no `hotel_id`. | **The sentinel is now valid in the Hotel realm too, and refused in Guest and Police.** It widens nothing: no hotel carries the sentinel as its id, so every tenant policy matches zero rows under it, and `SEC-RLS` asserts exactly that against real rows in every tenant table. The only rows reachable are the account-scoped tables, which carry no tenant column, and the principal's own membership and session-scope rows. |
+| 3 | doc 19 §14 leaves the authentication numbers open as P1 configuration — token TTLs, resend intervals, attempt and rate limits, password cost — while the lifecycle they govern had to be built. | **The shape is owned, the numbers are not.** Every value lives in one versioned record marked `p1-provisional`, is injected rather than imported, and is stamped onto each artefact derived under it, so a stored credential verifies against the parameters it was made with. P1-06 stays open; nothing in Phase 04 claims otherwise. |
+
+Phase 04 owns **26 DEC IDs** — `RBAC-DEC-001`–`017` and `STAFF-DEC-001`–`009` — and all 26 move to
+`COVERED` in [requirements-traceability.md](requirements-traceability.md) §16 and §17.
+
 ---
 
 ## 4. P1 configuration register

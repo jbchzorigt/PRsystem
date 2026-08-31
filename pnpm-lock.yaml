@@ -65,6 +65,9 @@ importers:
       '@nestjs/swagger':
         specifier: 11.4.7
         version: 11.4.7(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.2.3(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)
+      '@prsystem/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
       '@prsystem/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -291,6 +294,18 @@ importers:
       tsx:
         specifier: 4.23.12
         version: 4.23.12
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
+  packages/authz:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
       typescript:
         specifier: 5.9.3
         version: 5.9.3

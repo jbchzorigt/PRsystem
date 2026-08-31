@@ -13,10 +13,27 @@ export type KeyScope = 'pii.hotel_guest' | 'pii.police';
  * Lookup scopes are separate from encryption scopes, and Police lookup has its
  * own. An unkeyed hash of a national identifier is prohibited (ADR-0020 §6).
  */
-export type HmacScope = 'lookup.identity' | 'lookup.police_identity';
+export type HmacScope =
+  | 'lookup.identity'
+  | 'lookup.police_identity'
+  /**
+   * Phase 04 authentication artefacts. Each token kind has its own scope, so a
+   * session token digest can never be replayed as an invitation or a reset —
+   * the derived key differs even when the token bytes do not (`STAFF-DEC-001`,
+   * doc 19 §4, §6).
+   */
+  | 'auth.session_token'
+  | 'auth.invitation_token'
+  | 'auth.password_reset_token';
 
 export const KEY_SCOPES: readonly KeyScope[] = ['pii.hotel_guest', 'pii.police'];
-export const HMAC_SCOPES: readonly HmacScope[] = ['lookup.identity', 'lookup.police_identity'];
+export const HMAC_SCOPES: readonly HmacScope[] = [
+  'lookup.identity',
+  'lookup.police_identity',
+  'auth.session_token',
+  'auth.invitation_token',
+  'auth.password_reset_token',
+];
 
 export interface WrappedKey {
   readonly wrapped: Uint8Array;

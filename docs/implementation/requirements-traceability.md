@@ -1,6 +1,6 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.9 (Phase 03 sixth security repair — credential-bound D-09, exact ownership, full typecheck)
+**Version:** 1.10 (Phase 04 — IAM, tenancy, RBAC and the staff lifecycle: 26 decisions `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -188,8 +188,11 @@ artefacts below are the traceable output.
 | 03 | Ownership of the target database and `public` is an explicit approved-operator contract, and owner roles reach exactly what the design says | `packages/db/src/bootstrap.ts`, `packages/db/migrations/0001_kernel.sql` | `GATE-SEC` / `SEC-BOOTSTRAP`, `SEC-REGRESSION` |
 | 03 | CI gate commands are matched exactly and cannot discard their exit status | `tools/validate-regression-coverage.mjs`, `tools/validate-regression-coverage.fixtures.mjs` | `pnpm run validate:ci-bypass-fixtures` |
 
-Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions remains `PENDING` after
-them. Phase 04 is the first phase to move a decision to `COVERED`.
+Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions was still `PENDING` after
+them. Phase 04 is the first phase to move a decision to `COVERED`, and it moves twenty-six: the
+seventeen `RBAC-DEC` rows of §16 and the nine `STAFF-DEC` rows of §17. Every one of them names the
+code that implements it and the tests that ran against it, and `validate-governance` check 3 refuses a
+`COVERED` row that names neither.
 
 ---
 
@@ -433,39 +436,39 @@ them. Phase 04 is the first phase to move a decision to `COVERED`.
 
 ## 16. RBAC-DEC — Permission matrix (doc 18, 17)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| RBAC-DEC-001 | Multi-role and explicit operational role | 04 | PENDING |
-| RBAC-DEC-002 | Hotel action matrix | 04 | PENDING |
-| RBAC-DEC-003 | Package entitlement gate | 04 | PENDING |
-| RBAC-DEC-004 | Platform and Operation separation | 04 | PENDING |
-| RBAC-DEC-005 | Police base matrix | 04 | PENDING |
-| RBAC-DEC-006 | Server-side enforcement | 04 | PENDING |
-| RBAC-DEC-007 | Full financial report for Hotel Admin only | 04 | PENDING |
-| RBAC-DEC-008 | Cleaner checkout exception permissions | 04 | PENDING |
-| RBAC-DEC-009 | Minibar inventory and shortage override permissions | 04 | PENDING |
-| RBAC-DEC-010 | Expense lifecycle and financial report permissions | 04 | PENDING |
-| RBAC-DEC-011 | Shift self-close and review permissions | 04 | PENDING |
-| RBAC-DEC-012 | Cash drawer, transfer and payout permissions | 04 | PENDING |
-| RBAC-DEC-013 | Deposit configuration and correction permissions | 04 | PENDING |
-| RBAC-DEC-014 | Post-suspension unfinished work | 04 | PENDING |
-| RBAC-DEC-015 | Review and guest registry permissions | 04 | PENDING |
-| RBAC-DEC-016 | Online cancellation, no-show and overbooking permissions | 04 | PENDING |
-| RBAC-DEC-017 | Explicit Operation permissions and takeover scope | 04 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| RBAC-DEC-001 | Multi-role and explicit operational role | 04 | COVERED | `packages/authz/src/actions.ts`, `packages/authz/src/effective.ts` | `packages/authz/src/matrix.test.ts`, `apps/api/src/modules/iam/iam.integration.test.ts` |
+| RBAC-DEC-002 | Hotel action matrix | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-003 | Package entitlement gate | 04 | COVERED | `packages/authz/src/packages.ts`, `packages/authz/src/effective.ts`, `packages/authz/src/pipeline.ts` | `packages/authz/src/matrix.test.ts`, `packages/authz/src/pipeline.test.ts`, `apps/api/src/modules/iam/iam.integration.test.ts` |
+| RBAC-DEC-004 | Platform and Operation separation | 04 | COVERED | `packages/authz/src/operation.ts`, `packages/authz/src/pipeline.ts` | `packages/authz/src/matrix.test.ts`, `packages/authz/src/pipeline.test.ts` |
+| RBAC-DEC-005 | Police base matrix | 04 | COVERED | `packages/authz/src/police.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-006 | Server-side enforcement | 04 | COVERED | `packages/authz/src/pipeline.ts`, `apps/api/src/modules/iam/services/authorization.service.ts` | `packages/authz/src/pipeline.test.ts`, `apps/api/src/modules/iam/iam.integration.test.ts` |
+| RBAC-DEC-007 | Full financial report for Hotel Admin only | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-008 | Cleaner checkout exception permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-009 | Minibar inventory and shortage override permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-010 | Expense lifecycle and financial report permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-011 | Shift self-close and review permissions | 04 | COVERED | `packages/authz/src/actions.ts`, `packages/authz/src/cells.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-012 | Cash drawer, transfer and payout permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-013 | Deposit configuration and correction permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-014 | Post-suspension unfinished work | 04 | COVERED | `apps/api/src/modules/iam/services/handoff.service.ts`, `packages/db/migrations/0002_iam_rbac_staff.sql` | `apps/api/src/modules/iam/iam.concurrency.test.ts`, `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-015 | Review and guest registry permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-016 | Online cancellation, no-show and overbooking permissions | 04 | COVERED | `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts` |
+| RBAC-DEC-017 | Explicit Operation permissions and takeover scope | 04 | COVERED | `packages/authz/src/operation.ts`, `packages/authz/src/actions.ts` | `packages/authz/src/matrix.test.ts`, `packages/authz/src/pipeline.test.ts` |
 
 ## 17. STAFF-DEC — Staff lifecycle (doc 19, 9)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| STAFF-DEC-001 | Email invitation with user-created password | 04 | PENDING |
-| STAFF-DEC-002 | Account versus membership | 04 | PENDING |
-| STAFF-DEC-003 | Password reset and session revocation | 04 | PENDING |
-| STAFF-DEC-004 | Role change and suspension effect | 04 | PENDING |
-| STAFF-DEC-005 | No hard delete of staff history | 04 | PENDING |
-| STAFF-DEC-006 | Single Primary Hotel Admin | 04 | PENDING |
-| STAFF-DEC-007 | Post-suspension takeover and reassignment | 04 | PENDING |
-| STAFF-DEC-008 | Membership revision, reactivation, takeover terminalization | 04 | PENDING |
-| STAFF-DEC-009 | Invitation concurrency and the one-membership invariant | 04 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| STAFF-DEC-001 | Email invitation with user-created password | 04 | COVERED | `apps/api/src/modules/iam/services/password.service.ts`, `apps/api/src/modules/iam/services/token.service.ts`, `apps/api/src/modules/iam/services/staff.service.ts` | `apps/api/src/modules/iam/services/credentials.test.ts`, `apps/api/src/modules/iam/iam.integration.test.ts` |
+| STAFF-DEC-002 | Account versus membership | 04 | COVERED | `packages/db/migrations/0002_iam_rbac_staff.sql`, `apps/api/src/modules/iam/repositories/membership.repository.ts` | `apps/api/src/modules/iam/iam.integration.test.ts` |
+| STAFF-DEC-003 | Password reset and session revocation | 04 | COVERED | `apps/api/src/modules/iam/services/staff.service.ts`, `apps/api/src/modules/iam/repositories/account.repository.ts` | `apps/api/src/modules/iam/iam.integration.test.ts` |
+| STAFF-DEC-004 | Role change and suspension effect | 04 | COVERED | `apps/api/src/modules/iam/services/staff.service.ts`, `apps/api/src/modules/iam/repositories/membership.repository.ts` | `apps/api/src/modules/iam/iam.integration.test.ts` |
+| STAFF-DEC-005 | No hard delete of staff history | 04 | COVERED | `packages/db/migrations/0002_iam_rbac_staff.sql` | `apps/api/src/modules/iam/iam.integration.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
+| STAFF-DEC-006 | Single Primary Hotel Admin | 04 | COVERED | `packages/db/migrations/0002_iam_rbac_staff.sql`, `apps/api/src/modules/iam/services/staff.service.ts` | `apps/api/src/modules/iam/iam.integration.test.ts` |
+| STAFF-DEC-007 | Post-suspension takeover and reassignment | 04 | COVERED | `apps/api/src/modules/iam/services/handoff.service.ts`, `apps/api/src/modules/iam/repositories/handoff.repository.ts` | `apps/api/src/modules/iam/iam.concurrency.test.ts` |
+| STAFF-DEC-008 | Membership revision, reactivation, takeover terminalization | 04 | COVERED | `apps/api/src/modules/iam/repositories/membership.repository.ts`, `packages/db/migrations/0002_iam_rbac_staff.sql` | `apps/api/src/modules/iam/iam.concurrency.test.ts`, `apps/api/src/modules/iam/iam.integration.test.ts` |
+| STAFF-DEC-009 | Invitation concurrency and the one-membership invariant | 04 | COVERED | `packages/db/migrations/0002_iam_rbac_staff.sql`, `apps/api/src/modules/iam/services/staff.service.ts` | `apps/api/src/modules/iam/iam.concurrency.test.ts`, `apps/api/src/modules/iam/iam.integration.test.ts` |
 
 ## 18. DEP-DEC — Deposit and payment correction (doc 20, 10)
 

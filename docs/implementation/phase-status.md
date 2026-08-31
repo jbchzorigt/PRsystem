@@ -13,9 +13,10 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |
+| Current phase | 05 — Hotel onboarding and subscription |
 | Phase state | `NOT STARTED` — implementation requires explicit authorization to begin |
 | Phase 03 state | `DONE` |
+| Phase 04 state | `DONE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -32,7 +33,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 01 | Architecture and threat model | `DONE` | — | `GATE-GOV` | `b0ec3f3`; later corrections to its documents ride with the Phase 03 repairs |
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
-| 04 | IAM, tenancy, RBAC, and staff lifecycle | `NOT STARTED` | — | — | — |
+| 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff` | the Phase 04 battery — counts in [Phase 04 record](#phase-04-record) | see the Phase 04 record |
 | 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
@@ -1643,3 +1644,147 @@ At the end of every phase, append to the phase ledger:
 Never mark a phase `DONE` on the strength of a command that was not run.
 
 <!-- phase-03-repair-history:end -->
+
+---
+
+## Phase 04 record
+
+**Scope.** IAM, tenancy, RBAC and the staff lifecycle: `RBAC-DEC-001`–`017` and
+`STAFF-DEC-001`–`009`, twenty-six decisions in all. Phase 04 also absorbs the
+authorization work the customer moved out of Phase 03 — the four realms, server
+sessions and auth-epoch revocation, the seven-stage pipeline, the permission
+catalog, the package gate, the subscription state gate with its 48-hour grace and
+hard lock, the multi-role union and the step-up marker.
+
+### Scope completed
+
+- **The permission catalog.** `packages/authz` carries doc 18 §§3, 5 and 6 row for
+  row, with each row's heading transcribed from the source. A cell is one of the
+  four forms the document actually uses — `✓`, `—`, `Нэмэлт <role> role`,
+  `Read-only`/`Request` — with its package annotation, its scope limit and its
+  audited single-actor condition, because flattening those into a boolean is how
+  `Нэмэлт role` stops being enforced.
+- **The seven-stage pipeline.** Realm, active account and membership, named
+  permission, tenant and resource scope, package entitlement, account/hotel/
+  subscription state, recent step-up. It is a pure function: the same decision is
+  asserted in a unit test and re-evaluated inside the transaction that applies
+  the effect. Stages 2–4 return one indistinguishable `NOT_FOUND` with an
+  identical body; stages 5–7 are actionable.
+- **The package gate above the role.** A role the package does not permit
+  contributes nothing to the granted set, *and* the result is intersected with
+  what the package entitles. A Manager Plus role on a 25,000₮ hotel therefore
+  fails twice, independently, and the role assignment is refused as well as every
+  action it would have opened.
+- **Migration `0002_iam_rbac_staff`.** The tenant root, accounts, credentials,
+  sessions, the per-hotel session scope, memberships, role grants, invitations and
+  their requested roles, password resets, explicit permission grants, and the
+  IAM-owned work handoff queue with its append-only movement history.
+- **The staff lifecycle.** Invitation create, resend, revoke, inspect and accept;
+  acceptance by a new account with a user-chosen password and by an existing
+  verified account without a second one; role add and remove; suspend, terminate
+  and explicit reactivation with a reason; self-service and Hotel-Admin-initiated
+  password reset; all-device logout; scope-targeted session invalidation.
+- **The handoff queue.** `TAKEOVER_REQUIRED` for a suspended Reception's open
+  shift, reassignment for a Cleaner task or a Restaurant order, a linked
+  `CONTINUATION` where a movement has already posted, and
+  `UNASSIGNED_REQUIRES_ACTION` where no eligible replacement exists.
+
+### Migrations
+
+`0002_iam_rbac_staff.sql`. Thirteen tables, all in the `platform` schema; eight
+tenant-scoped with `ENABLE` and `FORCE ROW LEVEL SECURITY` and five account-scoped
+carrying no tenant column at all. Five transition guards, no `DELETE` grant
+anywhere, and `0001_kernel` unchanged.
+
+### What Phase 04 deliberately did not build
+
+- **No later-phase aggregate.** A Restaurant, a Reception shift, a Cleaner task
+  and a Restaurant order are referenced by an opaque `subject_ref` with no foreign
+  key. Phases 15, 11, 09 and 15 own those tables; the linkage is completed there.
+- **No subscription or billing table.** Subscription state arrives through a
+  typed, fail-closed contract. The production adapter answers nothing, so every
+  hotel action is denied until Phase 05 supplies one.
+- **No production email adapter.** `INT-MAIL-01` stays closed. A typed port and a
+  deterministic simulator exist; the production path refuses, which aborts the
+  command rather than issuing a link nobody received.
+- **No realm-specific login flow beyond the Hotel realm.** Guest, Operation and
+  Police authentication belong to Phases 12, 19 and 18.
+
+### Test gates
+
+Every command below was run on the final tree.
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 114 of 114 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
+| `node tools/scan-secrets.mjs` | 403 indexed files, none reported |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 17 of 17 projects |
+| `pnpm run typecheck` | 27 of 27 graphs |
+| `pnpm run test:unit` | 1 220 across 11 projects |
+| `pnpm run test:migrations` | 138 |
+| `pnpm run test:integration` | 85 — db 41, outbox 5, api 39 |
+| `pnpm run test:concurrency` | 26 — db 16, api 10 |
+| `pnpm run test:regression` | 51 |
+| `pnpm run test:security` | 18 of 18 sub-gates, 629 tests |
+| `pnpm run test:e2e` | 15 |
+| `pnpm run build` | 17 of 17 projects |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | none at high or critical; one moderate, `DSR-01` |
+| `git diff --check` | clean |
+
+### Migration evidence
+
+Fresh install, upgrade from `0001_kernel`, and a repeat application that is a
+no-op, all against real PostgreSQL, with the normalized schema dump compared
+between the fresh and upgraded databases and the live catalogue compared against
+both halves of the declaration.
+
+### Security and concurrency evidence
+
+- **The matrix.** Every row of doc 18 §§3, 5 and 6 is asserted column by column,
+  in every package, including both halves of every `Нэмэлт role` cell: the column
+  refuses the action **and** each role the cell names actually grants it.
+- **Realm and tenant isolation.** A cross-tenant target and a genuinely missing
+  one produce byte-identical bodies. Without a tenant context every IAM table
+  returns zero rows and refuses writes. Under the platform sentinel no tenant row
+  is reachable at all.
+- **Revocation.** A password reset closes every session in every membership; a
+  suspension or a role change closes only the affected hotel's scope and leaves
+  the account's other hotels working; a reactivation never revives a closed one.
+- **Secrets.** No invitation token, reset token, session token or password
+  appears in any IAM table, in the audit stream at any depth, or in the outbox
+  intent. A plaintext password written straight into the credential column is
+  refused by a check constraint.
+- **Concurrency, on real connections released by a barrier.** Two identical
+  invitation creates produce one membership and one live invitation; a
+  termination and a stale acceptance never both apply; a stale membership
+  revision is refused rather than overwriting; two Managers claiming one takeover
+  item produce one claimant and one version bump; two assignments produce one
+  assignee; two continuation attempts produce exactly one linked continuation
+  while the original keeps its actor, its movement and its history; and a
+  suspended actor's retry is refused because authorization is re-read at commit.
+
+### Remaining blockers
+
+- **`INT-MAIL-01`** — no contracted email provider. The port and its simulator
+  exist and the production path fails closed.
+- **The subscription contract** — Phase 05 supplies the authoritative source. Until
+  it does, the production adapter answers nothing and every hotel action is denied.
+- **17 P1 configuration items**, still open. The authentication numbers among them
+  — token TTLs, resend intervals, attempt and rate limits, password cost — are
+  carried in one versioned record stamped onto every artefact derived under it,
+  and are marked `p1-provisional`.
+- **11 EXT gates**, seeded closed; each opens in the phase that needs its provider.
+- **`DSR-01`**, OPEN and contained, with its mandatory review in Phase 23.
+- **Selecting `GATE-SEC` as a required GitHub status check**, an external
+  repository-settings action needing push authorisation. Not attempted.
+

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 import {
   BATTERY_ENTRY_KEYS,
+  GOVERNED_PHASES,
   GOVERNED_STATE,
   MANIFEST_KEYS,
   REQUIRED_BATTERY,
@@ -122,14 +123,27 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
 
   // ---------------------------------------------------------------- parse DECs
   // Traceability rows: | <FAMILY>-DEC-<NNN> | <subject> | <NN> | <STATUS> |
+  //
+  // The evidence columns are optional here because a `PENDING` decision has none
+  // yet: `Code` and `Tests` are appended by the owning phase. What is *not*
+  // optional is that a `COVERED` row carries both — asserted below, so a
+  // decision cannot be declared implemented without naming where.
   const decRowRe =
-    /^\|\s*([A-Z]+-DEC-\d{3})\s*\|\s*([^|]+?)\s*\|\s*(\d{2})\s*\|\s*([A-Z]+)\s*\|\s*$/gm;
-  const decRows = [...traceability.matchAll(decRowRe)].map((m) => ({
-    id: m[1],
-    subject: m[2],
-    phase: Number(m[3]),
-    status: m[4],
-  }));
+    /^\|\s*([A-Z]+-DEC-\d{3})\s*\|\s*([^|]+?)\s*\|\s*(\d{2})\s*\|\s*([A-Z]+)\s*\|(.*)$/gm;
+  const decRows = [...traceability.matchAll(decRowRe)].map((m) => {
+    const evidence = (m[5] ?? '')
+      .replace(/\|\s*$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+    return {
+      id: m[1],
+      subject: m[2],
+      phase: Number(m[3]),
+      status: m[4],
+      code: evidence[0] ?? '',
+      tests: evidence[1] ?? '',
+    };
+  });
 
   // ------------------------------------------------------- parse phase numbers
   const planHeadingPhases = [...buildPlan.matchAll(/^### Phase (\d{2}) — /gm)].map((m) =>
@@ -223,6 +237,22 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       total === EXPECTED_DEC_COUNT,
       `phase load sums to ${total}, expected ${EXPECTED_DEC_COUNT}`,
     );
+    // A decision is `COVERED` only when its owning phase has implemented the
+    // mapped controls and the mapped gates have run against them (§26). A row
+    // that says so without naming the code and the tests is a claim nobody can
+    // check, so both cells must carry something that looks like a path.
+    const covered = decRows.filter((row) => row.status === 'COVERED');
+    for (const row of covered) {
+      assert(
+        /[\w./-]+\.(ts|sql|mjs)/.test(row.code),
+        `${row.id} is COVERED but names no code evidence`,
+      );
+      assert(
+        /[\w./-]+\.(ts|mjs)/.test(row.tests),
+        `${row.id} is COVERED but names no test evidence`,
+      );
+    }
+
     return `${byId.size} DECs, one phase each, load sums to ${total}`;
   });
 
@@ -954,10 +984,11 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // Exactly one ledger table, and exactly one Phase 03 and one Phase 04 row in
     // the whole document. A second, blockquoted ledger declaring Phase 03 `DONE`
     // rendered beside the real one and was never counted.
+    const governedNumbers = GOVERNED_PHASES.map((phase) => phase.number);
     const ledgerTables_ = allTokens.filter(
       (entry) =>
         entry.token.type === 'table' &&
-        (entry.token.rows ?? []).some((row) => ['03', '04'].includes(row[0]?.text.trim())),
+        (entry.token.rows ?? []).some((row) => governedNumbers.includes(row[0]?.text.trim())),
     );
     assert(
       ledgerTables_.length === 1,
@@ -965,7 +996,7 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
         'exactly one',
     );
     const ledgerTable = ledgerTables_[0];
-    for (const phase of ['03', '04']) {
+    for (const phase of governedNumbers) {
       const rows = allTokens
         .filter((entry) => entry.token.type === 'table')
         .flatMap((entry) => entry.token.rows ?? [])
@@ -1287,7 +1318,13 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     // and may not be the authority on what comes after it.
     const EXPECTED_POSITION = new Map([
       ['Current phase', GOVERNED_STATE.currentPhase],
+      // The Phase 03 state comes from the frozen manifest; every other completed
+      // phase comes from the governed state directly. The current phase's own
+      // state is the `Phase state` row below, which may carry prose.
       ['Phase 03 state', `\`${manifest.acceptedPhaseState}\``],
+      ...GOVERNED_PHASES.filter(
+        (phase) => phase.number !== '03' && phase.state !== GOVERNED_STATE.currentPhaseState,
+      ).map((phase) => [`Phase ${phase.number} state`, `\`${phase.state}\``]),
       ['Customer acceptance', `\`${manifest.customerAcceptance}\``],
       ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
@@ -1334,16 +1371,29 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
     const ledgerRow = ledgerRows[0];
     assertRowShapes(ledgerTables[0], 'phase ledger');
     const ledgerText = ledgerRow.map((cell) => cell.text).join(' | ');
-    // The state cell, exactly. A `**DONE**` appended beside the required token
-    // left the token in place and the row saying two things.
     const STATE_COLUMN = ledgerTables[0].header.findIndex((cell) => cell.text.trim() === 'State');
     assert(STATE_COLUMN >= 0, 'the phase ledger has no State column');
-    const phase03State = ledgerRow[STATE_COLUMN].text.trim();
-    assert(
-      phase03State === `\`${manifest.acceptedPhaseState}\``,
-      `the Phase 03 ledger state cell renders ${JSON.stringify(phase03State)}; it must render ` +
-        `exactly \`${manifest.acceptedPhaseState}\``,
-    );
+
+    // Every governed phase's state cell, exactly. A `**DONE**` appended beside
+    // the required token left the token in place and the row saying two things,
+    // and a phase that advanced by editing its own cell is the programme moving
+    // without an authorization.
+    for (const phase of GOVERNED_PHASES) {
+      const rows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === phase.number);
+      assert(
+        rows.length === 1,
+        `the phase ledger holds ${String(rows.length)} Phase ${phase.number} rows; there must be ` +
+          'exactly one',
+      );
+      const expected = phase.number === '03' ? manifest.acceptedPhaseState : phase.state;
+      const rendered = rows[0][STATE_COLUMN].text.trim();
+      assert(
+        rendered === `\`${expected}\``,
+        `the Phase ${phase.number} ledger state cell renders ${JSON.stringify(rendered)}; it must ` +
+          `render exactly \`${expected}\``,
+      );
+    }
+
     const stateTokens = [...ledgerText.matchAll(/`([A-Z_ ]+)`/g)].map((m) => m[1]);
     assert(
       stateTokens.length === 1,
@@ -1367,20 +1417,6 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       anchorLinks.length === 1,
       `the Phase 03 ledger row has ${String(anchorLinks.length)} links whose destination is ` +
         `${ANCHOR}; there must be exactly one`,
-    );
-    // Phase 04 has not started, and the ledger is where that is recorded. It is
-    // the current phase now, and beginning it is a change to
-    // `phase-03-battery.mjs`, not to this row.
-    const nextRows = ledgerTables[0].rows.filter((row) => row[0].text.trim() === '04');
-    assert(
-      nextRows.length === 1,
-      `the phase ledger holds ${String(nextRows.length)} Phase 04 rows; there must be exactly one`,
-    );
-    const phase04State = nextRows[0][STATE_COLUMN].text.trim();
-    assert(
-      phase04State === `\`${GOVERNED_STATE.currentPhaseState}\``,
-      `the Phase 04 ledger state cell renders ${JSON.stringify(phase04State)}; it must render ` +
-        `exactly \`${GOVERNED_STATE.currentPhaseState}\``,
     );
 
     const ledgerOrdinal = new RegExp(`\\b(${ORDINALS.join('|')})\\b`, 'i').exec(ledgerText);

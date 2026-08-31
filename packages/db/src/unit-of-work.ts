@@ -48,6 +48,14 @@ async function applyContext(client: PoolClient, context: TenantContext): Promise
     'app.correlation_id',
     context.correlationId,
   ]);
+  // Empty rather than absent when there is no authenticated account:
+  // `platform.current_account_id()` maps the empty string to NULL, so an
+  // account policy matches nothing instead of matching whatever the previous
+  // transaction on this connection happened to set.
+  await client.query('SELECT set_config($1, $2, true)', [
+    'app.account_id',
+    context.accountId ?? '',
+  ]);
 
   const now = await client.query<{ now: Date }>('SELECT now() AS now');
   const serverNow = now.rows[0]?.now;
@@ -94,7 +102,7 @@ export async function withTenantTransaction<T>(
     // RESET ALL would also drop the connection's role.
     try {
       await client.query(
-        'RESET app.hotel_id; RESET app.realm; RESET app.actor_ref; RESET app.correlation_id',
+        'RESET app.hotel_id; RESET app.realm; RESET app.actor_ref; RESET app.correlation_id; RESET app.account_id',
       );
     } catch {
       // Ignored: the connection is being released either way.
@@ -109,16 +117,22 @@ export async function withTenantTransaction<T>(
  */
 export async function readSessionScope(
   pool: Pool,
-): Promise<{ hotelId: string | null; realm: string | null }> {
+): Promise<{ hotelId: string | null; realm: string | null; accountId: string | null }> {
   const client = await pool.connect();
   try {
-    const result = await client.query<{ hotel_id: string | null; realm: string | null }>(
-      `SELECT nullif(current_setting('app.hotel_id', true), '') AS hotel_id,
-              nullif(current_setting('app.realm', true), '')    AS realm`,
+    const result = await client.query<{
+      hotel_id: string | null;
+      realm: string | null;
+      account_id: string | null;
+    }>(
+      `SELECT nullif(current_setting('app.hotel_id', true), '')   AS hotel_id,
+              nullif(current_setting('app.realm', true), '')      AS realm,
+              nullif(current_setting('app.account_id', true), '') AS account_id`,
     );
     return {
       hotelId: result.rows[0]?.hotel_id ?? null,
       realm: result.rows[0]?.realm ?? null,
+      accountId: result.rows[0]?.account_id ?? null,
     };
   } finally {
     client.release();

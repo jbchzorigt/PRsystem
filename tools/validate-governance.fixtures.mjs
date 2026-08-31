@@ -726,20 +726,36 @@ const FIXTURES = [
   },
   {
     // Starting the next phase is an authorization, not an edit.
-    name: 'current position: the current phase advanced past Phase 04',
+    name: 'current position: the current phase advanced past the governed one',
     file: 'phase-status',
-    expect: /states Current phase = "05 [^"]*"; the governed value is "04 — IAM/,
+    expect: /states Current phase = "06 [^"]*"; the governed value is "05 — Hotel/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |',
         '| Current phase | 05 — Hotel onboarding and subscription |',
+        '| Current phase | 06 — Hotel, room, category, and tariffs |',
       ),
   },
   {
-    name: 'coordinated: Phase 04 no longer NOT STARTED in the ledger',
+    // A completed phase is governed the same way the current one is: the
+    // document may state it and nothing else. Rolling Phase 04 back to NOT
+    // STARTED would erase a phase the programme actually finished.
+    name: 'governed: a completed phase rolled back in the ledger',
     file: 'phase-status',
-    expect: /Phase 04 ledger state cell renders "`IN PROGRESS`"/,
-    mutate: (text) => text.replace(/^(\| 04 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+    expect: /Phase 04 ledger state cell renders "`NOT STARTED`"/,
+    mutate: (text) => text.replace(/^(\| 04 \|[^|]*\| )`DONE`/m, '$1`NOT STARTED`'),
+  },
+  {
+    name: 'governed: a completed phase rolled back in the current position',
+    file: 'phase-status',
+    expect: /states Phase 04 state = "`IN PROGRESS`"; the governed value is "`DONE`"/,
+    mutate: (text) =>
+      text.replace('| Phase 04 state | `DONE` |', '| Phase 04 state | `IN PROGRESS` |'),
+  },
+  {
+    name: 'coordinated: the current phase quietly starts in the ledger',
+    file: 'phase-status',
+    expect: /Phase 05 ledger state cell renders "`IN PROGRESS`"/,
+    mutate: (text) => text.replace(/^(\| 05 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
   },
   {
     name: 'coordinated: one repair removed from the manifest and the history',
@@ -925,8 +941,8 @@ const FIXTURES = [
     expect: /raw HTML is not an approved boundary marker: <div>/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |',
-        '| Current phase | 04 — IAM, tenancy, RBAC, and staff lifecycle |\n\n<div>raw</div>\n',
+        '| Current phase | 05 — Hotel onboarding and subscription |',
+        '| Current phase | 05 — Hotel onboarding and subscription |\n\n<div>raw</div>\n',
       ),
   },
   {
