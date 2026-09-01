@@ -1358,6 +1358,9 @@ export function runGovernanceChecks({ root, runbookPath, phaseStatusPath, manife
       // Phase 04's own acceptance, distinct from its ledger state: a repaired
       // phase whose battery is green is still a phase nobody has accepted.
       ['Phase 04 acceptance', `\`${GOVERNED_STATE.completedPhaseAcceptance}\``],
+      // Phase 05's own, which is not the same fact: it is implemented and gated
+      // and nobody has taken it.
+      ['Phase 05 acceptance', `\`${GOVERNED_STATE.implementedPhaseAcceptance}\``],
       // And the one commit it was accepted at. Without this row the acceptance
       // was a token with no tree behind it: it could have been read as covering
       // whatever HEAD happened to be.

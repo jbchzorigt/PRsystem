@@ -403,17 +403,23 @@ No procedure here removes an unrelated container, database or volume.
 
 ### GATE-SEC sub-gate catalogue
 
-`GATE-SEC` (`pnpm run test:security`) aggregates **eighteen** sub-gates:
+`GATE-SEC` (`pnpm run test:security`) aggregates **nineteen** sub-gates:
 
 `SEC-ROLE`, `SEC-RLS`, `SEC-ACL-MATRIX`, `SEC-OWNERSHIP`, `SEC-LOCK-EVIDENCE`,
 `SEC-POOL-ERRORS`, `SEC-BOOTSTRAP`, `SEC-SCHEDULER`, `SEC-MAINTENANCE`,
 `SEC-STARTUP`, `SEC-STARTUP-WORKER`, `SEC-REGRESSION`, `SEC-AUDIT`,
 `SEC-PARTITION`, `SEC-POLICE-ISOLATION`, `SEC-KMS`, `SEC-PII-LEAK`,
-`SEC-SECRETS`.
+`SEC-ONBOARDING-ISOLATION`, `SEC-SECRETS`.
+
+`SEC-ONBOARDING-ISOLATION` is Phase 05's: an onboarding application exists before
+any tenant does, so it is isolated by a reference rather than by `hotel_id`, and
+that reference — plus the rule that no plaintext registration number, one-time
+code or activation token reaches a row, an audit record or an outbox payload —
+is what this sub-gate holds.
 
 This list is the one in `tools/gate-sec-config.mjs`; `validate-governance`
 compares the two and fails if they drift, because a catalogue that lists eight of
-eighteen reads as a complete gate and is not one.
+nineteen reads as a complete gate and is not one.
 
 It fails closed on an unavailable database, a skipped suite, a sub-gate that ran
 zero tests, or a missing artefact.

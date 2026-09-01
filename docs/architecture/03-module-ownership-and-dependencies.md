@@ -9,18 +9,35 @@ breaking the boundary rule in [CLAUDE.md](../../CLAUDE.md) §3.
 
 Each module owns its tables exclusively. No other module may read or write them directly.
 
+Two rows carry a bracketed earlier phase. That is a **table** introduced before its owning module,
+because an invariant somewhere else requires it to exist, and it means exactly what it says: the
+table is created early with only the columns that invariant needs, and the owning module still owns
+the aggregate.
+
+- `cash location` is created in Phase 05. doc 24 §2.1 requires exactly one `Үндсэн касс` to exist
+  when a hotel's subscription activates, and that has to happen inside the provisioning transaction
+  or it is not an invariant at all. What Phase 05 introduces is the location root alone — kind, name,
+  code, state, and the index that makes a second default drawer impossible. Shifts, movements,
+  balances, transfers, expenses and safes are Phase 11's, and the table has no column for any of
+  them.
+- `hotel profile` and `hotel location` are created in Phase 05, for the same reason: doc 15 §2.1's
+  public name, contact and coordinate are captured on the application and have to be written with the
+  tenant they belong to. They are one table, `platform.hotel_profile`, holding the submitted values
+  as integer micro-degrees plus the publication axis of doc 15 §6. No geocoding, no distance and no
+  discovery — `GeoPort` and the public portal are Phase 12, behind EXT-06.
+
 | Module | Owns (aggregates) | Introduced in phase |
 | --- | --- | --- |
 | `kernel` | audit event, outbox, idempotency key, session, auth epoch, config version | 03 |
 | `iam` | user account, credential, hotel membership, restaurant membership, role grant, invitation, permission grant | 04 |
-| `tenancy` | hotel, hotel profile, hotel location, package entitlement projection | 04 |
+| `tenancy` | hotel, hotel profile, hotel location, package entitlement projection | 04 (profile and location: 05) |
 | `subscription` | onboarding application, subscription owner, subscription, billing intent, payment attempt, reconciliation case, eBarimt receipt | 05 |
 | `catalog` | room category, room, tariff (hotel/category/room × hourly/nightly), cleaning buffer config, deposit config, entity lifecycle state | 06 |
 | `minibar` | product, stock location, stock movement, weighted-average cost, template entity, template version, room configuration, configuration request, rollout batch, rollout child | 07 |
 | `stay` | guest identity, stay, stay price book, occupancy interval, actual-time amendment, readiness state, overdue conflict | 08 |
 | `housekeeping` | cleaning task, minibar inspection task, minibar report version, refill request, dispute | 09 |
 | `folio` | folio, charge line, payment, deposit aggregate, deposit movement, refund request, financial correction | 10 |
-| `cash` | cash location, drawer shift, cash movement, transfer, expense request, expense payment | 11 |
+| `cash` | cash location, drawer shift, cash movement, transfer, expense request, expense payment | 11 (cash location root: 05) |
 | `discovery` | public listing projection, search index projection | 12 |
 | `booking` | booking, inventory hold, booking price snapshot, cancellation, no-show | 13 |
 | `settlement` | booking payment, commission, hotel payable, provider fee, refund, payout batch, adjustment | 14 |

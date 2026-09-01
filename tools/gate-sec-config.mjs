@@ -160,6 +160,17 @@ export const SUB_GATES = [
     artefacts: ['packages/db/src/integration/leakage.test.ts'],
   },
   {
+    id: 'SEC-ONBOARDING-ISOLATION',
+    what: 'pre-tenant isolation and no plaintext identifier, code or activation token',
+    filter: '@prsystem/api',
+    suite: 'src/modules/onboarding/onboarding.security.test.ts',
+    needsDatabase: true,
+    artefacts: [
+      'apps/api/src/modules/onboarding/onboarding.security.test.ts',
+      'packages/db/migrations/0003_onboarding_subscription.sql',
+    ],
+  },
+  {
     id: 'SEC-SECRETS',
     what: 'no committed secret and no EXT register drift',
     filter: '@prsystem/db',

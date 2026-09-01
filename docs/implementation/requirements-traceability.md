@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.14 (Phase 04 remediation 4 — the 26 decisions stay `COVERED`; the evidence now
-includes the lock-order, terminal-state, intake-binding and expiry regressions)
+**Version:** 1.15 (Phase 05 — hotel onboarding and subscription; 26 further decisions move to
+`COVERED`, bringing the total to 52 of 279)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -191,9 +191,12 @@ artefacts below are the traceable output.
 
 Phases 02 and 03 introduce no DEC coverage; every one of the 279 decisions was still `PENDING` after
 them. Phase 04 is the first phase to move a decision to `COVERED`, and it moves twenty-six: the
-seventeen `RBAC-DEC` rows of §16 and the nine `STAFF-DEC` rows of §17. Every one of them names the
-code that implements it and the tests that ran against it, and `validate-governance` check 3 refuses a
-`COVERED` row that names neither.
+seventeen `RBAC-DEC` rows of §16 and the nine `STAFF-DEC` rows of §17.
+
+Phase 05 moves a further twenty-six: the eight `ONB-DEC` rows of §13, the nine `SUB-DEC` rows of
+§14, the seven `LIFE-DEC` rows of §15, and `OPS-DEC-006` and `OPS-DEC-007` in §12 — fifty-two of the
+279 in total. Every one of them names the code that implements it and the tests that ran against it,
+and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ---
 
@@ -375,65 +378,65 @@ code that implements it and the tests that ran against it, and `validate-governa
 
 ## 12. OPS-DEC — Operation dashboard (doc 14, 18)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| OPS-DEC-001 | Dashboard purpose | 19 | PENDING |
-| OPS-DEC-002 | SMS reminder tab | 19 | PENDING |
-| OPS-DEC-003 | CallPro as SMS provider | 19 | PENDING |
-| OPS-DEC-004 | One-way SMS | 19 | PENDING |
-| OPS-DEC-005 | Seven-day expiring-soon threshold | 19 | PENDING |
-| OPS-DEC-006 | Subscription start and expiry computation | 05 | PENDING |
-| OPS-DEC-007 | Renewal period computation with grace | 05 | PENDING |
-| OPS-DEC-008 | Operation-initiated password reset | 19 | PENDING |
-| OPS-DEC-009 | Inaccessible-email recovery boundary | 19 | PENDING |
-| OPS-DEC-010 | Manual-only SMS sending | 19 | PENDING |
-| OPS-DEC-011 | Subscription list columns and default order | 19 | PENDING |
-| OPS-DEC-012 | Subscription list filters and search | 19 | PENDING |
-| OPS-DEC-013 | Application versus Hotel KPI boundary | 19 | PENDING |
-| OPS-DEC-014 | KPI formulas and card filters | 19 | PENDING |
-| OPS-DEC-015 | Operation security and contact change | 19 | PENDING |
-| OPS-DEC-016 | Subscription state and suspension | 19 | PENDING |
-| OPS-DEC-017 | Paid reconciliation permission and outcomes | 19 | PENDING |
-| OPS-DEC-018 | Provisioning retry and recovery permissions | 19 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| OPS-DEC-001 | Dashboard purpose | 19 | PENDING | — | — |
+| OPS-DEC-002 | SMS reminder tab | 19 | PENDING | — | — |
+| OPS-DEC-003 | CallPro as SMS provider | 19 | PENDING | — | — |
+| OPS-DEC-004 | One-way SMS | 19 | PENDING | — | — |
+| OPS-DEC-005 | Seven-day expiring-soon threshold | 19 | PENDING | — | — |
+| OPS-DEC-006 | Subscription start and expiry computation | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `packages/db/migrations/0003_onboarding_subscription.sql`, `apps/api/src/modules/onboarding/services/provisioning.service.ts` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| OPS-DEC-007 | Renewal period computation with grace | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| OPS-DEC-008 | Operation-initiated password reset | 19 | PENDING | — | — |
+| OPS-DEC-009 | Inaccessible-email recovery boundary | 19 | PENDING | — | — |
+| OPS-DEC-010 | Manual-only SMS sending | 19 | PENDING | — | — |
+| OPS-DEC-011 | Subscription list columns and default order | 19 | PENDING | — | — |
+| OPS-DEC-012 | Subscription list filters and search | 19 | PENDING | — | — |
+| OPS-DEC-013 | Application versus Hotel KPI boundary | 19 | PENDING | — | — |
+| OPS-DEC-014 | KPI formulas and card filters | 19 | PENDING | — | — |
+| OPS-DEC-015 | Operation security and contact change | 19 | PENDING | — | — |
+| OPS-DEC-016 | Subscription state and suspension | 19 | PENDING | — | — |
+| OPS-DEC-017 | Paid reconciliation permission and outcomes | 19 | PENDING | — | — |
+| OPS-DEC-018 | Provisioning retry and recovery permissions | 19 | PENDING | — | — |
 
 ## 13. ONB-DEC — Onboarding (doc 15, 8)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| ONB-DEC-001 | Payment-gated activation | 05 | PENDING |
-| ONB-DEC-002 | Citizen versus organization registration type | 05 | PENDING |
-| ONB-DEC-003 | Initial Hotel Admin activation link | 05 | PENDING |
-| ONB-DEC-004 | Mandatory registration fields | 05 | PENDING |
-| ONB-DEC-005 | Ownership and duplication rules | 05 | PENDING |
-| ONB-DEC-006 | Durable idempotent provisioning | 05 | PENDING |
-| ONB-DEC-007 | Existing account and owner proof, canonical state | 05 | PENDING |
-| ONB-DEC-008 | Payment retry, late and duplicate success | 05 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| ONB-DEC-001 | Payment-gated activation | 05 | COVERED | `packages/db/migrations/0003_onboarding_subscription.sql`, `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `apps/api/src/modules/onboarding/services/onboarding.service.ts` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.security.test.ts`, `apps/api/src/modules/onboarding/onboarding.concurrency.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
+| ONB-DEC-002 | Citizen versus organization registration type | 05 | COVERED | `apps/api/src/modules/onboarding/services/onboarding.service.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts` |
+| ONB-DEC-003 | Initial Hotel Admin activation link | 05 | COVERED | `apps/api/src/modules/onboarding/services/activation.service.ts`, `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.security.test.ts` |
+| ONB-DEC-004 | Mandatory registration fields | 05 | COVERED | `apps/api/src/modules/onboarding/services/onboarding.service.ts`, `apps/api/src/modules/onboarding/contracts/phone-verification.port.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.security.test.ts` |
+| ONB-DEC-005 | Ownership and duplication rules | 05 | COVERED | `apps/api/src/modules/onboarding/services/onboarding.service.ts`, `apps/api/src/modules/onboarding/repositories/onboarding.repository.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.security.test.ts` |
+| ONB-DEC-006 | Durable idempotent provisioning | 05 | COVERED | `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.concurrency.test.ts` |
+| ONB-DEC-007 | Existing account and owner proof, canonical state | 05 | COVERED | `apps/api/src/modules/onboarding/services/onboarding.service.ts`, `apps/api/src/modules/onboarding/repositories/onboarding.repository.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.security.test.ts` |
+| ONB-DEC-008 | Payment retry, late and duplicate success | 05 | COVERED | `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `apps/api/src/modules/onboarding/repositories/onboarding.repository.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.concurrency.test.ts` |
 
 ## 14. SUB-DEC — Subscription pricing (doc 16, 9)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| SUB-DEC-001 | Monthly base price | 05 | PENDING |
-| SUB-DEC-002 | Term total equals monthly price times months | 05 | PENDING |
-| SUB-DEC-003 | No MVP discounts | 05 | PENDING |
-| SUB-DEC-004 | QPay and Khaan Bank subscription gateways | 05 | PENDING |
-| SUB-DEC-005 | eBarimt per confirmed payment | 05 | PENDING |
-| SUB-DEC-006 | VAT-inclusive final price | 05 | PENDING |
-| SUB-DEC-007 | Gateway provider fee borne by the platform | 05 | PENDING |
-| SUB-DEC-008 | Operator flow when eBarimt fails | 05 | PENDING |
-| SUB-DEC-009 | Subscription payments are non-refundable | 05 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| SUB-DEC-001 | Monthly base price | 05 | COVERED | `apps/api/src/modules/onboarding/domain/pricing.ts`, `packages/authz/src/packages.ts` | `apps/api/src/modules/onboarding/domain/pricing.test.ts`, `apps/api/src/modules/onboarding/onboarding.integration.test.ts` |
+| SUB-DEC-002 | Term total equals monthly price times months | 05 | COVERED | `apps/api/src/modules/onboarding/domain/pricing.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/domain/pricing.test.ts`, `apps/api/src/modules/onboarding/onboarding.integration.test.ts` |
+| SUB-DEC-003 | No MVP discounts | 05 | COVERED | `apps/api/src/modules/onboarding/domain/pricing.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/domain/pricing.test.ts` |
+| SUB-DEC-004 | QPay and Khaan Bank subscription gateways | 05 | COVERED | `apps/api/src/modules/onboarding/contracts/payment-gateway.port.ts`, `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts` | `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.concurrency.test.ts` |
+| SUB-DEC-005 | eBarimt per confirmed payment | 05 | COVERED | `apps/api/src/modules/onboarding/services/ebarimt.service.ts`, `apps/api/src/modules/onboarding/contracts/ebarimt.port.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| SUB-DEC-006 | VAT-inclusive final price | 05 | COVERED | `apps/api/src/modules/onboarding/domain/pricing.ts`, `apps/api/src/modules/onboarding/contracts/onboarding-parameters.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/domain/pricing.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| SUB-DEC-007 | Gateway provider fee borne by the platform | 05 | COVERED | `packages/db/migrations/0003_onboarding_subscription.sql`, `apps/api/src/modules/onboarding/repositories/subscription.repository.ts` | `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| SUB-DEC-008 | Operator flow when eBarimt fails | 05 | COVERED | `apps/api/src/modules/onboarding/services/ebarimt.service.ts`, `apps/api/src/modules/onboarding/http/subscription.controller.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| SUB-DEC-009 | Subscription payments are non-refundable | 05 | COVERED | `packages/db/migrations/0003_onboarding_subscription.sql`, `apps/api/src/modules/onboarding/http/subscription.controller.ts` | `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
 
 ## 15. LIFE-DEC — Subscription lifecycle (doc 17, 7)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| LIFE-DEC-001 | Upgrade only, no downgrade | 05 | PENDING |
-| LIFE-DEC-002 | Upgrade price and effective moment | 05 | PENDING |
-| LIFE-DEC-003 | Expiry hard lock after the 48-hour grace | 05 | PENDING |
-| LIFE-DEC-004 | Public listing hidden after grace | 05 | PENDING |
-| LIFE-DEC-005 | Renewal inside the grace period | 05 | PENDING |
-| LIFE-DEC-006 | Paid pending upgrade and renewal serialization | 05 | PENDING |
-| LIFE-DEC-007 | Higher renewal, boundary race, reconciliation owner | 05 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| LIFE-DEC-001 | Upgrade only, no downgrade | 05 | COVERED | `apps/api/src/modules/onboarding/domain/pricing.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/domain/pricing.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| LIFE-DEC-002 | Upgrade price and effective moment | 05 | COVERED | `apps/api/src/modules/onboarding/domain/pricing.ts`, `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts` | `apps/api/src/modules/onboarding/domain/pricing.test.ts`, `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| LIFE-DEC-003 | Expiry hard lock after the 48-hour grace | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/contracts/subscription-state.adapter.ts`, `packages/authz/src/subscription.ts` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| LIFE-DEC-004 | Public listing hidden after grace | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| LIFE-DEC-005 | Renewal inside the grace period | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| LIFE-DEC-006 | Paid pending upgrade and renewal serialization | 05 | COVERED | `apps/api/src/modules/onboarding/services/subscription.service.ts`, `apps/api/src/modules/onboarding/repositories/subscription.repository.ts`, `packages/db/migrations/0003_onboarding_subscription.sql` | `apps/api/src/modules/onboarding/subscription.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.concurrency.test.ts` |
+| LIFE-DEC-007 | Higher renewal, boundary race, reconciliation owner | 05 | COVERED | `apps/api/src/modules/onboarding/services/subscription.service.ts`, `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/repositories/subscription.repository.ts` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.concurrency.test.ts` |
 
 ## 16. RBAC-DEC — Permission matrix (doc 18, 17)
 

@@ -33,15 +33,15 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | --- | --- | --- | --- | --- | --- |
 | EXT-01 | XYP / ХУР | Identity verification at check-in and Wanted-record creation | **BLOCKED** | 08 | 20 |
 | EXT-02 | e-Mongolia | Guest registration and login channel | **BLOCKED** | 12 | 20 |
-| EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 | 20 |
-| EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 | 20 |
+| EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 — port and simulator shipped | 20 |
+| EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — port and simulator shipped | 20 |
 | EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 | 20 |
 | EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 | 20 |
 | EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 | 20 |
 | EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 | 20 |
 | EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 | 20 |
 | EXT-10 | Police security | Human-rights and security assessment, DR, penetration test | **BLOCKED** | 18 | 20 |
-| EXT-11 | eBarimt | Subscription tax receipts | **BLOCKED** | 05 | 20 |
+| EXT-11 | eBarimt | Subscription tax receipts | **BLOCKED** | 05 — port and simulator shipped | 20 |
 
 All eleven gates are **production release gates**. None blocks development in Phases 01–19.
 
@@ -246,7 +246,8 @@ payment references, and never mark a receipt as sent before official issuance.
 | --- | --- | --- | --- |
 | Email delivery provider | `ONB-DEC-003`, `STAFF-DEC-001`, `OPS-DEC-008` | Activation, invitation, reset and eBarimt delivery all use email; provider, delivery-status semantics and TTLs are P1-15 configuration | 20 |
 | S3-compatible object storage | `GUEST-DEC-007`, doc 13 §12.3 | Private buckets, one-hour export TTL, five-minute signed URLs, encrypted temporary Police export files | 20 |
-| Tax and VAT treatment | P1-11 | The ledger carries tax fields; official accounting treatment awaits an accountant or tax adviser | 23 |
+| Tax and VAT treatment | P1-11 | The ledger carries tax fields; official accounting treatment awaits an accountant or tax adviser. Phase 05 stamps a `taxConfigVersion` of `p1-provisional-tax-2026-08` onto every quote and payment, so the rate a figure was computed under is recorded rather than assumed | 23 |
+| Phone one-time-password provider (`INT-OTP-01`) | `ONB-DEC-004`, doc 15 §2.1 | doc 15 requires the citizen's or representative's phone to be OTP-verified before an invoice exists, and **no OTP provider is contracted**. CallPro is EXT-05 and is an SMS *send* contract, not an OTP service, so reading it as covering this would be inventing an approved capability. Phase 05 ships the typed port and a deterministic simulator; the production adapter does not exist and the port fails closed outside local, CI and test | 20 |
 
 ---
 

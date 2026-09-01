@@ -268,6 +268,33 @@ of them is a customer-approved value.
 | 4 | "The provider failed" and "the provider sent it and the acknowledgement was lost" are indistinguishable to a sender, and only the second must not produce a second message. | **They are the same retry, made safe by identity rather than by detection.** The sender recovers the same intent and the same delivery id, and the provider recognises the repeat. The simulator gained a mode that records and then throws, so the case is exercised rather than assumed. |
 | 5 | A recorded intent can outlive its own TTL before a provider ever accepts it. | **Expiry is checked on the database clock before the secret is decrypted.** An expired intent is terminalised with its sealed secret destroyed and replaced for the same intake while retry budget remains, and dead-lettered when it does not. Four database rules keep the secret complete, destroy-only, and absent from every delivered or terminal row. |
 
+### 3.9 Phase 05 scope alignments — approved requirements, implemented
+
+Three alignments of already-approved requirements. None is a new business
+decision, and none reopens an approved DEC.
+
+| # | Alignment | Reading, and what was implemented |
+| --- | --- | --- |
+| 1 | **Phone OTP.** doc 15 §2.1 makes an OTP-verified phone a precondition of the invoice; the early-port table places phone OTP in Phase 12. | Only the **reusable typed port and its deterministic simulator** moved forward. Guest registration and Guest authentication stay Phase 12 and nothing here touches either. CallPro is **not** assumed to carry it: EXT-05 is an SMS *send* contract, not an OTP service, so the capability has its own blocked production control, `INT-OTP-01`, and the adapter fails closed outside local, CI and test. The code itself is a purpose- and subject-bound keyed digest with an attempt budget on the row — never plaintext. |
+| 2 | **Hotel location.** doc 15 §2.1 requires the district, khoroo, address and map coordinate to be captured and stored server-side. | Persisted and validated, as **integer micro-degrees** rather than floating point (CLAUDE.md §5), with range constraints in the database. No `GeoPort`, no Google Maps geocoding, no distance calculation and no public discovery: those stay Phase 12 behind EXT-06. The duplicate-review flag of doc 15 §5.1 asks the narrower question integer coordinates can answer — same name within a very short distance, or the same district and address — and never approximates a geocoder. |
+| 3 | **Default drawer.** doc 24 §2.1 requires exactly one `Үндсэн касс` when a hotel's subscription activates. | Created inside the provisioning transaction, so it commits with the tenant or not at all. Only the **cash-location root** was introduced: kind, name, code, state and the single-default index. No shifts, movements, balances, expenses, safes or cash APIs — those are Phase 11 — and the table carries no column for any of them. The early introduction is recorded in the implementation architecture documents. |
+
+Two further notes, recorded here rather than left implied:
+
+- **`prsystem_maintenance_fn` is reused as the provisioning definer.** It is the
+  established narrow, NOLOGIN owner of the D-09 wrappers, and the alternative was
+  a new cluster role rippling into bootstrap, the principal guards, the role
+  closure assertion and the runbook. What the boundary actually guarantees is
+  unchanged: no runtime holds INSERT on the tenant root, the wrapper re-derives
+  the payment, the state and the owner from the rows it locks, and it is not
+  exempt from row level security — it binds the new tenant's scope and every row
+  it writes has to satisfy the ordinary policy.
+- **The scheduled invokers remain open.** Phase 05 implements the service-month
+  boundary operation, the activation-delivery drain and the eBarimt issuance
+  drain, and registers their queue names. What invokes them on a cadence is the
+  scheduler work assigned to a later phase, exactly as the Phase 04
+  password-reset drain was left.
+
 ---
 
 ## 4. P1 configuration register

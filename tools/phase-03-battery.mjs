@@ -90,7 +90,18 @@ export const GOVERNED_STATE = {
    * copied SHA would have made one acceptance stand in for the other.
    */
   completedPhaseAcceptedAtCommit: 'e5fcf19c4164c72106b6d2408f460751ad30685f',
-  currentPhase: '05 — Hotel onboarding and subscription',
+  /**
+   * The phase implemented most recently, and its own acceptance.
+   *
+   * Phase 05 was authorized, implemented and gated; it has **not** been
+   * accepted. The two facts stay separate and are recorded separately, exactly
+   * as Phase 04's were: `DONE` says the work is finished and measured, and only
+   * a customer decision — a change to this module — can say more than that.
+   */
+  implementedPhase: '05 — Hotel onboarding and subscription',
+  implementedPhaseState: 'DONE',
+  implementedPhaseAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+  currentPhase: '06 — Hotel, room, category, and tariffs',
   currentPhaseState: 'NOT STARTED',
 };
 
@@ -104,7 +115,12 @@ export const GOVERNED_STATE = {
 export const GOVERNED_PHASES = [
   { number: '03', name: GOVERNED_STATE.acceptedPhase, state: GOVERNED_STATE.acceptedPhaseState },
   { number: '04', name: GOVERNED_STATE.completedPhase, state: GOVERNED_STATE.completedPhaseState },
-  { number: '05', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
+  {
+    number: '05',
+    name: GOVERNED_STATE.implementedPhase,
+    state: GOVERNED_STATE.implementedPhaseState,
+  },
+  { number: '06', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
 ];
 
 /** The manifest's exact key set. Anything else is an unreviewed addition. */

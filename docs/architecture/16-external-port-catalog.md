@@ -233,3 +233,21 @@ feature in production rather than defaulting it.
 they follow the same port discipline, ship simulators, and have production implementations delivered
 in Phase 20. `KeyManagementPort` is required from Phase 03, because identifier ciphertext and lookup
 tokens exist from the first migration that stores an identifier.
+
+Two more sit outside the EXT namespace for the same reason, both first needed in Phase 05:
+
+| Port | Control | Earliest port phase | Adapter phase |
+| --- | --- | :---: | :---: |
+| `StaffNotificationPort` | `INT-MAIL-01` | 04 | 20 |
+| `PhoneVerificationPort` | `INT-OTP-01` | 05 | 20 |
+
+`PhoneVerificationPort` deserves its own note. doc 15 §2.1 requires the citizen's or
+representative's phone to be OTP-verified before an invoice exists, and **no OTP provider is
+contracted**. CallPro is EXT-05 and is an SMS *send* contract, not an OTP service — reading it as
+covering this would be inventing an approved capability — so the control is its own,
+`INT-OTP-01`, and the production adapter does not exist. The port is deliberately reusable: Phase 12
+needs phone verification for Guest registration and will take this port rather than a second one.
+
+The one-time code never reaches storage. It is minted, digested with a purpose- and subject-bound
+keyed HMAC, and handed to the port in plaintext only for the duration of the delivery call — the same
+discipline every other one-time secret on this platform follows (ADR-0020 §6, CLAUDE.md §8).

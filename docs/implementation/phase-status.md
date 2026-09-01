@@ -14,12 +14,14 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 05 — Hotel onboarding and subscription |
+| Current phase | 06 — Hotel, room, category, and tariffs |
 | Phase state | `NOT STARTED` — implementation requires explicit authorization to begin |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
+| Phase 05 state | `DONE` |
 | Phase 04 acceptance | `ACCEPTED` |
 | Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |
+| Phase 05 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -37,7 +39,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
-| 05 | Hotel onboarding and subscription | `NOT STARTED` | — | — | — |
+| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription` | the Phase 05 battery — counts in [Phase 05 record](#phase-05-record) | see the Phase 05 record |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
@@ -2388,3 +2390,258 @@ including the reset lease, retry and dead-letter numbers; 11 EXT gates seeded
 closed; `DSR-01` OPEN and contained with its Phase 23 review; `GATE-SEC` as a
 required GitHub status check, needing push authorisation and not attempted; and
 the scheduled invokers for the reset drain and the discovery reconciliation.
+
+---
+
+## Phase 05 record
+
+Hotel onboarding and subscription. Authorized, implemented and gated on top of
+the accepted Phase 04 commit `e5fcf19`. Phase 05 is `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`; Phase 06 is the current phase and has **not**
+started.
+
+**Decisions closed:** the 26 this phase owns — `ONB-DEC-001`…`008`,
+`SUB-DEC-001`…`009`, `LIFE-DEC-001`…`007`, `OPS-DEC-006` and `OPS-DEC-007`. With
+Phase 04's 26, 52 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+**Onboarding.** Citizen and organization applications with every required field
+of doc 15 §2.1 and §2.2, validated server-side and refused as a shape rather than
+patched. The owner's registration number is envelope-encrypted under its own key
+scope, and exact lookup goes through a versioned, type- and country-namespaced
+keyed HMAC — never the plaintext and never an unkeyed digest, because a
+registration-number space is small enough to enumerate. One owner may hold many
+hotels; each hotel gets its own tenant, payment and subscription. The canonical
+application state machine of §7 is implemented exactly, in a database trigger as
+well as in the service, so no path — including a direct statement — can produce a
+transition the document does not list.
+
+**The pre-tenant isolation model.** An application exists before any tenant does,
+so it carries no `hotel_id` at all. There is no nullable tenant column, no
+platform sentinel standing in for one, and no broad runtime grant. The isolation
+is `app.onboarding_ref`, a transaction-local reference established only after the
+applicant presents the bearer secret their own draft was minted with, plus an
+explicit Operation-realm review policy. Unset, the reference is NULL and every
+onboarding policy matches zero rows — the absence of a scope is nothing, not
+everything. Classified `PRE_TENANT_ISOLATED`, and the classification checker
+holds it to no tenant column, forced RLS, and policies actually being present.
+
+**Pricing and payment.** The three monthly prices and the four terms, total =
+monthly × months, discount structurally zero, VAT-inclusive with the tax taken
+out of the price rather than added on top, and the provider fee recorded beside
+the gross as the platform's cost. Every amount is integer MNT and the VAT split
+is integer half-up arithmetic — no float and no numeric cast anywhere near
+money. Price, tax-configuration, package-feature, term, currency, provider and
+confirmation snapshots are immutable, enforced by a guard rather than by
+convention. One active payment attempt per application and one live billing
+intent per subscription, both by partial unique index. The first valid confirmed
+payment wins under a row lock; every later or duplicate capture becomes a
+reconciliation case. QPay and Khaan Bank share one provider-neutral model.
+
+**Durable provisioning.** The payment success is made immutable first. Then one
+logical job builds the tenant, the owner link, the subscription, the Primary
+Hotel Admin membership and the default `Үндсэн касс` drawer in a single
+transaction, through `platform.provision_paid_hotel`. No runtime holds INSERT on
+any of those tables; the wrapper belongs to the established narrow, NOLOGIN
+definer owner and re-derives the payment, the state, the terms and the owner from
+the rows it locks. It is **not** exempt from row level security: it mints the
+tenant id, binds the scope to it, and every row it writes has to satisfy the
+ordinary tenant policy — which is what proves the graph it built belongs to the
+hotel it created. `PROVISIONING_FAILED` is recorded in a transaction of its own,
+outside the one that rolled back. Five automatic attempts, then
+`ONBOARDING_PROVISION_RETRY`; a retry takes no parameters at all, so there is
+nothing an operator could pass that would change the payment, the owner, the
+package, the term, the amount, `starts_at` or `expires_at`.
+
+**Activation.** A new Hotel Admin gets one single-use link, minted outside the
+database, stored as a digest, sealed as ciphertext bound to its own row, and
+delivered by a leased queue so an email outage costs a retry rather than a
+rolled-back hotel. The account is created without a credential and cannot sign
+in until the link is redeemed. A proved existing active account gets no link, no
+token, no delivery row and no second account. Phase 04's account, credential,
+membership, token, notification and session lifecycle is reused throughout;
+there is no second password or session model.
+
+**Subscription lifecycle.** The Phase 04 fail-closed port is replaced by a
+database-backed `SubscriptionStatePort` that reads the authoritative row at
+request time — never a projection — and still answers `undefined` for a hotel
+that was never provisioned. `starts_at` is the confirmed payment instant; expiry
+adds calendar months in `Asia/Ulaanbaatar` with end-of-month clamping that does
+not carry forward. `ACTIVE`, `EXPIRING_SOON` at 168 hours, `GRACE` for 48,
+`EXPIRED` after, and suspension above all of them. Renewal continues from the
+existing expiry before expiry and inside grace, and restarts at confirmation
+after it. Upgrade-only floor, service-month boundary, incremental second
+upgrade, higher-package renewal, monotonic `billing_revision`, and a boundary
+worker that takes the same lock and the same compare-and-set a callback takes.
+
+**eBarimt and reconciliation.** One issuance intent per confirmed payment, a
+typed port with a deterministic simulator, a leased retry queue, a manual
+resolution queue, and `SUBSCRIPTION_EBARIMT_RETRY`. Receipt fields arrive from
+the port together or not at all; the database refuses a partial set and refuses
+to rewrite a complete one, and the retry API takes no receipt parameters — so
+the flow doc 16 §4.1 forbids has no surface to happen through. Email goes out
+only after the receipt officially exists. `PAID_REQUIRES_RECONCILIATION` is
+closed by `SUBSCRIPTION_PAYMENT_RECONCILE` with an outcome, an account and a
+reason, and there is no parameter for a package, a term, an entitlement,
+`starts_at` or `expires_at`.
+
+### Changed file groups
+
+- **Migration:** `packages/db/migrations/0003_onboarding_subscription.sql`, plus
+  the journal entry.
+- **Schema contract:** `packages/db/src/schema.ts`,
+  `packages/db/src/schema-snapshot.ts`, `packages/db/src/classification.ts`,
+  `packages/db/src/classification-check.ts`,
+  `packages/db/src/ownership-manifest.ts`,
+  `packages/db/src/test-support/tenant-rows.ts`, and the new frozen Phase 04
+  artefact under `packages/db/src/test-support/frozen-phase-04/`.
+- **Kernel:** `packages/db/src/tenant-context.ts`,
+  `packages/db/src/unit-of-work.ts` gained the pre-tenant scope axis.
+- **Ports:** `packages/ports/src/key-management.port.ts` gained one key scope and
+  three HMAC scopes.
+- **Domain:** `apps/api/src/modules/onboarding/` — contracts, domain, repositories,
+  services, HTTP and test support.
+- **Wiring:** `apps/api/src/app.module.ts`, `apps/api/src/bootstrap.ts`,
+  `apps/api/src/openapi.ts`, `apps/worker/src/queues.ts`.
+- **Phase 04 suites re-pointed at the authoritative source:**
+  `apps/api/src/modules/iam/test-support/iam-harness.ts` and the five suites that
+  boot the real application, plus `packages/db/src/security/sec-scheduler.test.ts`
+  and `packages/db/src/security/sec-partition.test.ts`.
+- **Governance:** traceability, this document, assumptions and conflicts,
+  external gates, the port catalog, module ownership, the runbook sub-gate
+  catalogue, `tools/phase-03-battery.mjs`, `tools/governance-checks.mjs`,
+  `tools/gate-sec-config.mjs` and the governance fixtures.
+
+### Migrations
+
+`0003_onboarding_subscription.sql`, forward-only. `0000_baseline`,
+`0001_kernel` and `0002_iam_rbac_staff` are untouched and checksum-pinned, and a
+new frozen Phase 04 artefact holds all three exactly as accepted at `e5fcf19`.
+`GATE-MIGR` runs both upgrade paths — an accepted Phase 03 database reaching head
+in two migrations, and an accepted Phase 04 database receiving exactly one — plus
+a fresh install, a repeat that applies nothing, and fresh/upgrade schema
+equality.
+
+Sixteen tables: six pre-tenant (`subscription_owner`, `onboarding_application`,
+`onboarding_phone_verification`, `onboarding_owner_proof`,
+`onboarding_payment_attempt`, `onboarding_event`) and ten tenant-scoped
+(`hotel_profile`, `hotel_owner_link`, `hotel_subscription`,
+`subscription_billing_intent`, `subscription_payment`, `subscription_event`,
+`ebarimt_issuance`, `cash_location`, `hotel_admin_activation`,
+`activation_delivery`).
+
+### Scope alignments applied
+
+The three the authorization named, recorded in
+[assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.9: the phone-OTP
+port moved forward with its own blocked control `INT-OTP-01` (CallPro is **not**
+assumed to carry OTP), the hotel location persisted and validated as integer
+micro-degrees with no `GeoPort` and no geocoding, and the cash-location root
+introduced early for the default drawer with nothing of Phase 11 in it.
+
+### What the gates caught
+
+Three defects, all found by running the battery rather than by reading it.
+
+**The onboarding module could not be constructed.** The subscription routes are
+guarded by Phase 04's `SessionGuard`, and Nest instantiates a guard in the module
+that hosts the controller — so `SessionService` had to be resolvable from
+`OnboardingModule`, and it was not. Every suite that boots the real application
+aborted the worker process rather than failing a test, because a Nest
+initialization error calls `process.abort()`. `AppModule` now constructs the IAM
+dynamic module once and imports the same object into both places, so the
+container resolves one module, one pool and one `SessionService` — importing it
+rather than rebuilding it, because a second `SessionService` would be exactly the
+second session model this phase was told not to create.
+
+**The Phase 04 application suites were still asserting the simulator.** They took
+the port the running application holds and required it to be
+`SimulatedSubscriptionState`; from this phase it is `DatabaseSubscriptionState`,
+which is the point. They now assert the authoritative adapter, and the IAM
+harness seeds a real `platform.hotel_subscription` row beside the simulator entry
+so a seeded hotel is entitled for both the service-level and the HTTP-level
+caller. That is the phase's "authoritative subscription state wired into Phase 04
+IAM" evidence, proved by the accepted Phase 04 suites themselves rather than by a
+new test written to agree with the change.
+
+**`SEC-PARTITION` held a dated literal.** It proved the worker cannot drop
+`audit.platform_event_2026_08` — a month the bootstrap no longer creates, so
+Postgres reported a missing table and the assertion had stopped testing the
+privilege it names. The partition is now looked up from the catalogue, so the
+check cannot expire again. `SEC-SCHEDULER`'s R9 catalogue also needed the three
+Phase 05 boundary-worker readers entered with their invocation-time guards;
+that gate exists precisely to refuse an uncatalogued definer, and it did.
+
+### Test gates — Phase 05
+
+| Command | Result |
+| --- | --- |
+| `node tools/validate-governance.mjs` | 15 of 15 |
+| `node tools/validate-governance.fixtures.mjs` | 118 of 118 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
+| `node tools/scan-secrets.mjs` | 387 indexed files, 0 findings |
+| `pnpm run format:check` | clean |
+| `pnpm run lint` | 17 of 17 projects |
+| `pnpm run typecheck` | 27 of 27 graphs |
+| `pnpm run test:unit` | 1,294 across 11 projects |
+| `pnpm run test:migrations` | 144: fresh, both upgrade paths, repeat and schema equality |
+| `pnpm run test:integration` | 202: db 41, outbox 5, api 156 |
+| `pnpm run test:concurrency` | 33: db 16, api 17 |
+| `pnpm run test:regression` | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | 19 of 19 sub-gates |
+| `pnpm run test:e2e` | 15 passed |
+| `pnpm run build` | 17 of 17 projects |
+| `pnpm run openapi` | document generated |
+| `pnpm run compose:config` | valid |
+| `pnpm run audit:prod` | no known vulnerabilities |
+| `pnpm run audit:tree` | none at high or critical; one moderate, `DSR-01` |
+| `git diff --check` | clean |
+
+### Security and concurrency evidence
+
+`SEC-ONBOARDING-ISOLATION` is the new nineteenth sub-gate: an applicant reaches
+their own application and nobody else's; an anonymous statement reaches none;
+an applicant cannot write into another's scope or read an owner profile they are
+not linked to; the pre-tenant and tenant axes are disjoint in both directions;
+the runtime holds no INSERT on anything provisioning creates; and no plaintext
+registration number, one-time code, bearer reference or activation token reaches
+a row, an audit record, an outbox payload or a response body.
+
+Concurrency is proved with genuinely simultaneous calls on separate
+connections: two identical callbacks make one paid transition; two providers
+paying one application leave one subscription and one reconciliation case; two
+provisioning runners create one hotel and one of everything under it; two
+boundary sweeps apply one entitlement; a boundary sweep racing a second-upgrade
+callback leaves one consistent state; a renewal and an upgrade quoted at once
+leave at most one live intent; and two activation drains deliver one message.
+
+### Remaining blockers
+
+- **`EXT-03` (QPay), `EXT-04` (Khaan Bank), `EXT-11` (eBarimt)** — BLOCKED. Ports
+  and deterministic simulators ship in this phase; the production adapters do not
+  exist and the ports fail closed outside local, CI and test. Adapters are Phase
+  20.
+- **`INT-OTP-01`** — new, and blocked. No OTP provider is contracted; CallPro is
+  an SMS send contract and not an OTP service.
+- **`INT-MAIL-01`** — unchanged. Activation and receipt email both run on the
+  Phase 04 notification port behind the same control.
+- **The scheduled invokers** for the service-month boundary, the activation
+  delivery drain and the eBarimt issuance queue. Phase 05 implements all three
+  operations and registers their queue names; what invokes them on a cadence is
+  assigned to a later phase, exactly as the Phase 04 reset drain and
+  discovery reconciliation were.
+- **17 P1 configuration items**, all open. Phase 05 adds no closure and stamps a
+  `p1-provisional-tax-2026-08` tax-configuration version onto every quote and
+  payment so P1-11's eventual answer is a new version rather than a silent
+  reinterpretation of old rows.
+- **`DSR-01`** — OPEN and contained, review in Phase 23.
+- **Selecting `GATE-SEC` as a required GitHub status check** — still an external
+  repository-settings action needing push authorisation, not attempted.
+
+Phase 06 is the current phase and has **not** started. Beginning it requires a
+further explicit authorization.

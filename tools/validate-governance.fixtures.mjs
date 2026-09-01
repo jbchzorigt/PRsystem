@@ -75,9 +75,9 @@ const FIXTURES = [
   {
     name: 'catalogue: the stated count no longer matches',
     file: 'runbook',
-    expect: /says "seventeen" sub-gates, configuration has 18/,
+    expect: /says "eighteen" sub-gates, configuration has 19/,
     mutate: (text) =>
-      text.replace('aggregates **eighteen** sub-gates', 'aggregates **seventeen** sub-gates'),
+      text.replace('aggregates **nineteen** sub-gates', 'aggregates **eighteen** sub-gates'),
   },
   {
     name: 'catalogue: the section heading removed',
@@ -299,7 +299,7 @@ const FIXTURES = [
     mutate: (text) =>
       text
         .replace('| Phase state | `NOT STARTED`', '| Phase state | `IN PROGRESS`')
-        .replace(/^(\| 05 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+        .replace(/^(\| 06 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
   },
   {
     name: 'history: the latest heading duplicated',
@@ -777,11 +777,11 @@ const FIXTURES = [
     // Starting the next phase is an authorization, not an edit.
     name: 'current position: the current phase advanced past the governed one',
     file: 'phase-status',
-    expect: /states Current phase = "06 [^"]*"; the governed value is "05 — Hotel/,
+    expect: /states Current phase = "07 [^"]*"; the governed value is "06 — Hotel/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 05 — Hotel onboarding and subscription |',
         '| Current phase | 06 — Hotel, room, category, and tariffs |',
+        '| Current phase | 07 — Minibar inventory and templates |',
       ),
   },
   {
@@ -803,8 +803,8 @@ const FIXTURES = [
   {
     name: 'coordinated: the current phase quietly starts in the ledger',
     file: 'phase-status',
-    expect: /Phase 05 ledger state cell renders "`IN PROGRESS`"/,
-    mutate: (text) => text.replace(/^(\| 05 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+    expect: /Phase 06 ledger state cell renders "`IN PROGRESS`"/,
+    mutate: (text) => text.replace(/^(\| 06 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
   },
   {
     name: 'coordinated: one repair removed from the manifest and the history',
@@ -990,8 +990,8 @@ const FIXTURES = [
     expect: /raw HTML is not an approved boundary marker: <div>/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 05 — Hotel onboarding and subscription |',
-        '| Current phase | 05 — Hotel onboarding and subscription |\n\n<div>raw</div>\n',
+        '| Current phase | 06 — Hotel, room, category, and tariffs |',
+        '| Current phase | 06 — Hotel, room, category, and tariffs |\n\n<div>raw</div>\n',
       ),
   },
   {
