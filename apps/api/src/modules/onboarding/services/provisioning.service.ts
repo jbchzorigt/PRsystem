@@ -143,13 +143,27 @@ export class ProvisioningService extends OnboardingServiceBase {
     // `ONB-DEC-008`: the first valid confirmed payment wins, under the
     // application's own row lock. Anything after it is money that arrived, so it
     // becomes a reconciliation case rather than a second subscription.
+    //
+    // Two different facts lead there, and the second is not the first arriving
+    // late. An attempt that was superseded or failed *cannot* become `PAID` —
+    // doc 15 §4.1 lets a late success resurrect only an expired attempt, and the
+    // transition guard enforces exactly that — so a provider that collected on a
+    // cancelled or failed invoice is money the platform holds against no live
+    // attempt, whether or not the application itself was ever paid. Both are
+    // recorded with the reason that is actually true, because an operator
+    // closing the case is entitled to know which one they are looking at.
     const alreadyPaid = application.paidAttemptId !== null;
-    if (alreadyPaid) {
+    const canStillBePaid =
+      attempt.state === 'PENDING' ||
+      attempt.state === 'PAYMENT_UNCERTAIN' ||
+      attempt.state === 'EXPIRED';
+    if (alreadyPaid || !canStillBePaid) {
+      const reason = alreadyPaid ? 'application_already_paid' : 'superseded_attempt_paid';
       const settled = await repository.settleAttempt({
         attemptId: attempt.attemptId,
         expectedRevision: attempt.revision,
         state: 'PAID_REQUIRES_RECONCILIATION',
-        reason: 'application_already_paid',
+        reason,
         providerPaymentId: status.providerPaymentId,
         confirmedAt: status.confirmedAt,
       });
@@ -166,7 +180,7 @@ export class ProvisioningService extends OnboardingServiceBase {
         outcome: 'allowed',
         targetType: 'onboarding_payment_attempt',
         targetRef: attempt.attemptId,
-        reason: 'application_already_paid',
+        reason,
       });
       return { kind: 'requires_reconciliation', attemptId: attempt.attemptId };
     }

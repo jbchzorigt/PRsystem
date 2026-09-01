@@ -2542,7 +2542,7 @@ introduced early for the default drawer with nothing of Phase 11 in it.
 
 ### What the gates caught
 
-Three defects, all found by running the battery rather than by reading it.
+Four defects, all found by running the battery rather than by reading it.
 
 **The onboarding module could not be constructed.** The subscription routes are
 guarded by Phase 04's `SessionGuard`, and Nest instantiates a guard in the module
@@ -2564,6 +2564,17 @@ so a seeded hotel is entitled for both the service-level and the HTTP-level
 caller. That is the phase's "authoritative subscription state wired into Phase 04
 IAM" evidence, proved by the accepted Phase 04 suites themselves rather than by a
 new test written to agree with the change.
+
+**A paid callback on a dead attempt tried a transition the database forbids.**
+`ONB-DEC-008`'s two-provider race is order-dependent, and one order was wrong:
+when the callback for a superseded attempt arrived *before* the winning one, the
+service asked for `CANCELLED → PAID`, which the transition guard refused — the
+guard was right and the service was wrong. A late success may resurrect only an
+expired attempt (doc 15 §4.1); a capture on a cancelled or failed one is money
+held against no live attempt, so it now becomes a reconciliation case in its own
+right, reasoned `superseded_attempt_paid` rather than `application_already_paid`,
+whether or not the application was ever paid. Covered deterministically as well
+as by the race, so the case no longer depends on which callback wins.
 
 **`SEC-PARTITION` held a dated literal.** It proved the worker cannot drop
 `audit.platform_event_2026_08` — a month the bootstrap no longer creates, so
@@ -2590,7 +2601,7 @@ that gate exists precisely to refuse an uncatalogued definer, and it did.
 | `pnpm run typecheck` | 27 of 27 graphs |
 | `pnpm run test:unit` | 1,294 across 11 projects |
 | `pnpm run test:migrations` | 144: fresh, both upgrade paths, repeat and schema equality |
-| `pnpm run test:integration` | 202: db 41, outbox 5, api 156 |
+| `pnpm run test:integration` | 203: db 41, outbox 5, api 157 |
 | `pnpm run test:concurrency` | 33: db 16, api 17 |
 | `pnpm run test:regression` | 51, every reproduced Phase 03 defect |
 | `pnpm run test:security` | 19 of 19 sub-gates |
