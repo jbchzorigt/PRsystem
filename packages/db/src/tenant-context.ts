@@ -56,6 +56,19 @@ export interface TenantContext {
    * every hotel the account belongs to (doc 19 §10).
    */
   readonly accountId?: string;
+  /**
+   * The pre-tenant onboarding reference (Phase 05).
+   *
+   * An onboarding application exists before any hotel does, so it cannot be
+   * isolated by `hotel_id`: a nullable tenant column or the platform sentinel
+   * would be a scope every applicant shares. This is a separate axis, carried
+   * transaction-locally like the rest, and read by the onboarding policies.
+   *
+   * Unset it is NULL, and `application_id = NULL` is never true — so a statement
+   * that has not presented an applicant's bearer secret sees zero applications
+   * rather than everybody's.
+   */
+  readonly onboardingRef?: string;
   readonly correlationId: string;
   readonly causationId?: string;
 }
@@ -88,6 +101,9 @@ export function assertTenantContext(context: TenantContext): void {
   }
   if (context.accountId !== undefined && !UUID.test(context.accountId)) {
     throw new TenantScopeError('the account reference must be a UUID');
+  }
+  if (context.onboardingRef !== undefined && !UUID.test(context.onboardingRef)) {
+    throw new TenantScopeError('the onboarding reference must be a UUID');
   }
   // The platform sentinel is not a hotel. It is the scope work that belongs to
   // no single tenant runs in: platform-wide Operation work, and — from Phase 04

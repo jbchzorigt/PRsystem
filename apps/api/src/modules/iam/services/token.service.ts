@@ -17,12 +17,31 @@ import type { HmacScope, KeyManagementPort } from '@prsystem/ports';
 /** 32 bytes of CSPRNG output, base64url — no structure to guess or enumerate. */
 const TOKEN_BYTES = 32;
 
-export type TokenPurpose = 'session' | 'invitation' | 'password_reset';
+/**
+ * Phase 05 adds three purposes and no second mechanism.
+ *
+ * `hotel_admin_activation` is the first Hotel Admin's one-time link
+ * (`ONB-DEC-003`), `phone_otp` the onboarding phone code (doc 15 §2.1), and
+ * `onboarding_draft` the bearer reference that binds an anonymous applicant to
+ * their own pre-tenant application. Each has its own HMAC scope for the reason
+ * every other one does: a digest produced for one artefact can never be
+ * replayed as another, even if the bytes were somehow reused.
+ */
+export type TokenPurpose =
+  | 'session'
+  | 'invitation'
+  | 'password_reset'
+  | 'hotel_admin_activation'
+  | 'phone_otp'
+  | 'onboarding_draft';
 
 const SCOPE_BY_PURPOSE: Readonly<Record<TokenPurpose, HmacScope>> = {
   session: 'auth.session_token',
   invitation: 'auth.invitation_token',
   password_reset: 'auth.password_reset_token',
+  hotel_admin_activation: 'auth.activation_token',
+  phone_otp: 'auth.phone_otp',
+  onboarding_draft: 'auth.onboarding_draft',
 };
 
 export interface TokenDigest {
@@ -54,6 +73,31 @@ export class TokenService {
   async issue(purpose: TokenPurpose, subject: string): Promise<IssuedToken> {
     const token = randomBytes(TOKEN_BYTES).toString('base64url');
     const digest = await this.digest(purpose, subject, token);
+    return { ...digest, token };
+  }
+
+  /**
+   * A numeric one-time code, for the one channel that cannot carry a link.
+   *
+   * An SMS code has to be short enough to read out, so it is guessable in a way
+   * a 32-byte token is not — which is why the attempt budget and the expiry are
+   * stored on the challenge row rather than left to the caller. The digest is
+   * bound and stored exactly like every other secret here; the plaintext exists
+   * only long enough to reach the delivery port.
+   */
+  async issueNumericCode(subject: string, digits: number): Promise<IssuedToken> {
+    if (!Number.isInteger(digits) || digits < 4 || digits > 10) {
+      throw new Error('a one-time code is 4 to 10 digits');
+    }
+    // Rejection sampling, so every code is equally likely. Taking a modulus of a
+    // random integer would make the low codes fractionally more common, which is
+    // a bias an attacker can use and a bias nobody would notice.
+    const ceiling = 10 ** digits;
+    const limit = Math.floor(0xff_ff_ff_ff / ceiling) * ceiling;
+    let sampled = limit;
+    while (sampled >= limit) sampled = randomBytes(4).readUInt32BE(0);
+    const token = String(sampled % ceiling).padStart(digits, '0');
+    const digest = await this.digest('phone_otp', subject, token);
     return { ...digest, token };
   }
 

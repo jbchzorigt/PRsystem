@@ -79,11 +79,12 @@ describe('R2 — two runners against a completely empty database', () => {
     // CREATE SCHEMA / CREATE TABLE.
     const [first, second] = await Promise.all([runMigrations(url), runMigrations(url)]);
 
-    // The whole journal: 0000_baseline, 0001_kernel, 0002_iam_rbac_staff.
-    expect(first.appliedAfter).toBe(3);
-    expect(second.appliedAfter).toBe(3);
+    // The whole journal: 0000_baseline, 0001_kernel, 0002_iam_rbac_staff,
+    // 0003_onboarding_subscription.
+    expect(first.appliedAfter).toBe(4);
+    expect(second.appliedAfter).toBe(4);
     // Exactly one of them did the applying.
-    const applied = [first, second].filter((r) => r.appliedBefore === 0 && r.appliedAfter === 3);
+    const applied = [first, second].filter((r) => r.appliedBefore === 0 && r.appliedAfter === 4);
     expect(applied).toHaveLength(1);
   }, 120000);
 });

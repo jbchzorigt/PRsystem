@@ -115,6 +115,39 @@ export async function validateClassification(pool: Pool): Promise<Classification
       });
     }
 
+    // A pre-tenant table is exempt from the tenant predicate because it has no
+    // tenant yet — and that exemption holds only while three things are true:
+    // it genuinely carries no tenant column, RLS is on and forced, and it
+    // actually has policies. The third matters most: forced RLS with no policy
+    // at all denies everything, which looks safe, but a table that reached
+    // production that way would be a feature nobody could use — and a table
+    // with RLS merely enabled and no policy would be wide open to its owner.
+    if (entry.classification === 'PRE_TENANT_ISOLATED') {
+      if (row.has_tenant_column || row.has_restaurant_column) {
+        violations.push({
+          kind: 'pre_tenant_carries_tenant_column',
+          detail: `${row.qualified} is PRE_TENANT_ISOLATED but carries a tenant column`,
+        });
+      }
+      if (!(row.rls_enabled && row.rls_forced)) {
+        violations.push({
+          kind: 'pre_tenant_not_forced',
+          detail: `${row.qualified} is PRE_TENANT_ISOLATED but RLS is enabled=${String(row.rls_enabled)} forced=${String(row.rls_forced)}`,
+        });
+      }
+      const policies = await pool.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM pg_policies
+          WHERE schemaname = $1 AND tablename = $2`,
+        [entry.schema, entry.table],
+      );
+      if ((policies.rows[0]?.count ?? '0') === '0') {
+        violations.push({
+          kind: 'pre_tenant_has_no_policy',
+          detail: `${row.qualified} is PRE_TENANT_ISOLATED but carries no policy at all`,
+        });
+      }
+    }
+
     if ((RUNTIME_ROLES as readonly string[]).includes(row.owner)) {
       violations.push({
         kind: 'runtime_role_owns_object',

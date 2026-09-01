@@ -6,6 +6,12 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { Pool } from 'pg';
 import { UnavailableKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
+import {
+  PaymentGatewayRegistry,
+  UnavailablePaymentGateway,
+} from './modules/onboarding/contracts/payment-gateway.port';
+import { UnavailableEBarimt } from './modules/onboarding/contracts/ebarimt.port';
+import { UnavailablePhoneVerification } from './modules/onboarding/contracts/phone-verification.port';
 import { UnavailableSubscriptionState } from './modules/iam/contracts/subscription-state.port';
 import { UnavailableStaffNotification } from './modules/iam/contracts/staff-notification.port';
 import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
@@ -33,6 +39,22 @@ async function generate(): Promise<void> {
         notifications: new UnavailableStaffNotification(),
         openWork: new UnregisteredOpenWork(),
         restaurants: new UnavailableRestaurantDirectory(),
+      },
+      // The Phase 05 ports are supplied the same way, for the same reason: the
+      // document is a shape, and generating it must not open a connection or
+      // construct key material.
+      onboarding: {
+        pool: new Pool({ max: 1 }),
+        keys: new UnavailableKeyManagement(),
+        gateways: new PaymentGatewayRegistry(
+          new Map([
+            ['QPAY', new UnavailablePaymentGateway('QPAY')],
+            ['KHAAN', new UnavailablePaymentGateway('KHAAN')],
+          ]),
+        ),
+        ebarimt: new UnavailableEBarimt(),
+        phone: new UnavailablePhoneVerification(),
+        notifications: new UnavailableStaffNotification(),
       },
     }),
     new FastifyAdapter(),

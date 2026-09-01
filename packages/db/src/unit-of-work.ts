@@ -56,6 +56,13 @@ async function applyContext(client: PoolClient, context: TenantContext): Promise
     'app.account_id',
     context.accountId ?? '',
   ]);
+  // Empty rather than absent for the same reason: `current_onboarding_ref()`
+  // maps the empty string to NULL, so an onboarding policy matches nothing
+  // instead of matching whatever the previous transaction on this connection set.
+  await client.query('SELECT set_config($1, $2, true)', [
+    'app.onboarding_ref',
+    context.onboardingRef ?? '',
+  ]);
 
   const now = await client.query<{ now: Date }>('SELECT now() AS now');
   const serverNow = now.rows[0]?.now;
@@ -102,7 +109,8 @@ export async function withTenantTransaction<T>(
     // RESET ALL would also drop the connection's role.
     try {
       await client.query(
-        'RESET app.hotel_id; RESET app.realm; RESET app.actor_ref; RESET app.correlation_id; RESET app.account_id',
+        'RESET app.hotel_id; RESET app.realm; RESET app.actor_ref; RESET app.correlation_id; ' +
+          'RESET app.account_id; RESET app.onboarding_ref',
       );
     } catch {
       // Ignored: the connection is being released either way.
@@ -115,24 +123,30 @@ export async function withTenantTransaction<T>(
  * Reads the tenant context PostgreSQL currently sees. Used by the pool-leak gate
  * to prove that a connection returned to the pool carries nothing forward.
  */
-export async function readSessionScope(
-  pool: Pool,
-): Promise<{ hotelId: string | null; realm: string | null; accountId: string | null }> {
+export async function readSessionScope(pool: Pool): Promise<{
+  hotelId: string | null;
+  realm: string | null;
+  accountId: string | null;
+  onboardingRef: string | null;
+}> {
   const client = await pool.connect();
   try {
     const result = await client.query<{
       hotel_id: string | null;
       realm: string | null;
       account_id: string | null;
+      onboarding_ref: string | null;
     }>(
-      `SELECT nullif(current_setting('app.hotel_id', true), '')   AS hotel_id,
-              nullif(current_setting('app.realm', true), '')      AS realm,
-              nullif(current_setting('app.account_id', true), '') AS account_id`,
+      `SELECT nullif(current_setting('app.hotel_id', true), '')        AS hotel_id,
+              nullif(current_setting('app.realm', true), '')           AS realm,
+              nullif(current_setting('app.account_id', true), '')      AS account_id,
+              nullif(current_setting('app.onboarding_ref', true), '')  AS onboarding_ref`,
     );
     return {
       hotelId: result.rows[0]?.hotel_id ?? null,
       realm: result.rows[0]?.realm ?? null,
       accountId: result.rows[0]?.account_id ?? null,
+      onboardingRef: result.rows[0]?.onboarding_ref ?? null,
     };
   } finally {
     client.release();

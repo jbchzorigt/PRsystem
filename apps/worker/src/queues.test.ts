@@ -54,11 +54,16 @@ describe('workerOptions', () => {
 });
 
 describe('QUEUE_NAMES', () => {
-  it('registers the heartbeat and the two kernel queues', () => {
+  it('registers the kernel queues and the three Phase 05 operations', () => {
+    // An exact list, not a subset: a queue that appears without being declared
+    // here is a background operation nobody reviewed.
     expect(Object.values(QUEUE_NAMES)).toEqual([
       'system.heartbeat',
       'kernel.outbox.relay',
       'kernel.audit.partition_maintenance',
+      'subscription.upgrade.boundary',
+      'onboarding.activation.delivery',
+      'subscription.ebarimt.issuance',
     ]);
   });
 

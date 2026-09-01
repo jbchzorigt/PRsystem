@@ -51,6 +51,7 @@ const UPGRADE_DATABASE = 'prsystem_migration_upgrade';
 const SENSITIVITY_DATABASE = 'prsystem_migration_sensitivity';
 /** The accepted Phase 03 database that receives only the Phase 04 migration. */
 const PHASE_04_DATABASE = 'prsystem_migration_phase04';
+const PHASE_05_DATABASE = 'prsystem_migration_phase05';
 /** A pristine database for the comparator mutation tests. */
 const COMPARATOR_DATABASE = 'prsystem_migration_comparator';
 
@@ -114,6 +115,21 @@ const FROZEN_PHASE_03_SHA256: Readonly<Record<string, string>> = {
   '0001_kernel.sql': '00c5f11768cc1b274209465526f016f397f88d18d4343220ea0279db9a3fbff4',
 };
 
+/**
+ * The accepted Phase 04 state: the three migrations as accepted at `e5fcf19`.
+ *
+ * The newest accepted release, and therefore the one a running cluster is
+ * actually on when Phase 05 deploys. Phase 03's artefact is kept beside it and
+ * still exercised: a phase that only tested the newest accepted release would
+ * stop proving that an older cluster can still reach head.
+ */
+const FROZEN_PHASE_04 = resolve(__dirname, 'test-support', 'frozen-phase-04');
+const FROZEN_PHASE_04_SHA256: Readonly<Record<string, string>> = {
+  '0000_baseline.sql': '2a202d67ce10c9f8fa74166c38616c16e95216ff9f00c8cd6bf28bbb025858bc',
+  '0001_kernel.sql': '00c5f11768cc1b274209465526f016f397f88d18d4343220ea0279db9a3fbff4',
+  '0002_iam_rbac_staff.sql': '25aae0e6cdbb6d6c18ff32068b6e0a6761bee130af45d336aa82aa269e038b47',
+};
+
 function checksumOf(folder: string, file: string): string {
   return createHash('sha256')
     .update(readFileSync(join(folder, file)))
@@ -148,6 +164,7 @@ beforeAll(async () => {
     FRESH_DATABASE,
     UPGRADE_DATABASE,
     PHASE_04_DATABASE,
+    PHASE_05_DATABASE,
     SENSITIVITY_DATABASE,
     COMPARATOR_DATABASE,
   ]) {
@@ -170,6 +187,7 @@ afterAll(async () => {
     FRESH_DATABASE,
     UPGRADE_DATABASE,
     PHASE_04_DATABASE,
+    PHASE_05_DATABASE,
     SENSITIVITY_DATABASE,
     COMPARATOR_DATABASE,
   ]) {
@@ -189,19 +207,20 @@ describe('migration runner', () => {
   const freshUrl = asMigrationLogin(withDatabase(ADMIN_URL, FRESH_DATABASE));
   const upgradeUrl = asMigrationLogin(withDatabase(ADMIN_URL, UPGRADE_DATABASE));
   const phase04Url = asMigrationLogin(withDatabase(ADMIN_URL, PHASE_04_DATABASE));
+  const phase05Url = asMigrationLogin(withDatabase(ADMIN_URL, PHASE_05_DATABASE));
   let freshLedger: LedgerRow[] = [];
 
   it('applies the whole journal to a fresh database', async () => {
     const outcome = await runMigrations(freshUrl);
 
     expect(outcome.appliedBefore).toBe(0);
-    // 0000_baseline, 0001_kernel, 0002_iam_rbac_staff.
-    expect(outcome.appliedAfter).toBe(3);
+    // 0000_baseline, 0001_kernel, 0002_iam_rbac_staff, 0003_onboarding_subscription.
+    expect(outcome.appliedAfter).toBe(4);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
-      expect(freshLedger).toHaveLength(3);
+      expect(freshLedger).toHaveLength(4);
     } finally {
       await pool.end();
     }
@@ -217,7 +236,7 @@ describe('migration runner', () => {
 
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
-    expect(upgradeOutcome.appliedAfter).toBe(3);
+    expect(upgradeOutcome.appliedAfter).toBe(4);
   }, 60000);
 
   it('holds the accepted Phase 03 migrations byte-for-byte, and only those', () => {
@@ -238,34 +257,64 @@ describe('migration runner', () => {
     expect(frozen).toEqual(['0000_baseline.sql', '0001_kernel.sql']);
   });
 
-  it('applies exactly the Phase 04 migration to an accepted Phase 03 database', async () => {
-    // The deployment step a running cluster actually takes.
+  it('holds the accepted Phase 04 migrations byte-for-byte, and only those', () => {
+    for (const [file, expected] of Object.entries(FROZEN_PHASE_04_SHA256)) {
+      expect({ file, sha256: checksumOf(FROZEN_PHASE_04, file) }).toEqual({
+        file,
+        sha256: expected,
+      });
+    }
+    const frozen = readdirSync(FROZEN_PHASE_04)
+      .filter((name) => name.endsWith('.sql'))
+      .sort();
+    // Phase 05's own migration is deliberately absent: it is the one thing the
+    // upgrade below is supposed to apply.
+    expect(frozen).toEqual(['0000_baseline.sql', '0001_kernel.sql', '0002_iam_rbac_staff.sql']);
+  });
+
+  it('reaches head from an accepted Phase 03 database', async () => {
+    // The older accepted release still upgrades: two migrations, not one.
     const accepted = await runMigrations(phase04Url, { migrationsFolder: FROZEN_PHASE_03 });
     expect({ before: accepted.appliedBefore, after: accepted.appliedAfter }).toEqual({
       before: 0,
       after: 2,
     });
 
-    const phase04 = await runMigrations(phase04Url);
-    expect({ before: phase04.appliedBefore, after: phase04.appliedAfter }).toEqual({
+    const toHead = await runMigrations(phase04Url);
+    expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 2,
+      after: 4,
+    });
+  }, 120000);
+
+  it('applies exactly the Phase 05 migration to an accepted Phase 04 database', async () => {
+    // The deployment step a running cluster actually takes.
+    const accepted = await runMigrations(phase05Url, { migrationsFolder: FROZEN_PHASE_04 });
+    expect({ before: accepted.appliedBefore, after: accepted.appliedAfter }).toEqual({
+      before: 0,
       after: 3,
+    });
+
+    const phase05 = await runMigrations(phase05Url);
+    expect({ before: phase05.appliedBefore, after: phase05.appliedAfter }).toEqual({
+      before: 3,
+      after: 4,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
-    const ledgerAfter = await withPool(phase04Url, ledgerRows);
-    const repeat = await runMigrations(phase04Url);
+    const ledgerAfter = await withPool(phase05Url, ledgerRows);
+    const repeat = await runMigrations(phase05Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 3,
-      after: 3,
+      before: 4,
+      after: 4,
     });
-    expect(await withPool(phase04Url, ledgerRows)).toEqual(ledgerAfter);
+    expect(await withPool(phase05Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
 
-  it('reaches the same schema by the Phase 04 upgrade as by a fresh install', async () => {
+  it('reaches the same schema by the Phase 05 upgrade as by a fresh install', async () => {
     const container = pinnedContainer();
     const fresh = schemaDump({ container, user: 'prsystem', database: FRESH_DATABASE });
-    const upgraded = schemaDump({ container, user: 'prsystem', database: PHASE_04_DATABASE });
+    const upgraded = schemaDump({ container, user: 'prsystem', database: PHASE_05_DATABASE });
 
     expect(upgraded).toBe(fresh);
   }, 60000);
@@ -478,8 +527,8 @@ describe('migration runner', () => {
   it('treats a second application as a safe no-op', async () => {
     const outcome = await runMigrations(freshUrl);
 
-    expect(outcome.appliedBefore).toBe(3);
-    expect(outcome.appliedAfter).toBe(3);
+    expect(outcome.appliedBefore).toBe(4);
+    expect(outcome.appliedAfter).toBe(4);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
@@ -1371,7 +1420,7 @@ describe('the migration runner requires the canonical migration login', () => {
     const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
     await expect(
       runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
-    ).resolves.toMatchObject({ appliedAfter: 3 });
+    ).resolves.toMatchObject({ appliedAfter: 4 });
   }, 180000);
 });
 

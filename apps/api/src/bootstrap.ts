@@ -9,6 +9,7 @@ import { Pool } from 'pg';
 import { API_PREFIX, UNVERSIONED_PATHS } from '@prsystem/contracts';
 import { selectKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
+import { DatabaseSubscriptionState } from './modules/onboarding/contracts/subscription-state.adapter';
 import { registerCorrelation } from './observability/correlation.plugin';
 import { ApiErrorFilter } from './observability/api-error.filter';
 import { assertApiConnectionPrincipal } from './observability/connection-guard';
@@ -47,6 +48,11 @@ export async function createApp(
     await guardPool.end();
   }
 
+  // The subscription-state adapter's own pool. Small: it serves one short read
+  // per authorization check, and giving it its own handle keeps an entitlement
+  // lookup from queueing behind a long-running command.
+  const subscriptionPool = new Pool({ connectionString: config.DATABASE_URL, max: 4 });
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot({
       scheduler: config.scheduler,
@@ -57,7 +63,23 @@ export async function createApp(
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
         },
+        // Phase 05's authoritative source, replacing the Phase 04 port that
+        // answered nothing. It reads `platform.hotel_subscription` at request
+        // time under the hotel's own scope — the authoritative row, never a
+        // projection (ADR-0019 §4, `OPS-DEC-016`) — and still answers
+        // `undefined` for a hotel with no subscription, so the pipeline goes on
+        // failing closed for a tenant that was never provisioned.
+        subscription: new DatabaseSubscriptionState(subscriptionPool),
       },
+      onboarding: {
+        config: {
+          databaseUrl: config.DATABASE_URL,
+          appEnv: config.APP_ENV,
+          kmsAdapter: config.KMS_ADAPTER,
+          ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+        },
+      },
+      ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),
     // Nest's own bootstrap logging is suppressed; the redacting logger is authoritative.

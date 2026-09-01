@@ -24,7 +24,6 @@ describe('the worker has no schema DDL', () => {
     ['create a table in audit', 'CREATE TABLE audit.sneaky (id int)'],
     ['create a table in platform', 'CREATE TABLE platform.sneaky (id int)'],
     ['create a table in police_audit', 'CREATE TABLE police_audit.sneaky (id int)'],
-    ['drop an audit partition', 'DROP TABLE audit.platform_event_2026_08'],
     ['alter the audit parent', 'ALTER TABLE audit.platform_event ADD COLUMN sneaky int'],
   ];
 
@@ -33,6 +32,27 @@ describe('the worker has no schema DDL', () => {
       await expect(env.worker.query(sql)).rejects.toThrow(/permission denied|must be owner/i);
     });
   }
+
+  it('cannot drop an audit partition', async () => {
+    // The partition is looked up rather than named. A literal month passes for
+    // as long as that month is one of the four the bootstrap creates and then
+    // silently stops testing anything: Postgres reports a missing table before
+    // it reports a missing privilege, so the assertion would go on passing for
+    // the wrong reason.
+    const existing = await env.admin.query<{ relname: string }>(
+      `SELECT c.relname
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'audit' AND c.relkind = 'r'
+          AND c.relname LIKE 'platform\\_event\\_%'
+        ORDER BY c.relname LIMIT 1`,
+    );
+    const partition = existing.rows[0]?.relname;
+    expect(partition).toBeDefined();
+
+    await expect(env.worker.query(`DROP TABLE audit.${partition as string}`)).rejects.toThrow(
+      /permission denied|must be owner/i,
+    );
+  });
 });
 
 describe('the worker can still renew coverage', () => {

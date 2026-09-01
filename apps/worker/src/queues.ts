@@ -3,9 +3,15 @@ import type { ConnectionOptions, WorkerOptions } from 'bullmq';
 /**
  * Queue registry.
  *
- * Phase 03 adds the two kernel queues. Domain queues — notification, provisioning,
- * billing boundary, export, reconciliation, retention — arrive with the phases that
- * own them (docs/architecture/02-container-and-deployment.md §5).
+ * Phase 03 adds the two kernel queues; Phase 05 adds the three its own
+ * background operations run on. The remaining domain queues — export,
+ * retention, notification fan-out — arrive with the phases that own them
+ * (docs/architecture/02-container-and-deployment.md §5).
+ *
+ * A name here is not a schedule. Phase 05 implements each operation and its
+ * handler; **what invokes them on a cadence is the scheduler work assigned to a
+ * later phase**, and until that lands the operations are driven by their owning
+ * service. That is recorded as an open item rather than left implied.
  */
 export const QUEUE_NAMES = {
   heartbeat: 'system.heartbeat',
@@ -13,6 +19,12 @@ export const QUEUE_NAMES = {
   outboxRelay: 'kernel.outbox.relay',
   /** Pre-creates audit partitions and checks the horizon (ADR-0018 §4). */
   partitionMaintenance: 'kernel.audit.partition_maintenance',
+  /** Applies a paid pending upgrade at its service-month boundary (doc 17 §4.4). */
+  subscriptionBoundary: 'subscription.upgrade.boundary',
+  /** Delivers the first Hotel Admin's activation link (doc 15 §5). */
+  activationDelivery: 'onboarding.activation.delivery',
+  /** Issues and retries eBarimt receipts (doc 16 §4.1). */
+  ebarimtIssuance: 'subscription.ebarimt.issuance',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

@@ -1196,6 +1196,38 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'no role closure — reads the horizon of the two audit streams and raises an operational ' +
         'alert; writes nothing else and takes only a bounded threshold',
     },
+    // Phase 05's three boundary-worker discovery wrappers. Each exists for the
+    // same reason: the rows a worker must find live behind a tenant policy, and
+    // a worker outside any tenant scope cannot see them to find out which tenant
+    // to enter. They are the narrowest possible answer to that — read-only, and
+    // they return identifiers and nothing else.
+    {
+      signature: 'platform.due_upgrade_boundaries(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a STABLE reader that returns only (hotel_id, subscription_id) for a ' +
+        'pending upgrade already due on the server clock, with a bounded limit. It writes ' +
+        'nothing: the entitlement is applied afterwards under the hotel scope and a row lock',
+    },
+    {
+      signature: 'platform.pending_activation_deliveries(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a STABLE reader that returns only (hotel_id, delivery_id) for an ' +
+        'unclaimed or lease-expired delivery, with a bounded limit. It exposes no address, no ' +
+        'token and no payload, and the claim itself is a CAS under the hotel scope',
+    },
+    {
+      signature: 'platform.pending_ebarimt_issuances(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a STABLE reader that returns only (hotel_id, issuance_id) for an ' +
+        'unclaimed or lease-expired issuance, with a bounded limit. It exposes no receipt field ' +
+        'and no amount, and the claim itself is a CAS under the hotel scope',
+    },
   ] as const;
 
   it('grants EXECUTE to a Worker or Scheduler on exactly the catalogued definers', async () => {

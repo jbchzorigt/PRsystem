@@ -161,7 +161,20 @@ export function attachIamHarness(
       );
       const hotelId = created.rows[0]?.hotel_id;
       if (hotelId === undefined) throw new Error('the hotel insert returned no row');
+      // Both sources, because from Phase 05 there are two callers with two
+      // truths: a service-level test drives the simulator it was handed, while
+      // an application booted through `createApp` reads the authoritative row.
+      // Seeding one and not the other would make a hotel entitled for half the
+      // suite. The row is written on the administrative connection for the same
+      // reason the hotel is — no runtime login holds INSERT here, and provisioning
+      // it properly is Phase 05's own subject.
       subscription.set(hotelId, { state: 'ACTIVE', effectivePackage: packageCode });
+      await admin.query(
+        `INSERT INTO platform.hotel_subscription
+           (hotel_id, effective_package, package_floor, term_months, starts_at, expires_at)
+         VALUES ($1, $2, $2, 12, now(), now() + interval '365 days')`,
+        [hotelId, packageCode],
+      );
       return hotelId;
     },
 

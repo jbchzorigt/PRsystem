@@ -16,7 +16,18 @@ export type KeyScope =
    * compromise of the guest-PII key must not also open reset links, and the
    * lifetime and rotation cadence of the two have nothing in common.
    */
-  | 'auth.delivery_secret';
+  | 'auth.delivery_secret'
+  /**
+   * Subscription-owner identifiers — a citizen registration number or an
+   * organisation's state registration number (doc 15 §2.1, §2.2).
+   *
+   * Its own scope rather than `pii.hotel_guest`: an owner identifier is
+   * collected once at onboarding and kept for the life of the ownership, while
+   * guest PII is collected per stay and retired on its own schedule. Sharing a
+   * key would tie two rotation cadences together and make one compromise open
+   * both populations (ADR-0020 §5).
+   */
+  | 'pii.subscription_owner';
 
 /**
  * Lookup scopes are separate from encryption scopes, and Police lookup has its
@@ -33,12 +44,25 @@ export type HmacScope =
    */
   | 'auth.session_token'
   | 'auth.invitation_token'
-  | 'auth.password_reset_token';
+  | 'auth.password_reset_token'
+  /**
+   * Phase 05 artefacts, each with its own scope for the same reason.
+   *
+   * `auth.activation_token` is the first Hotel Admin's one-time activation link
+   * (`ONB-DEC-003`); `auth.phone_otp` is the onboarding phone verification code
+   * (doc 15 §2.1); `auth.onboarding_draft` is the bearer reference that binds an
+   * anonymous applicant to their own pre-tenant application and to nobody
+   * else's.
+   */
+  | 'auth.activation_token'
+  | 'auth.phone_otp'
+  | 'auth.onboarding_draft';
 
 export const KEY_SCOPES: readonly KeyScope[] = [
   'pii.hotel_guest',
   'pii.police',
   'auth.delivery_secret',
+  'pii.subscription_owner',
 ];
 export const HMAC_SCOPES: readonly HmacScope[] = [
   'lookup.identity',
@@ -46,6 +70,9 @@ export const HMAC_SCOPES: readonly HmacScope[] = [
   'auth.session_token',
   'auth.invitation_token',
   'auth.password_reset_token',
+  'auth.activation_token',
+  'auth.phone_otp',
+  'auth.onboarding_draft',
 ];
 
 export interface WrappedKey {

@@ -75,6 +75,28 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.finish_worker_job(p_job_run_id uuid, p_state text, p_error_name text)':
     KERNEL_OWNERS.maintenanceFn,
   'platform.maintenance_expire_idempotency_keys(p_job_run_id uuid)': KERNEL_OWNERS.maintenanceFn,
+
+  // Phase 05. The paid-onboarding provisioning wrapper: the only path by which a
+  // hotel tenant, its owner link, its subscription, its Primary Hotel Admin
+  // membership and its default drawer come into existence. It belongs to the
+  // same narrow, unreachable definer owner as the D-09 wrappers rather than to a
+  // new role, for the reason that role exists — no runtime holds it, nobody can
+  // connect as it, and it owns nothing but wrappers whose bodies are the whole
+  // of what it can do.
+  'platform.provision_paid_hotel(p_application_id uuid, p_idempotency_key text, p_activation_id uuid, p_token_hash text, p_token_key_version text, p_token_expires_at timestamp with time zone, p_secret_ciphertext bytea, p_secret_wrapped_dek bytea, p_secret_key_version text)':
+    KERNEL_OWNERS.maintenanceFn,
+
+  // Cross-tenant queue discovery. Identifiers only: the alternative was a policy
+  // letting the worker read every hotel's subscriptions, which is the broad
+  // grant this boundary exists to avoid.
+  'platform.resolve_onboarding_applicant(p_token_hash text)': KERNEL_OWNERS.maintenanceFn,
+  'platform.resolve_payment_attempt(p_provider text, p_provider_invoice_id text)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.probe_subscription_owner(p_application_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.owner_holds_other_hotel(p_application_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.due_upgrade_boundaries(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+  'platform.pending_activation_deliveries(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+  'platform.pending_ebarimt_issuances(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
 };
 
 /**

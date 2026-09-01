@@ -346,6 +346,14 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
               kmsSeed: 'synthetic-scheduler-boundary-seed',
             },
           },
+          onboarding: {
+            config: {
+              databaseUrl: apiUrl,
+              appEnv: 'ci',
+              kmsAdapter: 'local',
+              kmsSeed: 'synthetic-scheduler-boundary-seed',
+            },
+          },
         }),
       ],
     }).compile();

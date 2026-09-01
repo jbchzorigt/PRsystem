@@ -100,13 +100,17 @@ describe('connection pool tenant context (ADR-0017 §2)', () => {
         expect(seen.rows[0]?.hotel_id).toBe(HOTEL);
       });
 
-      // The account scope is read back too: Phase 04 added a fourth setting, and
-      // a leak check that inspected three of four would pass while the new one
-      // survived on the connection.
+      // Every scope setting is read back, not a chosen subset: Phase 04 added the
+      // account and Phase 05 the pre-tenant onboarding reference, and a leak
+      // check that inspected four of five would pass while the newest one
+      // survived on the connection. The object comparison is what keeps this
+      // honest — a setting added without being listed here fails the test rather
+      // than being quietly excluded from it.
       expect(await readSessionScope(single)).toEqual({
         hotelId: null,
         realm: null,
         accountId: null,
+        onboardingRef: null,
       });
     } finally {
       await single.end();

@@ -11,7 +11,7 @@ import { PLATFORM_SCOPE, withTenantTransaction } from '@prsystem/db';
 import { newCorrelationId as newId } from '@prsystem/contracts';
 import { resolvePrincipal } from './services/authorization.service';
 import { SimulatedStaffNotification } from './contracts/staff-notification.port';
-import { SimulatedSubscriptionState } from './contracts/subscription-state.port';
+import { DatabaseSubscriptionState } from '../onboarding/contracts/subscription-state.adapter';
 import { SimulatedOpenWork } from './contracts/open-work.port';
 import { SimulatedRestaurantDirectory } from './contracts/restaurant-directory.port';
 import {
@@ -205,19 +205,20 @@ beforeAll(async () => {
 
   // The very instances the running application holds. A second set would let a
   // test seed work or a restaurant the application never sees.
-  const subscription = app.get<SimulatedSubscriptionState>(SUBSCRIPTION_STATE);
+  const subscription = app.get<DatabaseSubscriptionState>(SUBSCRIPTION_STATE);
   const notifications = app.get<SimulatedStaffNotification>(STAFF_NOTIFICATION);
   const openWork = app.get<SimulatedOpenWork>(OPEN_WORK);
   const restaurants = app.get<SimulatedRestaurantDirectory>(RESTAURANT_DIRECTORY);
   appStaff = app.get<StaffService>(StaffService);
-  // And they are the deterministic simulators, not a production adapter that
-  // happened to be selected: no such adapter exists for any of the four.
-  expect(subscription).toBeInstanceOf(SimulatedSubscriptionState);
+  // Subscription state is the authoritative database adapter — Phase 05 replaced
+  // the port that answered nothing — and the other three are the deterministic
+  // simulators, not a production adapter that happened to be selected: no such
+  // adapter exists for any of them.
+  expect(subscription).toBeInstanceOf(DatabaseSubscriptionState);
   expect(notifications).toBeInstanceOf(SimulatedStaffNotification);
   expect(openWork).toBeInstanceOf(SimulatedOpenWork);
   expect(restaurants).toBeInstanceOf(SimulatedRestaurantDirectory);
   env = attachIamHarness(db, 'iam_repair', {
-    subscription,
     notifications,
     openWork,
     restaurants,

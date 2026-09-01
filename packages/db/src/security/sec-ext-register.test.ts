@@ -131,6 +131,11 @@ describe('EXT register', () => {
     expect(rows.rows.map((r) => r.control_code)).toEqual([
       'INT-KMS-01',
       'INT-MAIL-01',
+      // Phase 05: doc 15 §2.1 requires an OTP-verified phone and no OTP provider
+      // is contracted. CallPro is EXT-05 and is an SMS *send* contract, not an
+      // OTP service, so the capability gets its own internal control rather than
+      // being read into an external gate that does not cover it.
+      'INT-OTP-01',
       'INT-POS-01',
     ]);
     expect(rows.rows.every((r) => !r.enabled)).toBe(true);

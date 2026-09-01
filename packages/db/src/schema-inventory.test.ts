@@ -58,6 +58,11 @@ const COLUMN_INVENTORY: Readonly<Record<string, 'projected' | 'non-persistent' |
   // separate fields.
   precision: 'projected',
   withTimezone: 'projected',
+  // A `customType` column's declared PostgreSQL type name — `bytea`, for the
+  // envelope ciphertext columns Phase 05 adds. Persistent, and projected the
+  // same way: `getSQLType()` returns exactly this string, which is what the
+  // column shape is compared on.
+  sqlName: 'projected',
   // Drizzle-side only: how a value is read back into JavaScript, not how
   // PostgreSQL stores it.
   dataType: 'non-persistent',

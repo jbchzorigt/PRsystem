@@ -9,7 +9,7 @@ import { attachIamHarness, actorFor, provisionIamDatabase } from './test-support
 import type { CommandActor } from './services/iam-context';
 import { newRequestContext } from './services/iam-context';
 import { SimulatedStaffNotification } from './contracts/staff-notification.port';
-import { SimulatedSubscriptionState } from './contracts/subscription-state.port';
+import { DatabaseSubscriptionState } from '../onboarding/contracts/subscription-state.adapter';
 import { STAFF_NOTIFICATION, SUBSCRIPTION_STATE } from './iam.tokens';
 
 /**
@@ -117,13 +117,18 @@ beforeAll(async () => {
   app = started.app;
   baseUrl = `http://127.0.0.1:${String(started.port)}`;
 
-  // The very instances the running application holds. Two simulators would let
-  // a test set a subscription the application never sees.
-  const subscription = app.get<SimulatedSubscriptionState>(SUBSCRIPTION_STATE);
+  // The very instances the running application holds. A second simulator would
+  // let a test seed something the application never sees.
+  //
+  // Subscription state is the exception, and deliberately so: from Phase 05 the
+  // application reads the authoritative `platform.hotel_subscription` row rather
+  // than any simulator, so what the two sides share is the database row the
+  // harness seeds — asserted below.
+  const subscription = app.get<DatabaseSubscriptionState>(SUBSCRIPTION_STATE);
   const notifications = app.get<SimulatedStaffNotification>(STAFF_NOTIFICATION);
-  expect(subscription).toBeInstanceOf(SimulatedSubscriptionState);
+  expect(subscription).toBeInstanceOf(DatabaseSubscriptionState);
   expect(notifications).toBeInstanceOf(SimulatedStaffNotification);
-  env = attachIamHarness(db, 'iam_integration', { subscription, notifications });
+  env = attachIamHarness(db, 'iam_integration', { notifications });
 
   hotel30 = await env.createHotel('Thirty Hotel', 'P30');
   hotel25 = await env.createHotel('Twenty Five Hotel', 'P25');

@@ -53,6 +53,18 @@ export interface TenantRowSpec {
   readonly grants: Readonly<Record<Runtime, readonly Verb[]>>;
 }
 
+/**
+ * The reference a fixture uses when its parent row is invisible.
+ *
+ * A pre-tenant or cross-tenant parent is hidden by the very policy under test,
+ * so `INSERT ... SELECT FROM parent` inserts zero rows and raises nothing — and
+ * "no error" is indistinguishable from "the policy allowed it". Every such
+ * fixture supplies a complete row with this fallback instead, so the statement
+ * always reaches the WITH CHECK predicate. Nothing references it: it exists to
+ * be refused before the foreign key is ever checked.
+ */
+const ABSENT_UUID = "'00000000-0000-0000-0000-0000000000ff'::uuid";
+
 export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   {
     name: 'platform.idempotency_key',
@@ -369,6 +381,230 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
             SELECT $1, item.item_id, 1, 'opened', $3 FROM item`,
       values: [hotelId, `fixture-event-${String(n)}@example.test`, `handoff-fixture-${String(n)}`],
     }),
+  },
+  // ------------------------------------------------------------- Phase 05
+  //
+  // Every one of these hangs off a pre-tenant application, so each fixture
+  // builds the whole graph it needs — owner, application, attempt — rather than
+  // relying on a suite having seeded one. `$1` is always the tenant.
+  {
+    name: 'platform.hotel_profile',
+    // Provisioning writes the row; the API may only correct it afterwards.
+    grants: { api: ['SELECT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.hotel_profile
+              (hotel_id, public_name, public_phone, district, khoroo, address_line,
+               latitude_micro, longitude_micro)
+            VALUES ($1, $2, '+97611000000', 'Sukhbaatar', '1-r khoroo', 'fixture address',
+                    47918000, 106917000)`,
+      values: [hotelId, `fixture-profile-${String(n)}`],
+    }),
+    insertableByRuntime: false,
+    rowsPerTenant: 1,
+    updateColumn: 'public_phone',
+    updateSet: `public_phone = '+97611000001', revision = revision + 1`,
+  },
+  {
+    name: 'platform.hotel_owner_link',
+    grants: { api: ['SELECT'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `WITH owner AS (
+              INSERT INTO platform.subscription_owner
+                (owner_type, display_name, identity_type, identifier_ciphertext,
+                 identifier_wrapped_dek, identifier_key_version, identifier_lookup_token,
+                 identifier_lookup_key_version)
+              VALUES ('CITIZEN', 'fixture owner', 'registration_number',
+                      decode('00', 'hex'), decode('00', 'hex'), 'v1', md5($2) || md5($2), 'v1')
+              RETURNING owner_id
+            ), app AS (
+              INSERT INTO platform.onboarding_application
+                (owner_type, applicant_token_hash, applicant_token_key_version,
+                 owner_display_name, owner_identifier_ciphertext, owner_identifier_wrapped_dek,
+                 owner_identifier_key_version, owner_identifier_lookup_token,
+                 owner_identifier_lookup_key_version, contact_phone,
+                 subscription_contact_phone, admin_email_normalized, hotel_display_name,
+                 hotel_public_phone, district, khoroo, address_line, latitude_micro,
+                 longitude_micro, package_code, term_months, monthly_price_mnt,
+                 total_amount_mnt, vat_rate_bp, price_book_version, tax_config_version,
+                 package_feature_version, owner_id)
+              SELECT 'CITIZEN', md5($2 || 'a') || md5($2 || 'b'), 'v1', 'fixture owner',
+                     decode('00', 'hex'), decode('00', 'hex'), 'v1', md5($2) || md5($2), 'v1',
+                     '+97699000000', '+97699000000', $3, 'fixture hotel', '+97611000000',
+                     'Sukhbaatar', '1-r khoroo', 'fixture address', 47918000, 106917000,
+                     'P20', 1, 20000, 20000, 1000, 'pb-1', 'tax-1', 'pkg-1', owner.owner_id
+              FROM owner
+              RETURNING application_id, owner_id
+            )
+            INSERT INTO platform.hotel_owner_link (hotel_id, owner_id, owner_type, application_id)
+            SELECT $1, app.owner_id, 'CITIZEN', app.application_id FROM app`,
+      values: [hotelId, `fixture-link-${String(n)}`, `fixture-link-${String(n)}@example.test`],
+    }),
+    insertableByRuntime: false,
+    rowsPerTenant: 1,
+  },
+  {
+    name: 'platform.hotel_subscription',
+    grants: { api: ['SELECT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.hotel_subscription
+              (hotel_id, effective_package, package_floor, term_months, starts_at, expires_at)
+            VALUES ($1, 'P20', 'P20', 1, now(), now() + interval '30 days')`,
+      values: [hotelId],
+    }),
+    insertableByRuntime: false,
+    rowsPerTenant: 1,
+    updateColumn: 'expires_at',
+    updateSet: `expires_at = expires_at + interval '1 day',
+                billing_revision = billing_revision + 1, revision = revision + 1`,
+  },
+  {
+    name: 'platform.subscription_billing_intent',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      // `coalesce`, not a bare subquery. Unscoped, the parent is invisible and a
+      // `SELECT ... FROM parent` would insert **zero rows and raise nothing** —
+      // which the unscoped probe would read as "the policy allowed it". With a
+      // literal fallback the row is always structurally complete, so the refusal
+      // is the WITH CHECK predicate. The foreign key is an AFTER trigger and is
+      // never reached.
+      sql: `INSERT INTO platform.subscription_billing_intent
+              (hotel_id, subscription_id, kind, provider, merchant_ref, provider_invoice_id,
+               amount_mnt, quoted_billing_revision, current_package, target_package,
+               term_months, monthly_price_mnt, quoted_expires_at, vat_rate_bp,
+               price_book_version, tax_config_version, package_feature_version, expires_at,
+               state, terminal_at, terminal_reason)
+            VALUES ($1,
+                    coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                               WHERE s.hotel_id = $1), ${ABSENT_UUID}),
+                    'RENEWAL', 'QPAY', 'merch-fixture', $2, 20000, 1, 'P20', 'P20', 1, 20000,
+                    now() + interval '30 days', 1000, 'pb-1', 'tax-1', 'pkg-1',
+                    now() + interval '1 hour', 'CANCELLED', now(), 'fixture')`,
+      values: [hotelId, `inv-fixture-${String(n)}`],
+    }),
+    // Seeded terminal, not pending. `LIFE-DEC-006` allows exactly one live
+    // intent per subscription, so a fixture that produced live ones could seed
+    // only a single row and the INSERT cell would collide with it — which would
+    // report the unique index as a privilege failure. Terminal rows exercise
+    // the same grants and the same policy without pretending the rule is
+    // looser than it is.
+    updateColumn: 'reconciliation_reason',
+    updateSet: `state = 'PAID_REQUIRES_RECONCILIATION', revision = revision + 1`,
+  },
+  {
+    name: 'platform.subscription_payment',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.subscription_payment
+              (hotel_id, subscription_id, purpose, provider, provider_payment_id, merchant_ref,
+               gross_amount_mnt, vat_amount_mnt, net_amount_mnt, vat_rate_bp, package_code,
+               term_months, monthly_price_mnt, price_book_version, tax_config_version,
+               package_feature_version, application_id, confirmed_at)
+            VALUES ($1,
+                    coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                               WHERE s.hotel_id = $1), ${ABSENT_UUID}),
+                    'RENEWAL', 'QPAY', $2, 'merch-fixture', 20000, 1818, 20000, 1000, 'P20',
+                    1, 20000, 'pb-1', 'tax-1', 'pkg-1',
+                    coalesce((SELECT l.application_id FROM platform.hotel_owner_link l
+                               WHERE l.hotel_id = $1), ${ABSENT_UUID}),
+                    now())`,
+      values: [hotelId, `pay-fixture-${String(n)}`],
+    }),
+  },
+  {
+    name: 'platform.subscription_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.subscription_event
+              (hotel_id, subscription_id, event_type, billing_revision, actor_ref, detail)
+            VALUES ($1,
+                    coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                               WHERE s.hotel_id = $1), ${ABSENT_UUID}),
+                    'RENEWED', 1, $2, '{}'::jsonb)`,
+      values: [hotelId, `actor-fixture-${String(n)}`],
+    }),
+  },
+  {
+    name: 'platform.ebarimt_issuance',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `WITH pay AS (
+              INSERT INTO platform.subscription_payment
+                (hotel_id, subscription_id, purpose, provider, provider_payment_id, merchant_ref,
+                 gross_amount_mnt, vat_amount_mnt, net_amount_mnt, vat_rate_bp, package_code,
+                 term_months, monthly_price_mnt, price_book_version, tax_config_version,
+                 package_feature_version, application_id, confirmed_at)
+              VALUES ($1,
+                      coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                                 WHERE s.hotel_id = $1), ${ABSENT_UUID}),
+                      'RENEWAL', 'QPAY', $2, 'merch-fixture', 20000, 1818, 20000, 1000, 'P20',
+                      1, 20000, 'pb-1', 'tax-1', 'pkg-1',
+                      coalesce((SELECT l.application_id FROM platform.hotel_owner_link l
+                                 WHERE l.hotel_id = $1), ${ABSENT_UUID}),
+                      now())
+              RETURNING payment_id
+            )
+            INSERT INTO platform.ebarimt_issuance (hotel_id, payment_id)
+            SELECT $1, pay.payment_id FROM pay`,
+      values: [hotelId, `ebarimt-pay-fixture-${String(n)}`],
+    }),
+    updateColumn: 'last_error',
+    updateSet: `attempts = attempts + 1, last_error = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.cash_location',
+    grants: { api: ['SELECT'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+            VALUES ($1, 'DRAWER', $2, $3)`,
+      values: [hotelId, `Fixture drawer ${String(n)}`, `FIX${String(n)}`],
+    }),
+    insertableByRuntime: false,
+  },
+  {
+    name: 'platform.hotel_admin_activation',
+    grants: { api: ['SELECT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `WITH acct AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('hotel', $2) RETURNING account_id
+            ), mem AS (
+              INSERT INTO platform.staff_membership
+                (hotel_id, account_id, invited_email_normalized, state,
+                 membership_revision, activated_at)
+              SELECT $1, acct.account_id, $2, 'ACTIVE', 1, now() FROM acct
+              RETURNING membership_id, account_id
+            )
+            INSERT INTO platform.hotel_admin_activation
+              (hotel_id, membership_id, account_id, application_id, state, email_normalized,
+               activated_at)
+            SELECT $1, mem.membership_id, mem.account_id, l.application_id, 'ACTIVE', $2, now()
+              FROM mem, platform.hotel_owner_link l WHERE l.hotel_id = $1`,
+      values: [hotelId, `fixture-activation-${String(n)}@example.test`],
+    }),
+    insertableByRuntime: false,
+    // One application per hotel, and one activation per application.
+    rowsPerTenant: 1,
+    updateColumn: 'state',
+    updateSet: `state = 'SUSPENDED', revision = revision + 1`,
+  },
+  {
+    name: 'platform.activation_delivery',
+    // The sealed link is written by the provisioning wrapper, in the same
+    // transaction as the tenant. A runtime drains it and never mints one.
+    grants: { api: ['SELECT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.activation_delivery
+              (hotel_id, activation_id, email_normalized, expires_at)
+            VALUES ($1,
+                    coalesce((SELECT a.activation_id FROM platform.hotel_admin_activation a
+                               WHERE a.hotel_id = $1), ${ABSENT_UUID}),
+                    $2, now() + interval '1 day')`,
+      values: [hotelId, `fixture-delivery-${String(n)}@example.test`],
+    }),
+    insertableByRuntime: false,
+    rowsPerTenant: 1,
+    updateColumn: 'last_error',
+    updateSet: `attempts = attempts + 1, last_error = 'acl-probe'`,
   },
 ];
 

@@ -8,7 +8,12 @@
  */
 
 export type TableClass =
-  'GLOBAL' | 'ACCOUNT_GLOBAL' | 'TENANT_RLS' | 'PLATFORM_AUDIT' | 'POLICE_ISOLATED';
+  | 'GLOBAL'
+  | 'ACCOUNT_GLOBAL'
+  | 'TENANT_RLS'
+  | 'PRE_TENANT_ISOLATED'
+  | 'PLATFORM_AUDIT'
+  | 'POLICE_ISOLATED';
 
 export interface ClassifiedTable {
   readonly schema: string;
@@ -182,6 +187,112 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     classification: 'TENANT_RLS',
     why: 'carries hotel_id; the retryable marker that a suspended membership\u2019s open work still has to be enumerated (STAFF-DEC-007)',
   },
+  // ------------------------------------------------------------- Phase 05
+  //
+  // The pre-tenant graph. These carry no `hotel_id` — an application exists
+  // before any hotel does — so they are not TENANT_RLS, and they are not
+  // ACCOUNT_GLOBAL either: they belong to an applicant who may have no account
+  // at all. Their isolation is `app.onboarding_ref`, which is NULL unless the
+  // applicant presented the bearer secret their own draft was minted with, plus
+  // an explicit Operation-realm review policy. `PRE_TENANT_ISOLATED` names that
+  // and is checked the same way every other class is: RLS enabled and forced, no
+  // tenant column, and a policy set that is actually present.
+  {
+    schema: 'platform',
+    table: 'subscription_owner',
+    classification: 'PRE_TENANT_ISOLATED',
+    why: 'an owner profile outlives any one hotel and is reachable only from its own application or by Operation (ONB-DEC-005)',
+  },
+  {
+    schema: 'platform',
+    table: 'onboarding_application',
+    classification: 'PRE_TENANT_ISOLATED',
+    why: 'the pre-payment request; there is no tenant yet and a nullable hotel_id would be a scope every applicant shares (ONB-DEC-001)',
+  },
+  {
+    schema: 'platform',
+    table: 'onboarding_phone_verification',
+    classification: 'PRE_TENANT_ISOLATED',
+    why: 'the OTP challenge belongs to one application and to no hotel (doc 15 §2.1)',
+  },
+  {
+    schema: 'platform',
+    table: 'onboarding_owner_proof',
+    classification: 'PRE_TENANT_ISOLATED',
+    why: 'an ownership challenge belongs to one application and to no hotel (ONB-DEC-007)',
+  },
+  {
+    schema: 'platform',
+    table: 'onboarding_payment_attempt',
+    classification: 'PRE_TENANT_ISOLATED',
+    why: 'the invoice precedes the tenant it will pay for (ONB-DEC-008)',
+  },
+  {
+    schema: 'platform',
+    table: 'onboarding_event',
+    classification: 'PRE_TENANT_ISOLATED',
+    why: 'append-only application history, scoped to the application it describes (doc 15 §8)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_profile',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the public name, contact and location are tenant data (doc 15 §2.1)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_owner_link',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; which owner a hotel belongs to is tenant data (ONB-DEC-005)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_subscription',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the authoritative entitlement row authorization stage 5 reads (OPS-DEC-016)',
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_billing_intent',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a renewal or upgrade quote is one hotel\u2019s money (LIFE-DEC-006)',
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_payment',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; confirmed subscription money, append-only (SUB-DEC-009)',
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_event',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; append-only renewal and upgrade history (doc 17 §4)',
+  },
+  {
+    schema: 'platform',
+    table: 'ebarimt_issuance',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a tax receipt names one hotel\u2019s payment (SUB-DEC-005)',
+  },
+  {
+    schema: 'platform',
+    table: 'cash_location',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the default drawer is the hotel\u2019s own cash root (doc 24 §2.1)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_admin_activation',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the first Hotel Admin\u2019s activation axis belongs to one hotel (doc 15 §6)',
+  },
+  {
+    schema: 'platform',
+    table: 'activation_delivery',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the sealed activation link is one hotel\u2019s outbound delivery (doc 15 §5)',
+  },
   {
     schema: 'audit',
     table: 'platform_event',
@@ -223,6 +334,9 @@ export interface ClassificationViolation {
     | 'account_global_carries_tenant_column'
     | 'tenant_column_not_tenant_rls'
     | 'tenant_rls_not_forced'
+    | 'pre_tenant_carries_tenant_column'
+    | 'pre_tenant_not_forced'
+    | 'pre_tenant_has_no_policy'
     | 'unauthorised_audit_grant'
     | 'runtime_role_owns_object';
   readonly detail: string;

@@ -2,6 +2,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -16,6 +17,18 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+
+/**
+ * `bytea`, which Drizzle 0.45.2 has no built-in column for.
+ *
+ * Envelope ciphertext and wrapped data keys are bytes. Storing them as text
+ * would mean an encoding nobody declared, so the column keeps its real type and
+ * `customType` reports the exact type name the comparator reads back from the
+ * catalogue.
+ */
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+  dataType: () => 'bytea',
+});
 
 /**
  * Drizzle schema representation of the Phase 03 kernel.
@@ -1487,6 +1500,1450 @@ export const workHandoffEvent = platform
   )
   .enableRLS();
 
+// ------------------------------------------------------------------- Phase 05
+
+export const subscriptionOwner = platform
+  .table(
+    'subscription_owner',
+    {
+      countryCode: text('country_code')
+        .notNull()
+        .default(sql`'MN'::text`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      displayName: text('display_name').notNull(),
+      identifierCiphertext: bytea('identifier_ciphertext').notNull(),
+      identifierKeyVersion: text('identifier_key_version').notNull(),
+      identifierLookupKeyVersion: text('identifier_lookup_key_version').notNull(),
+      identifierLookupToken: text('identifier_lookup_token').notNull(),
+      identifierWrappedDek: bytea('identifier_wrapped_dek').notNull(),
+      identityType: text('identity_type').notNull(),
+      ownerId: uuid('owner_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      ownerType: text('owner_type').notNull(),
+      representativeName: text('representative_name'),
+      representativePosition: text('representative_position'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      verifiedEmailNormalized: text('verified_email_normalized'),
+      verifiedPhone: text('verified_phone'),
+    },
+    (table) => [
+      check('subscription_owner_country_shape', sql`(country_code ~ '^[A-Z]{2}$'::text)`),
+      check(
+        'subscription_owner_display_name_bounded',
+        sql`((length(display_name) >= 1) AND (length(display_name) <= 200))`,
+      ),
+      check(
+        'subscription_owner_email_normalised',
+        sql`((verified_email_normalized IS NULL) OR (verified_email_normalized = lower(verified_email_normalized)))`,
+      ),
+      check(
+        'subscription_owner_identity_type_known',
+        sql`(identity_type = ANY (ARRAY['registration_number'::text]))`,
+      ),
+      check(
+        'subscription_owner_lookup_shape',
+        sql`(identifier_lookup_token ~ '^[0-9a-f]{64}$'::text)`,
+      ),
+      check(
+        'subscription_owner_representative_matches_type',
+        sql`
+CASE owner_type
+    WHEN 'ORGANIZATION'::text THEN ((representative_name IS NOT NULL) AND (representative_position IS NOT NULL))
+    ELSE ((representative_name IS NULL) AND (representative_position IS NULL))
+END`,
+      ),
+      check('subscription_owner_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'subscription_owner_type_known',
+        sql`(owner_type = ANY (ARRAY['CITIZEN'::text, 'ORGANIZATION'::text]))`,
+      ),
+      unique('subscription_owner_identifier_uq').on(
+        table.identityType,
+        table.countryCode,
+        table.identifierLookupToken,
+      ),
+      pgPolicy('applicant_create', {
+        for: 'insert',
+        withCheck: sql`(EXISTS ( SELECT 1
+   FROM platform.onboarding_application a
+  WHERE ((a.application_id = platform.current_onboarding_ref()) AND (a.owner_identity_type = subscription_owner.identity_type) AND (a.owner_country_code = subscription_owner.country_code) AND (a.owner_identifier_lookup_token = subscription_owner.identifier_lookup_token))))`,
+      }),
+      pgPolicy('applicant_read', {
+        for: 'select',
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.onboarding_application a
+  WHERE ((a.application_id = platform.current_onboarding_ref()) AND (a.owner_id = subscription_owner.owner_id))))`,
+      }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const onboardingApplication = platform
+  .table(
+    'onboarding_application',
+    {
+      addressLine: text('address_line').notNull(),
+      adminEmailNormalized: text('admin_email_normalized').notNull(),
+      applicantTokenHash: text('applicant_token_hash').notNull(),
+      applicantTokenKeyVersion: text('applicant_token_key_version').notNull(),
+      applicationId: uuid('application_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      contactPhone: text('contact_phone').notNull(),
+      contactPhoneVerifiedAt: timestamp('contact_phone_verified_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      currency: text('currency')
+        .notNull()
+        .default(sql`'MNT'::text`),
+      discountMnt: bigint('discount_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      district: text('district').notNull(),
+      duplicateReviewRequired: boolean('duplicate_review_required')
+        .notNull()
+        .default(sql`false`),
+      existingAccountId: uuid('existing_account_id'),
+      hotelDisplayName: text('hotel_display_name').notNull(),
+      hotelPublicPhone: text('hotel_public_phone').notNull(),
+      khoroo: text('khoroo').notNull(),
+      latitudeMicro: integer('latitude_micro').notNull(),
+      longitudeMicro: integer('longitude_micro').notNull(),
+      monthlyPriceMnt: bigint('monthly_price_mnt', { mode: 'bigint' }).notNull(),
+      ownerCountryCode: text('owner_country_code')
+        .notNull()
+        .default(sql`'MN'::text`),
+      ownerDisplayName: text('owner_display_name').notNull(),
+      ownerId: uuid('owner_id'),
+      ownerIdentifierCiphertext: bytea('owner_identifier_ciphertext').notNull(),
+      ownerIdentifierKeyVersion: text('owner_identifier_key_version').notNull(),
+      ownerIdentifierLookupKeyVersion: text('owner_identifier_lookup_key_version').notNull(),
+      ownerIdentifierLookupToken: text('owner_identifier_lookup_token').notNull(),
+      ownerIdentifierWrappedDek: bytea('owner_identifier_wrapped_dek').notNull(),
+      ownerIdentityType: text('owner_identity_type')
+        .notNull()
+        .default(sql`'registration_number'::text`),
+      ownerType: text('owner_type').notNull(),
+      packageCode: text('package_code').notNull(),
+      packageFeatureVersion: text('package_feature_version').notNull(),
+      paidAttemptId: uuid('paid_attempt_id'),
+      paymentConfirmedAt: timestamp('payment_confirmed_at', { withTimezone: true }),
+      priceBookVersion: text('price_book_version').notNull(),
+      provisionAttempts: integer('provision_attempts')
+        .notNull()
+        .default(sql`0`),
+      provisionedHotelId: uuid('provisioned_hotel_id'),
+      representativeName: text('representative_name'),
+      representativePosition: text('representative_position'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'DRAFT'::text`),
+      stateChangedAt: timestamp('state_changed_at', { withTimezone: true }),
+      stateReason: text('state_reason'),
+      subscriptionContactPhone: text('subscription_contact_phone').notNull(),
+      taxConfigVersion: text('tax_config_version').notNull(),
+      termMonths: integer('term_months').notNull(),
+      totalAmountMnt: bigint('total_amount_mnt', { mode: 'bigint' }).notNull(),
+      vatInclusive: boolean('vat_inclusive')
+        .notNull()
+        .default(sql`true`),
+      vatRateBp: integer('vat_rate_bp').notNull(),
+    },
+    (table) => [
+      check(
+        'onboarding_application_address_bounded',
+        sql`((length(address_line) >= 1) AND (length(address_line) <= 300))`,
+      ),
+      check('onboarding_application_country_shape', sql`(owner_country_code ~ '^[A-Z]{2}$'::text)`),
+      check('onboarding_application_currency_known', sql`(currency = 'MNT'::text)`),
+      check('onboarding_application_discount_zero', sql`(discount_mnt = 0)`),
+      check(
+        'onboarding_application_email_normalised',
+        sql`(admin_email_normalized = lower(admin_email_normalized))`,
+      ),
+      check(
+        'onboarding_application_email_shape',
+        sql`(admin_email_normalized ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'::text)`,
+      ),
+      check(
+        'onboarding_application_identity_type_known',
+        sql`(owner_identity_type = ANY (ARRAY['registration_number'::text]))`,
+      ),
+      check(
+        'onboarding_application_latitude_range',
+        sql`((latitude_micro >= '-90000000'::integer) AND (latitude_micro <= 90000000))`,
+      ),
+      check(
+        'onboarding_application_longitude_range',
+        sql`((longitude_micro >= '-180000000'::integer) AND (longitude_micro <= 180000000))`,
+      ),
+      check(
+        'onboarding_application_lookup_shape',
+        sql`(owner_identifier_lookup_token ~ '^[0-9a-f]{64}$'::text)`,
+      ),
+      check(
+        'onboarding_application_monthly_price_matches_package',
+        sql`(monthly_price_mnt =
+CASE package_code
+    WHEN 'P20'::text THEN 20000
+    WHEN 'P25'::text THEN 25000
+    WHEN 'P30'::text THEN 30000
+    ELSE NULL::integer
+END)`,
+      ),
+      check(
+        'onboarding_application_package_known',
+        sql`(package_code = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text]))`,
+      ),
+      check(
+        'onboarding_application_paid_states_have_payment',
+        sql`((state = ANY (ARRAY['PAID_OWNER_VERIFICATION_REQUIRED'::text, 'PAID_PENDING_PROVISIONING'::text, 'PROVISIONING'::text, 'PROVISIONING_FAILED'::text, 'PROVISIONED'::text])) = (paid_attempt_id IS NOT NULL))`,
+      ),
+      check(
+        'onboarding_application_payment_time_matches_attempt',
+        sql`((paid_attempt_id IS NULL) = (payment_confirmed_at IS NULL))`,
+      ),
+      check(
+        'onboarding_application_provision_attempts_non_negative',
+        sql`(provision_attempts >= 0)`,
+      ),
+      check(
+        'onboarding_application_provisioned_has_hotel',
+        sql`((state = 'PROVISIONED'::text) = (provisioned_hotel_id IS NOT NULL))`,
+      ),
+      check(
+        'onboarding_application_representative_matches_type',
+        sql`
+CASE owner_type
+    WHEN 'ORGANIZATION'::text THEN ((representative_name IS NOT NULL) AND (representative_position IS NOT NULL))
+    ELSE ((representative_name IS NULL) AND (representative_position IS NULL))
+END`,
+      ),
+      check('onboarding_application_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'onboarding_application_state_known',
+        sql`(state = ANY (ARRAY['DRAFT'::text, 'OWNER_VERIFICATION_REQUIRED'::text, 'PENDING_PAYMENT'::text, 'PAYMENT_UNCERTAIN'::text, 'PAYMENT_FAILED'::text, 'PAYMENT_EXPIRED'::text, 'PAID_OWNER_VERIFICATION_REQUIRED'::text, 'PAID_PENDING_PROVISIONING'::text, 'PROVISIONING'::text, 'PROVISIONING_FAILED'::text, 'PROVISIONED'::text]))`,
+      ),
+      check('onboarding_application_term_known', sql`(term_months = ANY (ARRAY[1, 3, 7, 12]))`),
+      check(
+        'onboarding_application_token_shape',
+        sql`(applicant_token_hash ~ '^[0-9a-f]{64}$'::text)`,
+      ),
+      check(
+        'onboarding_application_total_is_product',
+        sql`(total_amount_mnt = ((monthly_price_mnt * term_months) - discount_mnt))`,
+      ),
+      check(
+        'onboarding_application_type_known',
+        sql`(owner_type = ANY (ARRAY['CITIZEN'::text, 'ORGANIZATION'::text]))`,
+      ),
+      check(
+        'onboarding_application_vat_rate_range',
+        sql`((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000))`,
+      ),
+      unique('onboarding_application_token_uq').on(table.applicantTokenHash),
+      foreignKey({
+        name: 'onboarding_application_existing_account_fkey',
+        columns: [table.existingAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'onboarding_application_hotel_fkey',
+        columns: [table.provisionedHotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'onboarding_application_owner_fkey',
+        columns: [table.ownerId],
+        foreignColumns: [subscriptionOwner.ownerId],
+      }).onDelete('restrict'),
+      uniqueIndex('onboarding_application_hotel_uq')
+        .on(table.provisionedHotelId)
+        .where(sql`provisioned_hotel_id IS NOT NULL`),
+      index('onboarding_application_owner_lookup_idx').on(table.ownerIdentifierLookupToken),
+      index('onboarding_application_state_idx').on(table.state, table.createdAt),
+      pgPolicy('applicant_scope', {
+        using: sql`(application_id = platform.current_onboarding_ref())`,
+        withCheck: sql`(application_id = platform.current_onboarding_ref())`,
+      }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const onboardingPhoneVerification = platform
+  .table(
+    'onboarding_phone_verification',
+    {
+      applicationId: uuid('application_id').notNull(),
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      codeDigest: text('code_digest'),
+      codeKeyVersion: text('code_key_version'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      maxAttempts: integer('max_attempts').notNull(),
+      phone: text('phone').notNull(),
+      purpose: text('purpose')
+        .notNull()
+        .default(sql`'owner_phone'::text`),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      verificationId: uuid('verification_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check(
+        'onboarding_phone_verification_attempts_bounded',
+        sql`((attempts >= 0) AND (attempts <= max_attempts))`,
+      ),
+      check(
+        'onboarding_phone_verification_code_complete',
+        sql`(num_nonnulls(code_digest, code_key_version) = ANY (ARRAY[0, 2]))`,
+      ),
+      check(
+        'onboarding_phone_verification_digest_shape',
+        sql`((code_digest IS NULL) OR (code_digest ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      check('onboarding_phone_verification_expiry_after_creation', sql`(expires_at > created_at)`),
+      check('onboarding_phone_verification_max_attempts_positive', sql`(max_attempts >= 1)`),
+      check(
+        'onboarding_phone_verification_purpose_known',
+        sql`(purpose = ANY (ARRAY['owner_phone'::text]))`,
+      ),
+      check(
+        'onboarding_phone_verification_settled_has_time',
+        sql`((state = 'PENDING'::text) = (settled_at IS NULL))`,
+      ),
+      check(
+        'onboarding_phone_verification_settled_holds_no_code',
+        sql`((code_digest IS NULL) OR (state = 'PENDING'::text))`,
+      ),
+      check(
+        'onboarding_phone_verification_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'VERIFIED'::text, 'EXPIRED'::text, 'FAILED'::text]))`,
+      ),
+      foreignKey({
+        name: 'onboarding_phone_verification_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      uniqueIndex('onboarding_phone_verification_pending_uq')
+        .on(table.applicationId, table.purpose)
+        .where(sql`state = 'PENDING'::text`),
+      pgPolicy('applicant_scope', {
+        using: sql`(application_id = platform.current_onboarding_ref())`,
+        withCheck: sql`(application_id = platform.current_onboarding_ref())`,
+      }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const onboardingOwnerProof = platform
+  .table(
+    'onboarding_owner_proof',
+    {
+      applicationId: uuid('application_id').notNull(),
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      challengeDigest: text('challenge_digest'),
+      challengeKeyVersion: text('challenge_key_version'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionReason: text('decision_reason'),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      maskedDestination: text('masked_destination'),
+      method: text('method').notNull(),
+      ownerId: uuid('owner_id').notNull(),
+      proofId: uuid('proof_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check('onboarding_owner_proof_attempts_non_negative', sql`(attempts >= 0)`),
+      check(
+        'onboarding_owner_proof_challenge_complete',
+        sql`(num_nonnulls(challenge_digest, challenge_key_version) = ANY (ARRAY[0, 2]))`,
+      ),
+      check(
+        'onboarding_owner_proof_decided_has_time',
+        sql`((state = 'PENDING'::text) = (decided_at IS NULL))`,
+      ),
+      check(
+        'onboarding_owner_proof_digest_shape',
+        sql`((challenge_digest IS NULL) OR (challenge_digest ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      check('onboarding_owner_proof_expiry_after_creation', sql`(expires_at > created_at)`),
+      check(
+        'onboarding_owner_proof_method_known',
+        sql`(method = ANY (ARRAY['AUTHENTICATED_ACCOUNT'::text, 'STORED_CONTACT_CHALLENGE'::text, 'OFFLINE_VERIFICATION'::text]))`,
+      ),
+      check(
+        'onboarding_owner_proof_offline_has_decider',
+        sql`((method <> 'OFFLINE_VERIFICATION'::text) OR (state = 'PENDING'::text) OR (decided_by_account_id IS NOT NULL))`,
+      ),
+      check(
+        'onboarding_owner_proof_settled_holds_no_challenge',
+        sql`((challenge_digest IS NULL) OR (state = 'PENDING'::text))`,
+      ),
+      check(
+        'onboarding_owner_proof_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'PASSED'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      foreignKey({
+        name: 'onboarding_owner_proof_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'onboarding_owner_proof_decided_by_fkey',
+        columns: [table.decidedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'onboarding_owner_proof_owner_fkey',
+        columns: [table.ownerId],
+        foreignColumns: [subscriptionOwner.ownerId],
+      }).onDelete('restrict'),
+      uniqueIndex('onboarding_owner_proof_passed_uq')
+        .on(table.applicationId)
+        .where(sql`state = 'PASSED'::text`),
+      uniqueIndex('onboarding_owner_proof_pending_uq')
+        .on(table.applicationId)
+        .where(sql`state = 'PENDING'::text`),
+      pgPolicy('applicant_scope', {
+        using: sql`(application_id = platform.current_onboarding_ref())`,
+        withCheck: sql`(application_id = platform.current_onboarding_ref())`,
+      }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const onboardingPaymentAttempt = platform
+  .table(
+    'onboarding_payment_attempt',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      applicationId: uuid('application_id').notNull(),
+      attemptId: uuid('attempt_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      currency: text('currency')
+        .notNull()
+        .default(sql`'MNT'::text`),
+      discountMnt: bigint('discount_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      merchantRef: text('merchant_ref').notNull(),
+      monthlyPriceMnt: bigint('monthly_price_mnt', { mode: 'bigint' }).notNull(),
+      packageCode: text('package_code').notNull(),
+      packageFeatureVersion: text('package_feature_version').notNull(),
+      priceBookVersion: text('price_book_version').notNull(),
+      provider: text('provider').notNull(),
+      providerInvoiceId: text('provider_invoice_id').notNull(),
+      providerPaymentId: text('provider_payment_id'),
+      reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
+      reconciledByAccountId: uuid('reconciled_by_account_id'),
+      reconciliationOutcome: text('reconciliation_outcome'),
+      reconciliationReason: text('reconciliation_reason'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      taxConfigVersion: text('tax_config_version').notNull(),
+      termMonths: integer('term_months').notNull(),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+      terminalReason: text('terminal_reason'),
+      vatRateBp: integer('vat_rate_bp').notNull(),
+    },
+    (table) => [
+      check(
+        'onboarding_payment_attempt_amount_is_product',
+        sql`(amount_mnt = ((monthly_price_mnt * term_months) - discount_mnt))`,
+      ),
+      check('onboarding_payment_attempt_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'onboarding_payment_attempt_confirmed_has_provider_payment',
+        sql`((confirmed_at IS NULL) = (provider_payment_id IS NULL))`,
+      ),
+      check('onboarding_payment_attempt_currency_known', sql`(currency = 'MNT'::text)`),
+      check('onboarding_payment_attempt_discount_zero', sql`(discount_mnt = 0)`),
+      check('onboarding_payment_attempt_expiry_after_creation', sql`(expires_at > created_at)`),
+      check(
+        'onboarding_payment_attempt_package_known',
+        sql`(package_code = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text]))`,
+      ),
+      check(
+        'onboarding_payment_attempt_paid_has_confirmation',
+        sql`((state = ANY (ARRAY['PAID'::text, 'PAID_REQUIRES_RECONCILIATION'::text])) <= (confirmed_at IS NOT NULL))`,
+      ),
+      check(
+        'onboarding_payment_attempt_provider_known',
+        sql`(provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text]))`,
+      ),
+      check(
+        'onboarding_payment_attempt_reconciled_complete',
+        sql`(num_nonnulls(reconciliation_outcome, reconciled_by_account_id, reconciled_at) = ANY (ARRAY[0, 3]))`,
+      ),
+      check(
+        'onboarding_payment_attempt_reconciliation_outcome_known',
+        sql`((reconciliation_outcome IS NULL) OR (reconciliation_outcome = ANY (ARRAY['PROVIDER_CORRECTED_NOT_PAID'::text, 'EXTERNALLY_VOIDED'::text, 'FINANCE_CLOSED_EXCEPTION'::text])))`,
+      ),
+      check('onboarding_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'onboarding_payment_attempt_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+      ),
+      check('onboarding_payment_attempt_term_known', sql`(term_months = ANY (ARRAY[1, 3, 7, 12]))`),
+      check(
+        'onboarding_payment_attempt_terminal_has_time',
+        sql`((state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text])) = (terminal_at IS NULL))`,
+      ),
+      check(
+        'onboarding_payment_attempt_vat_rate_range',
+        sql`((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000))`,
+      ),
+      unique('onboarding_payment_attempt_invoice_uq').on(table.provider, table.providerInvoiceId),
+      foreignKey({
+        name: 'onboarding_payment_attempt_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'onboarding_payment_attempt_reconciled_by_fkey',
+        columns: [table.reconciledByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      uniqueIndex('onboarding_payment_attempt_active_uq')
+        .on(table.applicationId)
+        .where(sql`state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text])`),
+      index('onboarding_payment_attempt_application_idx').on(table.applicationId, table.createdAt),
+      uniqueIndex('onboarding_payment_attempt_provider_payment_uq')
+        .on(table.provider, table.providerPaymentId)
+        .where(sql`provider_payment_id IS NOT NULL`),
+      index('onboarding_payment_attempt_reconciliation_idx')
+        .on(table.state, table.confirmedAt)
+        .where(sql`state = 'PAID_REQUIRES_RECONCILIATION'::text`),
+      pgPolicy('applicant_scope', {
+        using: sql`(application_id = platform.current_onboarding_ref())`,
+        withCheck: sql`(application_id = platform.current_onboarding_ref())`,
+      }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const onboardingEvent = platform
+  .table(
+    'onboarding_event',
+    {
+      actorRef: text('actor_ref').notNull(),
+      applicationId: uuid('application_id').notNull(),
+      correlationId: text('correlation_id'),
+      detail: jsonb('detail')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      eventId: bigint('event_id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+      fromState: text('from_state'),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reason: text('reason'),
+      toState: text('to_state').notNull(),
+    },
+    (table) => [
+      check('onboarding_event_detail_sanitised', sql`(NOT platform.contains_denied_key(detail))`),
+      foreignKey({
+        name: 'onboarding_event_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      index('onboarding_event_application_idx').on(table.applicationId, table.eventId),
+      pgPolicy('applicant_scope', {
+        using: sql`(application_id = platform.current_onboarding_ref())`,
+        withCheck: sql`(application_id = platform.current_onboarding_ref())`,
+      }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelProfile = platform
+  .table(
+    'hotel_profile',
+    {
+      addressLine: text('address_line').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      district: text('district').notNull(),
+      duplicateReviewRequired: boolean('duplicate_review_required')
+        .notNull()
+        .default(sql`false`),
+      hotelId: uuid('hotel_id').primaryKey(),
+      khoroo: text('khoroo').notNull(),
+      latitudeMicro: integer('latitude_micro').notNull(),
+      listingState: text('listing_state')
+        .notNull()
+        .default(sql`'UNLISTED'::text`),
+      longitudeMicro: integer('longitude_micro').notNull(),
+      publicName: text('public_name').notNull(),
+      publicPhone: text('public_phone').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+    },
+    (table) => [
+      check(
+        'hotel_profile_address_bounded',
+        sql`((length(address_line) >= 1) AND (length(address_line) <= 300))`,
+      ),
+      check(
+        'hotel_profile_latitude_range',
+        sql`((latitude_micro >= '-90000000'::integer) AND (latitude_micro <= 90000000))`,
+      ),
+      check(
+        'hotel_profile_listing_state_known',
+        sql`(listing_state = ANY (ARRAY['UNLISTED'::text, 'PUBLISHED'::text]))`,
+      ),
+      check(
+        'hotel_profile_longitude_range',
+        sql`((longitude_micro >= '-180000000'::integer) AND (longitude_micro <= 180000000))`,
+      ),
+      check(
+        'hotel_profile_review_blocks_listing',
+        sql`((NOT duplicate_review_required) OR (listing_state = 'UNLISTED'::text))`,
+      ),
+      check('hotel_profile_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'hotel_profile_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelOwnerLink = platform
+  .table(
+    'hotel_owner_link',
+    {
+      applicationId: uuid('application_id').notNull(),
+      hotelId: uuid('hotel_id').primaryKey(),
+      linkedAt: timestamp('linked_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      ownerId: uuid('owner_id').notNull(),
+      ownerType: text('owner_type').notNull(),
+    },
+    (table) => [
+      check(
+        'hotel_owner_link_type_known',
+        sql`(owner_type = ANY (ARRAY['CITIZEN'::text, 'ORGANIZATION'::text]))`,
+      ),
+      unique('hotel_owner_link_application_uq').on(table.applicationId),
+      foreignKey({
+        name: 'hotel_owner_link_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_owner_link_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_owner_link_owner_fkey',
+        columns: [table.ownerId],
+        foreignColumns: [subscriptionOwner.ownerId],
+      }).onDelete('restrict'),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelSubscription = platform
+  .table(
+    'hotel_subscription',
+    {
+      billingRevision: integer('billing_revision')
+        .notNull()
+        .default(sql`1`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      effectivePackage: text('effective_package').notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      packageFloor: text('package_floor').notNull(),
+      pendingUpgradeEffectiveAt: timestamp('pending_upgrade_effective_at', { withTimezone: true }),
+      pendingUpgradePackage: text('pending_upgrade_package'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+      subscriptionId: uuid('subscription_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+      suspensionReason: text('suspension_reason'),
+      termMonths: integer('term_months').notNull(),
+      timezone: text('timezone')
+        .notNull()
+        .default(sql`'Asia/Ulaanbaatar'::text`),
+    },
+    (table) => [
+      check('hotel_subscription_billing_revision_positive', sql`(billing_revision >= 1)`),
+      check('hotel_subscription_expiry_after_start', sql`(expires_at > starts_at)`),
+      check(
+        'hotel_subscription_floor_known',
+        sql`(package_floor = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text]))`,
+      ),
+      check(
+        'hotel_subscription_floor_not_below_effective',
+        sql`(platform.package_rank(package_floor) >= platform.package_rank(effective_package))`,
+      ),
+      check(
+        'hotel_subscription_package_known',
+        sql`(effective_package = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text]))`,
+      ),
+      check(
+        'hotel_subscription_pending_complete',
+        sql`(num_nonnulls(pending_upgrade_package, pending_upgrade_effective_at) = ANY (ARRAY[0, 2]))`,
+      ),
+      check(
+        'hotel_subscription_pending_is_an_upgrade',
+        sql`((pending_upgrade_package IS NULL) OR (platform.package_rank(pending_upgrade_package) > platform.package_rank(effective_package)))`,
+      ),
+      check(
+        'hotel_subscription_pending_within_floor',
+        sql`((pending_upgrade_package IS NULL) OR (platform.package_rank(package_floor) >= platform.package_rank(pending_upgrade_package)))`,
+      ),
+      check('hotel_subscription_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_subscription_suspension_complete',
+        sql`((suspended_at IS NULL) = (suspension_reason IS NULL))`,
+      ),
+      check('hotel_subscription_term_known', sql`(term_months = ANY (ARRAY[1, 3, 7, 12]))`),
+      check('hotel_subscription_timezone_known', sql`(timezone = 'Asia/Ulaanbaatar'::text)`),
+      unique('hotel_subscription_hotel_uq').on(table.hotelId),
+      unique('hotel_subscription_scope_uq').on(table.hotelId, table.subscriptionId),
+      foreignKey({
+        name: 'hotel_subscription_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      index('hotel_subscription_boundary_idx')
+        .on(table.pendingUpgradeEffectiveAt)
+        .where(sql`pending_upgrade_package IS NOT NULL`),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const subscriptionBillingIntent = platform
+  .table(
+    'subscription_billing_intent',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      currency: text('currency')
+        .notNull()
+        .default(sql`'MNT'::text`),
+      currentPackage: text('current_package').notNull(),
+      discountMnt: bigint('discount_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      effectiveAt: timestamp('effective_at', { withTimezone: true }),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      intentId: uuid('intent_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      kind: text('kind').notNull(),
+      merchantRef: text('merchant_ref').notNull(),
+      monthlyPriceMnt: bigint('monthly_price_mnt', { mode: 'bigint' }).notNull(),
+      packageFeatureVersion: text('package_feature_version').notNull(),
+      priceBookVersion: text('price_book_version').notNull(),
+      priceDeltaMnt: bigint('price_delta_mnt', { mode: 'bigint' }),
+      provider: text('provider').notNull(),
+      providerInvoiceId: text('provider_invoice_id').notNull(),
+      providerPaymentId: text('provider_payment_id'),
+      quotedBillingRevision: integer('quoted_billing_revision').notNull(),
+      quotedExpiresAt: timestamp('quoted_expires_at', { withTimezone: true }).notNull(),
+      reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
+      reconciledByAccountId: uuid('reconciled_by_account_id'),
+      reconciliationOutcome: text('reconciliation_outcome'),
+      reconciliationReason: text('reconciliation_reason'),
+      remainingServiceMonths: integer('remaining_service_months'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      subscriptionId: uuid('subscription_id').notNull(),
+      targetPackage: text('target_package').notNull(),
+      taxConfigVersion: text('tax_config_version').notNull(),
+      termMonths: integer('term_months'),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+      terminalReason: text('terminal_reason'),
+      vatRateBp: integer('vat_rate_bp').notNull(),
+    },
+    (table) => [
+      check('subscription_billing_intent_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'subscription_billing_intent_confirmed_has_provider_payment',
+        sql`((confirmed_at IS NULL) = (provider_payment_id IS NULL))`,
+      ),
+      check('subscription_billing_intent_currency_known', sql`(currency = 'MNT'::text)`),
+      check('subscription_billing_intent_discount_zero', sql`(discount_mnt = 0)`),
+      check('subscription_billing_intent_expiry_after_creation', sql`(expires_at > created_at)`),
+      check(
+        'subscription_billing_intent_kind_known',
+        sql`(kind = ANY (ARRAY['RENEWAL'::text, 'UPGRADE'::text]))`,
+      ),
+      check(
+        'subscription_billing_intent_package_known',
+        sql`((current_package = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text])) AND (target_package = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text])))`,
+      ),
+      check(
+        'subscription_billing_intent_provider_known',
+        sql`(provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text]))`,
+      ),
+      check(
+        'subscription_billing_intent_quoted_revision_positive',
+        sql`(quoted_billing_revision >= 1)`,
+      ),
+      check(
+        'subscription_billing_intent_reconciled_complete',
+        sql`(num_nonnulls(reconciliation_outcome, reconciled_by_account_id, reconciled_at) = ANY (ARRAY[0, 3]))`,
+      ),
+      check(
+        'subscription_billing_intent_reconciliation_outcome_known',
+        sql`((reconciliation_outcome IS NULL) OR (reconciliation_outcome = ANY (ARRAY['PROVIDER_CORRECTED_NOT_PAID'::text, 'EXTERNALLY_VOIDED'::text, 'FINANCE_CLOSED_EXCEPTION'::text])))`,
+      ),
+      check(
+        'subscription_billing_intent_renewal_not_below_floor',
+        sql`((kind <> 'RENEWAL'::text) OR (platform.package_rank(target_package) >= platform.package_rank(current_package)))`,
+      ),
+      check(
+        'subscription_billing_intent_renewal_shape',
+        sql`((kind <> 'RENEWAL'::text) OR ((term_months = ANY (ARRAY[1, 3, 7, 12])) AND (price_delta_mnt IS NULL) AND (remaining_service_months IS NULL) AND (effective_at IS NULL) AND (amount_mnt = ((monthly_price_mnt * term_months) - discount_mnt))))`,
+      ),
+      check('subscription_billing_intent_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'subscription_billing_intent_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+      ),
+      check(
+        'subscription_billing_intent_terminal_has_time',
+        sql`((state = 'PENDING'::text) = (terminal_at IS NULL))`,
+      ),
+      check(
+        'subscription_billing_intent_upgrade_shape',
+        sql`((kind <> 'UPGRADE'::text) OR ((term_months IS NULL) AND (price_delta_mnt IS NOT NULL) AND (remaining_service_months IS NOT NULL) AND (remaining_service_months >= 1) AND (effective_at IS NOT NULL) AND (platform.package_rank(target_package) > platform.package_rank(current_package)) AND (amount_mnt = (price_delta_mnt * remaining_service_months))))`,
+      ),
+      check(
+        'subscription_billing_intent_vat_rate_range',
+        sql`((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000))`,
+      ),
+      unique('subscription_billing_intent_invoice_uq').on(table.provider, table.providerInvoiceId),
+      unique('subscription_billing_intent_scope_uq').on(table.hotelId, table.intentId),
+      foreignKey({
+        name: 'subscription_billing_intent_reconciled_by_fkey',
+        columns: [table.reconciledByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'subscription_billing_intent_subscription_fkey',
+        columns: [table.hotelId, table.subscriptionId],
+        foreignColumns: [hotelSubscription.hotelId, hotelSubscription.subscriptionId],
+      }).onDelete('restrict'),
+      uniqueIndex('subscription_billing_intent_active_uq')
+        .on(table.subscriptionId)
+        .where(sql`state = 'PENDING'::text`),
+      uniqueIndex('subscription_billing_intent_provider_payment_uq')
+        .on(table.provider, table.providerPaymentId)
+        .where(sql`provider_payment_id IS NOT NULL`),
+      index('subscription_billing_intent_reconciliation_idx')
+        .on(table.state, table.confirmedAt)
+        .where(sql`state = 'PAID_REQUIRES_RECONCILIATION'::text`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const subscriptionPayment = platform
+  .table(
+    'subscription_payment',
+    {
+      applicationId: uuid('application_id'),
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      currency: text('currency')
+        .notNull()
+        .default(sql`'MNT'::text`),
+      discountMnt: bigint('discount_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      grossAmountMnt: bigint('gross_amount_mnt', { mode: 'bigint' }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      intentId: uuid('intent_id'),
+      merchantRef: text('merchant_ref').notNull(),
+      monthlyPriceMnt: bigint('monthly_price_mnt', { mode: 'bigint' }).notNull(),
+      netAmountMnt: bigint('net_amount_mnt', { mode: 'bigint' }).notNull(),
+      packageCode: text('package_code').notNull(),
+      packageFeatureVersion: text('package_feature_version').notNull(),
+      paymentId: uuid('payment_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      priceBookVersion: text('price_book_version').notNull(),
+      provider: text('provider').notNull(),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      providerPaymentId: text('provider_payment_id').notNull(),
+      purpose: text('purpose').notNull(),
+      subscriptionId: uuid('subscription_id').notNull(),
+      taxConfigVersion: text('tax_config_version').notNull(),
+      termMonths: integer('term_months'),
+      vatAmountMnt: bigint('vat_amount_mnt', { mode: 'bigint' }).notNull(),
+      vatRateBp: integer('vat_rate_bp').notNull(),
+    },
+    (table) => [
+      check(
+        'subscription_payment_amounts_positive',
+        sql`((gross_amount_mnt > 0) AND (vat_amount_mnt >= 0) AND (provider_fee_mnt >= 0))`,
+      ),
+      check('subscription_payment_currency_known', sql`(currency = 'MNT'::text)`),
+      check('subscription_payment_discount_zero', sql`(discount_mnt = 0)`),
+      check(
+        'subscription_payment_net_is_gross_less_fee',
+        sql`(net_amount_mnt = (gross_amount_mnt - provider_fee_mnt))`,
+      ),
+      check(
+        'subscription_payment_package_known',
+        sql`(package_code = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text]))`,
+      ),
+      check(
+        'subscription_payment_provider_known',
+        sql`(provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text]))`,
+      ),
+      check(
+        'subscription_payment_purpose_known',
+        sql`(purpose = ANY (ARRAY['ONBOARDING'::text, 'RENEWAL'::text, 'UPGRADE'::text]))`,
+      ),
+      check(
+        'subscription_payment_source_named',
+        sql`(num_nonnulls(application_id, intent_id) = 1)`,
+      ),
+      check(
+        'subscription_payment_term_matches_purpose',
+        sql`((purpose = 'UPGRADE'::text) = (term_months IS NULL))`,
+      ),
+      check(
+        'subscription_payment_vat_rate_range',
+        sql`((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000))`,
+      ),
+      check('subscription_payment_vat_within_gross', sql`(vat_amount_mnt <= gross_amount_mnt)`),
+      unique('subscription_payment_provider_uq').on(table.provider, table.providerPaymentId),
+      unique('subscription_payment_scope_uq').on(table.hotelId, table.paymentId),
+      foreignKey({
+        name: 'subscription_payment_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'subscription_payment_intent_fkey',
+        columns: [table.hotelId, table.intentId],
+        foreignColumns: [subscriptionBillingIntent.hotelId, subscriptionBillingIntent.intentId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'subscription_payment_subscription_fkey',
+        columns: [table.hotelId, table.subscriptionId],
+        foreignColumns: [hotelSubscription.hotelId, hotelSubscription.subscriptionId],
+      }).onDelete('restrict'),
+      index('subscription_payment_subscription_idx').on(
+        table.hotelId,
+        table.subscriptionId,
+        table.confirmedAt,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const subscriptionEvent = platform
+  .table(
+    'subscription_event',
+    {
+      actorRef: text('actor_ref').notNull(),
+      billingRevision: integer('billing_revision').notNull(),
+      detail: jsonb('detail')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      eventId: bigint('event_id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+      eventType: text('event_type').notNull(),
+      fromExpiresAt: timestamp('from_expires_at', { withTimezone: true }),
+      fromPackage: text('from_package'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      paymentId: uuid('payment_id'),
+      subscriptionId: uuid('subscription_id').notNull(),
+      toExpiresAt: timestamp('to_expires_at', { withTimezone: true }),
+      toPackage: text('to_package'),
+    },
+    (table) => [
+      check('subscription_event_billing_revision_positive', sql`(billing_revision >= 1)`),
+      check('subscription_event_detail_sanitised', sql`(NOT platform.contains_denied_key(detail))`),
+      check(
+        'subscription_event_type_known',
+        sql`(event_type = ANY (ARRAY['PROVISIONED'::text, 'RENEWED'::text, 'UPGRADE_PAID'::text, 'UPGRADE_APPLIED'::text, 'SUSPENDED'::text, 'REACTIVATED'::text]))`,
+      ),
+      foreignKey({
+        name: 'subscription_event_payment_fkey',
+        columns: [table.hotelId, table.paymentId],
+        foreignColumns: [subscriptionPayment.hotelId, subscriptionPayment.paymentId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'subscription_event_subscription_fkey',
+        columns: [table.hotelId, table.subscriptionId],
+        foreignColumns: [hotelSubscription.hotelId, hotelSubscription.subscriptionId],
+      }).onDelete('restrict'),
+      index('subscription_event_subscription_idx').on(
+        table.hotelId,
+        table.subscriptionId,
+        table.eventId,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const ebarimtIssuance = platform
+  .table(
+    'ebarimt_issuance',
+    {
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      availableAt: timestamp('available_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      claimToken: uuid('claim_token'),
+      claimedUntil: timestamp('claimed_until', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+      deliveryState: text('delivery_state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      hotelId: uuid('hotel_id').notNull(),
+      issuanceId: uuid('issuance_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      lastError: text('last_error'),
+      paymentId: uuid('payment_id').notNull(),
+      receiptAmountMnt: bigint('receipt_amount_mnt', { mode: 'bigint' }),
+      receiptIssuedAt: timestamp('receipt_issued_at', { withTimezone: true }),
+      receiptNumber: text('receipt_number'),
+      receiptQr: text('receipt_qr'),
+      receiptVatAmountMnt: bigint('receipt_vat_amount_mnt', { mode: 'bigint' }),
+      retriedByAccountId: uuid('retried_by_account_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check('ebarimt_issuance_attempts_non_negative', sql`(attempts >= 0)`),
+      check(
+        'ebarimt_issuance_claim_complete',
+        sql`(num_nonnulls(claim_token, claimed_until) = ANY (ARRAY[0, 2]))`,
+      ),
+      check(
+        'ebarimt_issuance_delivered_has_time',
+        sql`((delivery_state = 'SENT'::text) = (delivered_at IS NOT NULL))`,
+      ),
+      check(
+        'ebarimt_issuance_delivery_requires_issue',
+        sql`((delivery_state = 'PENDING'::text) OR (state = 'ISSUED'::text))`,
+      ),
+      check(
+        'ebarimt_issuance_delivery_state_known',
+        sql`(delivery_state = ANY (ARRAY['PENDING'::text, 'SENT'::text, 'FAILED'::text]))`,
+      ),
+      check(
+        'ebarimt_issuance_receipt_complete',
+        sql`(num_nonnulls(receipt_number, receipt_qr, receipt_amount_mnt, receipt_vat_amount_mnt, receipt_issued_at) = ANY (ARRAY[0, 5]))`,
+      ),
+      check(
+        'ebarimt_issuance_receipt_matches_state',
+        sql`((state = 'ISSUED'::text) = (receipt_number IS NOT NULL))`,
+      ),
+      check('ebarimt_issuance_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'ebarimt_issuance_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text, 'ISSUED'::text, 'MANUAL_RESOLUTION'::text]))`,
+      ),
+      unique('ebarimt_issuance_payment_uq').on(table.hotelId, table.paymentId),
+      unique('ebarimt_issuance_scope_uq').on(table.hotelId, table.issuanceId),
+      foreignKey({
+        name: 'ebarimt_issuance_payment_fkey',
+        columns: [table.hotelId, table.paymentId],
+        foreignColumns: [subscriptionPayment.hotelId, subscriptionPayment.paymentId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'ebarimt_issuance_retried_by_fkey',
+        columns: [table.retriedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      index('ebarimt_issuance_manual_idx')
+        .on(table.hotelId, table.createdAt)
+        .where(sql`state = 'MANUAL_RESOLUTION'::text`),
+      index('ebarimt_issuance_queue_idx')
+        .on(table.availableAt, table.issuanceId)
+        .where(sql`state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text])`),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const cashLocation = platform
+  .table(
+    'cash_location',
+    {
+      cashLocationId: uuid('cash_location_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      code: text('code').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      isDefaultDrawer: boolean('is_default_drawer')
+        .notNull()
+        .default(sql`false`),
+      kind: text('kind').notNull(),
+      name: text('name').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      check(
+        'cash_location_default_is_a_drawer',
+        sql`((NOT is_default_drawer) OR (kind = 'DRAWER'::text))`,
+      ),
+      check(
+        'cash_location_default_is_active',
+        sql`((NOT is_default_drawer) OR (state = 'ACTIVE'::text))`,
+      ),
+      check('cash_location_kind_known', sql`(kind = ANY (ARRAY['DRAWER'::text, 'SAFE'::text]))`),
+      check('cash_location_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 100))`),
+      check('cash_location_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'cash_location_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
+      unique('cash_location_code_uq').on(table.hotelId, table.code),
+      unique('cash_location_name_uq').on(table.hotelId, table.name),
+      unique('cash_location_scope_uq').on(table.hotelId, table.cashLocationId),
+      foreignKey({
+        name: 'cash_location_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      uniqueIndex('cash_location_default_drawer_uq')
+        .on(table.hotelId)
+        .where(sql`is_default_drawer IS TRUE`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelAdminActivation = platform
+  .table(
+    'hotel_admin_activation',
+    {
+      accountId: uuid('account_id').notNull(),
+      activatedAt: timestamp('activated_at', { withTimezone: true }),
+      activationId: uuid('activation_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      applicationId: uuid('application_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      emailNormalized: text('email_normalized').notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      membershipId: uuid('membership_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING_ACTIVATION'::text`),
+      tokenHash: text('token_hash'),
+      tokenKeyVersion: text('token_key_version'),
+    },
+    (table) => [
+      check(
+        'hotel_admin_activation_activated_has_time',
+        sql`((state = 'PENDING_ACTIVATION'::text) = (activated_at IS NULL))`,
+      ),
+      check(
+        'hotel_admin_activation_email_normalised',
+        sql`(email_normalized = lower(email_normalized))`,
+      ),
+      check('hotel_admin_activation_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_admin_activation_state_known',
+        sql`(state = ANY (ARRAY['PENDING_ACTIVATION'::text, 'ACTIVE'::text, 'SUSPENDED'::text]))`,
+      ),
+      check(
+        'hotel_admin_activation_token_complete',
+        sql`(num_nonnulls(token_hash, token_key_version, expires_at) = ANY (ARRAY[0, 3]))`,
+      ),
+      check(
+        'hotel_admin_activation_token_only_while_pending',
+        sql`((token_hash IS NULL) OR (state = 'PENDING_ACTIVATION'::text))`,
+      ),
+      check(
+        'hotel_admin_activation_token_shape',
+        sql`((token_hash IS NULL) OR (token_hash ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      unique('hotel_admin_activation_application_uq').on(table.applicationId),
+      unique('hotel_admin_activation_membership_uq').on(table.hotelId, table.membershipId),
+      unique('hotel_admin_activation_scope_uq').on(table.hotelId, table.activationId),
+      unique('hotel_admin_activation_token_uq').on(table.tokenHash),
+      foreignKey({
+        name: 'hotel_admin_activation_account_fkey',
+        columns: [table.accountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_admin_activation_application_fkey',
+        columns: [table.applicationId],
+        foreignColumns: [onboardingApplication.applicationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_admin_activation_membership_fkey',
+        columns: [table.hotelId, table.membershipId],
+        foreignColumns: [staffMembership.hotelId, staffMembership.membershipId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const activationDelivery = platform
+  .table(
+    'activation_delivery',
+    {
+      activationId: uuid('activation_id').notNull(),
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      availableAt: timestamp('available_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      claimToken: uuid('claim_token'),
+      claimedUntil: timestamp('claimed_until', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+      deliveryId: uuid('delivery_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      emailNormalized: text('email_normalized').notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      lastError: text('last_error'),
+      secretCiphertext: bytea('secret_ciphertext'),
+      secretKeyVersion: text('secret_key_version'),
+      secretWrappedDek: bytea('secret_wrapped_dek'),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check('activation_delivery_attempts_non_negative', sql`(attempts >= 0)`),
+      check(
+        'activation_delivery_claim_complete',
+        sql`(num_nonnulls(claim_token, claimed_until) = ANY (ARRAY[0, 2]))`,
+      ),
+      check(
+        'activation_delivery_delivered_has_time',
+        sql`((state = 'SENT'::text) = (delivered_at IS NOT NULL))`,
+      ),
+      check(
+        'activation_delivery_email_normalised',
+        sql`(email_normalized = lower(email_normalized))`,
+      ),
+      check(
+        'activation_delivery_secret_complete',
+        sql`(num_nonnulls(secret_ciphertext, secret_wrapped_dek, secret_key_version) = ANY (ARRAY[0, 3]))`,
+      ),
+      check(
+        'activation_delivery_settled_holds_no_secret',
+        sql`((secret_ciphertext IS NULL) OR (state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text])))`,
+      ),
+      check(
+        'activation_delivery_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text, 'SENT'::text, 'DEAD_LETTER'::text]))`,
+      ),
+      unique('activation_delivery_activation_uq').on(table.hotelId, table.activationId),
+      foreignKey({
+        name: 'activation_delivery_activation_fkey',
+        columns: [table.hotelId, table.activationId],
+        foreignColumns: [hotelAdminActivation.hotelId, hotelAdminActivation.activationId],
+      }).onDelete('restrict'),
+      index('activation_delivery_queue_idx')
+        .on(table.availableAt, table.deliveryId)
+        .where(sql`state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text])`),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /**
  * The PostgreSQL enum types this declaration covers.
  *
@@ -1534,4 +2991,21 @@ export const DECLARED_TABLES = [
   workHandoffItem,
   workHandoffEvent,
   workHandoffDiscovery,
+  // Phase 05.
+  subscriptionOwner,
+  onboardingApplication,
+  onboardingPhoneVerification,
+  onboardingOwnerProof,
+  onboardingPaymentAttempt,
+  onboardingEvent,
+  hotelProfile,
+  hotelOwnerLink,
+  hotelSubscription,
+  subscriptionBillingIntent,
+  subscriptionPayment,
+  subscriptionEvent,
+  ebarimtIssuance,
+  cashLocation,
+  hotelAdminActivation,
+  activationDelivery,
 ] as const;

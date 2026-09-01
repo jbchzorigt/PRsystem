@@ -1,0 +1,916 @@
+import type { UnitOfWork } from '@prsystem/db';
+import type { PackageCode } from '@prsystem/authz';
+import type { PaymentProvider } from '../contracts/payment-gateway.port';
+
+/**
+ * The pre-tenant onboarding graph.
+ *
+ * Every statement runs under `app.onboarding_ref` or the Operation realm — the
+ * policies decide which rows exist, so nothing here reasons about visibility. A
+ * lookup that returns nothing is a lookup the caller was not entitled to make,
+ * and the service turns it into the same `NOT_FOUND` an absent application gets.
+ */
+
+export type ApplicationState =
+  | 'DRAFT'
+  | 'OWNER_VERIFICATION_REQUIRED'
+  | 'PENDING_PAYMENT'
+  | 'PAYMENT_UNCERTAIN'
+  | 'PAYMENT_FAILED'
+  | 'PAYMENT_EXPIRED'
+  | 'PAID_OWNER_VERIFICATION_REQUIRED'
+  | 'PAID_PENDING_PROVISIONING'
+  | 'PROVISIONING'
+  | 'PROVISIONING_FAILED'
+  | 'PROVISIONED';
+
+export type OwnerType = 'CITIZEN' | 'ORGANIZATION';
+
+export type AttemptState =
+  | 'PENDING'
+  | 'PAYMENT_UNCERTAIN'
+  | 'PAID'
+  | 'FAILED'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'PAID_REQUIRES_RECONCILIATION';
+
+export interface ApplicationRow {
+  readonly applicationId: string;
+  readonly state: ApplicationState;
+  readonly ownerType: OwnerType;
+  readonly ownerDisplayName: string;
+  readonly representativeName: string | null;
+  readonly representativePosition: string | null;
+  readonly ownerIdentityType: string;
+  readonly ownerCountryCode: string;
+  readonly ownerLookupToken: string;
+  readonly contactPhone: string;
+  readonly contactPhoneVerifiedAt: Date | null;
+  readonly subscriptionContactPhone: string;
+  readonly adminEmailNormalized: string;
+  readonly hotelDisplayName: string;
+  readonly hotelPublicPhone: string;
+  readonly district: string;
+  readonly khoroo: string;
+  readonly addressLine: string;
+  readonly latitudeMicro: number;
+  readonly longitudeMicro: number;
+  readonly packageCode: PackageCode;
+  readonly termMonths: number;
+  readonly monthlyPriceMnt: bigint;
+  readonly discountMnt: bigint;
+  readonly totalAmountMnt: bigint;
+  readonly vatRateBp: number;
+  readonly priceBookVersion: string;
+  readonly taxConfigVersion: string;
+  readonly packageFeatureVersion: string;
+  readonly existingAccountId: string | null;
+  readonly ownerId: string | null;
+  readonly duplicateReviewRequired: boolean;
+  readonly provisionedHotelId: string | null;
+  readonly paidAttemptId: string | null;
+  readonly paymentConfirmedAt: Date | null;
+  readonly provisionAttempts: number;
+  readonly revision: number;
+}
+
+export interface AttemptRow {
+  readonly attemptId: string;
+  readonly applicationId: string;
+  readonly provider: PaymentProvider;
+  readonly merchantRef: string;
+  readonly providerInvoiceId: string;
+  readonly providerPaymentId: string | null;
+  readonly state: AttemptState;
+  readonly amountMnt: bigint;
+  readonly currency: string;
+  readonly packageCode: PackageCode;
+  readonly termMonths: number;
+  readonly monthlyPriceMnt: bigint;
+  readonly vatRateBp: number;
+  readonly expiresAt: Date;
+  readonly confirmedAt: Date | null;
+  readonly revision: number;
+}
+
+const APPLICATION_COLUMNS = `
+  application_id, state, owner_type, owner_display_name, representative_name,
+  representative_position, owner_identity_type, owner_country_code,
+  owner_identifier_lookup_token, contact_phone, contact_phone_verified_at,
+  subscription_contact_phone, admin_email_normalized, hotel_display_name,
+  hotel_public_phone, district, khoroo, address_line, latitude_micro, longitude_micro,
+  package_code, term_months, monthly_price_mnt, discount_mnt, total_amount_mnt,
+  vat_rate_bp, price_book_version, tax_config_version, package_feature_version,
+  existing_account_id, owner_id, duplicate_review_required, provisioned_hotel_id,
+  paid_attempt_id, payment_confirmed_at, provision_attempts, revision`;
+
+const ATTEMPT_COLUMNS = `
+  attempt_id, application_id, provider, merchant_ref, provider_invoice_id,
+  provider_payment_id, state, amount_mnt, currency, package_code, term_months,
+  monthly_price_mnt, vat_rate_bp, expires_at, confirmed_at, revision`;
+
+function mapApplication(row: Record<string, unknown> | undefined): ApplicationRow | undefined {
+  if (row === undefined) return undefined;
+  return {
+    applicationId: row['application_id'] as string,
+    state: row['state'] as ApplicationState,
+    ownerType: row['owner_type'] as OwnerType,
+    ownerDisplayName: row['owner_display_name'] as string,
+    representativeName: row['representative_name'] as string | null,
+    representativePosition: row['representative_position'] as string | null,
+    ownerIdentityType: row['owner_identity_type'] as string,
+    ownerCountryCode: row['owner_country_code'] as string,
+    ownerLookupToken: row['owner_identifier_lookup_token'] as string,
+    contactPhone: row['contact_phone'] as string,
+    contactPhoneVerifiedAt: row['contact_phone_verified_at'] as Date | null,
+    subscriptionContactPhone: row['subscription_contact_phone'] as string,
+    adminEmailNormalized: row['admin_email_normalized'] as string,
+    hotelDisplayName: row['hotel_display_name'] as string,
+    hotelPublicPhone: row['hotel_public_phone'] as string,
+    district: row['district'] as string,
+    khoroo: row['khoroo'] as string,
+    addressLine: row['address_line'] as string,
+    latitudeMicro: Number(row['latitude_micro']),
+    longitudeMicro: Number(row['longitude_micro']),
+    packageCode: row['package_code'] as PackageCode,
+    termMonths: Number(row['term_months']),
+    monthlyPriceMnt: BigInt(row['monthly_price_mnt'] as string),
+    discountMnt: BigInt(row['discount_mnt'] as string),
+    totalAmountMnt: BigInt(row['total_amount_mnt'] as string),
+    vatRateBp: Number(row['vat_rate_bp']),
+    priceBookVersion: row['price_book_version'] as string,
+    taxConfigVersion: row['tax_config_version'] as string,
+    packageFeatureVersion: row['package_feature_version'] as string,
+    existingAccountId: row['existing_account_id'] as string | null,
+    ownerId: row['owner_id'] as string | null,
+    duplicateReviewRequired: row['duplicate_review_required'] as boolean,
+    provisionedHotelId: row['provisioned_hotel_id'] as string | null,
+    paidAttemptId: row['paid_attempt_id'] as string | null,
+    paymentConfirmedAt: row['payment_confirmed_at'] as Date | null,
+    provisionAttempts: Number(row['provision_attempts']),
+    revision: Number(row['revision']),
+  };
+}
+
+function mapAttempt(row: Record<string, unknown> | undefined): AttemptRow | undefined {
+  if (row === undefined) return undefined;
+  return {
+    attemptId: row['attempt_id'] as string,
+    applicationId: row['application_id'] as string,
+    provider: row['provider'] as PaymentProvider,
+    merchantRef: row['merchant_ref'] as string,
+    providerInvoiceId: row['provider_invoice_id'] as string,
+    providerPaymentId: row['provider_payment_id'] as string | null,
+    state: row['state'] as AttemptState,
+    amountMnt: BigInt(row['amount_mnt'] as string),
+    currency: row['currency'] as string,
+    packageCode: row['package_code'] as PackageCode,
+    termMonths: Number(row['term_months']),
+    monthlyPriceMnt: BigInt(row['monthly_price_mnt'] as string),
+    vatRateBp: Number(row['vat_rate_bp']),
+    expiresAt: row['expires_at'] as Date,
+    confirmedAt: row['confirmed_at'] as Date | null,
+    revision: Number(row['revision']),
+  };
+}
+
+export interface CreateApplicationInput {
+  /**
+   * Minted by the caller, not by the database.
+   *
+   * The envelope AAD and the applicant token digest are both bound to this id,
+   * so it has to exist before the row does — a value the insert generated could
+   * only be bound to afterwards, and a ciphertext bound to the wrong row is one
+   * that will not decrypt.
+   */
+  readonly applicationId: string;
+  readonly ownerType: OwnerType;
+  readonly applicantTokenHash: string;
+  readonly applicantTokenKeyVersion: string;
+  readonly ownerDisplayName: string;
+  readonly representativeName: string | null;
+  readonly representativePosition: string | null;
+  readonly identifierCiphertext: Uint8Array;
+  readonly identifierWrappedDek: Uint8Array;
+  readonly identifierKeyVersion: string;
+  readonly identifierLookupToken: string;
+  readonly identifierLookupKeyVersion: string;
+  readonly contactPhone: string;
+  readonly subscriptionContactPhone: string;
+  readonly adminEmailNormalized: string;
+  readonly hotelDisplayName: string;
+  readonly hotelPublicPhone: string;
+  readonly district: string;
+  readonly khoroo: string;
+  readonly addressLine: string;
+  readonly latitudeMicro: number;
+  readonly longitudeMicro: number;
+  readonly packageCode: PackageCode;
+  readonly termMonths: number;
+  readonly monthlyPriceMnt: bigint;
+  readonly totalAmountMnt: bigint;
+  readonly vatRateBp: number;
+  readonly priceBookVersion: string;
+  readonly taxConfigVersion: string;
+  readonly packageFeatureVersion: string;
+  readonly duplicateReviewRequired: boolean;
+}
+
+/**
+ * Resolves an applicant's bearer digest to the application it names.
+ *
+ * The one lookup that cannot go through the policy, because the policy needs
+ * the very reference this call produces. It goes through the `SECURITY DEFINER`
+ * wrapper, which returns an id and nothing else; the caller then establishes
+ * that scope and reads the row through the ordinary policy like everything else.
+ */
+export async function resolveApplicantToken(
+  uow: UnitOfWork,
+  tokenHash: string,
+): Promise<string | undefined> {
+  const result = await uow.query<{ application_id: string | null }>(
+    `SELECT platform.resolve_onboarding_applicant($1) AS application_id`,
+    [tokenHash],
+  );
+  return result.rows[0]?.application_id ?? undefined;
+}
+
+/**
+ * Resolves a provider invoice reference to the application it belongs to.
+ *
+ * The callback's counterpart to `resolveApplicantToken`, and it exists for the
+ * same reason: the scope has to come from somewhere, and a gateway holds no
+ * applicant secret. The authority is the signature the service verified before
+ * calling this; what comes back is an identifier and nothing else.
+ */
+export async function resolvePaymentAttempt(
+  uow: UnitOfWork,
+  provider: string,
+  providerInvoiceId: string,
+): Promise<string | undefined> {
+  const result = await uow.query<{ application_id: string | null }>(
+    `SELECT platform.resolve_payment_attempt($1, $2) AS application_id`,
+    [provider, providerInvoiceId],
+  );
+  return result.rows[0]?.application_id ?? undefined;
+}
+
+export class OnboardingRepository {
+  constructor(private readonly uow: UnitOfWork) {}
+
+  async create(input: CreateApplicationInput): Promise<string> {
+    const result = await this.uow.query<{ application_id: string }>(
+      `INSERT INTO platform.onboarding_application
+         (application_id, owner_type, applicant_token_hash, applicant_token_key_version,
+          owner_display_name,
+          representative_name, representative_position, owner_identifier_ciphertext,
+          owner_identifier_wrapped_dek, owner_identifier_key_version,
+          owner_identifier_lookup_token, owner_identifier_lookup_key_version,
+          contact_phone, subscription_contact_phone, admin_email_normalized,
+          hotel_display_name, hotel_public_phone, district, khoroo, address_line,
+          latitude_micro, longitude_micro, package_code, term_months, monthly_price_mnt,
+          total_amount_mnt, vat_rate_bp, price_book_version, tax_config_version,
+          package_feature_version, duplicate_review_required)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+               $22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+       RETURNING application_id`,
+      [
+        input.applicationId,
+        input.ownerType,
+        input.applicantTokenHash,
+        input.applicantTokenKeyVersion,
+        input.ownerDisplayName,
+        input.representativeName,
+        input.representativePosition,
+        Buffer.from(input.identifierCiphertext),
+        Buffer.from(input.identifierWrappedDek),
+        input.identifierKeyVersion,
+        input.identifierLookupToken,
+        input.identifierLookupKeyVersion,
+        input.contactPhone,
+        input.subscriptionContactPhone,
+        input.adminEmailNormalized,
+        input.hotelDisplayName,
+        input.hotelPublicPhone,
+        input.district,
+        input.khoroo,
+        input.addressLine,
+        input.latitudeMicro,
+        input.longitudeMicro,
+        input.packageCode,
+        input.termMonths,
+        input.monthlyPriceMnt.toString(),
+        input.totalAmountMnt.toString(),
+        input.vatRateBp,
+        input.priceBookVersion,
+        input.taxConfigVersion,
+        input.packageFeatureVersion,
+        input.duplicateReviewRequired,
+      ],
+    );
+    const applicationId = result.rows[0]?.application_id;
+    if (applicationId === undefined) throw new Error('the application insert returned no row');
+    return applicationId;
+  }
+
+  async byId(applicationId: string): Promise<ApplicationRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${APPLICATION_COLUMNS} FROM platform.onboarding_application
+        WHERE application_id = $1`,
+      [applicationId],
+    );
+    return mapApplication(result.rows[0]);
+  }
+
+  /** The row under a write lock. Every state transition takes this first. */
+  async lock(applicationId: string): Promise<ApplicationRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${APPLICATION_COLUMNS} FROM platform.onboarding_application
+        WHERE application_id = $1 FOR UPDATE`,
+      [applicationId],
+    );
+    return mapApplication(result.rows[0]);
+  }
+
+  /**
+   * The sealed owner identifier, for the one operation that has to reseal it.
+   *
+   * Read as bytes and never as text: this is ciphertext, and a text round-trip
+   * would corrupt it silently.
+   */
+  async sealedIdentifier(applicationId: string): Promise<
+    | {
+        ciphertext: Uint8Array;
+        wrappedDek: Uint8Array;
+        keyVersion: string;
+        lookupKeyVersion: string;
+      }
+    | undefined
+  > {
+    const result = await this.uow.query<{
+      c: Buffer;
+      d: Buffer;
+      v: string;
+      lookup_version: string;
+    }>(
+      `SELECT owner_identifier_ciphertext AS c, owner_identifier_wrapped_dek AS d,
+              owner_identifier_key_version AS v,
+              owner_identifier_lookup_key_version AS lookup_version
+         FROM platform.onboarding_application WHERE application_id = $1`,
+      [applicationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      ciphertext: Uint8Array.from(row.c),
+      wrappedDek: Uint8Array.from(row.d),
+      keyVersion: row.v,
+      lookupKeyVersion: row.lookup_version,
+    };
+  }
+
+  /**
+   * Moves the application, fenced on the revision it was read at.
+   *
+   * Zero rows means somebody else moved it first, which is exactly the
+   * duplicate-callback and concurrent-retry case: the caller stops rather than
+   * applying a second transition (`ONB-DEC-008`).
+   */
+  async transition(input: {
+    applicationId: string;
+    expectedRevision: number;
+    state: ApplicationState;
+    reason: string;
+    ownerId?: string | null;
+    existingAccountId?: string | null;
+    paidAttemptId?: string | null;
+    paymentConfirmedAt?: Date | null;
+    contactPhoneVerifiedAt?: Date | null;
+    bumpProvisionAttempts?: boolean;
+    duplicateReviewRequired?: boolean;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_application
+          SET state = $3,
+              state_changed_at = now(),
+              state_reason = $4,
+              owner_id = COALESCE($5, owner_id),
+              existing_account_id = COALESCE($6, existing_account_id),
+              paid_attempt_id = COALESCE($7, paid_attempt_id),
+              payment_confirmed_at = COALESCE($8, payment_confirmed_at),
+              contact_phone_verified_at = COALESCE($9, contact_phone_verified_at),
+              duplicate_review_required = COALESCE($10, duplicate_review_required),
+              provision_attempts = provision_attempts + CASE WHEN $11 THEN 1 ELSE 0 END,
+              revision = revision + 1
+        WHERE application_id = $1 AND revision = $2`,
+      [
+        input.applicationId,
+        input.expectedRevision,
+        input.state,
+        input.reason,
+        input.ownerId ?? null,
+        input.existingAccountId ?? null,
+        input.paidAttemptId ?? null,
+        input.paymentConfirmedAt ?? null,
+        input.contactPhoneVerifiedAt ?? null,
+        input.duplicateReviewRequired ?? null,
+        input.bumpProvisionAttempts === true,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async recordEvent(input: {
+    applicationId: string;
+    fromState: ApplicationState | null;
+    toState: ApplicationState;
+    reason: string;
+    detail?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.uow.query(
+      `INSERT INTO platform.onboarding_event
+         (application_id, from_state, to_state, reason, actor_ref, correlation_id, detail)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        input.applicationId,
+        input.fromState,
+        input.toState,
+        input.reason,
+        this.uow.context.actorRef,
+        this.uow.context.correlationId,
+        JSON.stringify(input.detail ?? {}),
+      ],
+    );
+  }
+
+  async history(applicationId: string): Promise<readonly { from: string | null; to: string }[]> {
+    const result = await this.uow.query<{ from_state: string | null; to_state: string }>(
+      `SELECT from_state, to_state FROM platform.onboarding_event
+        WHERE application_id = $1 ORDER BY event_id`,
+      [applicationId],
+    );
+    return result.rows.map((row) => ({ from: row.from_state, to: row.to_state }));
+  }
+
+  // ----------------------------------------------------------- owner profiles
+
+  /**
+   * doc 15 §3.1: the existing owner behind this application's registration
+   * number, if any.
+   *
+   * Through the probe wrapper, not a direct read. An applicant may not read an
+   * owner profile they are not linked to — it holds the verified contact a proof
+   * would be sent to — so the probe answers with an opaque reference, a masked
+   * destination and whether that owner already holds a hotel. Exact match on a
+   * versioned keyed HMAC, never the plaintext identifier and never an unkeyed
+   * digest (ADR-0020 §6): a registration-number space is small enough to
+   * enumerate, so an unkeyed hash is a lookup table.
+   */
+  async probeOwner(
+    applicationId: string,
+  ): Promise<
+    { ownerId: string; maskedDestination: string | null; ownsOtherHotel: boolean } | undefined
+  > {
+    const result = await this.uow.query<{
+      owner_id: string;
+      masked_destination: string | null;
+      owns_other_hotel: boolean;
+    }>(
+      `SELECT owner_id, masked_destination, owns_other_hotel
+         FROM platform.probe_subscription_owner($1)`,
+      [applicationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      ownerId: row.owner_id,
+      maskedDestination: row.masked_destination,
+      ownsOtherHotel: row.owns_other_hotel,
+    };
+  }
+
+  /** doc 15 §3.1's callback-time race: did the owner acquire a hotel elsewhere? */
+  async ownerHoldsOtherHotel(applicationId: string): Promise<boolean> {
+    const result = await this.uow.query<{ holds: boolean }>(
+      `SELECT platform.owner_holds_other_hotel($1) AS holds`,
+      [applicationId],
+    );
+    return result.rows[0]?.holds === true;
+  }
+
+  async createOwner(input: {
+    /** Minted by the caller: the resealed ciphertext is bound to it. */
+    ownerId: string;
+    ownerType: OwnerType;
+    displayName: string;
+    representativeName: string | null;
+    representativePosition: string | null;
+    identityType: string;
+    countryCode: string;
+    identifierCiphertext: Uint8Array;
+    identifierWrappedDek: Uint8Array;
+    identifierKeyVersion: string;
+    identifierLookupToken: string;
+    identifierLookupKeyVersion: string;
+    verifiedEmail: string | null;
+    verifiedPhone: string | null;
+  }): Promise<string> {
+    // No `RETURNING`: PostgreSQL requires a SELECT policy to permit a returned
+    // row, and an applicant has none until the owner is linked to their
+    // application. The id was minted by the caller anyway, because the resealed
+    // ciphertext is bound to it.
+    await this.uow.query(
+      `INSERT INTO platform.subscription_owner
+         (owner_id, owner_type, display_name, representative_name, representative_position,
+          identity_type, country_code, identifier_ciphertext, identifier_wrapped_dek,
+          identifier_key_version, identifier_lookup_token, identifier_lookup_key_version,
+          verified_email_normalized, verified_phone)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        input.ownerId,
+        input.ownerType,
+        input.displayName,
+        input.representativeName,
+        input.representativePosition,
+        input.identityType,
+        input.countryCode,
+        Buffer.from(input.identifierCiphertext),
+        Buffer.from(input.identifierWrappedDek),
+        input.identifierKeyVersion,
+        input.identifierLookupToken,
+        input.identifierLookupKeyVersion,
+        input.verifiedEmail,
+        input.verifiedPhone,
+      ],
+    );
+    return input.ownerId;
+  }
+
+  // ------------------------------------------------------ phone verification
+
+  async openPhoneChallenge(input: {
+    applicationId: string;
+    phone: string;
+    codeDigest: string;
+    codeKeyVersion: string;
+    maxAttempts: number;
+    ttlSeconds: number;
+  }): Promise<string> {
+    const result = await this.uow.query<{ verification_id: string }>(
+      `INSERT INTO platform.onboarding_phone_verification
+         (application_id, phone, code_digest, code_key_version, max_attempts, expires_at)
+       VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))
+       RETURNING verification_id`,
+      [
+        input.applicationId,
+        input.phone,
+        input.codeDigest,
+        input.codeKeyVersion,
+        input.maxAttempts,
+        input.ttlSeconds,
+      ],
+    );
+    const verificationId = result.rows[0]?.verification_id;
+    if (verificationId === undefined) throw new Error('the challenge insert returned no row');
+    return verificationId;
+  }
+
+  async lockPendingPhoneChallenge(applicationId: string): Promise<
+    | {
+        verificationId: string;
+        codeDigest: string;
+        attempts: number;
+        maxAttempts: number;
+        expired: boolean;
+      }
+    | undefined
+  > {
+    const result = await this.uow.query<{
+      verification_id: string;
+      code_digest: string;
+      attempts: number;
+      max_attempts: number;
+      expired: boolean;
+    }>(
+      `SELECT verification_id, code_digest, attempts, max_attempts,
+              (expires_at <= now()) AS expired
+         FROM platform.onboarding_phone_verification
+        WHERE application_id = $1 AND state = 'PENDING'
+          FOR UPDATE`,
+      [applicationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      verificationId: row.verification_id,
+      codeDigest: row.code_digest,
+      attempts: Number(row.attempts),
+      maxAttempts: Number(row.max_attempts),
+      expired: row.expired,
+    };
+  }
+
+  async recordPhoneAttempt(verificationId: string): Promise<void> {
+    await this.uow.query(
+      `UPDATE platform.onboarding_phone_verification
+          SET attempts = attempts + 1
+        WHERE verification_id = $1 AND state = 'PENDING'`,
+      [verificationId],
+    );
+  }
+
+  /**
+   * Settles the challenge and destroys its digest.
+   *
+   * The code is cleared rather than kept: a verified or dead challenge that
+   * still held a redeemable digest would be a second copy of the secret with
+   * nothing left to protect it.
+   */
+  async settlePhoneChallenge(
+    verificationId: string,
+    state: 'VERIFIED' | 'EXPIRED' | 'FAILED',
+  ): Promise<void> {
+    await this.uow.query(
+      `UPDATE platform.onboarding_phone_verification
+          SET state = $2, settled_at = now(),
+              code_digest = NULL, code_key_version = NULL
+        WHERE verification_id = $1 AND state = 'PENDING'`,
+      [verificationId, state],
+    );
+  }
+
+  // ---------------------------------------------------------- owner proof
+
+  async openOwnerProof(input: {
+    applicationId: string;
+    ownerId: string;
+    method: 'AUTHENTICATED_ACCOUNT' | 'STORED_CONTACT_CHALLENGE' | 'OFFLINE_VERIFICATION';
+    challengeDigest: string | null;
+    challengeKeyVersion: string | null;
+    maskedDestination: string | null;
+    ttlSeconds: number;
+  }): Promise<string> {
+    const result = await this.uow.query<{ proof_id: string }>(
+      `INSERT INTO platform.onboarding_owner_proof
+         (application_id, owner_id, method, challenge_digest, challenge_key_version,
+          masked_destination, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6, now() + make_interval(secs => $7))
+       RETURNING proof_id`,
+      [
+        input.applicationId,
+        input.ownerId,
+        input.method,
+        input.challengeDigest,
+        input.challengeKeyVersion,
+        input.maskedDestination,
+        input.ttlSeconds,
+      ],
+    );
+    const proofId = result.rows[0]?.proof_id;
+    if (proofId === undefined) throw new Error('the proof insert returned no row');
+    return proofId;
+  }
+
+  async lockPendingProof(applicationId: string): Promise<
+    | {
+        proofId: string;
+        ownerId: string;
+        method: string;
+        challengeDigest: string | null;
+        expired: boolean;
+      }
+    | undefined
+  > {
+    const result = await this.uow.query<{
+      proof_id: string;
+      owner_id: string;
+      method: string;
+      challenge_digest: string | null;
+      expired: boolean;
+    }>(
+      `SELECT proof_id, owner_id, method, challenge_digest, (expires_at <= now()) AS expired
+         FROM platform.onboarding_owner_proof
+        WHERE application_id = $1 AND state = 'PENDING'
+          FOR UPDATE`,
+      [applicationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      proofId: row.proof_id,
+      ownerId: row.owner_id,
+      method: row.method,
+      challengeDigest: row.challenge_digest,
+      expired: row.expired,
+    };
+  }
+
+  async settleProof(input: {
+    proofId: string;
+    state: 'PASSED' | 'FAILED' | 'EXPIRED';
+    decidedByAccountId: string | null;
+    reason: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_owner_proof
+          SET state = $2, decided_at = now(), decided_by_account_id = $3,
+              decision_reason = $4, challenge_digest = NULL, challenge_key_version = NULL
+        WHERE proof_id = $1 AND state = 'PENDING'`,
+      [input.proofId, input.state, input.decidedByAccountId, input.reason],
+    );
+    return result.rowCount === 1;
+  }
+
+  async hasPassedProof(applicationId: string): Promise<boolean> {
+    const result = await this.uow.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM platform.onboarding_owner_proof
+        WHERE application_id = $1 AND state = 'PASSED'`,
+      [applicationId],
+    );
+    return (result.rows[0]?.n ?? '0') !== '0';
+  }
+
+  // ------------------------------------------------------- payment attempts
+
+  async openAttempt(input: {
+    applicationId: string;
+    provider: PaymentProvider;
+    merchantRef: string;
+    providerInvoiceId: string;
+    amountMnt: bigint;
+    packageCode: PackageCode;
+    termMonths: number;
+    monthlyPriceMnt: bigint;
+    vatRateBp: number;
+    priceBookVersion: string;
+    taxConfigVersion: string;
+    packageFeatureVersion: string;
+    ttlSeconds: number;
+  }): Promise<string> {
+    const result = await this.uow.query<{ attempt_id: string }>(
+      `INSERT INTO platform.onboarding_payment_attempt
+         (application_id, provider, merchant_ref, provider_invoice_id, amount_mnt,
+          package_code, term_months, monthly_price_mnt, vat_rate_bp, price_book_version,
+          tax_config_version, package_feature_version, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now() + make_interval(secs => $13))
+       RETURNING attempt_id`,
+      [
+        input.applicationId,
+        input.provider,
+        input.merchantRef,
+        input.providerInvoiceId,
+        input.amountMnt.toString(),
+        input.packageCode,
+        input.termMonths,
+        input.monthlyPriceMnt.toString(),
+        input.vatRateBp,
+        input.priceBookVersion,
+        input.taxConfigVersion,
+        input.packageFeatureVersion,
+        input.ttlSeconds,
+      ],
+    );
+    const attemptId = result.rows[0]?.attempt_id;
+    if (attemptId === undefined) throw new Error('the attempt insert returned no row');
+    return attemptId;
+  }
+
+  async lockAttemptByInvoice(
+    provider: PaymentProvider,
+    providerInvoiceId: string,
+  ): Promise<AttemptRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${ATTEMPT_COLUMNS} FROM platform.onboarding_payment_attempt
+        WHERE provider = $1 AND provider_invoice_id = $2
+          FOR UPDATE`,
+      [provider, providerInvoiceId],
+    );
+    return mapAttempt(result.rows[0]);
+  }
+
+  async attemptById(attemptId: string): Promise<AttemptRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${ATTEMPT_COLUMNS} FROM platform.onboarding_payment_attempt
+        WHERE attempt_id = $1`,
+      [attemptId],
+    );
+    return mapAttempt(result.rows[0]);
+  }
+
+  async attemptsFor(applicationId: string): Promise<readonly AttemptRow[]> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${ATTEMPT_COLUMNS} FROM platform.onboarding_payment_attempt
+        WHERE application_id = $1 ORDER BY created_at`,
+      [applicationId],
+    );
+    return result.rows.flatMap((row) => {
+      const mapped = mapAttempt(row);
+      return mapped === undefined ? [] : [mapped];
+    });
+  }
+
+  /** Settles an attempt, fenced on the revision it was locked at. */
+  async settleAttempt(input: {
+    attemptId: string;
+    expectedRevision: number;
+    state: AttemptState;
+    reason: string;
+    providerPaymentId?: string | null;
+    confirmedAt?: Date | null;
+  }): Promise<boolean> {
+    const terminal = input.state !== 'PENDING' && input.state !== 'PAYMENT_UNCERTAIN';
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_payment_attempt
+          SET state = $3,
+              terminal_at = CASE WHEN $4 THEN COALESCE(terminal_at, now()) ELSE terminal_at END,
+              terminal_reason = $5,
+              provider_payment_id = COALESCE(provider_payment_id, $6),
+              confirmed_at = COALESCE(confirmed_at, $7),
+              revision = revision + 1
+        WHERE attempt_id = $1 AND revision = $2`,
+      [
+        input.attemptId,
+        input.expectedRevision,
+        input.state,
+        terminal,
+        input.reason,
+        input.providerPaymentId ?? null,
+        input.confirmedAt ?? null,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  /** doc 15 §4.1: the reconciliation queue an operator owns. */
+  async reconciliationQueue(): Promise<readonly AttemptRow[]> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${ATTEMPT_COLUMNS} FROM platform.onboarding_payment_attempt
+        WHERE state = 'PAID_REQUIRES_RECONCILIATION' AND reconciliation_outcome IS NULL
+        ORDER BY confirmed_at`,
+    );
+    return result.rows.flatMap((row) => {
+      const mapped = mapAttempt(row);
+      return mapped === undefined ? [] : [mapped];
+    });
+  }
+
+  async closeReconciliation(input: {
+    attemptId: string;
+    expectedRevision: number;
+    outcome: 'PROVIDER_CORRECTED_NOT_PAID' | 'EXTERNALLY_VOIDED' | 'FINANCE_CLOSED_EXCEPTION';
+    accountId: string;
+    reason: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_payment_attempt
+          SET reconciliation_outcome = $3, reconciled_by_account_id = $4,
+              reconciled_at = now(), reconciliation_reason = $5,
+              revision = revision + 1
+        WHERE attempt_id = $1 AND revision = $2
+          AND state = 'PAID_REQUIRES_RECONCILIATION'
+          AND reconciliation_outcome IS NULL`,
+      [input.attemptId, input.expectedRevision, input.outcome, input.accountId, input.reason],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * doc 15 §5.1: hotels whose name, address or coordinate is close enough to
+   * this one that somebody should look before it is published.
+   *
+   * Integer micro-degree arithmetic, not a distance: a real proximity search is
+   * Phase 12's `GeoPort` work, and approximating one here would be inventing the
+   * geocoding EXT-06 has not cleared. This asks the narrower question the
+   * duplicate flag actually needs — is there already a hotel at this address, or
+   * one with this name within a very short distance?
+   */
+  async duplicateSuspected(input: {
+    hotelDisplayName: string;
+    district: string;
+    addressLine: string;
+    latitudeMicro: number;
+    longitudeMicro: number;
+    proximityMicroDegrees: number;
+  }): Promise<boolean> {
+    const result = await this.uow.query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM platform.onboarding_application
+        WHERE provisioned_hotel_id IS NOT NULL
+          AND (
+            (lower(hotel_display_name) = lower($1)
+             AND abs(latitude_micro - $4) <= $6 AND abs(longitude_micro - $5) <= $6)
+            OR (lower(district) = lower($2) AND lower(address_line) = lower($3))
+          )`,
+      [
+        input.hotelDisplayName,
+        input.district,
+        input.addressLine,
+        input.latitudeMicro,
+        input.longitudeMicro,
+        input.proximityMicroDegrees,
+      ],
+    );
+    return (result.rows[0]?.n ?? '0') !== '0';
+  }
+}

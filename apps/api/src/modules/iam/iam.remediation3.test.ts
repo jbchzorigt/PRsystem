@@ -7,7 +7,7 @@ import type { IamHarness, SeededMembership } from './test-support/iam-harness';
 import { attachIamHarness, provisionIamDatabase } from './test-support/iam-harness';
 import { StaffService } from './services/staff.service';
 import { SimulatedStaffNotification } from './contracts/staff-notification.port';
-import { SimulatedSubscriptionState } from './contracts/subscription-state.port';
+import { DatabaseSubscriptionState } from '../onboarding/contracts/subscription-state.adapter';
 import { SimulatedOpenWork } from './contracts/open-work.port';
 import { SimulatedRestaurantDirectory } from './contracts/restaurant-directory.port';
 import {
@@ -199,17 +199,16 @@ beforeAll(async () => {
   app = started.app;
   baseUrl = `http://127.0.0.1:${String(started.port)}`;
 
-  const subscription = app.get<SimulatedSubscriptionState>(SUBSCRIPTION_STATE);
+  const subscription = app.get<DatabaseSubscriptionState>(SUBSCRIPTION_STATE);
   const notifications = app.get<SimulatedStaffNotification>(STAFF_NOTIFICATION);
   const openWork = app.get<SimulatedOpenWork>(OPEN_WORK);
   const restaurants = app.get<SimulatedRestaurantDirectory>(RESTAURANT_DIRECTORY);
   appStaff = app.get<StaffService>(StaffService);
-  expect(subscription).toBeInstanceOf(SimulatedSubscriptionState);
+  expect(subscription).toBeInstanceOf(DatabaseSubscriptionState);
   expect(notifications).toBeInstanceOf(SimulatedStaffNotification);
   expect(openWork).toBeInstanceOf(SimulatedOpenWork);
   expect(restaurants).toBeInstanceOf(SimulatedRestaurantDirectory);
   env = attachIamHarness(db, 'iam_remediation3', {
-    subscription,
     notifications,
     openWork,
     restaurants,
