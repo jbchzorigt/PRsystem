@@ -2595,7 +2595,7 @@ that gate exists precisely to refuse an uncatalogued definer, and it did.
 | `node tools/validate-regression-coverage.mjs` | 724 of 724 |
 | `node tools/validate-regression-coverage.fixtures.mjs` | 76 of 76 bypasses caught |
 | `node tools/validate-pool-error-fixture.mjs` | 12 of 12 |
-| `node tools/scan-secrets.mjs` | 387 indexed files, 0 findings |
+| `node tools/scan-secrets.mjs` | 419 indexed files, 0 findings |
 | `pnpm run format:check` | clean |
 | `pnpm run lint` | 17 of 17 projects |
 | `pnpm run typecheck` | 27 of 27 graphs |
