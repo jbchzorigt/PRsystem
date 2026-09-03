@@ -236,6 +236,78 @@ describe('assignment versus retirement', () => {
   });
 });
 
+describe('readers and movers never deadlock', () => {
+  it('rate resolutions racing category moves in both directions all complete', async () => {
+    const left = await category('Race L', 100_000n);
+    const right = await category('Race R', 110_000n);
+    const rooms: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const created = await env.catalog.createRoom(
+        {
+          hotelId,
+          idempotencyKey: key(),
+          roomNumber: roomNumber(),
+          categoryId: i % 2 === 0 ? left : right,
+          state: 'ACTIVE',
+        },
+        manager,
+        request(manager),
+      );
+      rooms.push(created.roomId);
+    }
+    // Movers cross: even rooms go right, odd rooms go left, while readers
+    // resolve every room and both categories at the same time. A reader takes
+    // the category before the room; a mover takes both categories before the
+    // room — one order, so PostgreSQL never has to break a cycle.
+    for (let round = 0; round < 3; round += 1) {
+      const listing = await env.catalog.listCatalog(hotelId, manager, request(manager));
+      const revisions = new Map(listing.rooms.map((r) => [r.roomId, r.revision]));
+      const movers = rooms.map((roomId, i) =>
+        settle(
+          env.catalog.updateRoom(
+            {
+              hotelId,
+              roomId,
+              idempotencyKey: key(),
+              expectedRevision: revisions.get(roomId) ?? 0,
+              categoryId: (i + round) % 2 === 0 ? right : left,
+            },
+            manager,
+            request(manager),
+          ),
+        ),
+      );
+      const readers = [
+        ...rooms.map((roomId) =>
+          settle(
+            env.tariffs.effectiveRate(
+              { hotelId, stayType: 'NIGHTLY', channel: 'WALK_IN', roomId },
+              manager,
+              request(manager),
+            ),
+          ),
+        ),
+        ...[left, right].map((categoryId) =>
+          settle(
+            env.tariffs.effectiveRate(
+              { hotelId, stayType: 'NIGHTLY', channel: 'ONLINE', categoryId },
+              manager,
+              request(manager),
+            ),
+          ),
+        ),
+      ];
+      const results = await Promise.all([...movers, ...readers]);
+      for (const result of results) {
+        // The only refusal a reader may see is the one it is told to retry on;
+        // a deadlock would surface as a raw 40P01, never as an ApiError.
+        if (!result.ok) expect(result.error.code).toBe('CONFLICT');
+      }
+      expect(results.slice(0, movers.length).every((r) => r.ok)).toBe(true);
+    }
+  });
+});
+
 describe('duplicate and concurrent identical requests', () => {
   it('the same idempotency key sent twice at once yields one effect', async () => {
     const categoryId = await category('Race C');

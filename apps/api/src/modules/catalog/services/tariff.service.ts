@@ -240,20 +240,37 @@ export class TariffService extends CatalogServiceBase {
       throw new ApiError('VALIDATION_FAILED', 'a walk-in rate is resolved for a physical room');
     }
 
+    // The module's lock order, configuration → category → room, with share
+    // locks. The room's category is read without a lock first so the category
+    // can be locked *before* the room; the room is then locked and re-read, and
+    // a room that moved category in between is refused rather than priced
+    // against a category it no longer belongs to.
     const configuration = await catalog.shareConfiguration();
-    const room = query.roomId === undefined ? undefined : await catalog.shareRoom(query.roomId);
-    if (query.roomId !== undefined && room === undefined) {
+    const unlockedRoom =
+      query.roomId === undefined ? undefined : await catalog.roomById(query.roomId);
+    if (query.roomId !== undefined && unlockedRoom === undefined) {
       throw new ApiError('NOT_FOUND', 'not found');
     }
-    const categoryId = room?.categoryId ?? query.categoryId;
+    const categoryId = unlockedRoom?.categoryId ?? query.categoryId;
     if (categoryId === undefined) {
       throw new ApiError('VALIDATION_FAILED', 'an online quote names a room category');
     }
-    if (query.categoryId !== undefined && room !== undefined && room.categoryId !== categoryId) {
+    if (
+      query.categoryId !== undefined &&
+      unlockedRoom !== undefined &&
+      unlockedRoom.categoryId !== categoryId
+    ) {
       throw new ApiError('VALIDATION_FAILED', 'the room does not belong to the named category');
     }
     const category = await catalog.shareCategory(categoryId);
     if (category === undefined) throw new ApiError('NOT_FOUND', 'not found');
+    const room = query.roomId === undefined ? undefined : await catalog.shareRoom(query.roomId);
+    if (query.roomId !== undefined && room === undefined) {
+      throw new ApiError('NOT_FOUND', 'not found');
+    }
+    if (room !== undefined && room.categoryId !== categoryId) {
+      throw new ApiError('CONFLICT', 'the room changed category; resolve again');
+    }
 
     if (category.state !== 'ACTIVE') {
       throw new ApiError('CONFLICT', 'ENTITY_NOT_ACTIVE: the room category is not active');

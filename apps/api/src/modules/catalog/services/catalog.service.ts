@@ -566,8 +566,22 @@ export class CatalogService extends CatalogServiceBase {
         const configuration = touchesTariff(input)
           ? await catalog.ensureConfiguration()
           : undefined;
-        const category =
-          input.categoryId === undefined ? undefined : await catalog.lockCategory(input.categoryId);
+        // A category move touches two categories. Both are locked before the
+        // room, in id order, so two moves in opposite directions serialise
+        // instead of deadlocking; the room is then locked and its category
+        // re-read, and the compare-and-set below refuses a room that moved.
+        const unlockedRoom =
+          input.categoryId === undefined ? undefined : await catalog.roomById(input.roomId);
+        let category: CategoryRow | undefined;
+        if (input.categoryId !== undefined) {
+          const ids = [...new Set([input.categoryId, unlockedRoom?.categoryId])]
+            .filter((id): id is string => id !== undefined)
+            .sort();
+          for (const id of ids) {
+            const locked = await catalog.lockCategory(id);
+            if (id === input.categoryId) category = locked;
+          }
+        }
         const existing = await catalog.lockRoom(input.roomId);
         await authorize();
         if (configuration !== undefined) {
