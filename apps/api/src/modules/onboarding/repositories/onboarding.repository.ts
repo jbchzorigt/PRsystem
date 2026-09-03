@@ -35,6 +35,7 @@ export type AttemptState =
   | 'PREPARING'
   | 'PENDING'
   | 'ABANDONED'
+  | 'REFUSED'
   | 'PAYMENT_UNCERTAIN'
   | 'PAID'
   | 'FAILED'
@@ -935,6 +936,22 @@ export class OnboardingRepository {
           SET state = 'PENDING', provider_invoice_id = $2, revision = revision + 1
         WHERE attempt_id = $1 AND revision = $3 AND state = 'PREPARING'`,
       [input.attemptId, input.providerInvoiceId, input.expectedRevision],
+    );
+    return result.rowCount === 1;
+  }
+
+  /** The provider refused to create the invoice: terminal, no invoice, the reason (remediation 3). */
+  async refuseAttempt(input: {
+    attemptId: string;
+    expectedRevision: number;
+    reason: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_payment_attempt
+          SET state = 'REFUSED', terminal_at = now(), terminal_reason = $2, revision = revision + 1
+        WHERE attempt_id = $1 AND revision = $3 AND state = 'PREPARING'
+          AND provider_invoice_id IS NULL`,
+      [input.attemptId, input.reason, input.expectedRevision],
     );
     return result.rowCount === 1;
   }

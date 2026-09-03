@@ -5,7 +5,9 @@ import type { CommandActor } from '../iam/services/iam-context';
 import type { OnboardingHarness } from './test-support/onboarding-harness';
 import { citizenDraft, createOnboardingHarness } from './test-support/onboarding-harness';
 import { actorFor } from '../iam/test-support/iam-harness';
-import { newOnboardingRequest } from './services/onboarding-context';
+import { withTenantTransaction } from '@prsystem/db';
+import { SubscriptionRepository } from './repositories/subscription.repository';
+import { hotelScope, newOnboardingRequest } from './services/onboarding-context';
 import type { RequestContext } from './services/onboarding-context';
 
 /**
@@ -603,59 +605,130 @@ describe('2 — ownership-proof recovery', () => {
   });
 
   it('recovers a collision refused inside the provisioning transaction', async () => {
-    // The boundary raises P0501 when the owner appeared between the claim and
-    // the build. On the base the application is sent back to proof without an
-    // owner binding, so `resolveOwner` refuses it as past resolution.
-    const { first, second } = await collidingAfterPayment();
-    // The claim-time probe cannot be made to miss deterministically, so the
-    // boundary's own refusal is reproduced at the first write it performs after
-    // the owner check: a trap on the hotel insert raising the boundary's P0501.
-    // The owner really exists, so the recovery it demands is the real one.
-    await env.admin.query(
-      `UPDATE platform.onboarding_application SET owner_id = NULL, revision = revision + 1
-        WHERE application_id = $1 AND owner_id IS NULL`,
-      [second.applicationId],
-    );
-    const untrap = await installTrap('hotel', 'INSERT', 'P0501');
+    // A deterministic interleaving that reaches the SQL boundary: the owner
+    // appears in the same transaction that claims the row — after the
+    // claim-time probe has answered "nobody" — so the boundary itself meets the
+    // collision and raises P0501. The appearance is an AFTER INSERT trigger on
+    // the claim's own `provisioning_started` event, running as the database
+    // owner, inserting an owner that carries this application's identifier and
+    // a stored verified contact of its own (remediation 3, finding 3).
+    const ready = await verified({ packageCode: 'P20', termMonths: 12 });
+    const resolved = await env.onboarding.resolveOwner(ready.applicationId, request());
+    expect(resolved.ownerResolution).toBe('NEW');
+    const paid = await payAndConfirm(ready.applicationId);
+    const storedContact = '+97699000555';
+    const trap = `rm3_collide_${unique()}`;
+    await env.admin.query(`
+      CREATE OR REPLACE FUNCTION platform.${trap}() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER AS $$
+      BEGIN
+        IF NEW.reason = 'provisioning_started' AND NEW.application_id = '${ready.applicationId}' THEN
+          INSERT INTO platform.subscription_owner
+            (owner_type, display_name, identity_type, country_code, identifier_ciphertext,
+             identifier_wrapped_dek, identifier_key_version, identifier_lookup_token,
+             identifier_lookup_key_version, verified_phone)
+          SELECT a.owner_type, 'colliding owner', a.owner_identity_type, a.owner_country_code,
+                 decode('00', 'hex'), decode('00', 'hex'), 'v1', a.owner_identifier_lookup_token,
+                 a.owner_identifier_lookup_key_version, '${storedContact}'
+            FROM platform.onboarding_application a WHERE a.application_id = NEW.application_id;
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER ${trap} AFTER INSERT ON platform.onboarding_event
+        FOR EACH ROW EXECUTE FUNCTION platform.${trap}();`);
     let raced;
     try {
       raced = await env.provisioning.provision(
-        second.applicationId,
-        `rm2-p0501-${unique()}`,
+        ready.applicationId,
+        `rm3-p0501-${unique()}`,
         request(),
       );
     } finally {
-      await untrap();
+      await env.admin.query(
+        `DROP TRIGGER IF EXISTS ${trap} ON platform.onboarding_event; DROP FUNCTION IF EXISTS platform.${trap}();`,
+      );
     }
-    expect(raced.kind).not.toBe('provisioned');
-    const state = await env.admin.query<{ state: string; owner_id: string | null }>(
-      `SELECT state, owner_id FROM platform.onboarding_application WHERE application_id = $1`,
-      [second.applicationId],
+    // The boundary refused — not the claim-time probe: the failure is recorded
+    // against the claimed attempt with the boundary's own reason.
+    expect(raced).toEqual({ kind: 'blocked', state: 'PAID_OWNER_VERIFICATION_REQUIRED' });
+    const refusal = await env.admin.query<{ from_state: string; to_state: string; reason: string }>(
+      `SELECT from_state, to_state, reason FROM platform.onboarding_event
+        WHERE application_id = $1 AND reason = 'existing_owner_detected' ORDER BY event_id`,
+      [ready.applicationId],
     );
-    expect(state.rows[0]?.state).toBe('PAID_OWNER_VERIFICATION_REQUIRED');
-
-    const resolved = await env.onboarding.resolveOwner(second.applicationId, request());
-    expect(resolved).toMatchObject({
+    expect(refusal.rows.map((r) => `${r.from_state}>${r.to_state}`)).toEqual([
+      'PROVISIONING>PROVISIONING_FAILED',
+      'PROVISIONING_FAILED>PAID_OWNER_VERIFICATION_REQUIRED',
+    ]);
+    const owner = await env.admin.query<{ owner_id: string }>(
+      `SELECT owner_id FROM platform.subscription_owner WHERE display_name = 'colliding owner'
+          AND identifier_lookup_token = (SELECT owner_identifier_lookup_token
+                                            FROM platform.onboarding_application WHERE application_id = $1)`,
+      [ready.applicationId],
+    );
+    expect(owner.rows).toHaveLength(1);
+    const state = await env.admin.query<{
+      state: string;
+      owner_id: string | null;
+      last_error: string | null;
+    }>(
+      `SELECT state, owner_id, provision_last_error AS last_error
+         FROM platform.onboarding_application WHERE application_id = $1`,
+      [ready.applicationId],
+    );
+    expect(state.rows[0]).toEqual({
       state: 'PAID_OWNER_VERIFICATION_REQUIRED',
-      proofRequired: true,
+      owner_id: owner.rows[0]?.owner_id,
+      last_error: 'existing_owner_detected',
     });
+    expect(
+      await count(
+        'SELECT count(*)::text AS n FROM platform.hotel_owner_link WHERE application_id = $1',
+        [ready.applicationId],
+      ),
+    ).toBe(0);
+
+    // The challenge goes to the owner's stored verified contact, never to the
+    // application's own phone.
+    const again = await env.onboarding.resolveOwner(ready.applicationId, request());
+    expect(again).toMatchObject({ state: 'PAID_OWNER_VERIFICATION_REQUIRED', proofRequired: true });
     const challenge = env.phone.deliveries.filter(
-      (message) => message.subjectRef === `${second.applicationId}:owner-proof`,
+      (message) => message.subjectRef === `${ready.applicationId}:owner-proof`,
     );
-    expect(challenge.length).toBeGreaterThanOrEqual(1);
-    expect(challenge[challenge.length - 1]?.phone).toBe(first.phone);
+    expect(challenge).toHaveLength(1);
+    expect(challenge[0]?.phone).toBe(storedContact);
+    expect(challenge[0]?.phone).not.toBe(ready.phone);
     const proved = await env.onboarding.proveOwnership(
-      second.applicationId,
-      challenge[challenge.length - 1]?.code ?? '',
+      ready.applicationId,
+      challenge[0]?.code ?? '',
       request(),
     );
     expect(proved.state).toBe('PAID_PENDING_PROVISIONING');
+
+    // Recovery on the original payment: the same attempt, the owner it named.
     const outcome = await env.provisioning.provision(
-      second.applicationId,
-      `rm2-p0501b-${unique()}`,
+      ready.applicationId,
+      `rm3-p0501b-${unique()}`,
       request(),
     );
     expect(outcome).toMatchObject({ kind: 'provisioned' });
+    const after = await env.admin.query<{
+      paid_attempt_id: string;
+      link_owner: string;
+      owners: string;
+    }>(
+      `SELECT a.paid_attempt_id,
+              (SELECT l.owner_id FROM platform.hotel_owner_link l WHERE l.application_id = a.application_id) AS link_owner,
+              (SELECT count(*)::text FROM platform.subscription_owner o
+                WHERE o.identifier_lookup_token = a.owner_identifier_lookup_token) AS owners
+         FROM platform.onboarding_application a WHERE a.application_id = $1`,
+      [ready.applicationId],
+    );
+    expect(after.rows[0]).toEqual({
+      paid_attempt_id: paid.attemptId,
+      link_owner: owner.rows[0]?.owner_id,
+      owners: '1',
+    });
   });
 
   it('an expired challenge is persisted as expired before the refusal, and a fresh one is issued', async () => {
@@ -1185,5 +1258,165 @@ describe('6 — payment fee facts', () => {
       [unknown.applicationId],
     );
     expect(attempts.rows[0]?.fee).toBeNull();
+  });
+});
+
+// ================================================== remediation 3 — closeout
+
+describe('remediation 3 — provider refusals and the payments reader', () => {
+  /** The kernel stores a non-2xx outcome as `failed` with its status: that is the durable refusal. */
+  async function idempotencyRow(operation: string, key: string) {
+    const row = await env.admin.query<{ state: string; response_status: number | null }>(
+      `SELECT state, response_status FROM platform.idempotency_key
+        WHERE operation = $1 AND idempotency_key = $2`,
+      [operation, key],
+    );
+    return row.rows[0];
+  }
+
+  it('an onboarding invoice the provider refuses is a durable refusal the same key replays', async () => {
+    // Control flow on the base: the refusal abandons the prepared attempt with
+    // no invoice, which violates the 0005 invoice-once-live check; the stored
+    // refusal rolls back with it, the caller sees the constraint error, and a
+    // retry calls the provider again.
+    const ready = await verified();
+    await env.onboarding.resolveOwner(ready.applicationId, request());
+    const key = `rm3-refused-${unique()}`;
+    const invoices = env.qpay.invoiceCount;
+    env.qpay.failNext({ kind: 'REJECTED', providerCode: 'SIMULATED_REFUSAL' });
+    await expectApiError(
+      env.onboarding.openInvoice(
+        { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: key },
+        request(),
+      ),
+      'CONFLICT',
+    );
+    expect(await idempotencyRow('onboarding.invoice.open', key)).toEqual({
+      state: 'failed',
+      response_status: 409,
+    });
+    const attempts = await env.admin.query<{ state: string; provider_invoice_id: string | null }>(
+      `SELECT state, provider_invoice_id FROM platform.onboarding_payment_attempt WHERE application_id = $1`,
+      [ready.applicationId],
+    );
+    expect(attempts.rows).toEqual([{ state: 'REFUSED', provider_invoice_id: null }]);
+    expect(env.qpay.invoiceCount).toBe(invoices);
+
+    // The same key replays the refusal: no provider call, no second attempt.
+    await expectApiError(
+      env.onboarding.openInvoice(
+        { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: key },
+        request(),
+      ),
+      'CONFLICT',
+    );
+    expect(env.qpay.invoiceCount).toBe(invoices);
+    expect(
+      await count(
+        'SELECT count(*)::text AS n FROM platform.onboarding_payment_attempt WHERE application_id = $1',
+        [ready.applicationId],
+      ),
+    ).toBe(1);
+    // And a new key opens a live invoice: the refusal weakened nothing.
+    const opened = await env.onboarding.openInvoice(
+      {
+        applicationId: ready.applicationId,
+        provider: 'QPAY',
+        idempotencyKey: `rm3-fresh-${unique()}`,
+      },
+      request(),
+    );
+    expect(opened.providerInvoiceId).toBeDefined();
+    const live = await env.admin.query<{ state: string }>(
+      `SELECT state FROM platform.onboarding_payment_attempt WHERE application_id = $1 ORDER BY created_at`,
+      [ready.applicationId],
+    );
+    expect(live.rows.map((r) => r.state)).toEqual(['REFUSED', 'PENDING']);
+  });
+
+  it('a renewal quote the provider refuses is a durable refusal the same key replays', async () => {
+    const hotel = await provisionedHotel();
+    const key = `rm3-refused-rn-${unique()}`;
+    const invoices = env.khaan.invoiceCount;
+    env.khaan.failNext({ kind: 'REJECTED', providerCode: 'SIMULATED_REFUSAL' });
+    await expectApiError(
+      env.subscriptions.quoteRenewal(
+        {
+          hotelId: hotel.hotelId,
+          targetPackage: 'P20',
+          termMonths: 1,
+          provider: 'KHAAN',
+          idempotencyKey: key,
+        },
+        hotel.admin,
+        request(),
+      ),
+      'CONFLICT',
+    );
+    expect(await idempotencyRow('subscription.renewal', key)).toEqual({
+      state: 'failed',
+      response_status: 409,
+    });
+    const intents = await env.admin.query<{ state: string; provider_invoice_id: string | null }>(
+      `SELECT state, provider_invoice_id FROM platform.subscription_billing_intent WHERE hotel_id = $1`,
+      [hotel.hotelId],
+    );
+    expect(intents.rows).toEqual([{ state: 'REFUSED', provider_invoice_id: null }]);
+    expect(env.khaan.invoiceCount).toBe(invoices);
+    await expectApiError(
+      env.subscriptions.quoteRenewal(
+        {
+          hotelId: hotel.hotelId,
+          targetPackage: 'P20',
+          termMonths: 1,
+          provider: 'KHAAN',
+          idempotencyKey: key,
+        },
+        hotel.admin,
+        request(),
+      ),
+      'CONFLICT',
+    );
+    expect(env.khaan.invoiceCount).toBe(invoices);
+    expect(
+      await count(
+        'SELECT count(*)::text AS n FROM platform.subscription_billing_intent WHERE hotel_id = $1',
+        [hotel.hotelId],
+      ),
+    ).toBe(1);
+    const quoted = await env.subscriptions.quoteRenewal(
+      {
+        hotelId: hotel.hotelId,
+        targetPackage: 'P20',
+        termMonths: 1,
+        provider: 'KHAAN',
+        idempotencyKey: `rm3-fresh-rn-${unique()}`,
+      },
+      hotel.admin,
+      request(),
+    );
+    expect(quoted.providerInvoiceId).toBeDefined();
+  });
+
+  it('the payments reader preserves an unknown fee and distinguishes it from zero and nonzero', async () => {
+    // Control flow on the base: `payments()` converts the fee and net columns
+    // with BigInt(), which throws on NULL.
+    const unknown = await provisionedHotel();
+    const zero = await provisionedHotel({}, { feeMnt: 0n });
+    const nonzero = await provisionedHotel({}, { feeMnt: 300n });
+    const read = (hotelId: string) =>
+      withTenantTransaction(env.api, hotelScope(hotelId, request()), (uow) =>
+        new SubscriptionRepository(uow).payments(),
+      );
+    const [u, z, n] = await Promise.all([
+      read(unknown.hotelId),
+      read(zero.hotelId),
+      read(nonzero.hotelId),
+    ]);
+    expect(u).toHaveLength(1);
+    expect(u[0]).toMatchObject({ purpose: 'ONBOARDING', providerFeeMnt: null, netAmountMnt: null });
+    expect(z[0]).toMatchObject({ providerFeeMnt: 0n, netAmountMnt: z[0]?.grossAmountMnt });
+    expect(n[0]).toMatchObject({ providerFeeMnt: 300n });
+    expect(n[0]?.netAmountMnt).toBe((n[0]?.grossAmountMnt ?? 0n) - 300n);
   });
 });

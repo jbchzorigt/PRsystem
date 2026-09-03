@@ -17,6 +17,7 @@ export type IntentState =
   | 'PREPARING'
   | 'PENDING'
   | 'ABANDONED'
+  | 'REFUSED'
   | 'PAID'
   | 'FAILED'
   | 'EXPIRED'
@@ -370,6 +371,26 @@ export class SubscriptionRepository {
   }
 
   /**
+   * The provider refused to create the invoice at all: a terminal row with no
+   * invoice and the refusal's reason (remediation 3, finding 1). Reached only
+   * from `PREPARING`; nothing can ever pay it.
+   */
+  async refuseIntent(input: {
+    intentId: string;
+    expectedRevision: number;
+    reason: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.subscription_billing_intent
+          SET state = 'REFUSED', terminal_at = now(), terminal_reason = $3, revision = revision + 1
+        WHERE hotel_id = $1 AND intent_id = $2 AND revision = $4 AND state = 'PREPARING'
+          AND provider_invoice_id IS NULL`,
+      [this.hotelId, input.intentId, input.reason, input.expectedRevision],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
    * The quote was never live: the provider refused it, its snapshot moved, or
    * its principal lost the hotel while the provider was being called. The
    * provider's invoice, when one exists, is kept on the row so a payment
@@ -578,8 +599,10 @@ export class SubscriptionRepository {
       purpose: string;
       grossAmountMnt: bigint;
       vatAmountMnt: bigint;
-      providerFeeMnt: bigint;
-      netAmountMnt: bigint;
+      /** null when the provider stated no fee (remediation 2, finding 6). */
+      providerFeeMnt: bigint | null;
+      /** null exactly when the fee is unknown: never derived from nothing. */
+      netAmountMnt: bigint | null;
     }[]
   > {
     const result = await this.uow.query<{
@@ -587,8 +610,8 @@ export class SubscriptionRepository {
       purpose: string;
       gross_amount_mnt: string;
       vat_amount_mnt: string;
-      provider_fee_mnt: string;
-      net_amount_mnt: string;
+      provider_fee_mnt: string | null;
+      net_amount_mnt: string | null;
     }>(
       `SELECT payment_id, purpose, gross_amount_mnt, vat_amount_mnt, provider_fee_mnt,
               net_amount_mnt
@@ -600,8 +623,8 @@ export class SubscriptionRepository {
       purpose: row.purpose,
       grossAmountMnt: BigInt(row.gross_amount_mnt),
       vatAmountMnt: BigInt(row.vat_amount_mnt),
-      providerFeeMnt: BigInt(row.provider_fee_mnt),
-      netAmountMnt: BigInt(row.net_amount_mnt),
+      providerFeeMnt: row.provider_fee_mnt === null ? null : BigInt(row.provider_fee_mnt),
+      netAmountMnt: row.net_amount_mnt === null ? null : BigInt(row.net_amount_mnt),
     }));
   }
 

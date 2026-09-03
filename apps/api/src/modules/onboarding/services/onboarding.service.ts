@@ -1256,10 +1256,9 @@ export class OnboardingService extends OnboardingServiceBase {
           }
           const row = await repository.lockAttemptByMerchantRef(merchantRef);
           if (row !== undefined && row.state === 'PREPARING') {
-            await repository.abandonAttempt({
+            await repository.refuseAttempt({
               attemptId: row.attemptId,
               expectedRevision: row.revision,
-              providerInvoiceId: null,
               reason: `provider_${invoice.error.kind.toLowerCase()}`,
             });
           }

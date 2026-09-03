@@ -559,10 +559,9 @@ export class SubscriptionService extends OnboardingServiceBase {
           }
           const row = await repository.lockIntentByMerchantRef(merchantRef);
           if (row !== undefined && row.state === 'PREPARING') {
-            await repository.abandonIntent({
+            await repository.refuseIntent({
               intentId: row.intentId,
               expectedRevision: row.revision,
-              providerInvoiceId: null,
               reason: `provider_${invoice.error.kind.toLowerCase()}`,
             });
           }
