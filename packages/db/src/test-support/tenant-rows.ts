@@ -477,7 +477,7 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
             VALUES ($1,
                     coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
                                WHERE s.hotel_id = $1), ${ABSENT_UUID}),
-                    'RENEWAL', 'QPAY', 'merch-fixture', $2, 20000, 1, 'P20', 'P20', 1, 20000,
+                    'RENEWAL', 'QPAY', 'merch-fixture-' || $2, $2, 20000, 1, 'P20', 'P20', 1, 20000,
                     now() + interval '30 days', 1000, 'pb-1', 'tax-1', 'pkg-1',
                     now() + interval '1 hour', 'CANCELLED', now(), 'fixture')`,
       values: [hotelId, `inv-fixture-${String(n)}`],
@@ -497,13 +497,13 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     insert: (hotelId, n) => ({
       sql: `INSERT INTO platform.subscription_payment
               (hotel_id, subscription_id, purpose, provider, provider_payment_id, merchant_ref,
-               gross_amount_mnt, vat_amount_mnt, net_amount_mnt, vat_rate_bp, package_code,
+               gross_amount_mnt, vat_amount_mnt, vat_rate_bp, package_code,
                term_months, monthly_price_mnt, price_book_version, tax_config_version,
                package_feature_version, application_id, confirmed_at)
             VALUES ($1,
                     coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
                                WHERE s.hotel_id = $1), ${ABSENT_UUID}),
-                    'RENEWAL', 'QPAY', $2, 'merch-fixture', 20000, 1818, 20000, 1000, 'P20',
+                    'RENEWAL', 'QPAY', $2, 'merch-fixture', 20000, 1818, 1000, 'P20',
                     1, 20000, 'pb-1', 'tax-1', 'pkg-1',
                     coalesce((SELECT l.application_id FROM platform.hotel_owner_link l
                                WHERE l.hotel_id = $1), ${ABSENT_UUID}),
@@ -531,13 +531,13 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
       sql: `WITH pay AS (
               INSERT INTO platform.subscription_payment
                 (hotel_id, subscription_id, purpose, provider, provider_payment_id, merchant_ref,
-                 gross_amount_mnt, vat_amount_mnt, net_amount_mnt, vat_rate_bp, package_code,
+                 gross_amount_mnt, vat_amount_mnt, vat_rate_bp, package_code,
                  term_months, monthly_price_mnt, price_book_version, tax_config_version,
                  package_feature_version, application_id, confirmed_at)
               VALUES ($1,
                       coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
                                  WHERE s.hotel_id = $1), ${ABSENT_UUID}),
-                      'RENEWAL', 'QPAY', $2, 'merch-fixture', 20000, 1818, 20000, 1000, 'P20',
+                      'RENEWAL', 'QPAY', $2, 'merch-fixture', 20000, 1818, 1000, 'P20',
                       1, 20000, 'pb-1', 'tax-1', 'pkg-1',
                       coalesce((SELECT l.application_id FROM platform.hotel_owner_link l
                                  WHERE l.hotel_id = $1), ${ABSENT_UUID}),

@@ -2025,6 +2025,30 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'ebarimt_issuance',
+      column: 'delivery_attempts',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
+      column: 'delivery_available_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
+      column: 'delivery_claim_token',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
+      column: 'delivery_claimed_until',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
       column: 'delivery_state',
       shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
     },
@@ -2920,13 +2944,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'onboarding_payment_attempt',
       column: 'provider_invoice_id',
-      shape: 'text | NOT NULL | no default | no identity | not generated',
+      shape: 'text | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
       table: 'onboarding_payment_attempt',
       column: 'provider_fee_mnt',
-      shape: 'bigint | NOT NULL | default 0 | no identity | not generated',
+      shape: 'bigint | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -3178,13 +3202,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'subscription_billing_intent',
       column: 'provider_invoice_id',
-      shape: 'text | NOT NULL | no default | no identity | not generated',
+      shape: 'text | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
       table: 'subscription_billing_intent',
       column: 'provider_fee_mnt',
-      shape: 'bigint | NOT NULL | default 0 | no identity | not generated',
+      shape: 'bigint | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -3203,6 +3227,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'subscription_billing_intent',
       column: 'quoted_expires_at',
       shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
+      column: 'quoted_snapshot',
+      shape: 'jsonb | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -3526,7 +3556,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'subscription_payment',
       column: 'net_amount_mnt',
-      shape: 'bigint | NOT NULL | no default | no identity | not generated',
+      shape: 'bigint | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -3562,7 +3592,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'subscription_payment',
       column: 'provider_fee_mnt',
-      shape: 'bigint | NOT NULL | default 0 | no identity | not generated',
+      shape: 'bigint | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -5142,6 +5172,21 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'ebarimt_issuance',
+      name: 'ebarimt_issuance_delivery_attempts_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((delivery_attempts >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
+      name: 'ebarimt_issuance_delivery_claim_complete',
+      kind: 'c',
+      definition:
+        'CHECK ((num_nonnulls(delivery_claim_token, delivery_claimed_until) = ANY (ARRAY[0, 2])))',
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
       name: 'ebarimt_issuance_delivery_state_known',
       kind: 'c',
       definition:
@@ -5961,6 +6006,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'onboarding_payment_attempt',
+      name: 'onboarding_payment_attempt_invoice_once_live',
+      kind: 'c',
+      definition: "CHECK (((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_payment_attempt',
       name: 'onboarding_payment_attempt_package_known',
       kind: 'c',
       definition: "CHECK ((package_code = ANY (ARRAY['P20'::text, 'P25'::text, 'P30'::text])))",
@@ -6024,7 +6076,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'onboarding_payment_attempt_state_known',
       kind: 'c',
       definition:
-        "CHECK ((state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
+        "CHECK ((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
     },
     {
       schema: 'platform',
@@ -6039,7 +6091,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'onboarding_payment_attempt_terminal_has_time',
       kind: 'c',
       definition:
-        "CHECK (((state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text])) = (terminal_at IS NULL)))",
+        "CHECK (((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text])) = (terminal_at IS NULL)))",
     },
     {
       schema: 'platform',
@@ -6186,6 +6238,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'subscription_billing_intent',
+      name: 'subscription_billing_intent_invoice_once_live',
+      kind: 'c',
+      definition: "CHECK (((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
       name: 'subscription_billing_intent_kind_known',
       kind: 'c',
       definition: "CHECK ((kind = ANY (ARRAY['RENEWAL'::text, 'UPGRADE'::text])))",
@@ -6279,7 +6338,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'subscription_billing_intent_state_known',
       kind: 'c',
       definition:
-        "CHECK ((state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
+        "CHECK ((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
     },
     {
       schema: 'platform',
@@ -6294,7 +6353,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'subscription_billing_intent',
       name: 'subscription_billing_intent_terminal_has_time',
       kind: 'c',
-      definition: "CHECK (((state = 'PENDING'::text) = (terminal_at IS NULL)))",
+      definition:
+        "CHECK (((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text])) = (terminal_at IS NULL)))",
     },
     {
       schema: 'platform',
@@ -6485,7 +6545,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'subscription_payment',
       name: 'subscription_payment_net_is_gross_less_fee',
       kind: 'c',
-      definition: 'CHECK ((net_amount_mnt = (gross_amount_mnt - provider_fee_mnt)))',
+      definition:
+        'CHECK ((((provider_fee_mnt IS NULL) AND (net_amount_mnt IS NULL)) OR ((provider_fee_mnt IS NOT NULL) AND (net_amount_mnt = (gross_amount_mnt - provider_fee_mnt)))))',
     },
     {
       schema: 'platform',
@@ -7332,6 +7393,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'onboarding_payment_attempt',
+      name: 'onboarding_payment_attempt_merchant_ref_uq',
+      definition:
+        'CREATE UNIQUE INDEX onboarding_payment_attempt_merchant_ref_uq ON platform.onboarding_payment_attempt USING btree (merchant_ref)',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_payment_attempt',
       name: 'onboarding_payment_attempt_pkey',
       definition:
         'CREATE UNIQUE INDEX onboarding_payment_attempt_pkey ON platform.onboarding_payment_attempt USING btree (attempt_id)',
@@ -7377,6 +7445,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'subscription_billing_intent_invoice_uq',
       definition:
         'CREATE UNIQUE INDEX subscription_billing_intent_invoice_uq ON platform.subscription_billing_intent USING btree (provider, provider_invoice_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
+      name: 'subscription_billing_intent_merchant_ref_uq',
+      definition:
+        'CREATE UNIQUE INDEX subscription_billing_intent_merchant_ref_uq ON platform.subscription_billing_intent USING btree (merchant_ref)',
     },
     {
       schema: 'platform',
@@ -7912,6 +7987,16 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'ebarimt_issuance',
+      name: 'operation_review',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: "(platform.current_realm() = 'operation'::text)",
+      withCheck: "(platform.current_realm() = 'operation'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'ebarimt_issuance',
       name: 'resolver_read',
       as: 'PERMISSIVE',
       command: 'SELECT',
@@ -8112,6 +8197,16 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'onboarding_phone_verification',
+      name: 'operation_review',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: "(platform.current_realm() = 'operation'::text)",
+      withCheck: "(platform.current_realm() = 'operation'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
       name: 'operation_review',
       as: 'PERMISSIVE',
       command: 'ALL',

@@ -1228,12 +1228,22 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'unclaimed or lease-expired issuance, with a bounded limit. It exposes no receipt field ' +
         'and no amount, and the claim itself is a CAS under the hotel scope',
     },
+    // Phase 05 remediation 2: the receipt's email is its own durable job.
+    {
+      signature: 'platform.pending_ebarimt_deliveries(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a STABLE reader that returns only (hotel_id, issuance_id) for an ' +
+        'issued receipt whose delivery is due and unclaimed, with a bounded limit. It exposes ' +
+        'no address and no receipt field, and the claim itself is a CAS under the hotel scope',
+    },
     // Phase 05 remediation 1: the durable provisioning job runs in the worker
     // deployment, so the worker holds the provisioning boundary and the two
     // probes the claim step needs, plus its own discovery wrapper.
     {
       signature:
-        'platform.provision_paid_hotel(p_application_id uuid, p_idempotency_key text, p_owner_id uuid, p_owner_ciphertext bytea, p_owner_wrapped_dek bytea, p_owner_key_version text, p_activation_id uuid, p_token_hash text, p_token_key_version text, p_token_expires_at timestamp with time zone, p_secret_ciphertext bytea, p_secret_wrapped_dek bytea, p_secret_key_version text)',
+        'platform.provision_paid_hotel(p_application_id uuid, p_idempotency_key text, p_owner_id uuid, p_owner_ciphertext bytea, p_owner_wrapped_dek bytea, p_owner_key_version text, p_activation_id uuid, p_token_hash text, p_token_key_version text, p_token_expires_at timestamp with time zone, p_secret_ciphertext bytea, p_secret_wrapped_dek bytea, p_secret_key_version text, p_claim_token uuid)',
       grantee: 'prsystem_worker',
       closure: false,
       guard:

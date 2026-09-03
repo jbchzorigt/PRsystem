@@ -2028,10 +2028,8 @@ export const onboardingPaymentAttempt = platform
       packageFeatureVersion: text('package_feature_version').notNull(),
       priceBookVersion: text('price_book_version').notNull(),
       provider: text('provider').notNull(),
-      providerInvoiceId: text('provider_invoice_id').notNull(),
-      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
-        .notNull()
-        .default(sql`0`),
+      providerInvoiceId: text('provider_invoice_id'),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' }),
       providerPaymentId: text('provider_payment_id'),
       reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
       reconciledByAccountId: uuid('reconciled_by_account_id'),
@@ -2085,12 +2083,16 @@ export const onboardingPaymentAttempt = platform
       check('onboarding_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
       check(
         'onboarding_payment_attempt_state_known',
-        sql`(state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+        sql`(state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+      ),
+      check(
+        'onboarding_payment_attempt_invoice_once_live',
+        sql`((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL))`,
       ),
       check('onboarding_payment_attempt_term_known', sql`(term_months = ANY (ARRAY[1, 3, 7, 12]))`),
       check(
         'onboarding_payment_attempt_terminal_has_time',
-        sql`((state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text])) = (terminal_at IS NULL))`,
+        sql`((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text])) = (terminal_at IS NULL))`,
       ),
       check('onboarding_payment_attempt_fee_non_negative', sql`(provider_fee_mnt >= 0)`),
       check('onboarding_payment_attempt_fee_within_amount', sql`(provider_fee_mnt <= amount_mnt)`),
@@ -2112,6 +2114,7 @@ export const onboardingPaymentAttempt = platform
       uniqueIndex('onboarding_payment_attempt_active_uq')
         .on(table.applicationId)
         .where(sql`state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text])`),
+      uniqueIndex('onboarding_payment_attempt_merchant_ref_uq').on(table.merchantRef),
       index('onboarding_payment_attempt_application_idx').on(table.applicationId, table.createdAt),
       uniqueIndex('onboarding_payment_attempt_provider_payment_uq')
         .on(table.provider, table.providerPaymentId)
@@ -2396,10 +2399,9 @@ export const subscriptionBillingIntent = platform
       priceBookVersion: text('price_book_version').notNull(),
       priceDeltaMnt: bigint('price_delta_mnt', { mode: 'bigint' }),
       provider: text('provider').notNull(),
-      providerInvoiceId: text('provider_invoice_id').notNull(),
-      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
-        .notNull()
-        .default(sql`0`),
+      providerInvoiceId: text('provider_invoice_id'),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' }),
+      quotedSnapshot: jsonb('quoted_snapshot'),
       providerPaymentId: text('provider_payment_id'),
       quotedBillingRevision: integer('quoted_billing_revision').notNull(),
       quotedExpiresAt: timestamp('quoted_expires_at', { withTimezone: true }).notNull(),
@@ -2466,11 +2468,15 @@ export const subscriptionBillingIntent = platform
       check('subscription_billing_intent_revision_non_negative', sql`(revision >= 0)`),
       check(
         'subscription_billing_intent_state_known',
-        sql`(state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+        sql`(state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
       ),
       check(
         'subscription_billing_intent_terminal_has_time',
-        sql`((state = 'PENDING'::text) = (terminal_at IS NULL))`,
+        sql`((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text])) = (terminal_at IS NULL))`,
+      ),
+      check(
+        'subscription_billing_intent_invoice_once_live',
+        sql`((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL))`,
       ),
       check(
         'subscription_billing_intent_upgrade_shape',
@@ -2497,12 +2503,17 @@ export const subscriptionBillingIntent = platform
       uniqueIndex('subscription_billing_intent_active_uq')
         .on(table.subscriptionId)
         .where(sql`state = 'PENDING'::text`),
+      uniqueIndex('subscription_billing_intent_merchant_ref_uq').on(table.merchantRef),
       uniqueIndex('subscription_billing_intent_provider_payment_uq')
         .on(table.provider, table.providerPaymentId)
         .where(sql`provider_payment_id IS NOT NULL`),
       index('subscription_billing_intent_reconciliation_idx')
         .on(table.state, table.confirmedAt)
         .where(sql`state = 'PAID_REQUIRES_RECONCILIATION'::text`),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
@@ -2531,7 +2542,7 @@ export const subscriptionPayment = platform
       intentId: uuid('intent_id'),
       merchantRef: text('merchant_ref').notNull(),
       monthlyPriceMnt: bigint('monthly_price_mnt', { mode: 'bigint' }).notNull(),
-      netAmountMnt: bigint('net_amount_mnt', { mode: 'bigint' }).notNull(),
+      netAmountMnt: bigint('net_amount_mnt', { mode: 'bigint' }),
       packageCode: text('package_code').notNull(),
       packageFeatureVersion: text('package_feature_version').notNull(),
       paymentId: uuid('payment_id')
@@ -2539,9 +2550,7 @@ export const subscriptionPayment = platform
         .default(sql`gen_random_uuid()`),
       priceBookVersion: text('price_book_version').notNull(),
       provider: text('provider').notNull(),
-      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
-        .notNull()
-        .default(sql`0`),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' }),
       providerPaymentId: text('provider_payment_id').notNull(),
       purpose: text('purpose').notNull(),
       subscriptionId: uuid('subscription_id').notNull(),
@@ -2559,7 +2568,7 @@ export const subscriptionPayment = platform
       check('subscription_payment_discount_zero', sql`(discount_mnt = 0)`),
       check(
         'subscription_payment_net_is_gross_less_fee',
-        sql`(net_amount_mnt = (gross_amount_mnt - provider_fee_mnt))`,
+        sql`(((provider_fee_mnt IS NULL) AND (net_amount_mnt IS NULL)) OR ((provider_fee_mnt IS NOT NULL) AND (net_amount_mnt = (gross_amount_mnt - provider_fee_mnt))))`,
       ),
       check(
         'subscription_payment_package_known',
@@ -2684,6 +2693,14 @@ export const ebarimtIssuance = platform
         .notNull()
         .default(sql`now()`),
       deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+      deliveryAttempts: integer('delivery_attempts')
+        .notNull()
+        .default(sql`0`),
+      deliveryAvailableAt: timestamp('delivery_available_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deliveryClaimToken: uuid('delivery_claim_token'),
+      deliveryClaimedUntil: timestamp('delivery_claimed_until', { withTimezone: true }),
       deliveryState: text('delivery_state')
         .notNull()
         .default(sql`'PENDING'::text`),
@@ -2724,6 +2741,11 @@ export const ebarimtIssuance = platform
         'ebarimt_issuance_delivery_state_known',
         sql`(delivery_state = ANY (ARRAY['PENDING'::text, 'SENT'::text, 'FAILED'::text]))`,
       ),
+      check('ebarimt_issuance_delivery_attempts_non_negative', sql`(delivery_attempts >= 0)`),
+      check(
+        'ebarimt_issuance_delivery_claim_complete',
+        sql`(num_nonnulls(delivery_claim_token, delivery_claimed_until) = ANY (ARRAY[0, 2]))`,
+      ),
       check(
         'ebarimt_issuance_receipt_complete',
         sql`(num_nonnulls(receipt_number, receipt_qr, receipt_amount_mnt, receipt_vat_amount_mnt, receipt_issued_at) = ANY (ARRAY[0, 5]))`,
@@ -2755,6 +2777,10 @@ export const ebarimtIssuance = platform
       index('ebarimt_issuance_queue_idx')
         .on(table.availableAt, table.issuanceId)
         .where(sql`state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text])`),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
       pgPolicy('resolver_read', {
         for: 'select',
         to: ['prsystem_maintenance_fn'],
