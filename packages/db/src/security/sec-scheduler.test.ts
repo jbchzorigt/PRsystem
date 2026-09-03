@@ -1228,6 +1228,46 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'unclaimed or lease-expired issuance, with a bounded limit. It exposes no receipt field ' +
         'and no amount, and the claim itself is a CAS under the hotel scope',
     },
+    // Phase 05 remediation 1: the durable provisioning job runs in the worker
+    // deployment, so the worker holds the provisioning boundary and the two
+    // probes the claim step needs, plus its own discovery wrapper.
+    {
+      signature:
+        'platform.provision_paid_hotel(p_application_id uuid, p_idempotency_key text, p_owner_id uuid, p_owner_ciphertext bytea, p_owner_wrapped_dek bytea, p_owner_key_version text, p_activation_id uuid, p_token_hash text, p_token_key_version text, p_token_expires_at timestamp with time zone, p_secret_ciphertext bytea, p_secret_wrapped_dek bytea, p_secret_key_version text)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — the boundary re-derives every authorising fact from the rows it ' +
+        'locks: a claimed PROVISIONING application, a PAID attempt matching its terms, a proved ' +
+        'owner or a fresh registration number, a proved active account or a free email. It binds ' +
+        'the tenant scope it mints and every row it writes satisfies the ordinary policy',
+    },
+    {
+      signature:
+        'platform.pending_provisioning_applications(p_limit integer, p_max_attempts integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a STABLE reader that returns only application ids whose job is due: ' +
+        'unclaimed, lease-expired or unsettled, below the attempt cap, with a bounded limit. It ' +
+        'writes nothing; the claim is a CAS on the row under the application scope',
+    },
+    {
+      signature: 'platform.probe_subscription_owner(p_application_id uuid)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — answers an opaque owner reference, a masked destination and whether ' +
+        'that owner holds another hotel; never the identifier and never the stored contact',
+    },
+    {
+      signature: 'platform.probe_existing_hotel_account(p_application_id uuid)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a boolean, whether an account already holds the application’s admin ' +
+        'email, so the claim step can route the application to proof; no account row is exposed',
+    },
   ] as const;
 
   it('grants EXECUTE to a Worker or Scheduler on exactly the catalogued definers', async () => {

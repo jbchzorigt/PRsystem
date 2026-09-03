@@ -83,7 +83,7 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   // new role, for the reason that role exists — no runtime holds it, nobody can
   // connect as it, and it owns nothing but wrappers whose bodies are the whole
   // of what it can do.
-  'platform.provision_paid_hotel(p_application_id uuid, p_idempotency_key text, p_activation_id uuid, p_token_hash text, p_token_key_version text, p_token_expires_at timestamp with time zone, p_secret_ciphertext bytea, p_secret_wrapped_dek bytea, p_secret_key_version text)':
+  'platform.provision_paid_hotel(p_application_id uuid, p_idempotency_key text, p_owner_id uuid, p_owner_ciphertext bytea, p_owner_wrapped_dek bytea, p_owner_key_version text, p_activation_id uuid, p_token_hash text, p_token_key_version text, p_token_expires_at timestamp with time zone, p_secret_ciphertext bytea, p_secret_wrapped_dek bytea, p_secret_key_version text)':
     KERNEL_OWNERS.maintenanceFn,
 
   // Cross-tenant queue discovery. Identifiers only: the alternative was a policy
@@ -93,6 +93,14 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.resolve_payment_attempt(p_provider text, p_provider_invoice_id text)':
     KERNEL_OWNERS.maintenanceFn,
   'platform.probe_subscription_owner(p_application_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  // Phase 05 remediation 1.
+  'platform.probe_existing_hotel_account(p_application_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.account_linked_to_owner(p_application_id uuid, p_account_id uuid)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.owner_challenge_destination(p_application_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.pending_provisioning_applications(p_limit integer, p_max_attempts integer)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.manual_ebarimt_issuances(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   'platform.owner_holds_other_hotel(p_application_id uuid)': KERNEL_OWNERS.maintenanceFn,
   'platform.due_upgrade_boundaries(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   'platform.pending_activation_deliveries(p_limit integer)': KERNEL_OWNERS.maintenanceFn,

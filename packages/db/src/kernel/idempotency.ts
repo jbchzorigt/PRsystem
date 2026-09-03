@@ -141,3 +141,42 @@ export async function completeIdempotencyKey(
     ],
   );
 }
+
+export type IdempotencyLock =
+  | { readonly kind: 'in_progress'; readonly idempotencyId: string }
+  | { readonly kind: 'replay'; readonly status: number; readonly body: unknown }
+  | { readonly kind: 'absent' };
+
+/**
+ * Locks an already-claimed key for the transaction that will complete it.
+ *
+ * A command that has to call a provider *between* claiming its key and storing
+ * its result — creating an invoice is the case — cannot hold the claim's
+ * transaction open across the network. So it claims in one transaction, calls
+ * the provider with a stable key, and then locks the record in the transaction
+ * that persists the outcome. Two concurrent completions serialise here: the
+ * second waits on the row lock and, once the first has committed, finds the
+ * stored response and replays it rather than persisting a second effect.
+ */
+export async function lockIdempotencyClaim(
+  uow: UnitOfWork,
+  request: { readonly operation: string; readonly key: string },
+): Promise<IdempotencyLock> {
+  const locked = await uow.query<{
+    idempotency_id: string;
+    state: string;
+    response_status: number | null;
+    response_body: unknown;
+  }>(
+    `SELECT idempotency_id, state, response_status, response_body
+       FROM platform.idempotency_key
+      WHERE realm = $1 AND actor_ref = $2 AND operation = $3 AND idempotency_key = $4
+        FOR UPDATE`,
+    [uow.context.realm, uow.context.actorRef, request.operation, request.key],
+  );
+  const row = locked.rows[0];
+  if (row === undefined) return { kind: 'absent' };
+  if (row.state === 'in_progress')
+    return { kind: 'in_progress', idempotencyId: row.idempotency_id };
+  return { kind: 'replay', status: row.response_status ?? 500, body: row.response_body };
+}

@@ -29,6 +29,13 @@
       "when": 1756512000000,
       "tag": "0003_onboarding_subscription",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1756598400000,
+      "tag": "0004_onboarding_remediation",
+      "breakpoints": true
     }
   ]
 }

@@ -2583,6 +2583,42 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'onboarding_application',
+      column: 'provision_available_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      column: 'provision_claim_token',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      column: 'provision_claimed_until',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      column: 'provision_last_error',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      column: 'existing_account_proof_method',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      column: 'existing_account_proved_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
       column: 'provisioned_hotel_id',
       shape: 'uuid | NULL | no default | no identity | not generated',
     },
@@ -2889,6 +2925,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'onboarding_payment_attempt',
+      column: 'provider_fee_mnt',
+      shape: 'bigint | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_payment_attempt',
       column: 'provider_payment_id',
       shape: 'text | NULL | no default | no identity | not generated',
     },
@@ -3137,6 +3179,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'subscription_billing_intent',
       column: 'provider_invoice_id',
       shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
+      column: 'provider_fee_mnt',
+      shape: 'bigint | NOT NULL | default 0 | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -4517,7 +4565,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'staff_membership',
       name: 'staff_membership_primary_is_active',
       kind: 'c',
-      definition: "CHECK (((NOT is_primary_admin) OR (state = 'ACTIVE'::text)))",
+      definition:
+        "CHECK (((NOT is_primary_admin) OR (state = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text]))))",
     },
     {
       schema: 'platform',
@@ -4633,7 +4682,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'user_account_state_known',
       kind: 'c',
       definition:
-        "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text])))",
+        "CHECK ((state = ANY (ARRAY['PENDING_ACTIVATION'::text, 'ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text])))",
     },
     {
       schema: 'platform',
@@ -5638,6 +5687,30 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'onboarding_application',
+      name: 'onboarding_application_account_proof_complete',
+      kind: 'c',
+      definition:
+        'CHECK ((num_nonnulls(existing_account_id, existing_account_proof_method, existing_account_proved_at) = ANY (ARRAY[0, 3])))',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      name: 'onboarding_application_account_proof_method_known',
+      kind: 'c',
+      definition:
+        "CHECK (((existing_account_proof_method IS NULL) OR (existing_account_proof_method = ANY (ARRAY['SIGNED_IN'::text, 'PASSWORD_RECOVERY'::text]))))",
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
+      name: 'onboarding_application_claim_complete',
+      kind: 'c',
+      definition:
+        'CHECK ((num_nonnulls(provision_claim_token, provision_claimed_until) = ANY (ARRAY[0, 2])))',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_application',
       name: 'onboarding_application_provisioned_has_hotel',
       kind: 'c',
       definition: "CHECK (((state = 'PROVISIONED'::text) = (provisioned_hotel_id IS NOT NULL)))",
@@ -5977,6 +6050,20 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     },
     {
       schema: 'platform',
+      table: 'onboarding_payment_attempt',
+      name: 'onboarding_payment_attempt_fee_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((provider_fee_mnt >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'onboarding_payment_attempt',
+      name: 'onboarding_payment_attempt_fee_within_amount',
+      kind: 'c',
+      definition: 'CHECK ((provider_fee_mnt <= amount_mnt))',
+    },
+    {
+      schema: 'platform',
       table: 'onboarding_phone_verification',
       name: 'onboarding_phone_verification_application_fkey',
       kind: 'f',
@@ -6223,6 +6310,20 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'subscription_billing_intent_vat_rate_range',
       kind: 'c',
       definition: 'CHECK (((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000)))',
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
+      name: 'subscription_billing_intent_fee_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((provider_fee_mnt >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_billing_intent',
+      name: 'subscription_billing_intent_fee_within_amount',
+      kind: 'c',
+      definition: 'CHECK ((provider_fee_mnt <= amount_mnt))',
     },
     {
       schema: 'platform',
@@ -8041,17 +8142,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'subscription_owner',
-      name: 'applicant_create',
-      as: 'PERMISSIVE',
-      command: 'INSERT',
-      to: ['public'],
-      using: null,
-      withCheck:
-        '(EXISTS ( SELECT 1\n   FROM platform.onboarding_application a\n  WHERE ((a.application_id = platform.current_onboarding_ref()) AND (a.owner_identity_type = subscription_owner.identity_type) AND (a.owner_country_code = subscription_owner.country_code) AND (a.owner_identifier_lookup_token = subscription_owner.identifier_lookup_token))))',
-    },
-    {
-      schema: 'platform',
-      table: 'subscription_owner',
       name: 'applicant_read',
       as: 'PERMISSIVE',
       command: 'SELECT',
@@ -8073,6 +8163,37 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'subscription_owner',
+      name: 'provisioner_create',
+      as: 'PERMISSIVE',
+      command: 'INSERT',
+      to: ['prsystem_maintenance_fn'],
+      using: null,
+      withCheck:
+        '(EXISTS ( SELECT 1\n   FROM platform.onboarding_application a\n  WHERE ((a.application_id = platform.current_onboarding_ref()) AND (a.owner_identity_type = subscription_owner.identity_type) AND (a.owner_country_code = subscription_owner.country_code) AND (a.owner_identifier_lookup_token = subscription_owner.identifier_lookup_token))))',
+    },
+    {
+      schema: 'platform',
+      table: 'subscription_owner',
+      name: 'resolver_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using: 'true',
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
+      name: 'resolver_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using: 'true',
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'staff_membership',
       name: 'resolver_read',
       as: 'PERMISSIVE',
       command: 'SELECT',

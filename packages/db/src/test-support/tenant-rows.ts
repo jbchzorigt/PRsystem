@@ -406,7 +406,8 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.hotel_owner_link',
-    grants: { api: ['SELECT'], worker: [], police: [] },
+    // The issuance worker names the receipt's buyer by the owner link (R5).
+    grants: { api: ['SELECT'], worker: ['SELECT'], police: [] },
     insert: (hotelId, n) => ({
       sql: `WITH owner AS (
               INSERT INTO platform.subscription_owner

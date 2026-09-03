@@ -54,9 +54,10 @@ export {
   canonicalJson,
   claimIdempotencyKey,
   completeIdempotencyKey,
+  lockIdempotencyClaim,
   requestHash,
 } from './kernel/idempotency';
-export type { IdempotencyOutcome, IdempotencyRequest } from './kernel/idempotency';
+export type { IdempotencyLock, IdempotencyOutcome, IdempotencyRequest } from './kernel/idempotency';
 export { recordPlatformAudit, recordPoliceAudit } from './kernel/audit';
 export type { AuditOutcome, PlatformAuditEvent, PoliceAuditEvent } from './kernel/audit';
 export {

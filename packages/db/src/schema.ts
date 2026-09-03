@@ -647,11 +647,16 @@ END`,
     check('user_account_revision_non_negative', sql`(revision >= 0)`),
     check(
       'user_account_state_known',
-      sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text]))`,
+      sql`(state = ANY (ARRAY['PENDING_ACTIVATION'::text, 'ACTIVE'::text, 'SUSPENDED'::text, 'DISABLED'::text]))`,
     ),
     unique('user_account_principal_uq').on(table.accountId, table.realm, table.realmRole),
     unique('user_account_realm_email_uq').on(table.realm, table.emailNormalized),
     unique('user_account_realm_identity_uq').on(table.accountId, table.realm),
+    pgPolicy('resolver_read', {
+      for: 'select',
+      to: ['prsystem_maintenance_fn'],
+      using: sql`true`,
+    }),
   ],
 );
 
@@ -785,7 +790,7 @@ export const staffMembership = platform
       ),
       check(
         'staff_membership_primary_is_active',
-        sql`((NOT is_primary_admin) OR (state = 'ACTIVE'::text))`,
+        sql`((NOT is_primary_admin) OR (state = ANY (ARRAY['PENDING'::text, 'ACTIVE'::text])))`,
       ),
       check(
         'staff_membership_primary_is_hotel_scope',
@@ -835,6 +840,11 @@ export const staffMembership = platform
       uniqueIndex('staff_membership_restaurant_email_uq')
         .on(table.hotelId, table.restaurantId, table.invitedEmailNormalized)
         .where(sql`restaurant_id IS NOT NULL`),
+      pgPolicy('resolver_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
       pgPolicy('own_membership_read', {
         for: 'select',
         using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
@@ -1567,12 +1577,6 @@ END`,
         table.countryCode,
         table.identifierLookupToken,
       ),
-      pgPolicy('applicant_create', {
-        for: 'insert',
-        withCheck: sql`(EXISTS ( SELECT 1
-   FROM platform.onboarding_application a
-  WHERE ((a.application_id = platform.current_onboarding_ref()) AND (a.owner_identity_type = subscription_owner.identity_type) AND (a.owner_country_code = subscription_owner.country_code) AND (a.owner_identifier_lookup_token = subscription_owner.identifier_lookup_token))))`,
-      }),
       pgPolicy('applicant_read', {
         for: 'select',
         using: sql`(EXISTS ( SELECT 1
@@ -1582,6 +1586,13 @@ END`,
       pgPolicy('operation_review', {
         using: sql`(platform.current_realm() = 'operation'::text)`,
         withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('provisioner_create', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`(EXISTS ( SELECT 1
+   FROM platform.onboarding_application a
+  WHERE ((a.application_id = platform.current_onboarding_ref()) AND (a.owner_identity_type = subscription_owner.identity_type) AND (a.owner_country_code = subscription_owner.country_code) AND (a.owner_identifier_lookup_token = subscription_owner.identifier_lookup_token))))`,
       }),
       pgPolicy('resolver_read', {
         for: 'select',
@@ -1619,6 +1630,8 @@ export const onboardingApplication = platform
         .notNull()
         .default(sql`false`),
       existingAccountId: uuid('existing_account_id'),
+      existingAccountProofMethod: text('existing_account_proof_method'),
+      existingAccountProvedAt: timestamp('existing_account_proved_at', { withTimezone: true }),
       hotelDisplayName: text('hotel_display_name').notNull(),
       hotelPublicPhone: text('hotel_public_phone').notNull(),
       khoroo: text('khoroo').notNull(),
@@ -1647,6 +1660,12 @@ export const onboardingApplication = platform
       provisionAttempts: integer('provision_attempts')
         .notNull()
         .default(sql`0`),
+      provisionAvailableAt: timestamp('provision_available_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      provisionClaimToken: uuid('provision_claim_token'),
+      provisionClaimedUntil: timestamp('provision_claimed_until', { withTimezone: true }),
+      provisionLastError: text('provision_last_error'),
       provisionedHotelId: uuid('provisioned_hotel_id'),
       representativeName: text('representative_name'),
       representativePosition: text('representative_position'),
@@ -1720,6 +1739,18 @@ END)`,
       check(
         'onboarding_application_payment_time_matches_attempt',
         sql`((paid_attempt_id IS NULL) = (payment_confirmed_at IS NULL))`,
+      ),
+      check(
+        'onboarding_application_account_proof_complete',
+        sql`(num_nonnulls(existing_account_id, existing_account_proof_method, existing_account_proved_at) = ANY (ARRAY[0, 3]))`,
+      ),
+      check(
+        'onboarding_application_account_proof_method_known',
+        sql`((existing_account_proof_method IS NULL) OR (existing_account_proof_method = ANY (ARRAY['SIGNED_IN'::text, 'PASSWORD_RECOVERY'::text])))`,
+      ),
+      check(
+        'onboarding_application_claim_complete',
+        sql`(num_nonnulls(provision_claim_token, provision_claimed_until) = ANY (ARRAY[0, 2]))`,
       ),
       check(
         'onboarding_application_provision_attempts_non_negative',
@@ -1998,6 +2029,9 @@ export const onboardingPaymentAttempt = platform
       priceBookVersion: text('price_book_version').notNull(),
       provider: text('provider').notNull(),
       providerInvoiceId: text('provider_invoice_id').notNull(),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
       providerPaymentId: text('provider_payment_id'),
       reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
       reconciledByAccountId: uuid('reconciled_by_account_id'),
@@ -2058,6 +2092,8 @@ export const onboardingPaymentAttempt = platform
         'onboarding_payment_attempt_terminal_has_time',
         sql`((state = ANY (ARRAY['PENDING'::text, 'PAYMENT_UNCERTAIN'::text])) = (terminal_at IS NULL))`,
       ),
+      check('onboarding_payment_attempt_fee_non_negative', sql`(provider_fee_mnt >= 0)`),
+      check('onboarding_payment_attempt_fee_within_amount', sql`(provider_fee_mnt <= amount_mnt)`),
       check(
         'onboarding_payment_attempt_vat_rate_range',
         sql`((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000))`,
@@ -2361,6 +2397,9 @@ export const subscriptionBillingIntent = platform
       priceDeltaMnt: bigint('price_delta_mnt', { mode: 'bigint' }),
       provider: text('provider').notNull(),
       providerInvoiceId: text('provider_invoice_id').notNull(),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
       providerPaymentId: text('provider_payment_id'),
       quotedBillingRevision: integer('quoted_billing_revision').notNull(),
       quotedExpiresAt: timestamp('quoted_expires_at', { withTimezone: true }).notNull(),
@@ -2437,6 +2476,8 @@ export const subscriptionBillingIntent = platform
         'subscription_billing_intent_upgrade_shape',
         sql`((kind <> 'UPGRADE'::text) OR ((term_months IS NULL) AND (price_delta_mnt IS NOT NULL) AND (remaining_service_months IS NOT NULL) AND (remaining_service_months >= 1) AND (effective_at IS NOT NULL) AND (platform.package_rank(target_package) > platform.package_rank(current_package)) AND (amount_mnt = (price_delta_mnt * remaining_service_months))))`,
       ),
+      check('subscription_billing_intent_fee_non_negative', sql`(provider_fee_mnt >= 0)`),
+      check('subscription_billing_intent_fee_within_amount', sql`(provider_fee_mnt <= amount_mnt)`),
       check(
         'subscription_billing_intent_vat_rate_range',
         sql`((vat_rate_bp >= 0) AND (vat_rate_bp <= 10000))`,
