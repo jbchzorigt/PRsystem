@@ -153,12 +153,19 @@ export class SimulatedEBarimt extends EBarimtBase {
       return Promise.resolve(fail({ kind: 'REJECTED', providerCode: 'SIMULATED_PERMANENT' }));
     }
 
+    // Every material input: a receipt for a different buyer, buyer type, VAT
+    // amount or VAT rate under the same key is a different receipt, and the
+    // issuer refuses the reuse rather than answering with the old one
+    // (remediation 2, finding 7).
     const hash = createHash('sha256')
       .update(
         JSON.stringify({
           paymentId: cmd.paymentId,
           totalMnt: cmd.totalMnt.toString(),
           vatMnt: cmd.vatBreakdown.vatMnt.toString(),
+          vatRateBp: cmd.vatBreakdown.vatRateBp,
+          ownerRef: cmd.buyer.ownerRef,
+          ownerType: cmd.buyer.ownerType,
         }),
       )
       .digest('hex');

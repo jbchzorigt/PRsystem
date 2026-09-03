@@ -323,7 +323,9 @@ export class SimulatedPaymentGateway extends PaymentGatewayBase {
       currency: invoice.currency,
       merchantRef: invoice.merchantRef,
       paidAt,
-      providerFeeMnt: providerFeeMnt ?? 0n,
+      // A fee the test stated is a fee; one it did not state is unknown. The
+      // simulator never invents a zero (remediation 2, finding 6).
+      ...(providerFeeMnt === undefined ? {} : { providerFeeMnt }),
     };
     return paymentId;
   }
@@ -437,8 +439,14 @@ export class SimulatedPaymentGateway extends PaymentGatewayBase {
     if (raw.merchantRef !== undefined && raw.merchantRef !== invoice.merchantRef) {
       return Promise.resolve(fail({ kind: 'MISMATCH', field: 'merchant' }));
     }
-    if (raw.amountMnt !== undefined && BigInt(raw.amountMnt) !== invoice.amountMnt) {
-      return Promise.resolve(fail({ kind: 'MISMATCH', field: 'amount' }));
+    if (raw.amountMnt !== undefined) {
+      // A callback amount is untrusted text. Anything that is not a whole
+      // number of MNT is a mismatch, reported as one — never a throw out of the
+      // port (remediation 2, finding 7).
+      const amount = parseWholeMnt(raw.amountMnt);
+      if (amount === undefined || amount !== invoice.amountMnt) {
+        return Promise.resolve(fail({ kind: 'MISMATCH', field: 'amount' }));
+      }
     }
     if (raw.currency !== undefined && raw.currency !== invoice.currency) {
       return Promise.resolve(fail({ kind: 'MISMATCH', field: 'currency' }));
@@ -477,6 +485,12 @@ export class PaymentGatewayRegistry implements PaymentGateways {
 }
 
 /** Chooses the adapters for an environment, and refuses to degrade. */
+/** A whole number of MNT as the provider would state it, or nothing. */
+function parseWholeMnt(text: string): bigint | undefined {
+  if (!/^[0-9]{1,18}$/.test(text)) return undefined;
+  return BigInt(text);
+}
+
 export function selectPaymentGateways(appEnv: string): PaymentGatewayRegistry {
   const simulated = isNonProductionEnv(appEnv);
   return new PaymentGatewayRegistry(

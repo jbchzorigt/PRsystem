@@ -189,6 +189,25 @@ describe.each([['QPAY'], ['KHAAN']] as const)('PaymentGatewayPort — %s simulat
     expect(refund.state).toBe('REFUNDED');
   });
 
+  it('7b — a malformed callback amount is a typed refusal, never a throw', async () => {
+    const port = new SimulatedPaymentGateway(provider);
+    const invoice = ok(await port.createInvoice(invoiceCommand('malformed'), ctx));
+    port.pay(invoice.providerInvoiceId, new Date(), 'pay-malformed');
+    for (const amountMnt of ['abc', '12.5', '', '1e3', ' 240000']) {
+      const outcome = await port.verifyCallback(
+        {
+          provider,
+          providerInvoiceId: invoice.providerInvoiceId,
+          providerPaymentId: 'pay-malformed',
+          amountMnt,
+          signature: port.signatureFor(invoice.providerInvoiceId),
+        },
+        ctx,
+      );
+      expect(err(outcome)).toEqual({ kind: 'MISMATCH', field: 'amount' });
+    }
+  });
+
   it('the uncleared adapter answers DISABLED without a network call', async () => {
     const port = new UnavailablePaymentGateway(provider);
     expect(port.mode).toBe('adapter');
@@ -247,6 +266,26 @@ describe('EBarimtPort simulator', () => {
     expect(first.totalMnt).toBe(20_000n);
     expect(port.receiptCount).toBe(1);
     expect(ok(await port.queryStatus({ receiptId: first.receiptId }, ctx)).state).toBe('ISSUED');
+  });
+
+  it('refuses the same key with a materially different buyer or VAT input', async () => {
+    const port = new SimulatedEBarimt();
+    const first = ok(await port.issue(issue('same-key'), ctx));
+    const variants = [
+      { ...issue('same-key'), buyer: { ownerRef: 'owner-2', ownerType: 'CITIZEN' as const } },
+      { ...issue('same-key'), buyer: { ownerRef: 'owner-1', ownerType: 'ORGANIZATION' as const } },
+      { ...issue('same-key'), vatBreakdown: { vatMnt: 1_818n, vatRateBp: 500 } },
+      { ...issue('same-key'), vatBreakdown: { vatMnt: 1_000n, vatRateBp: 1000 } },
+      { ...issue('same-key'), totalMnt: 25_000n },
+    ];
+    for (const variant of variants) {
+      expect(err(await port.issue(variant, ctx))).toEqual({
+        kind: 'REJECTED',
+        providerCode: 'IDEMPOTENCY_KEY_REUSED',
+      });
+    }
+    expect(ok(await port.issue(issue('same-key'), ctx))).toEqual(first);
+    expect(port.receiptCount).toBe(1);
   });
 
   it('reports retryable and permanent failures as typed errors', async () => {
