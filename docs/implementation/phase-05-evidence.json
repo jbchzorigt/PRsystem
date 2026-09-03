@@ -3,151 +3,151 @@
   "phaseState": "DONE",
   "acceptance": "AWAITING_CUSTOMER_ACCEPTANCE",
   "remediationNumber": 2,
-  "measuredAtCommit": "2c2bed064a7fb6899a0fa01aa096f2740ae45e4b",
+  "measuredAtCommit": "15cb672627541cd0d57c76b17844725518f14e1e",
   "battery": [
     {
       "command": "node tools/validate-governance.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "16 of 16"
     },
     {
       "command": "node tools/validate-governance.fixtures.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "132 of 132 drift fixtures caught"
     },
     {
       "command": "node tools/validate-secret-scan.fixtures.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "72 of 72 correct"
     },
     {
       "command": "node tools/validate-workspace.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "15 of 15"
     },
     {
       "command": "node tools/validate-regression-coverage.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "724 of 724"
     },
     {
       "command": "node tools/validate-regression-coverage.fixtures.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "76 of 76 bypasses caught"
     },
     {
       "command": "node tools/validate-pool-error-fixture.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "12 of 12"
     },
     {
       "command": "node tools/scan-secrets.mjs",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "442 indexed files, 0 findings"
     },
     {
       "command": "pnpm run format:check",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "clean"
     },
     {
       "command": "pnpm run lint",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "17 of 17 projects"
     },
     {
       "command": "pnpm run typecheck",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "28 of 28 graphs"
     },
     {
       "command": "pnpm run test:unit",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "1,329 across 11 projects"
     },
     {
       "command": "pnpm run test:migrations",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "144: fresh, both upgrade paths, repeat and schema equality"
     },
     {
       "command": "pnpm run test:integration",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "264: db 41, outbox 5, api 216, worker 2"
     },
     {
       "command": "pnpm run test:concurrency",
       "executions": 3,
       "exits": [0, 0, 0],
-      "result": "pending measurement"
+      "result": "35 each run: db 16, api 19"
     },
     {
       "command": "pnpm run test:regression",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "51, every reproduced Phase 03 defect"
     },
     {
       "command": "pnpm run test:security",
       "executions": 3,
       "exits": [0, 0, 0],
-      "result": "pending measurement"
+      "result": "19 of 19 sub-gates, 841, each run"
     },
     {
       "command": "pnpm run test:e2e",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "15 passed"
     },
     {
       "command": "pnpm run audit:prod",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "no known vulnerabilities"
     },
     {
       "command": "pnpm run audit:tree",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "none at high or critical; one moderate, DSR-01"
     },
     {
       "command": "pnpm run build",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "17 of 17 projects"
     },
     {
       "command": "pnpm run openapi",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "document generated"
     },
     {
       "command": "pnpm run compose:config",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "valid"
     },
     {
       "command": "git diff --check",
       "executions": 1,
       "exits": [0],
-      "result": "pending measurement"
+      "result": "clean"
     }
   ]
 }

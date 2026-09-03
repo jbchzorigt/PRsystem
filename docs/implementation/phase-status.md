@@ -2983,7 +2983,7 @@ and `OPS-DEC-007` gain migration `0005` and the remediation-2 suite.
 
 <!-- phase-05-evidence:begin -->
 
-Measured at implementation commit 2c2bed064a7fb6899a0fa01aa096f2740ae45e4b, the tree of the
+Measured at implementation commit 15cb672627541cd0d57c76b17844725518f14e1e, the tree of the
 remediation-2 commits. The record itself — the manifest and this table — is
 the commit after it; the governance validator and its fixtures were run again
 on that final tree and are what the two governance rows report. Every command
@@ -2991,30 +2991,30 @@ exited 0. This is the fresh run; the remediation-1 table above is historical.
 
 | Command | Status | Result |
 | --- | --- | --- |
-| `node tools/validate-governance.mjs` | PASS | pending measurement |
-| `node tools/validate-governance.fixtures.mjs` | PASS | pending measurement |
-| `node tools/validate-secret-scan.fixtures.mjs` | PASS | pending measurement |
-| `node tools/validate-workspace.mjs` | PASS | pending measurement |
-| `node tools/validate-regression-coverage.mjs` | PASS | pending measurement |
-| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | pending measurement |
-| `node tools/validate-pool-error-fixture.mjs` | PASS | pending measurement |
-| `node tools/scan-secrets.mjs` | PASS | pending measurement |
-| `pnpm run format:check` | PASS | pending measurement |
-| `pnpm run lint` | PASS | pending measurement |
-| `pnpm run typecheck` | PASS | pending measurement |
-| `pnpm run test:unit` | PASS | pending measurement |
-| `pnpm run test:migrations` | PASS | pending measurement |
-| `pnpm run test:integration` | PASS | pending measurement |
-| `pnpm run test:concurrency` | PASS | pending measurement |
-| `pnpm run test:regression` | PASS | pending measurement |
-| `pnpm run test:security` | PASS | pending measurement |
-| `pnpm run test:e2e` | PASS | pending measurement |
-| `pnpm run audit:prod` | PASS | pending measurement |
-| `pnpm run audit:tree` | PASS | pending measurement |
-| `pnpm run build` | PASS | pending measurement |
-| `pnpm run openapi` | PASS | pending measurement |
-| `pnpm run compose:config` | PASS | pending measurement |
-| `git diff --check` | PASS | pending measurement |
+| `node tools/validate-governance.mjs` | PASS | 16 of 16 |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 132 of 132 drift fixtures caught |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 442 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,329 across 11 projects |
+| `pnpm run test:migrations` | PASS | 144: fresh, both upgrade paths, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 264: db 41, outbox 5, api 216, worker 2 |
+| `pnpm run test:concurrency` | PASS | 35 each run: db 16, api 19 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, 841, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
 
 <!-- phase-05-evidence:end -->
 
