@@ -141,7 +141,10 @@ cancel({ receiptId, reason }) → { state: 'CANCELLED'|'FAILED' }
 ```
 
 A failure never reverses an activated subscription; it routes to the manual queue
-(`SUB-DEC-005`, `SUB-DEC-008`). Operators can never author receipt fields.
+(`SUB-DEC-005`, `SUB-DEC-008`). Operators can never author receipt fields. The idempotency key
+covers every material input — payment, total, VAT amount, VAT rate, buyer reference and buyer
+type — so the same key with any of them changed is a reuse the issuer refuses, never a receipt
+answered from the earlier request (Phase 05 remediation 2).
 
 ### Email — `EmailPort`
 
@@ -216,7 +219,9 @@ INVALID_SIGNATURE | MISMATCH`) rather than throwing; every port carries its `id`
 every irreversible provider effect takes a **caller-supplied idempotency key** — the same key the
 domain claims in its own idempotency table before the provider is called — so a retry after a lost
 acknowledgement recovers the same invoice or receipt and never creates a second one. A gate is
-recorded as "port and simulator shipped" only on that evidence.
+recorded as "port and simulator shipped" only on that evidence. Remediation 2 added two cases to
+the suite: a malformed callback amount is a typed `MISMATCH` and never a throw out of the port,
+and the eBarimt simulator refuses the same key with a materially different buyer or VAT input.
 
 ---
 

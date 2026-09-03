@@ -39,7 +39,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
-| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation` | the Phase 05 battery — counts in [Phase 05 remediation 1](#phase-05-remediation-1) | see the Phase 05 record and remediation 1 |
+| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2` | the Phase 05 battery — counts in [Phase 05 remediation 2](#phase-05-remediation-2) | see the Phase 05 record and remediations 1 and 2 |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
@@ -2814,15 +2814,13 @@ decision was marked `COVERED` without production wiring and a regression.
   action is not reachable and is not claimed to be.
 - 17 P1 items, `DSR-01`, and the `GATE-SEC` required-check selection — unchanged.
 
-### Evidence
+### Evidence — historical measurement
 
-<!-- phase-05-evidence:begin -->
-
-Measured at implementation commit fee4e3f5041c56b4be5cce610dd22289fce2ad99, the tree of the six remediation
-commits. The record itself — the manifest and this table — is the commit
-after it; the governance validator and its fixtures were run again on that
-final tree and are what the two governance rows report. Every command exited
-0.
+Historical: the remediation 1 battery as measured on the tree of
+`fee4e3f5041c56b4be5cce610dd22289fce2ad99`, the six remediation-1 commits. It
+is superseded as the governed Phase 05 evidence by remediation 2 below and is
+kept here unchanged as the record of what was measured then. Every command
+exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
@@ -2850,6 +2848,173 @@ final tree and are what the two governance rows report. Every command exited
 | `pnpm run openapi` | PASS | document generated |
 | `pnpm run compose:config` | PASS | valid |
 | `git diff --check` | PASS | clean |
+
+Phase 05 remained `AWAITING_CUSTOMER_ACCEPTANCE` at the end of remediation 1.
+
+---
+
+## Phase 05 remediation 2
+
+Phase 05 is still **not accepted**. A second bounded pass — the correctness
+closure — was performed on top of `2c2bed064a7fb6899a0fa01aa096f2740ae45e4b`,
+the remediation 1 evidence commit, against the seven findings of the customer's
+review. Phase 05 stays `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 06 has
+**not** started. No acceptance is claimed by this record.
+
+### Method
+
+Every finding was reproduced before it was fixed. The regressions —
+`onboarding.remediation2.test.ts` under `apps/api` (twenty cases, findings 1 to
+6), two consumer-startup cases in `apps/worker/src/jobs/onboarding.test.ts`
+(finding 3) and three conformance cases in `packages/ports/src/conformance.test.ts`
+(finding 7) — were run against `2c2bed0` first: all twenty API cases failed,
+the three conformance cases failed and the two worker cases failed. Each
+failure was checked to be the defect and not the test: a replay refused with
+CONFLICT and with the "only ever raised" rule, a stale-quote refusal that the
+retry re-executed, the intent lock held while waiting on the subscription
+(SQLSTATE 55P03), a pending proof with no delivered challenge, an expiry and a
+refusal audit rolled back with their errors, a boundary with no claim
+parameter, a claim taken before its backoff, a fifth-attempt crash left
+PROVISIONING for ever, a failed receipt mail never retried, an audited
+Operation decision with no effect, and a fabricated zero fee. Two cases needed
+a test-side correction before they reproduced the defect and not a fixture
+mistake: the Primary Admin row is guarded against a direct suspension, so
+revocation is the membership-revision bump every real revocation performs; and
+the claim-time owner probe cannot be made to miss deterministically, so the
+boundary's own P0501 refusal is reproduced by a trap on the hotel insert that
+raises it, with the colliding owner really present. One finding did not
+reproduce as a test on the base because the code it names did not exist — the
+worker's consumer startup had no function to call — so its reproduction is the
+control flow: `main.ts` registered the sweeps after `startWorker` returned,
+with no failure path between.
+
+### What changed, by finding
+
+- **1 — invoices and quotes.** The idempotency claim is consulted before
+  eligibility, after authorization: a completed onboarding invoice or upgrade
+  quote replays after payment. A quote or invoice is **prepared** on its row
+  before the provider is called, with the complete priced snapshot
+  (`quoted_snapshot`) and no invoice, and a retry under the same key recovers
+  that row at that price; finalization compares the stored snapshot with the
+  row as it is now, and a stale quote is **abandoned** with the provider's
+  invoice recorded on it, the refusal stored against the key, both committed,
+  and only then thrown. The payment callback takes the subscription row before
+  the intent, the order the finalization uses; the onboarding callback takes
+  the application before the attempt. A deterministic regression holds the
+  subscription row from outside and proves the callback waits without holding
+  the intent.
+- **2 — ownership proofs.** A pending proof that was never challenged, or whose
+  challenge expired, is settled and a fresh challenge is opened; a collision
+  found inside provisioning binds the owner the identifier names, found by the
+  probe; the challenge always goes to that owner's stored verified contact; the
+  passed proof releases the application to provisioning on its original
+  payment. Expiry and refusal transitions commit before their errors are
+  thrown.
+- **3 — provisioning.** `provision_paid_hotel` takes the claim token and refuses
+  unless the row is claimed by exactly that token with an unexpired lease; a
+  stale worker cannot build and cannot settle the replacement's claim. A claim
+  that is not the operator's is refused as `deferred` until the persisted
+  backoff has elapsed, for a signal exactly as for the sweep. The sweep
+  discovers a PROVISIONING row whose lease expired at the attempt cap and
+  settles it as exhausted without a sixth attempt. The worker opens its
+  consumers and registers its sweeps through one function that closes every
+  consumer it opened, and the runtime, when any step fails.
+- **4 — receipts.** Delivery is its own job on the issuance row: attempts,
+  availability, claim and lease. A crash after the issuance commit, a
+  notification outage and a lost acknowledgement are all recovered by the
+  drain under the stable delivery id `ebarimt-<issuanceId>`; the receipt is
+  never reissued to resend the mail.
+- **5 — authorization.** The quote's final mutation re-runs the scope gate and
+  the catalogued permission against the row as it is now; a principal revoked
+  during the provider call is refused, the prepared quote is abandoned with the
+  provider's invoice, and the existing live intent is untouched. Reconciliation
+  closure and the eBarimt retry authorize and mutate in one Operation-realm
+  transaction, under a realm policy the two tables now carry.
+- **6 — fee facts.** A fee the provider did not state is NULL on the attempt,
+  the intent and the payment, and no net amount is derived from it; a stated
+  zero is zero. The simulator no longer invents a zero.
+- **7 — simulators.** A malformed callback amount is a typed `MISMATCH`, never a
+  throw; the eBarimt simulator refuses the same key with a different buyer,
+  buyer type, VAT amount or VAT rate.
+
+### Migration path
+
+`0005_onboarding_remediation2.sql`, forward-only, on top of `0004`.
+`0000`–`0004` are untouched and checksum-pinned. `GATE-MIGR` runs the fresh
+install, both upgrade paths (an accepted Phase 03 database and an accepted
+Phase 04 database reaching head, the latter through three Phase 05
+migrations), a repeat that applies nothing, and fresh/upgrade schema equality,
+with the declaration and snapshot aligned.
+
+### Changed file groups
+
+- **Database:** the migration and journal, `schema.ts`, `schema-snapshot.ts`,
+  `ownership-manifest.ts`, `test-support/tenant-rows.ts`, the migration,
+  regression and scheduler tests.
+- **API:** `modules/onboarding/` — the onboarding, subscription, provisioning
+  and eBarimt services; the two repositories; the new remediation-2 suite; the
+  suites whose assertions the prepared-row and fee contracts changed; the
+  harness (worker-login pool exposed for boundary probes); the package's test
+  scripts.
+- **Worker:** `jobs/onboarding.ts` (`startOnboardingConsumers`), `main.ts`, the
+  jobs suite.
+- **Ports:** `payment-gateway.port.ts`, `ebarimt.port.ts`, the conformance suite.
+- **Governance:** `tools/programme-state.mjs` (the governed Phase 05 evidence is
+  now remediation 2), this document, traceability, assumptions, the port
+  catalog, the manifest.
+
+### DEC coverage
+
+No status changes: the 26 Phase 05 decisions stay `COVERED`; the code and test
+columns of `ONB-DEC-006`, `ONB-DEC-007`, `ONB-DEC-008`, `SUB-DEC-004`,
+`SUB-DEC-005`, `SUB-DEC-007`, `SUB-DEC-008`, `LIFE-DEC-006`, `LIFE-DEC-007`
+and `OPS-DEC-007` gain migration `0005` and the remediation-2 suite.
+
+### Remaining blockers
+
+- `EXT-03`, `EXT-04`, `EXT-11` — BLOCKED; canonical ports and simulators,
+  conformance-gated; production adapters are Phase 20.
+- `INT-OTP-01`, `INT-MAIL-01` — unchanged.
+- The offline ownership-verification HTTP surface — Phase 19; not reachable and
+  not claimed.
+- 17 P1 items, `DSR-01`, and the `GATE-SEC` required-check selection — unchanged.
+
+### Evidence
+
+<!-- phase-05-evidence:begin -->
+
+Measured at implementation commit 2c2bed064a7fb6899a0fa01aa096f2740ae45e4b, the tree of the
+remediation-2 commits. The record itself — the manifest and this table — is
+the commit after it; the governance validator and its fixtures were run again
+on that final tree and are what the two governance rows report. Every command
+exited 0. This is the fresh run; the remediation-1 table above is historical.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | pending measurement |
+| `node tools/validate-governance.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-workspace.mjs` | PASS | pending measurement |
+| `node tools/validate-regression-coverage.mjs` | PASS | pending measurement |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | pending measurement |
+| `node tools/scan-secrets.mjs` | PASS | pending measurement |
+| `pnpm run format:check` | PASS | pending measurement |
+| `pnpm run lint` | PASS | pending measurement |
+| `pnpm run typecheck` | PASS | pending measurement |
+| `pnpm run test:unit` | PASS | pending measurement |
+| `pnpm run test:migrations` | PASS | pending measurement |
+| `pnpm run test:integration` | PASS | pending measurement |
+| `pnpm run test:concurrency` | PASS | pending measurement |
+| `pnpm run test:regression` | PASS | pending measurement |
+| `pnpm run test:security` | PASS | pending measurement |
+| `pnpm run test:e2e` | PASS | pending measurement |
+| `pnpm run audit:prod` | PASS | pending measurement |
+| `pnpm run audit:tree` | PASS | pending measurement |
+| `pnpm run build` | PASS | pending measurement |
+| `pnpm run openapi` | PASS | pending measurement |
+| `pnpm run compose:config` | PASS | pending measurement |
+| `git diff --check` | PASS | pending measurement |
 
 <!-- phase-05-evidence:end -->
 
