@@ -110,9 +110,9 @@ export const PHASE_05_EVIDENCE = {
   /** The bounded region in `phase-status.md`: `<!-- phase-05-evidence:begin/end -->`. */
   region: 'phase-05-evidence',
   /** The H2 under which the region must sit. */
-  heading: 'Phase 05 remediation 2',
+  heading: 'Phase 05 remediation 3',
   /** The remediation this evidence measures; the manifest must agree. */
-  remediationNumber: 2,
+  remediationNumber: 3,
   /** The manifest's exact key set. */
   manifestKeys: [
     'phase',

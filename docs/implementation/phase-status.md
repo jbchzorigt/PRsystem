@@ -39,7 +39,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
-| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2` | the Phase 05 battery — counts in [Phase 05 remediation 2](#phase-05-remediation-2) | see the Phase 05 record and remediations 1 and 2 |
+| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2`, `0006_onboarding_remediation3` | the Phase 05 battery — counts in [Phase 05 remediation 3](#phase-05-remediation-3) | see the Phase 05 record and remediations 1 to 3 |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
@@ -2979,15 +2979,12 @@ and `OPS-DEC-007` gain migration `0005` and the remediation-2 suite.
   not claimed.
 - 17 P1 items, `DSR-01`, and the `GATE-SEC` required-check selection — unchanged.
 
-### Evidence
+### Evidence — historical measurement
 
-<!-- phase-05-evidence:begin -->
-
-Measured at implementation commit 15cb672627541cd0d57c76b17844725518f14e1e, the tree of the
-remediation-2 commits. The record itself — the manifest and this table — is
-the commit after it; the governance validator and its fixtures were run again
-on that final tree and are what the two governance rows report. Every command
-exited 0. This is the fresh run; the remediation-1 table above is historical.
+Historical: the remediation 2 battery as measured on the tree of
+`15cb672627541cd0d57c76b17844725518f14e1e`, the four remediation-2 commits. It
+is superseded as the governed Phase 05 evidence by remediation 3 below and is
+kept here unchanged. Every command exited 0.
 
 | Command | Status | Result |
 | --- | --- | --- |
@@ -3015,6 +3012,131 @@ exited 0. This is the fresh run; the remediation-1 table above is historical.
 | `pnpm run openapi` | PASS | document generated |
 | `pnpm run compose:config` | PASS | valid |
 | `git diff --check` | PASS | clean |
+
+Phase 05 remained `AWAITING_CUSTOMER_ACCEPTANCE` at the end of remediation 2.
+
+---
+
+## Phase 05 remediation 3
+
+Phase 05 is still **not accepted**. A third, closeout pass was performed on top
+of `68be0fa0ec6e6eb520777c49ffa7411667d60c21`, the remediation 2 evidence
+commit, against the four findings of the customer's review. Phase 05 stays
+`DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 06 has **not** started. No
+acceptance is claimed by this record.
+
+### Method
+
+Each finding was reproduced on the base before it was fixed, in
+`onboarding.remediation2.test.ts` under `apps/api`. Finding 1 reproduced on
+both paths exactly as described: after a provider `REJECTED`, abandoning the
+prepared row with no invoice violated `0005`'s invoice-once-live check
+(SQLSTATE 23514), the stored refusal rolled back with it, the caller saw the
+constraint error, and a retry called the provider again. Finding 2 reproduced:
+the payments reader threw "Cannot convert null to a BigInt" on a payment whose
+fee the provider had not stated. Finding 3's corrected fixture reaches the SQL
+boundary and passed on the base unchanged — the recovery logic remediation 2
+shipped was correct; the earlier fixture had let the claim-time probe answer
+first — so no business logic was changed for it. Finding 4 is evidence, not
+code.
+
+### What changed, by finding
+
+- **1 — provider refusal persistence.** `0006_onboarding_remediation3` adds a
+  terminal `REFUSED` state to billing intents and payment attempts: reached
+  only from `PREPARING`, it is the one state besides `PREPARING` that may hold
+  no provider invoice, and it must hold none; every live, paid, stale,
+  abandoned or reconciled row still requires its invoice. Both services now
+  record a `REJECTED` or `MISMATCH` answer as `REFUSED` in the transaction that
+  stores the refusal against the key. A same-key retry replays the refusal with
+  no provider call and no second row; a fresh key opens a live invoice.
+- **2 — nullable payment reader.** `SubscriptionRepository.payments()` types
+  the fee and the net amount as nullable and maps NULL through. Proved on a
+  real onboarding payment with no stated fee, and with zero and nonzero
+  controls read through the same reader.
+- **3 — boundary-collision regression.** The colliding owner now appears inside
+  the transaction that claims the row — an AFTER INSERT trigger on the claim's
+  own `provisioning_started` event, running as the database owner, inserts an
+  owner carrying the application's identifier and its own stored contact — so
+  the claim-time probe has already answered "nobody" when the boundary meets
+  the collision. The test asserts the boundary's refusal (the
+  `PROVISIONING → PROVISIONING_FAILED` event with reason
+  `existing_owner_detected`, the recorded error, and no owner link), then the
+  binding to that owner, the challenge delivered to its stored contact and not
+  the application's phone, the passed proof, and provisioning on the original
+  attempt with the hotel linked to that owner and exactly one owner for the
+  identifier.
+- **4 — CI evidence.** The pristine-clone ledger below follows the workflow's
+  41 run steps one by one, with the compose and gate-sec jobs each on a
+  disposable Compose project of its own — a unique project name, free ports
+  and fresh volumes — so every cleanup step runs, against those projects only.
+
+### Migration path
+
+`0006_onboarding_remediation3.sql`, forward-only, on top of `0005`.
+`0000`–`0005` are untouched and checksum-pinned. `GATE-MIGR` runs the fresh
+install, both upgrade paths (four Phase 05 migrations on an accepted Phase 04
+database), a repeat that applies nothing, and fresh/upgrade schema equality.
+
+### Changed file groups
+
+- **Database:** the migration and journal, `schema.ts`, `schema-snapshot.ts`,
+  the migration and regression tests.
+- **API:** the two repositories (`refuseAttempt`, `refuseIntent`, the nullable
+  reader), the refusal branches of the onboarding and subscription services,
+  the remediation suite.
+- **Governance:** `tools/programme-state.mjs` (the governed Phase 05 evidence is
+  now remediation 3), this document, traceability, assumptions, the manifest.
+
+### DEC coverage
+
+No status changes. `ONB-DEC-008`, `SUB-DEC-004`, `SUB-DEC-007` and
+`LIFE-DEC-006` gain migration `0006` in their evidence columns.
+
+### Remaining blockers
+
+Unchanged from remediation 2: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with
+conformance-gated simulators; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline
+verification surface; 17 P1 items; `DSR-01`; the `GATE-SEC` required-check
+selection.
+
+### Evidence
+
+<!-- phase-05-evidence:begin -->
+
+Measured at implementation commit 68be0fa0ec6e6eb520777c49ffa7411667d60c21, the tree of the
+remediation-3 commits. The record itself — the manifest and this table — is
+the commit after it; the governance validator and its fixtures were run again
+on that final tree and are what the two governance rows report. Every command
+exited 0. This is the fresh run; the remediation-1 and remediation-2 tables
+above are historical.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | pending measurement |
+| `node tools/validate-governance.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-workspace.mjs` | PASS | pending measurement |
+| `node tools/validate-regression-coverage.mjs` | PASS | pending measurement |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | pending measurement |
+| `node tools/scan-secrets.mjs` | PASS | pending measurement |
+| `pnpm run format:check` | PASS | pending measurement |
+| `pnpm run lint` | PASS | pending measurement |
+| `pnpm run typecheck` | PASS | pending measurement |
+| `pnpm run test:unit` | PASS | pending measurement |
+| `pnpm run test:migrations` | PASS | pending measurement |
+| `pnpm run test:integration` | PASS | pending measurement |
+| `pnpm run test:concurrency` | PASS | pending measurement |
+| `pnpm run test:regression` | PASS | pending measurement |
+| `pnpm run test:security` | PASS | pending measurement |
+| `pnpm run test:e2e` | PASS | pending measurement |
+| `pnpm run audit:prod` | PASS | pending measurement |
+| `pnpm run audit:tree` | PASS | pending measurement |
+| `pnpm run build` | PASS | pending measurement |
+| `pnpm run openapi` | PASS | pending measurement |
+| `pnpm run compose:config` | PASS | pending measurement |
+| `git diff --check` | PASS | pending measurement |
 
 <!-- phase-05-evidence:end -->
 
