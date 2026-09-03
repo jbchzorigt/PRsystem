@@ -1,18 +1,25 @@
-import type { PackageCode } from '@prsystem/authz';
+import { randomUUID } from 'node:crypto';
+import type { PackageCode, SubscriptionStatePort } from '@prsystem/authz';
 import { isPackageCode } from '@prsystem/authz';
 import { ApiError } from '@prsystem/contracts';
-import { recordPlatformAudit } from '@prsystem/db';
+import type { UnitOfWork } from '@prsystem/db';
+import {
+  claimIdempotencyKey,
+  completeIdempotencyKey,
+  lockIdempotencyClaim,
+  recordPlatformAudit,
+} from '@prsystem/db';
 import { mnt } from '@prsystem/money';
+import type { InvoiceStatus, PaymentProvider, RawCallback } from '@prsystem/ports';
+import { isPaymentProvider } from '@prsystem/ports';
 import { derivedIdempotencyKey } from '../../iam/services/derived-key';
-import type { OnboardingDependencies, RequestContext } from './onboarding-context';
-import { OnboardingServiceBase } from './onboarding-context';
+import type { CommandActor, OnboardingDependencies, RequestContext } from './onboarding-context';
+import { OnboardingServiceBase, portContext, portFailure } from './onboarding-context';
 import type { IntentRow, SubscriptionRow } from '../repositories/subscription.repository';
 import {
   SubscriptionRepository,
   dueUpgradeCandidates,
 } from '../repositories/subscription.repository';
-import type { PaymentProvider, RawCallback } from '../contracts/payment-gateway.port';
-import { isPaymentProvider } from '../contracts/payment-gateway.port';
 import {
   isTermMonths,
   isUpgrade,
@@ -30,17 +37,21 @@ import {
   nextServiceMonthBoundary,
   remainingWholeServiceMonths,
   renewFrom,
+  snapshotFrom,
 } from '../domain/lifecycle';
+import { providerStatusFrom } from './provisioning.service';
 
 /**
  * Subscription renewal, upgrade and the service-month boundary (doc 17,
  * `LIFE-DEC-001`…`007`; doc 14 `OPS-DEC-006`, `OPS-DEC-007`).
  *
- * Everything money touches runs the same way: lock the subscription row, read
- * the billing revision, decide, then apply with that revision as a
- * compare-and-set. A callback and the boundary worker take the same lock and
- * compete for the same revision, so exactly one of them applies an entitlement
- * and the other finds zero rows and stops.
+ * Everything money touches runs the same way: the actor's live scope is
+ * resolved before the hotel is bound, the subscription row is locked, the
+ * Phase 04 pipeline is evaluated against `hotel.subscription.pay` on the very
+ * row that was locked, the billing revision is read, and the effect is applied
+ * with that revision as a compare-and-set. A callback and the boundary worker
+ * take the same lock and compete for the same revision, so exactly one of them
+ * applies an entitlement and the other finds zero rows and stops.
  */
 
 export interface QuoteResult {
@@ -62,6 +73,96 @@ export type BillingCallbackOutcome =
   | { readonly kind: 'rejected'; readonly reason: string }
   | { readonly kind: 'not_paid'; readonly state: string };
 
+export interface SubscriptionStatus {
+  readonly subscriptionId: string;
+  readonly effectivePackage: PackageCode;
+  readonly packageFloor: PackageCode;
+  readonly pendingUpgradePackage: PackageCode | null;
+  readonly pendingUpgradeEffectiveAt: Date | null;
+  readonly startsAt: Date;
+  readonly expiresAt: Date;
+  readonly graceExpiresAt: Date;
+  readonly state: string;
+  readonly listingEligible: boolean;
+  readonly billingRevision: number;
+}
+
+/** doc 18 §3: the one action that pays or renews a subscription. */
+const PAY_PERMISSION = 'hotel.subscription.pay';
+/** doc 18 §7: what any active member keeps — enough to read the state. */
+const READ_PERMISSION = 'platform.expired_notice';
+
+/**
+ * The complete quoted snapshot (doc 17 §4.4): everything the price and the
+ * effect were computed from. Re-locked and compared before the intent is
+ * persisted, so a quote is never stamped with a revision that moved under it.
+ */
+interface QuotedSnapshot {
+  readonly billingRevision: number;
+  readonly effectivePackage: PackageCode;
+  readonly packageFloor: PackageCode;
+  readonly pendingUpgradePackage: PackageCode | null;
+  readonly pendingUpgradeEffectiveAt: number | null;
+  readonly startsAt: number;
+  readonly expiresAt: number;
+  readonly termMonths: number;
+}
+
+function snapshotOf(row: SubscriptionRow): QuotedSnapshot {
+  return {
+    billingRevision: row.billingRevision,
+    effectivePackage: row.effectivePackage,
+    packageFloor: row.packageFloor,
+    pendingUpgradePackage: row.pendingUpgradePackage,
+    pendingUpgradeEffectiveAt: row.pendingUpgradeEffectiveAt?.getTime() ?? null,
+    startsAt: row.startsAt.getTime(),
+    expiresAt: row.expiresAt.getTime(),
+    termMonths: row.termMonths,
+  };
+}
+
+function sameSnapshot(left: QuotedSnapshot, right: QuotedSnapshot): boolean {
+  return (
+    left.billingRevision === right.billingRevision &&
+    left.effectivePackage === right.effectivePackage &&
+    left.packageFloor === right.packageFloor &&
+    left.pendingUpgradePackage === right.pendingUpgradePackage &&
+    left.pendingUpgradeEffectiveAt === right.pendingUpgradeEffectiveAt &&
+    left.startsAt === right.startsAt &&
+    left.expiresAt === right.expiresAt &&
+    left.termMonths === right.termMonths
+  );
+}
+
+/** A port answering from the row a command has already locked. */
+function portFromRow(row: SubscriptionRow): SubscriptionStatePort {
+  return {
+    snapshot: (hotelId, now) =>
+      Promise.resolve(
+        snapshotFrom(
+          {
+            hotelId,
+            effectivePackage: row.effectivePackage,
+            expiresAt: row.expiresAt,
+            suspendedAt: row.suspendedAt,
+          },
+          now,
+        ),
+      ),
+  };
+}
+
+function replayStored(status: number, body: unknown): QuoteResult {
+  if (status >= 400) {
+    const stored = body as { error?: { code?: string; message?: string } };
+    throw new ApiError(
+      (stored.error?.code as ApiError['code'] | undefined) ?? 'CONFLICT',
+      stored.error?.message ?? 'this request was refused when it was first made',
+    );
+  }
+  return body as QuoteResult;
+}
+
 export class SubscriptionService extends OnboardingServiceBase {
   constructor(deps: OnboardingDependencies) {
     super(deps);
@@ -69,50 +170,53 @@ export class SubscriptionService extends OnboardingServiceBase {
 
   // ================================================================ read model
 
-  /** The authoritative row, plus the state and listing truth derived from it. */
+  /**
+   * The authoritative row, plus the state and listing truth derived from it.
+   *
+   * Reachable by any active member of the hotel — the hard-lock notice needs
+   * it — but only through the scope gate: a suspended membership, a stale
+   * session grant, a foreign hotel and an unknown hotel are all `NOT_FOUND`.
+   */
   async status(
     hotelId: string,
+    actor: CommandActor,
     request: RequestContext,
-  ): Promise<
-    | {
-        subscriptionId: string;
-        effectivePackage: PackageCode;
-        packageFloor: PackageCode;
-        pendingUpgradePackage: PackageCode | null;
-        pendingUpgradeEffectiveAt: Date | null;
-        startsAt: Date;
-        expiresAt: Date;
-        graceExpiresAt: Date;
-        state: string;
-        listingEligible: boolean;
-        billingRevision: number;
-      }
-    | undefined
-  > {
-    return this.inHotelScope(hotelId, request, async (uow) => {
-      const repository = new SubscriptionRepository(uow);
-      const row = await repository.current();
-      if (row === undefined) return undefined;
-      const facts = {
-        hotelId,
-        effectivePackage: row.effectivePackage,
-        expiresAt: row.expiresAt,
-        suspendedAt: row.suspendedAt,
-      };
-      return {
-        subscriptionId: row.subscriptionId,
-        effectivePackage: row.effectivePackage,
-        packageFloor: row.packageFloor,
-        pendingUpgradePackage: row.pendingUpgradePackage,
-        pendingUpgradeEffectiveAt: row.pendingUpgradeEffectiveAt,
-        startsAt: row.startsAt,
-        expiresAt: row.expiresAt,
-        graceExpiresAt: new Date(row.expiresAt.getTime() + 48 * 60 * 60 * 1000),
-        state: deriveState(facts, uow.serverNow),
-        listingEligible: listingEligible(facts, uow.serverNow),
-        billingRevision: row.billingRevision,
-      };
-    });
+  ): Promise<SubscriptionStatus | undefined> {
+    return this.runAuthorizedHotelCommand(
+      actor,
+      { hotelId },
+      READ_PERMISSION,
+      request,
+      async (uow, _gate, authorize) => {
+        const repository = new SubscriptionRepository(uow);
+        const row = await repository.current();
+        if (row === undefined) return undefined;
+        await authorize(portFromRow(row));
+        return this.statusOf(hotelId, row, uow.serverNow);
+      },
+    );
+  }
+
+  private statusOf(hotelId: string, row: SubscriptionRow, now: Date): SubscriptionStatus {
+    const facts = {
+      hotelId,
+      effectivePackage: row.effectivePackage,
+      expiresAt: row.expiresAt,
+      suspendedAt: row.suspendedAt,
+    };
+    return {
+      subscriptionId: row.subscriptionId,
+      effectivePackage: row.effectivePackage,
+      packageFloor: row.packageFloor,
+      pendingUpgradePackage: row.pendingUpgradePackage,
+      pendingUpgradeEffectiveAt: row.pendingUpgradeEffectiveAt,
+      startsAt: row.startsAt,
+      expiresAt: row.expiresAt,
+      graceExpiresAt: new Date(row.expiresAt.getTime() + 48 * 60 * 60 * 1000),
+      state: deriveState(facts, now),
+      listingEligible: listingEligible(facts, now),
+      billingRevision: row.billingRevision,
+    };
   }
 
   // ================================================================== renewal
@@ -121,9 +225,11 @@ export class SubscriptionService extends OnboardingServiceBase {
    * doc 17 §3: quotes a renewal.
    *
    * The floor is the higher of the package in force and any paid pending
-   * upgrade, so a renewal cannot undo an upgrade somebody has already paid for
-   * by arriving before the boundary. A request below the floor is refused
-   * outright — there is no invoice to create for it (`LIFE-DEC-001`).
+   * upgrade. With a paid pending target the renewal may be quoted **at** that
+   * target and nowhere else: below it is below the floor, and above it is the
+   * incremental second upgrade of §4.3, which has to be completed first — a
+   * renewal never delays, overwrites, cancels or reprices an upgrade somebody
+   * has already paid for (`LIFE-DEC-001`, `LIFE-DEC-006`).
    */
   async quoteRenewal(
     input: {
@@ -133,6 +239,7 @@ export class SubscriptionService extends OnboardingServiceBase {
       provider: string;
       idempotencyKey: string;
     },
+    actor: CommandActor,
     request: RequestContext,
   ): Promise<QuoteResult> {
     if (!isPackageCode(input.targetPackage)) {
@@ -146,90 +253,61 @@ export class SubscriptionService extends OnboardingServiceBase {
     }
     const provider: PaymentProvider = input.provider;
     const targetPackage: PackageCode = input.targetPackage;
+    const termMonths = input.termMonths;
     const parameters = this.parameters;
+    const operation = 'subscription.renewal';
 
-    const prepared = await this.inHotelScope(input.hotelId, request, async (uow) => {
-      const repository = new SubscriptionRepository(uow);
-      const subscription = await repository.lock();
-      if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-      const floor = renewalFloor(
-        subscription.effectivePackage,
-        subscription.pendingUpgradePackage ?? undefined,
-      );
-      if (packageRank(targetPackage) < packageRank(floor)) {
-        throw new ApiError(
-          'PRECONDITION_FAILED',
-          'a renewal is never quoted below the package floor',
+    return this.quote(
+      { hotelId: input.hotelId, provider, idempotencyKey: input.idempotencyKey, operation },
+      { targetPackage, termMonths, provider },
+      actor,
+      request,
+      (subscription) => {
+        const floor = renewalFloor(
+          subscription.effectivePackage,
+          subscription.pendingUpgradePackage ?? undefined,
         );
-      }
-      // doc 17 §4.4: one unpaid intent at a time, and starting a different kind
-      // of billing action supersedes the previous quote rather than queueing it.
-      await repository.staleLiveIntent(subscription.subscriptionId, 'superseded_by_renewal');
-      return { subscription, floor };
-    });
-
-    const price = quoteTerm(targetPackage, input.termMonths, parameters);
-    const merchantRef = derivedIdempotencyKey(
-      'subscription.renewal',
-      input.hotelId,
-      input.idempotencyKey,
+        if (packageRank(targetPackage) < packageRank(floor)) {
+          throw new ApiError(
+            'PRECONDITION_FAILED',
+            'a renewal is never quoted below the package floor',
+          );
+        }
+        if (
+          subscription.pendingUpgradePackage !== null &&
+          packageRank(targetPackage) > packageRank(subscription.pendingUpgradePackage)
+        ) {
+          throw new ApiError(
+            'PRECONDITION_FAILED',
+            'a paid pending upgrade is in place; complete the incremental upgrade to the higher package first',
+          );
+        }
+        const price = quoteTerm(targetPackage, termMonths, parameters);
+        return {
+          amountMnt: price.totalAmountMnt,
+          vatAmountMnt: price.vatAmountMnt,
+          intent: {
+            kind: 'RENEWAL' as const,
+            currentPackage: floor,
+            targetPackage,
+            termMonths: price.termMonths,
+            monthlyPriceMnt: price.monthlyPriceMnt,
+            priceDeltaMnt: null,
+            remainingServiceMonths: null,
+            effectiveAt: null,
+            vatRateBp: price.vatRateBp,
+            priceBookVersion: price.priceBookVersion,
+            taxConfigVersion: price.taxConfigVersion,
+            packageFeatureVersion: price.packageFeatureVersion,
+          },
+          audit: {
+            action: 'subscription.renewal.quoted',
+            payload: { targetPackage, termMonths, amountMnt: price.totalAmountMnt.toString() },
+          },
+          effectiveAt: undefined,
+        };
+      },
     );
-    const invoice = await this.deps.gateways.gateway(provider).createInvoice({
-      provider,
-      merchantRef,
-      amountMnt: price.totalAmountMnt,
-      currency: 'MNT',
-      expiresAt: new Date(Date.now() + parameters.billingIntentTtlSeconds * 1000),
-    });
-
-    return this.inHotelScope(input.hotelId, request, async (uow) => {
-      const repository = new SubscriptionRepository(uow);
-      const subscription = await repository.lock();
-      if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-      const intentId = await repository.openIntent({
-        subscriptionId: subscription.subscriptionId,
-        kind: 'RENEWAL',
-        provider,
-        merchantRef,
-        providerInvoiceId: invoice.providerInvoiceId,
-        amountMnt: price.totalAmountMnt,
-        quotedBillingRevision: subscription.billingRevision,
-        currentPackage: prepared.floor,
-        targetPackage,
-        termMonths: price.termMonths,
-        monthlyPriceMnt: price.monthlyPriceMnt,
-        priceDeltaMnt: null,
-        remainingServiceMonths: null,
-        effectiveAt: null,
-        quotedExpiresAt: subscription.expiresAt,
-        vatRateBp: price.vatRateBp,
-        priceBookVersion: price.priceBookVersion,
-        taxConfigVersion: price.taxConfigVersion,
-        packageFeatureVersion: price.packageFeatureVersion,
-        ttlSeconds: parameters.billingIntentTtlSeconds,
-      });
-      await recordPlatformAudit(uow, {
-        action: 'subscription.renewal.quoted',
-        outcome: 'allowed',
-        targetType: 'subscription_billing_intent',
-        targetRef: intentId,
-        payload: {
-          targetPackage,
-          termMonths: price.termMonths,
-          amountMnt: price.totalAmountMnt.toString(),
-        },
-      });
-      return {
-        intentId,
-        providerInvoiceId: invoice.providerInvoiceId,
-        checkoutUrl: invoice.checkoutUrl,
-        amountMnt: price.totalAmountMnt.toString(),
-        vatAmountMnt: price.vatAmountMnt.toString(),
-        targetPackage,
-      };
-    });
   }
 
   // ================================================================== upgrade
@@ -241,17 +319,10 @@ export class SubscriptionService extends OnboardingServiceBase {
    * paid pending target when there is one — which is what makes a second upgrade
    * incremental rather than a re-charge of the first. The boundary is inherited
    * from the existing pending upgrade for the same reason.
-   *
-   * Zero remaining whole service months means no invoice at all; the caller is
-   * told to renew at the higher package instead (`LIFE-DEC-002`).
    */
   async quoteUpgrade(
-    input: {
-      hotelId: string;
-      targetPackage: string;
-      provider: string;
-      idempotencyKey: string;
-    },
+    input: { hotelId: string; targetPackage: string; provider: string; idempotencyKey: string },
+    actor: CommandActor,
     request: RequestContext,
   ): Promise<QuoteResult> {
     if (!isPackageCode(input.targetPackage)) {
@@ -264,101 +335,227 @@ export class SubscriptionService extends OnboardingServiceBase {
     const targetPackage: PackageCode = input.targetPackage;
     const parameters = this.parameters;
 
-    const prepared = await this.inHotelScope(input.hotelId, request, async (uow) => {
-      const repository = new SubscriptionRepository(uow);
-      const subscription = await repository.lock();
-      if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-      const basis = subscription.pendingUpgradePackage ?? subscription.effectivePackage;
-      // `LIFE-DEC-001`: there is no downgrade, and an equal target is not an
-      // upgrade either. Both are refused here and neither has an API of its own.
-      if (!isUpgrade(basis, targetPackage)) {
-        throw new ApiError(
-          'PRECONDITION_FAILED',
-          'a subscription package is only ever raised (LIFE-DEC-001)',
+    return this.quote(
+      {
+        hotelId: input.hotelId,
+        provider,
+        idempotencyKey: input.idempotencyKey,
+        operation: 'subscription.upgrade',
+      },
+      { targetPackage, provider },
+      actor,
+      request,
+      (subscription, now) => {
+        const basis = subscription.pendingUpgradePackage ?? subscription.effectivePackage;
+        // `LIFE-DEC-001`: there is no downgrade, and an equal target is not an
+        // upgrade either. Both are refused here and neither has an API of its own.
+        if (!isUpgrade(basis, targetPackage)) {
+          throw new ApiError(
+            'PRECONDITION_FAILED',
+            'a subscription package is only ever raised (LIFE-DEC-001)',
+          );
+        }
+        const effectiveAt =
+          subscription.pendingUpgradeEffectiveAt ??
+          nextServiceMonthBoundary(subscription.startsAt, now);
+        const remaining = remainingWholeServiceMonths(
+          subscription.startsAt,
+          effectiveAt,
+          subscription.expiresAt,
         );
-      }
-
-      const effectiveAt =
-        subscription.pendingUpgradeEffectiveAt ??
-        nextServiceMonthBoundary(subscription.startsAt, uow.serverNow);
-      const remaining = remainingWholeServiceMonths(
-        subscription.startsAt,
-        effectiveAt,
-        subscription.expiresAt,
-      );
-      const quote = quoteUpgrade(basis, targetPackage, remaining, parameters);
-      if (quote === undefined) {
-        throw new ApiError(
-          'PRECONDITION_FAILED',
-          'no whole service months remain; renew at the higher package instead',
-        );
-      }
-      await repository.staleLiveIntent(subscription.subscriptionId, 'superseded_by_upgrade');
-      return { subscription, basis, effectiveAt, quote };
-    });
-
-    const merchantRef = derivedIdempotencyKey(
-      'subscription.upgrade',
-      input.hotelId,
-      input.idempotencyKey,
+        const quote = quoteUpgrade(basis, targetPackage, remaining, parameters);
+        if (quote === undefined) {
+          throw new ApiError(
+            'PRECONDITION_FAILED',
+            'no whole service months remain; renew at the higher package instead',
+          );
+        }
+        return {
+          amountMnt: quote.totalAmountMnt,
+          vatAmountMnt: quote.vatAmountMnt,
+          intent: {
+            kind: 'UPGRADE' as const,
+            currentPackage: basis,
+            targetPackage,
+            termMonths: null,
+            monthlyPriceMnt: quote.monthlyPriceMnt,
+            priceDeltaMnt: quote.priceDeltaMnt,
+            remainingServiceMonths: quote.remainingServiceMonths,
+            effectiveAt,
+            vatRateBp: quote.vatRateBp,
+            priceBookVersion: quote.priceBookVersion,
+            taxConfigVersion: quote.taxConfigVersion,
+            packageFeatureVersion: quote.packageFeatureVersion,
+          },
+          audit: {
+            action: 'subscription.upgrade.quoted',
+            payload: {
+              basisPackage: basis,
+              targetPackage,
+              remainingServiceMonths: quote.remainingServiceMonths,
+              amountMnt: quote.totalAmountMnt.toString(),
+            },
+          },
+          effectiveAt,
+        };
+      },
     );
-    const invoice = await this.deps.gateways.gateway(provider).createInvoice({
-      provider,
-      merchantRef,
-      amountMnt: prepared.quote.totalAmountMnt,
-      currency: 'MNT',
-      expiresAt: new Date(Date.now() + parameters.billingIntentTtlSeconds * 1000),
-    });
+  }
 
-    return this.inHotelScope(input.hotelId, request, async (uow) => {
+  /**
+   * The one quoting discipline both actions share (R6).
+   *
+   *  1. gate the actor's scope, lock the row, authorize `hotel.subscription.pay`
+   *     against that row, price, and **claim the idempotency key** — before
+   *     anything irreversible;
+   *  2. call the provider with a stable idempotency key of its own, so a lost
+   *     reply recovers the same invoice on retry;
+   *  3. lock the row again, compare the complete quoted snapshot, lock the
+   *     claim, stale the previous live intent and persist the new one — only
+   *     now, when the replacement invoice durably exists — and store the result.
+   *
+   * A retry with the same key and body replays the stored result exactly; the
+   * same key with a different body is refused; a revision that moved between
+   * the price and the persist refuses the quote and persists nothing.
+   */
+  private async quote(
+    key: { hotelId: string; provider: PaymentProvider; idempotencyKey: string; operation: string },
+    payload: Record<string, unknown>,
+    actor: CommandActor,
+    request: RequestContext,
+    price: (subscription: SubscriptionRow, now: Date) => PricedQuote,
+  ): Promise<QuoteResult> {
+    const parameters = this.parameters;
+    const scoped = { ...request, accountId: actor.principal.accountId };
+
+    const prepared = await this.runAuthorizedHotelCommand(
+      actor,
+      { hotelId: key.hotelId },
+      PAY_PERMISSION,
+      scoped,
+      async (uow, _gate, authorize) => {
+        const repository = new SubscriptionRepository(uow);
+        const subscription = await repository.lock();
+        if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
+        await authorize(portFromRow(subscription));
+        const priced = price(subscription, uow.serverNow);
+
+        const claimed = await claimIdempotencyKey(uow, {
+          operation: key.operation,
+          key: key.idempotencyKey,
+          clientRef: key.hotelId,
+          payload: { hotelId: key.hotelId, ...payload },
+        });
+        if (claimed.kind === 'replay')
+          return { replay: replayStored(claimed.status, claimed.body) };
+        if (claimed.kind === 'key_reused_with_different_payload') {
+          throw new ApiError('IDEMPOTENCY_KEY_REUSED', 'this key was used for a different request');
+        }
+        return {
+          priced,
+          snapshot: snapshotOf(subscription),
+          subscriptionId: subscription.subscriptionId,
+        };
+      },
+    );
+    if ('replay' in prepared) return prepared.replay;
+
+    const merchantRef = derivedIdempotencyKey(key.operation, key.hotelId, key.idempotencyKey);
+    const invoice = await this.deps.gateways.gateway(key.provider).createInvoice(
+      {
+        intentId: merchantRef,
+        amountMnt: prepared.priced.amountMnt,
+        currency: 'MNT',
+        merchantRef,
+        expiresAt: new Date(Date.now() + parameters.billingIntentTtlSeconds * 1000),
+        idempotencyKey: merchantRef,
+      },
+      portContext(request),
+    );
+    if (!invoice.ok) {
+      const failure = portFailure(invoice.error, 'the payment gateway');
+      if (invoice.error.kind === 'REJECTED' || invoice.error.kind === 'MISMATCH') {
+        await this.inHotelScope(key.hotelId, scoped, async (uow) => {
+          const lock = await lockIdempotencyClaim(uow, {
+            operation: key.operation,
+            key: key.idempotencyKey,
+          });
+          if (lock.kind === 'in_progress') {
+            await completeIdempotencyKey(uow, lock.idempotencyId, failure.status, {
+              error: { code: failure.code, message: failure.message },
+            });
+          }
+        });
+      }
+      throw failure;
+    }
+
+    return this.inHotelScope(key.hotelId, scoped, async (uow) => {
       const repository = new SubscriptionRepository(uow);
       const subscription = await repository.lock();
       if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
+      const claim = await lockIdempotencyClaim(uow, {
+        operation: key.operation,
+        key: key.idempotencyKey,
+      });
+      if (claim.kind === 'replay') return replayStored(claim.status, claim.body);
+      if (claim.kind === 'absent') throw new ApiError('CONFLICT', 'the request claim is gone');
+
+      // doc 17 §4.4: the snapshot the price was computed from must be the row
+      // as it is now. Anything else — a renewal that moved the expiry, an
+      // upgrade that moved the revision — makes this quote stale before it
+      // exists, and a stale quote is never persisted.
+      if (!sameSnapshot(prepared.snapshot, snapshotOf(subscription))) {
+        const stale = new ApiError(
+          'CONFLICT',
+          'the subscription changed while the quote was being prepared; quote again',
+        );
+        await completeIdempotencyKey(uow, claim.idempotencyId, stale.status, {
+          error: { code: stale.code, message: stale.message },
+        });
+        throw stale;
+      }
+
+      // doc 17 §4.4: one unpaid intent at a time. The previous quote is
+      // superseded here, with the replacement's invoice already durable at the
+      // provider — never before.
+      await repository.staleLiveIntent(
+        subscription.subscriptionId,
+        `superseded_by_${prepared.priced.intent.kind.toLowerCase()}`,
+      );
 
       const intentId = await repository.openIntent({
         subscriptionId: subscription.subscriptionId,
-        kind: 'UPGRADE',
-        provider,
+        provider: key.provider,
         merchantRef,
-        providerInvoiceId: invoice.providerInvoiceId,
-        amountMnt: prepared.quote.totalAmountMnt,
+        providerInvoiceId: invoice.value.providerInvoiceId,
+        amountMnt: prepared.priced.amountMnt,
         quotedBillingRevision: subscription.billingRevision,
-        currentPackage: prepared.basis,
-        targetPackage,
-        termMonths: null,
-        monthlyPriceMnt: prepared.quote.monthlyPriceMnt,
-        priceDeltaMnt: prepared.quote.priceDeltaMnt,
-        remainingServiceMonths: prepared.quote.remainingServiceMonths,
-        effectiveAt: prepared.effectiveAt,
         quotedExpiresAt: subscription.expiresAt,
-        vatRateBp: prepared.quote.vatRateBp,
-        priceBookVersion: prepared.quote.priceBookVersion,
-        taxConfigVersion: prepared.quote.taxConfigVersion,
-        packageFeatureVersion: prepared.quote.packageFeatureVersion,
         ttlSeconds: parameters.billingIntentTtlSeconds,
+        ...prepared.priced.intent,
       });
       await recordPlatformAudit(uow, {
-        action: 'subscription.upgrade.quoted',
+        action: prepared.priced.audit.action,
         outcome: 'allowed',
         targetType: 'subscription_billing_intent',
         targetRef: intentId,
-        payload: {
-          basisPackage: prepared.basis,
-          targetPackage,
-          remainingServiceMonths: prepared.quote.remainingServiceMonths,
-          amountMnt: prepared.quote.totalAmountMnt.toString(),
-        },
+        payload: prepared.priced.audit.payload,
       });
-      return {
+      const result: QuoteResult = {
         intentId,
-        providerInvoiceId: invoice.providerInvoiceId,
-        checkoutUrl: invoice.checkoutUrl,
-        amountMnt: prepared.quote.totalAmountMnt.toString(),
-        vatAmountMnt: prepared.quote.vatAmountMnt.toString(),
-        targetPackage,
-        effectiveAt: prepared.effectiveAt.toISOString(),
+        providerInvoiceId: invoice.value.providerInvoiceId,
+        checkoutUrl: invoice.value.payUrl ?? '',
+        amountMnt: prepared.priced.amountMnt.toString(),
+        vatAmountMnt: prepared.priced.vatAmountMnt.toString(),
+        targetPackage: prepared.priced.intent.targetPackage,
+        ...(prepared.priced.effectiveAt === undefined
+          ? {}
+          : { effectiveAt: prepared.priced.effectiveAt.toISOString() }),
       };
+      await completeIdempotencyKey(uow, claim.idempotencyId, 201, result);
+      return result;
     });
   }
 
@@ -369,15 +566,9 @@ export class SubscriptionService extends OnboardingServiceBase {
    *
    * The same discipline as the onboarding callback — authenticate, re-query the
    * provider, match the stored intent, lock, apply once — plus the two rules
-   * that are specific to a live subscription:
-   *
-   *  * a quote that went stale is not applied. `LIFE-DEC-006` says a late
-   *    payment on a superseded intent becomes a reconciliation case, and the
-   *    billing revision the quote was taken at is what detects it;
-   *  * an upgrade whose boundary has already passed by the time the payment
-   *    confirms is applied **immediately** rather than left pending, which is
-   *    `LIFE-DEC-007`'s "callback commit үед `effective_at <= now` бол target
-   *    шууд apply".
+   * that are specific to a live subscription: a stale quote is not applied but
+   * becomes a reconciliation case (`LIFE-DEC-006`), and an upgrade whose
+   * boundary has already passed is applied immediately (`LIFE-DEC-007`).
    */
   async applyBillingCallback(
     hotelId: string,
@@ -385,9 +576,15 @@ export class SubscriptionService extends OnboardingServiceBase {
     request: RequestContext,
   ): Promise<BillingCallbackOutcome> {
     const gateway = this.deps.gateways.gateway(callback.provider);
-    const verified = await gateway.verifyCallback(callback);
-    if (!verified.verified) return { kind: 'rejected', reason: verified.reason };
-    const status = await gateway.queryStatus(callback.providerInvoiceId);
+    const verified = await gateway.verifyCallback(callback, portContext(request));
+    if (!verified.ok) return { kind: 'rejected', reason: verified.error.kind.toLowerCase() };
+    const queried = await gateway.queryStatus(
+      { providerInvoiceId: callback.providerInvoiceId },
+      portContext(request),
+    );
+    const status = queried.ok
+      ? providerStatusFrom(queried.value)
+      : { outcome: 'uncertain' as const, reason: queried.error.kind.toLowerCase() };
 
     return this.inHotelScope(hotelId, request, async (uow) => {
       const repository = new SubscriptionRepository(uow);
@@ -402,14 +599,11 @@ export class SubscriptionService extends OnboardingServiceBase {
       }
 
       if (status.outcome !== 'paid') {
-        if (status.outcome === 'pending') return { kind: 'not_paid', state: intent.state };
-        const next =
-          status.outcome === 'failed'
-            ? ('FAILED' as const)
-            : status.outcome === 'expired'
-              ? ('EXPIRED' as const)
-              : ('PENDING' as const);
-        if (next !== 'PENDING' && intent.state === 'PENDING') {
+        if (status.outcome === 'pending' || status.outcome === 'uncertain') {
+          return { kind: 'not_paid', state: intent.state };
+        }
+        const next = status.outcome === 'failed' ? ('FAILED' as const) : ('EXPIRED' as const);
+        if (intent.state === 'PENDING') {
           await repository.settleIntent({
             intentId: intent.intentId,
             expectedRevision: intent.revision,
@@ -442,9 +636,6 @@ export class SubscriptionService extends OnboardingServiceBase {
       const subscription = await repository.lock();
       if (subscription === undefined) return { kind: 'rejected', reason: 'unknown_reference' };
 
-      // A stale or superseded quote: the money arrived, the entitlement does
-      // not move, and a case is opened for somebody with the permission to close
-      // it (`LIFE-DEC-006`).
       const stale =
         intent.state !== 'PENDING' || intent.quotedBillingRevision !== subscription.billingRevision;
       if (stale) {
@@ -455,6 +646,7 @@ export class SubscriptionService extends OnboardingServiceBase {
           reason: 'stale_quote',
           providerPaymentId: status.providerPaymentId,
           confirmedAt: status.confirmedAt,
+          providerFeeMnt: status.providerFeeMnt,
         });
         await recordPlatformAudit(uow, {
           action: 'subscription.payment.requires_reconciliation',
@@ -466,67 +658,45 @@ export class SubscriptionService extends OnboardingServiceBase {
         return { kind: 'requires_reconciliation', intentId: intent.intentId };
       }
 
+      const settled = await repository.settleIntent({
+        intentId: intent.intentId,
+        expectedRevision: intent.revision,
+        state: 'PAID',
+        reason: 'provider_confirmed',
+        providerPaymentId: status.providerPaymentId,
+        confirmedAt: status.confirmedAt,
+        providerFeeMnt: status.providerFeeMnt,
+      });
+      if (!settled) throw new ApiError('CONFLICT', 'the intent changed concurrently');
+
+      const settlement = {
+        providerPaymentId: status.providerPaymentId,
+        confirmedAt: status.confirmedAt,
+        providerFeeMnt: status.providerFeeMnt,
+      };
       return intent.kind === 'RENEWAL'
-        ? this.applyRenewal(
-            repository,
-            subscription,
-            intent,
-            status.providerPaymentId,
-            status.confirmedAt,
-            uow.serverNow,
-          )
-        : this.applyUpgrade(
-            repository,
-            subscription,
-            intent,
-            status.providerPaymentId,
-            status.confirmedAt,
-            uow.serverNow,
-          );
+        ? this.applyRenewal(repository, subscription, intent, settlement)
+        : this.applyUpgrade(repository, subscription, intent, settlement, uow.serverNow);
     });
   }
 
-  private async applyRenewal(
+  private async recordPayment(
     repository: SubscriptionRepository,
     subscription: SubscriptionRow,
     intent: IntentRow,
-    providerPaymentId: string,
-    confirmedAt: Date,
-    _now: Date,
-  ): Promise<BillingCallbackOutcome> {
-    const termMonths = intent.termMonths ?? subscription.termMonths;
-    // `OPS-DEC-007` / `LIFE-DEC-005`: continue from the existing expiry before it
-    // and inside grace; restart at confirmation after grace. `renewFrom` is the
-    // one place that boundary is decided.
-    const outcome = renewFrom(subscription.expiresAt, confirmedAt, termMonths);
-
-    // `LIFE-DEC-007`: a higher-package renewal opens at the later of the previous
-    // expiry and the confirmation — so paid mid-term it waits for the new term,
-    // and paid in or after grace it opens now.
-    const raising = packageRank(intent.targetPackage) > packageRank(subscription.effectivePackage);
-    const effectiveNow =
-      raising &&
-      higherRenewalEffectiveAt(subscription.expiresAt, confirmedAt).getTime() <=
-        confirmedAt.getTime();
-
-    const settled = await repository.settleIntent({
-      intentId: intent.intentId,
-      expectedRevision: intent.revision,
-      state: 'PAID',
-      reason: 'provider_confirmed',
-      providerPaymentId,
-      confirmedAt,
-    });
-    if (!settled) throw new ApiError('CONFLICT', 'the intent changed concurrently');
-
-    const paymentId = await repository.recordPayment({
+    purpose: 'RENEWAL' | 'UPGRADE',
+    termMonths: number | null,
+    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint },
+  ): Promise<string> {
+    return repository.recordPayment({
       subscriptionId: subscription.subscriptionId,
-      purpose: 'RENEWAL',
+      purpose,
       provider: intent.provider,
-      providerPaymentId,
+      providerPaymentId: settlement.providerPaymentId,
       merchantRef: intent.merchantRef,
       grossAmountMnt: intent.amountMnt,
       vatAmountMnt: vatInsideInclusive(mnt(intent.amountMnt), intent.vatRateBp),
+      providerFeeMnt: settlement.providerFeeMnt,
       vatRateBp: intent.vatRateBp,
       packageCode: intent.targetPackage,
       termMonths,
@@ -535,15 +705,48 @@ export class SubscriptionService extends OnboardingServiceBase {
       taxConfigVersion: intent.taxConfigVersion,
       packageFeatureVersion: intent.packageFeatureVersion,
       intentId: intent.intentId,
-      confirmedAt,
+      confirmedAt: settlement.confirmedAt,
     });
+  }
+
+  private async applyRenewal(
+    repository: SubscriptionRepository,
+    subscription: SubscriptionRow,
+    intent: IntentRow,
+    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint },
+  ): Promise<BillingCallbackOutcome> {
+    const termMonths = intent.termMonths ?? subscription.termMonths;
+    const confirmedAt = settlement.confirmedAt;
+    // `OPS-DEC-007` / `LIFE-DEC-005`: continue from the existing expiry before it
+    // and inside grace; restart at confirmation after grace.
+    const outcome = renewFrom(subscription.expiresAt, confirmedAt, termMonths);
+
+    const paymentId = await this.recordPayment(
+      repository,
+      subscription,
+      intent,
+      'RENEWAL',
+      termMonths,
+      settlement,
+    );
+
+    // R7 / doc 17 §4.4: a paid pending upgrade is untouched by a renewal — its
+    // target and its boundary stay exactly as they were paid for. Only with no
+    // pending upgrade may a higher-package renewal open the higher entitlement
+    // (`LIFE-DEC-007`): now if paid in or after grace, else at the new term.
+    const pending = subscription.pendingUpgradePackage !== null;
+    const raising =
+      !pending && packageRank(intent.targetPackage) > packageRank(subscription.effectivePackage);
+    const effectiveNow =
+      raising &&
+      higherRenewalEffectiveAt(subscription.expiresAt, confirmedAt).getTime() <=
+        confirmedAt.getTime();
 
     const applied = await repository.apply({
       expectedBillingRevision: subscription.billingRevision,
       ...(outcome.startsAt === undefined ? {} : { startsAt: outcome.startsAt }),
       expiresAt: outcome.expiresAt,
       termMonths,
-      // The floor never falls, so a renewal raises it and never lowers it.
       packageFloor:
         packageRank(intent.targetPackage) > packageRank(subscription.packageFloor)
           ? intent.targetPackage
@@ -570,7 +773,7 @@ export class SubscriptionService extends OnboardingServiceBase {
       fromExpiresAt: subscription.expiresAt,
       toExpiresAt: outcome.expiresAt,
       paymentId,
-      detail: { restarted: outcome.restarted, termMonths },
+      detail: { restarted: outcome.restarted, termMonths, pendingUpgradePreserved: pending },
     });
     return { kind: 'renewed', expiresAt: outcome.expiresAt.toISOString() };
   }
@@ -579,41 +782,20 @@ export class SubscriptionService extends OnboardingServiceBase {
     repository: SubscriptionRepository,
     subscription: SubscriptionRow,
     intent: IntentRow,
-    providerPaymentId: string,
-    confirmedAt: Date,
+    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint },
     now: Date,
   ): Promise<BillingCallbackOutcome> {
     const effectiveAt = intent.effectiveAt ?? now;
     const dueNow = effectiveAt.getTime() <= now.getTime();
 
-    const settled = await repository.settleIntent({
-      intentId: intent.intentId,
-      expectedRevision: intent.revision,
-      state: 'PAID',
-      reason: 'provider_confirmed',
-      providerPaymentId,
-      confirmedAt,
-    });
-    if (!settled) throw new ApiError('CONFLICT', 'the intent changed concurrently');
-
-    const paymentId = await repository.recordPayment({
-      subscriptionId: subscription.subscriptionId,
-      purpose: 'UPGRADE',
-      provider: intent.provider,
-      providerPaymentId,
-      merchantRef: intent.merchantRef,
-      grossAmountMnt: intent.amountMnt,
-      vatAmountMnt: vatInsideInclusive(mnt(intent.amountMnt), intent.vatRateBp),
-      vatRateBp: intent.vatRateBp,
-      packageCode: intent.targetPackage,
-      termMonths: null,
-      monthlyPriceMnt: intent.monthlyPriceMnt,
-      priceBookVersion: intent.priceBookVersion,
-      taxConfigVersion: intent.taxConfigVersion,
-      packageFeatureVersion: intent.packageFeatureVersion,
-      intentId: intent.intentId,
-      confirmedAt,
-    });
+    const paymentId = await this.recordPayment(
+      repository,
+      subscription,
+      intent,
+      'UPGRADE',
+      null,
+      settlement,
+    );
 
     // `LIFE-DEC-001`: the target becomes the renewal floor the moment the payment
     // confirms, whether or not the entitlement has opened yet.
@@ -650,14 +832,9 @@ export class SubscriptionService extends OnboardingServiceBase {
    * compare-and-set a callback takes, so a worker racing a callback applies the
    * entitlement exactly once: whichever commits second finds the revision moved
    * and updates zero rows.
-   *
-   * Discovery is advisory and each hotel is processed in its own transaction, so
-   * a candidate that a callback applied first costs one wasted lookup.
    */
   async applyDueUpgrades(limit = 32): Promise<number> {
-    const request: RequestContext = {
-      correlationId: `boundary-${crypto.randomUUID().slice(0, 8)}`,
-    };
+    const request: RequestContext = { correlationId: `boundary-${randomUUID().slice(0, 8)}` };
     const candidates = await this.inOperationScope(request, (uow) =>
       dueUpgradeCandidates(uow, limit),
     );
@@ -675,9 +852,6 @@ export class SubscriptionService extends OnboardingServiceBase {
       const repository = new SubscriptionRepository(uow);
       const subscription = await repository.lock();
       if (subscription === undefined) return false;
-      // Re-read under the lock. The candidate list was taken outside it, so a
-      // callback may have applied this target already — in which case there is
-      // nothing pending and nothing to do.
       if (
         subscription.pendingUpgradePackage === null ||
         subscription.pendingUpgradeEffectiveAt === null ||
@@ -722,13 +896,12 @@ export class SubscriptionService extends OnboardingServiceBase {
   /**
    * `LIFE-DEC-007`: closes a reconciliation case.
    *
-   * The permission (`SUBSCRIPTION_PAYMENT_RECONCILE`) and the recent step-up are
-   * checked above this layer. What is enforced here is the part that matters:
-   * the only thing this can write is the outcome, the account that decided it
-   * and the reason. There is no parameter for a package, a term, an entitlement,
-   * a provisioning result, `starts_at` or `expires_at` — so no resolution can
-   * grant one, and a customer who should have an entitlement gets it by paying a
-   * new authoritative quote.
+   * `SUBSCRIPTION_PAYMENT_RECONCILE` plus a recent step-up, evaluated in the
+   * Operation realm by the Phase 04 pipeline and audited there. The only thing
+   * this can write is the outcome, the account that decided it and the reason.
+   * There is no parameter for a package, a term, an entitlement, a provisioning
+   * result, `starts_at` or `expires_at` — so no resolution can grant one, and a
+   * customer who should have an entitlement gets it by paying a new quote.
    */
   async closeReconciliation(
     input: {
@@ -737,9 +910,25 @@ export class SubscriptionService extends OnboardingServiceBase {
       outcome: 'PROVIDER_CORRECTED_NOT_PAID' | 'EXTERNALLY_VOIDED' | 'FINANCE_CLOSED_EXCEPTION';
       reason: string;
     },
-    accountId: string,
+    actor: CommandActor,
     request: RequestContext,
   ): Promise<void> {
+    const accountId = actor.principal.accountId;
+    await this.runOperationCommand(
+      actor,
+      'operation.subscription_payment_reconcile',
+      { targetType: 'subscription_billing_intent', targetRef: input.intentId },
+      request,
+      async (uow) => {
+        await recordPlatformAudit(uow, {
+          action: 'subscription.payment.reconcile_requested',
+          outcome: 'allowed',
+          targetType: 'subscription_billing_intent',
+          targetRef: input.intentId,
+          payload: { hotelId: input.hotelId, outcome: input.outcome, accountId },
+        });
+      },
+    );
     await this.inHotelScope(input.hotelId, { ...request, accountId }, async (uow) => {
       const repository = new SubscriptionRepository(uow);
       const intent = await repository.intentById(input.intentId);
@@ -766,4 +955,26 @@ export class SubscriptionService extends OnboardingServiceBase {
   }
 }
 
+interface PricedQuote {
+  readonly amountMnt: bigint;
+  readonly vatAmountMnt: bigint;
+  readonly intent: {
+    readonly kind: 'RENEWAL' | 'UPGRADE';
+    readonly currentPackage: PackageCode;
+    readonly targetPackage: PackageCode;
+    readonly termMonths: number | null;
+    readonly monthlyPriceMnt: bigint;
+    readonly priceDeltaMnt: bigint | null;
+    readonly remainingServiceMonths: number | null;
+    readonly effectiveAt: Date | null;
+    readonly vatRateBp: number;
+    readonly priceBookVersion: string;
+    readonly taxConfigVersion: string;
+    readonly packageFeatureVersion: string;
+  };
+  readonly audit: { readonly action: string; readonly payload: Record<string, unknown> };
+  readonly effectiveAt: Date | undefined;
+}
+
 export { expiryFrom };
+export type { InvoiceStatus, UnitOfWork };

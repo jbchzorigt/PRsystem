@@ -8,10 +8,10 @@ import type { ConnectionOptions, WorkerOptions } from 'bullmq';
  * retention, notification fan-out — arrive with the phases that own them
  * (docs/architecture/02-container-and-deployment.md §5).
  *
- * A name here is not a schedule. Phase 05 implements each operation and its
- * handler; **what invokes them on a cadence is the scheduler work assigned to a
- * later phase**, and until that lands the operations are driven by their owning
- * service. That is recorded as an open item rather than left implied.
+ * Every Phase 05 queue has a consumer in this deployment
+ * (`jobs/onboarding.ts`): the provisioning queue takes the API's best-effort
+ * signal and a repeatable sweep, the other three run their drains on a
+ * repeatable sweep. PostgreSQL is the job record; a name here is a transport.
  */
 export const QUEUE_NAMES = {
   heartbeat: 'system.heartbeat',
@@ -19,6 +19,8 @@ export const QUEUE_NAMES = {
   outboxRelay: 'kernel.outbox.relay',
   /** Pre-creates audit partitions and checks the horizon (ADR-0018 §4). */
   partitionMaintenance: 'kernel.audit.partition_maintenance',
+  /** Claims and runs paid provisioning jobs; signalled by the API, swept on a cadence (doc 15 §5). */
+  provisioning: 'onboarding.provisioning',
   /** Applies a paid pending upgrade at its service-month boundary (doc 17 §4.4). */
   subscriptionBoundary: 'subscription.upgrade.boundary',
   /** Delivers the first Hotel Admin's activation link (doc 15 §5). */

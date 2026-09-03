@@ -1,6 +1,6 @@
 import type { PackageCode } from '@prsystem/authz';
 import type { UnitOfWork } from '@prsystem/db';
-import type { PaymentProvider } from '../contracts/payment-gateway.port';
+import type { PaymentProvider } from '@prsystem/ports';
 
 /**
  * The tenant-scoped subscription graph.
@@ -48,6 +48,7 @@ export interface IntentRow {
   readonly providerInvoiceId: string;
   readonly providerPaymentId: string | null;
   readonly amountMnt: bigint;
+  readonly providerFeeMnt: bigint;
   readonly quotedBillingRevision: number;
   readonly currentPackage: PackageCode;
   readonly targetPackage: PackageCode;
@@ -73,9 +74,9 @@ const SUBSCRIPTION_COLUMNS = `
 
 const INTENT_COLUMNS = `
   intent_id, hotel_id, subscription_id, kind, state, provider, merchant_ref,
-  provider_invoice_id, provider_payment_id, amount_mnt, quoted_billing_revision,
-  current_package, target_package, term_months, monthly_price_mnt, price_delta_mnt,
-  remaining_service_months, effective_at, quoted_expires_at, vat_rate_bp,
+  provider_invoice_id, provider_payment_id, amount_mnt, provider_fee_mnt,
+  quoted_billing_revision, current_package, target_package, term_months, monthly_price_mnt,
+  price_delta_mnt, remaining_service_months, effective_at, quoted_expires_at, vat_rate_bp,
   price_book_version, tax_config_version, package_feature_version, expires_at,
   confirmed_at, revision`;
 
@@ -111,6 +112,7 @@ function mapIntent(row: Record<string, unknown> | undefined): IntentRow | undefi
     providerInvoiceId: row['provider_invoice_id'] as string,
     providerPaymentId: row['provider_payment_id'] as string | null,
     amountMnt: BigInt(row['amount_mnt'] as string),
+    providerFeeMnt: BigInt(row['provider_fee_mnt'] as string),
     quotedBillingRevision: Number(row['quoted_billing_revision']),
     currentPackage: row['current_package'] as PackageCode,
     targetPackage: row['target_package'] as PackageCode,
@@ -364,6 +366,7 @@ export class SubscriptionRepository {
     reason: string;
     providerPaymentId?: string | null;
     confirmedAt?: Date | null;
+    providerFeeMnt?: bigint;
   }): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.subscription_billing_intent
@@ -372,6 +375,8 @@ export class SubscriptionRepository {
               terminal_reason = $4,
               provider_payment_id = COALESCE(provider_payment_id, $5),
               confirmed_at = COALESCE(confirmed_at, $6),
+              provider_fee_mnt = CASE WHEN confirmed_at IS NULL THEN COALESCE($8, provider_fee_mnt)
+                                      ELSE provider_fee_mnt END,
               revision = revision + 1
         WHERE hotel_id = $1 AND intent_id = $2 AND revision = $7`,
       [
@@ -382,6 +387,7 @@ export class SubscriptionRepository {
         input.providerPaymentId ?? null,
         input.confirmedAt ?? null,
         input.expectedRevision,
+        input.providerFeeMnt === undefined ? null : input.providerFeeMnt.toString(),
       ],
     );
     return result.rowCount === 1;
@@ -390,9 +396,10 @@ export class SubscriptionRepository {
   /**
    * doc 17 §4.4: cancels the live unpaid intent, if there is one.
    *
-   * Called before a different kind of billing action starts, which is what makes
-   * "one unpaid intent per subscription" a rule rather than an index that keeps
-   * refusing. A quote that is superseded is `STALE`, not deleted: a late payment
+   * Called in the transaction that persists the replacement, after the
+   * replacement's provider invoice durably exists — never before, so a
+   * provider that fails to answer leaves the existing usable intent exactly as
+   * it was. A quote that is superseded is `STALE`, not deleted: a late payment
    * on it has to find a row to attach a reconciliation case to.
    */
   async staleLiveIntent(subscriptionId: string, reason: string): Promise<number> {
@@ -433,6 +440,12 @@ export class SubscriptionRepository {
 
   // ------------------------------------------------------------------ payments
 
+  /**
+   * Records the immutable payment **and** its eBarimt issuance intent, in the
+   * caller's transaction (`SUB-DEC-005`). A payment row without its intent
+   * cannot exist, and a duplicate callback that reached here twice is stopped
+   * by the payment's own unique key before either row is written.
+   */
   async recordPayment(input: {
     subscriptionId: string;
     purpose: 'RENEWAL' | 'UPGRADE';
@@ -441,6 +454,7 @@ export class SubscriptionRepository {
     merchantRef: string;
     grossAmountMnt: bigint;
     vatAmountMnt: bigint;
+    providerFeeMnt: bigint;
     vatRateBp: number;
     packageCode: PackageCode;
     termMonths: number | null;
@@ -457,7 +471,7 @@ export class SubscriptionRepository {
           gross_amount_mnt, vat_amount_mnt, provider_fee_mnt, net_amount_mnt, vat_rate_bp,
           package_code, term_months, monthly_price_mnt, price_book_version,
           tax_config_version, package_feature_version, intent_id, confirmed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$7,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$7::bigint - $9::bigint,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING payment_id`,
       [
         this.hotelId,
@@ -468,6 +482,7 @@ export class SubscriptionRepository {
         input.merchantRef,
         input.grossAmountMnt.toString(),
         input.vatAmountMnt.toString(),
+        input.providerFeeMnt.toString(),
         input.vatRateBp,
         input.packageCode,
         input.termMonths,
@@ -481,19 +496,33 @@ export class SubscriptionRepository {
     );
     const paymentId = result.rows[0]?.payment_id;
     if (paymentId === undefined) throw new Error('the payment insert returned no row');
+    await this.uow.query(
+      `INSERT INTO platform.ebarimt_issuance (hotel_id, payment_id) VALUES ($1, $2)`,
+      [this.hotelId, paymentId],
+    );
     return paymentId;
   }
 
   async payments(): Promise<
-    readonly { paymentId: string; purpose: string; grossAmountMnt: bigint; vatAmountMnt: bigint }[]
+    readonly {
+      paymentId: string;
+      purpose: string;
+      grossAmountMnt: bigint;
+      vatAmountMnt: bigint;
+      providerFeeMnt: bigint;
+      netAmountMnt: bigint;
+    }[]
   > {
     const result = await this.uow.query<{
       payment_id: string;
       purpose: string;
       gross_amount_mnt: string;
       vat_amount_mnt: string;
+      provider_fee_mnt: string;
+      net_amount_mnt: string;
     }>(
-      `SELECT payment_id, purpose, gross_amount_mnt, vat_amount_mnt
+      `SELECT payment_id, purpose, gross_amount_mnt, vat_amount_mnt, provider_fee_mnt,
+              net_amount_mnt
          FROM platform.subscription_payment WHERE hotel_id = $1 ORDER BY confirmed_at`,
       [this.hotelId],
     );
@@ -502,6 +531,8 @@ export class SubscriptionRepository {
       purpose: row.purpose,
       grossAmountMnt: BigInt(row.gross_amount_mnt),
       vatAmountMnt: BigInt(row.vat_amount_mnt),
+      providerFeeMnt: BigInt(row.provider_fee_mnt),
+      netAmountMnt: BigInt(row.net_amount_mnt),
     }));
   }
 
@@ -544,14 +575,9 @@ export class SubscriptionRepository {
  * every row it is looking for is tenant-scoped — so an unscoped scan sees
  * nothing, correctly. These go through the `SECURITY DEFINER` discovery
  * wrappers, which return identifiers and nothing else: no package, no amount,
- * no name, no address. The alternative would have been a policy letting the
- * worker read every hotel's subscriptions, which is precisely the broad grant
- * the provisioning boundary exists to avoid.
- *
- * Discovery is advisory. Each item is then processed in its own tenant-scoped
- * transaction, where the row is locked, re-read and claimed by
- * compare-and-set — so a stale candidate costs one wasted lookup, never a
- * second effect.
+ * no name, no address. Discovery is advisory; each item is then processed in
+ * its own tenant-scoped transaction, where the row is locked, re-read and
+ * claimed by compare-and-set.
  */
 export async function dueUpgradeCandidates(
   uow: UnitOfWork,
@@ -587,4 +613,37 @@ export async function pendingEBarimtIssuances(
     [limit],
   );
   return result.rows.map((row) => ({ hotelId: row.hotel_id, issuanceId: row.issuance_id }));
+}
+
+/** doc 16 §4.1 step 5: the receipts awaiting an operator, across every hotel. */
+export async function manualEBarimtIssuances(
+  uow: UnitOfWork,
+  limit: number,
+): Promise<
+  readonly {
+    hotelId: string;
+    issuanceId: string;
+    paymentId: string;
+    lastError: string | null;
+    createdAt: Date;
+  }[]
+> {
+  const result = await uow.query<{
+    hotel_id: string;
+    issuance_id: string;
+    payment_id: string;
+    last_error: string | null;
+    created_at: Date;
+  }>(
+    `SELECT hotel_id, issuance_id, payment_id, last_error, created_at
+        FROM platform.manual_ebarimt_issuances($1)`,
+    [limit],
+  );
+  return result.rows.map((row) => ({
+    hotelId: row.hotel_id,
+    issuanceId: row.issuance_id,
+    paymentId: row.payment_id,
+    lastError: row.last_error,
+    createdAt: row.created_at,
+  }));
 }

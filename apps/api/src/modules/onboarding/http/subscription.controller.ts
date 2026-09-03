@@ -12,37 +12,39 @@ import {
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { ApiError } from '@prsystem/contracts';
+import { isPaymentProvider } from '@prsystem/ports';
 import type { AuthenticatedRequest } from '../../iam/http/session.guard';
-import { SessionGuard } from '../../iam/http/session.guard';
+import { SessionGuard, actorOf, principalOf } from '../../iam/http/session.guard';
 import { body, idempotencyKey, requireString, requireUuid } from '../../iam/http/validation';
 import { SubscriptionService } from '../services/subscription.service';
-import { EBarimtService } from '../services/ebarimt.service';
 import { newOnboardingRequest } from '../services/onboarding-context';
-import { isPaymentProvider } from '../contracts/payment-gateway.port';
 
 /**
  * The subscription surface (docs 16 and 17).
  *
+ * `hotelId` is in the path because a request has to name its target; it grants
+ * nothing. `SessionGuard` authenticates and nothing more: every handler hands
+ * the actor — principal *and* session — to a command that resolves the live
+ * membership and scope grant for that hotel before the hotel is bound, and then
+ * evaluates the Phase 04 pipeline against the canonical action inside the
+ * transaction. Only a Hotel Admin holds `hotel.subscription.pay`; everyone else,
+ * every foreign hotel and every unknown id is the same `NOT_FOUND`.
+ *
  * Notice what is **not** here. There is no downgrade route, no refund route and
  * no partial-refund route — `LIFE-DEC-001` and `SUB-DEC-009` do not merely
- * forbid those actions, they leave the platform with no verb for them, and an
- * endpoint that existed and refused would be a surface to argue with.
- *
- * There is also no route that writes an eBarimt receipt field. `SUB-DEC-008`
- * gives an operator exactly one power — ask the issuer again — and the retry
- * route below takes no receipt parameters at all.
+ * forbid those actions, they leave the platform with no verb for them. And the
+ * eBarimt manual queue is not here: it is an Operation surface, and a Hotel
+ * session has no route to it.
  */
 @ApiTags('subscription')
 @Controller('hotels/:hotelId/subscription')
 export class SubscriptionController {
-  constructor(
-    @Inject(SubscriptionService) private readonly subscriptions: SubscriptionService,
-    @Inject(EBarimtService) private readonly ebarimt: EBarimtService,
-  ) {}
+  constructor(@Inject(SubscriptionService) private readonly subscriptions: SubscriptionService) {}
 
   @Get()
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'The authoritative subscription state' })
+  @ApiResponse({ status: 404, description: 'No live membership in this hotel' })
   async status(
     @Param('hotelId') hotelIdParam: string,
     @Req() request: AuthenticatedRequest,
@@ -50,7 +52,8 @@ export class SubscriptionController {
     const hotelId = requireUuid(hotelIdParam, 'hotelId');
     const found = await this.subscriptions.status(
       hotelId,
-      newOnboardingRequest(request.principal?.accountId),
+      actorOf(request),
+      newOnboardingRequest(principalOf(request).accountId),
     );
     if (found === undefined) throw new ApiError('NOT_FOUND', 'not found');
     return {
@@ -64,8 +67,8 @@ export class SubscriptionController {
 
   @Post('renewals')
   @UseGuards(SessionGuard)
-  @ApiOperation({ summary: 'Quote and invoice a renewal' })
-  @ApiResponse({ status: 412, description: 'The package is below the renewal floor' })
+  @ApiOperation({ summary: 'Quote and invoice a renewal (Hotel Admin, hotel.subscription.pay)' })
+  @ApiResponse({ status: 412, description: 'Below the floor, or above a paid pending upgrade' })
   async renew(
     @Param('hotelId') hotelIdParam: string,
     @Req() request: AuthenticatedRequest,
@@ -80,7 +83,8 @@ export class SubscriptionController {
         provider: requireString(payload['provider'], 'provider', 8),
         idempotencyKey: idempotencyKey(request),
       },
-      newOnboardingRequest(request.principal?.accountId),
+      actorOf(request),
+      newOnboardingRequest(principalOf(request).accountId),
     );
     reply.status(201);
     return { ...created };
@@ -88,7 +92,9 @@ export class SubscriptionController {
 
   @Post('upgrades')
   @UseGuards(SessionGuard)
-  @ApiOperation({ summary: 'Quote and invoice a package upgrade' })
+  @ApiOperation({
+    summary: 'Quote and invoice a package upgrade (Hotel Admin, hotel.subscription.pay)',
+  })
   @ApiResponse({ status: 412, description: 'Not an upgrade, or no whole service months remain' })
   async upgrade(
     @Param('hotelId') hotelIdParam: string,
@@ -103,12 +109,19 @@ export class SubscriptionController {
         provider: requireString(payload['provider'], 'provider', 8),
         idempotencyKey: idempotencyKey(request),
       },
-      newOnboardingRequest(request.principal?.accountId),
+      actorOf(request),
+      newOnboardingRequest(principalOf(request).accountId),
     );
     reply.status(201);
     return { ...created };
   }
 
+  /**
+   * The provider callback. Unauthenticated in the session sense and
+   * authenticated in the only sense that matters: the gateway verifies the
+   * signature, the provider's own status is re-queried, and every field is
+   * matched against the stored intent.
+   */
   @Post('payments/:provider/callback')
   @HttpCode(202)
   @ApiOperation({ summary: 'Renewal or upgrade payment callback' })
@@ -143,19 +156,5 @@ export class SubscriptionController {
       newOnboardingRequest(),
     );
     return { accepted: true };
-  }
-
-  @Get('ebarimt')
-  @UseGuards(SessionGuard)
-  @ApiOperation({ summary: 'The eBarimt issuances awaiting manual resolution' })
-  async manualQueue(
-    @Param('hotelId') hotelIdParam: string,
-    @Req() request: AuthenticatedRequest,
-  ): Promise<{ items: readonly Record<string, unknown>[] }> {
-    const items = await this.ebarimt.manualQueue(
-      requireUuid(hotelIdParam, 'hotelId'),
-      newOnboardingRequest(request.principal?.accountId),
-    );
-    return { items: items.map((item) => ({ ...item })) };
   }
 }

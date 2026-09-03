@@ -77,6 +77,10 @@ export async function createApp(
           appEnv: config.APP_ENV,
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+          // The provisioning signal (R3). Best-effort by contract: a Redis
+          // that is down costs the worker a sweep interval, never a payment.
+          redisUrl: config.REDIS_URL,
+          ...(config.QUEUE_PREFIX === undefined ? {} : { queuePrefix: config.QUEUE_PREFIX }),
         },
       },
       ownedPools: [subscriptionPool],

@@ -53,6 +53,12 @@ export interface OnboardingParameters {
   readonly provisioningMaxAutomaticAttempts: number;
   readonly provisioningRetryBackoffSeconds: number;
   readonly provisioningRetryBackoffCeilingSeconds: number;
+  /**
+   * How long a worker's claim on a provisioning job stays its own. A process
+   * that dies mid-run leaves a lease that lapses, and the next sweep reclaims
+   * the job rather than waiting on a holder that will never settle it.
+   */
+  readonly provisioningLeaseSeconds: number;
 
   /** doc 15 §5: the first Hotel Admin's activation link. */
   readonly activationTtlSeconds: number;
@@ -95,6 +101,7 @@ export const ONBOARDING_PARAMETERS: OnboardingParameters = {
   provisioningMaxAutomaticAttempts: 5,
   provisioningRetryBackoffSeconds: 5,
   provisioningRetryBackoffCeilingSeconds: 15 * 60,
+  provisioningLeaseSeconds: 2 * 60,
 
   activationTtlSeconds: 7 * 24 * 60 * 60,
   activationLeaseSeconds: 2 * 60,

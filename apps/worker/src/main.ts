@@ -3,7 +3,10 @@ import { Pool } from 'pg';
 import { workerEnv } from '@prsystem/config';
 import { selectKeyManagement } from '@prsystem/ports';
 import { createLogger, newRequestId, runWithCorrelation } from '@prsystem/telemetry';
+import { createOnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
+import type { OnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
+import { createOnboardingWorkers, scheduleOnboardingSweeps } from './jobs/onboarding';
 import { startWorker } from './startup';
 
 async function main(): Promise<void> {
@@ -12,6 +15,7 @@ async function main(): Promise<void> {
     level: config.LOG_LEVEL,
     serviceName: `${config.OTEL_SERVICE_NAME}-worker`,
   });
+  let runtime: OnboardingWorkerRuntime | undefined;
 
   // Startup order is enforced by startWorker: the security preconditions run to
   // completion before Redis is contacted or any consumer is constructed.
@@ -39,8 +43,24 @@ async function main(): Promise<void> {
       heartbeat.on('failed', (job, error) => {
         logger.error({ jobId: job?.id, err: error }, 'job failed');
       });
-      return [heartbeat];
+
+      // The Phase 05 operations, bound to this deployment's own restricted
+      // login and the environment's ports (R3, R5).
+      runtime = createOnboardingWorkerRuntime({
+        databaseUrl: config.DATABASE_URL,
+        appEnv: config.APP_ENV,
+        kmsAdapter: config.KMS_ADAPTER,
+        ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+      });
+      const onboarding = createOnboardingWorkers(connection, runtime, logger, {
+        ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }),
+      });
+      return [heartbeat, ...onboarding];
     },
+  });
+
+  await scheduleOnboardingSweeps(connectionFromUrl(config.REDIS_URL), {
+    ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }),
   });
 
   logger.info({ queues: Object.values(QUEUE_NAMES) }, 'worker started');
@@ -48,6 +68,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'worker shutting down');
     await started.close();
+    await runtime?.close();
     process.exit(0);
   };
 

@@ -4,14 +4,15 @@ import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Pool } from 'pg';
-import { UnavailableKeyManagement } from '@prsystem/ports';
-import { AppModule } from './app.module';
 import {
   PaymentGatewayRegistry,
+  UnavailableEBarimt,
+  UnavailableKeyManagement,
   UnavailablePaymentGateway,
-} from './modules/onboarding/contracts/payment-gateway.port';
-import { UnavailableEBarimt } from './modules/onboarding/contracts/ebarimt.port';
-import { UnavailablePhoneVerification } from './modules/onboarding/contracts/phone-verification.port';
+  UnavailablePhoneVerification,
+} from '@prsystem/ports';
+import { AppModule } from './app.module';
+import { NoProvisioningSignal } from './modules/onboarding/contracts/provisioning-signal';
 import { UnavailableSubscriptionState } from './modules/iam/contracts/subscription-state.port';
 import { UnavailableStaffNotification } from './modules/iam/contracts/staff-notification.port';
 import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
@@ -55,6 +56,7 @@ async function generate(): Promise<void> {
         ebarimt: new UnavailableEBarimt(),
         phone: new UnavailablePhoneVerification(),
         notifications: new UnavailableStaffNotification(),
+        signals: new NoProvisioningSignal(),
       },
     }),
     new FastifyAdapter(),

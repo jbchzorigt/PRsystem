@@ -148,67 +148,12 @@ export abstract class IamServiceBase {
    * that exists is indistinguishable from one that does not, and no lock is ever
    * taken on another tenant's rows.
    */
-  protected async gateHotelScope(
+  protected gateHotelScope(
     actor: CommandActor,
     target: { hotelId: string; restaurantId?: string },
     request: RequestContext,
   ): Promise<HotelGate> {
-    const denied = (): AuthorizationDenied =>
-      new AuthorizationDenied(
-        new ApiError('NOT_FOUND', 'not found'),
-        'hotel.scope',
-        'account_and_membership',
-        'NOT_AUTHORIZED',
-        'hotel',
-        target.hotelId,
-      );
-
-    const gate = await this.inAccountScope(
-      { ...request, accountId: actor.principal.accountId },
-      async (uow) => {
-        const principal = await resolvePrincipal(
-          uow,
-          actor.principal.accountId,
-          actor.principal.stepUpAt,
-        );
-        if (principal === undefined || principal.accountState !== 'ACTIVE') return undefined;
-
-        // A hotel-scoped membership covers any target in its hotel; a
-        // restaurant-scoped one covers only its own restaurant (doc 06 §4.1).
-        // The exact restaurant is preferred, so a person who holds both is
-        // evaluated as the narrower one first — and never as the union.
-        const covering = principal.memberships
-          .filter(
-            (membership) =>
-              membership.hotelId === target.hotelId &&
-              membership.state === 'ACTIVE' &&
-              (membership.restaurantId === undefined ||
-                membership.restaurantId === target.restaurantId),
-          )
-          .sort((left, right) => scopeRank(left, target) - scopeRank(right, target));
-        if (covering.length === 0) return undefined;
-
-        const memberships = new MembershipRepository(uow);
-        for (const membership of covering) {
-          const grant = await memberships.liveScopeGrantForAccount(
-            actor.principal.accountId,
-            actor.sessionId,
-            membership.membershipId,
-          );
-          if (grant !== undefined && grant.membershipRevision === membership.revision) {
-            return { principal, membership, sessionId: actor.sessionId };
-          }
-        }
-        return undefined;
-      },
-    );
-
-    if (gate === undefined) {
-      const refusal = denied();
-      await this.recordDenial(target.hotelId, request, refusal);
-      throw refusal;
-    }
-    return gate;
+    return gateHotelScope(this.deps.pool, actor, target, request);
   }
 
   /**
@@ -260,30 +205,12 @@ export abstract class IamServiceBase {
     }
   }
 
-  private async recordDenial(
+  private recordDenial(
     hotelId: string,
     request: RequestContext,
     denial: AuthorizationDenied,
   ): Promise<void> {
-    try {
-      await this.inAccountScope(request, async (uow) => {
-        await recordPlatformAudit(uow, {
-          action: `authz.${denial.permission}`,
-          outcome: 'denied',
-          targetType: denial.targetType ?? 'authorization',
-          ...(denial.targetRef === undefined ? {} : { targetRef: denial.targetRef }),
-          reason: denial.denialCode,
-          payload: {
-            stage: denial.stage,
-            permission: denial.permission,
-            targetHotelId: hotelId,
-          },
-        });
-      });
-    } catch {
-      // The refusal itself has already happened and is what the caller sees. A
-      // failure to record it must not turn a denial into a different error.
-    }
+    return recordAuthorizationDenial(this.deps.pool, hotelId, request, denial);
   }
 
   protected inAccountScope<T>(
@@ -299,5 +226,119 @@ export abstract class IamServiceBase {
     work: (uow: UnitOfWork) => Promise<T>,
   ): Promise<T> {
     return withTenantTransaction(this.deps.pool, hotelScope(hotelId, request), work);
+  }
+}
+
+/**
+ * Resolves the scope a session actually holds in a hotel — before any hotel
+ * RLS context is bound (doc 06 §2, `RBAC-DEC-006`).
+ *
+ * Exported as a function rather than kept as a method, because it is the one
+ * gate every module that binds a `hotel_id` from a path has to pass through:
+ * Phase 05's subscription surface takes it from here rather than growing a
+ * second reading of what a live scope grant is.
+ *
+ * It runs in the **account** scope, where the only rows visible are the
+ * principal's own. It answers one question: does this account hold an active
+ * membership covering the requested target, and does *this session* still hold
+ * a live scope grant on it at its current revision? Nothing about the target
+ * resource is read, locked or claimed until it does. A `hotel_id` in a URL
+ * therefore never binds tenant authority: a foreign hotel that exists is
+ * indistinguishable from one that does not, and no lock is ever taken on another
+ * tenant's rows. The refusal is audited in a transaction of its own (doc 05 §7).
+ */
+export async function gateHotelScope(
+  pool: Pool,
+  actor: CommandActor,
+  target: { hotelId: string; restaurantId?: string },
+  request: RequestContext,
+): Promise<HotelGate> {
+  const denied = (): AuthorizationDenied =>
+    new AuthorizationDenied(
+      new ApiError('NOT_FOUND', 'not found'),
+      'hotel.scope',
+      'account_and_membership',
+      'NOT_AUTHORIZED',
+      'hotel',
+      target.hotelId,
+    );
+
+  const gate = await withTenantTransaction(
+    pool,
+    accountScope({ ...request, accountId: actor.principal.accountId }),
+    async (uow) => {
+      const principal = await resolvePrincipal(
+        uow,
+        actor.principal.accountId,
+        actor.principal.stepUpAt,
+      );
+      if (principal === undefined || principal.accountState !== 'ACTIVE') return undefined;
+
+      const covering = principal.memberships
+        .filter(
+          (membership) =>
+            membership.hotelId === target.hotelId &&
+            membership.state === 'ACTIVE' &&
+            (membership.restaurantId === undefined ||
+              membership.restaurantId === target.restaurantId),
+        )
+        .sort((left, right) => scopeRank(left, target) - scopeRank(right, target));
+      if (covering.length === 0) return undefined;
+
+      const memberships = new MembershipRepository(uow);
+      for (const membership of covering) {
+        const grant = await memberships.liveScopeGrantForAccount(
+          actor.principal.accountId,
+          actor.sessionId,
+          membership.membershipId,
+        );
+        if (grant !== undefined && grant.membershipRevision === membership.revision) {
+          return { principal, membership, sessionId: actor.sessionId };
+        }
+      }
+      return undefined;
+    },
+  );
+
+  if (gate === undefined) {
+    const refusal = denied();
+    await recordAuthorizationDenial(pool, target.hotelId, request, refusal);
+    throw refusal;
+  }
+  return gate;
+}
+
+/**
+ * Records a denial the command's own transaction could not.
+ *
+ * doc 05 §7 requires a denied high-risk attempt to be audited, and a denial
+ * aborts the transaction it was detected in — so the record is written in a
+ * transaction of its own, under the platform scope, naming the hotel that was
+ * targeted. A failure to record it must not turn a denial into a different
+ * error.
+ */
+export async function recordAuthorizationDenial(
+  pool: Pool,
+  hotelId: string,
+  request: RequestContext,
+  denial: AuthorizationDenied,
+): Promise<void> {
+  try {
+    await withTenantTransaction(pool, accountScope(request), async (uow) => {
+      await recordPlatformAudit(uow, {
+        action: `authz.${denial.permission}`,
+        outcome: 'denied',
+        targetType: denial.targetType ?? 'authorization',
+        ...(denial.targetRef === undefined ? {} : { targetRef: denial.targetRef }),
+        reason: denial.denialCode,
+        payload: {
+          stage: denial.stage,
+          permission: denial.permission,
+          targetHotelId: hotelId,
+        },
+      });
+    });
+  } catch {
+    // The refusal itself has already happened and is what the caller sees.
   }
 }

@@ -25,7 +25,7 @@ export interface AccountRow {
   readonly realmRole: string | null;
   readonly policeScopeRef: string | null;
   readonly emailNormalized: string;
-  readonly state: 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+  readonly state: 'PENDING_ACTIVATION' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
   readonly authEpoch: number;
   readonly emailVerifiedAt: Date | null;
   readonly revision: number;
@@ -158,6 +158,28 @@ export class AccountRepository {
           SET state = $2, revision = revision + 1
         WHERE account_id = $1 AND revision = $3`,
       [accountId, state, expectedRevision],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * Activates a `PENDING_ACTIVATION` account in one checked write (Phase 05
+   * `ONB-DEC-003`, doc 15 §5).
+   *
+   * The verified email, the `ACTIVE` state and the auth-epoch bump land
+   * together, fenced on the revision the caller read under its lock. Zero rows
+   * means the account moved concurrently — or was never pending — and the
+   * caller must fail rather than continue with half an activation.
+   */
+  async activate(accountId: string, expectedRevision: number): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.user_account
+          SET state = 'ACTIVE',
+              email_verified_at = coalesce(email_verified_at, now()),
+              auth_epoch = auth_epoch + 1,
+              revision = revision + 1
+        WHERE account_id = $1 AND revision = $2 AND state = 'PENDING_ACTIVATION'`,
+      [accountId, expectedRevision],
     );
     return result.rowCount === 1;
   }

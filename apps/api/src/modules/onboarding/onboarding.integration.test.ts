@@ -8,6 +8,13 @@ import {
 } from './test-support/onboarding-harness';
 import { newOnboardingRequest } from './services/onboarding-context';
 import type { RequestContext } from './services/onboarding-context';
+import { actorFor } from '../iam/test-support/iam-harness';
+
+/** Unwraps a port result, or fails the test with the error it carried. */
+function unwrap<T>(result: { ok: true; value: T } | { ok: false; error: unknown }): T {
+  if (!result.ok) throw new Error(`port refused: ${JSON.stringify(result.error)}`);
+  return result.value;
+}
 
 /**
  * Phase 05 — hotel onboarding and subscription, end to end on a real database.
@@ -217,8 +224,8 @@ describe('ONB-DEC-001 — nothing exists before authoritative payment', () => {
       ]);
       await expect(
         client.query(
-          `SELECT platform.provision_paid_hotel($1, 'probe-key-0001', NULL, NULL, NULL,
-                                                NULL, NULL, NULL, NULL)`,
+          `SELECT platform.provision_paid_hotel($1, 'probe-key-0001', NULL, NULL, NULL, NULL,
+                                                NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
           [ready.applicationId],
         ),
       ).rejects.toMatchObject({ code: '42501' });
@@ -316,7 +323,11 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
 
   it('rejects an unknown invoice reference', async () => {
     const outcome = await env.provisioning.applyCallback(
-      { provider: 'QPAY', providerInvoiceId: 'qpay-inv-999999', signature: 'anything' },
+      {
+        provider: 'QPAY',
+        providerInvoiceId: 'qpay-inv-999999',
+        signature: env.qpay.signatureFor('qpay-inv-999999'),
+      },
       request(),
     );
     expect(outcome).toEqual({ kind: 'rejected', reason: 'unknown_reference' });
@@ -345,12 +356,12 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
     const stored = env.qpay.invoice(invoice.providerInvoiceId);
     if (stored === undefined) throw new Error('the simulator lost its invoice');
     env.qpay.settle(invoice.providerInvoiceId, {
-      outcome: 'paid',
+      state: 'PAID',
       providerPaymentId: `${invoice.providerInvoiceId}-pay`,
       paidAmountMnt: field === 'amount' ? stored.amountMnt + 1n : stored.amountMnt,
       currency: field === 'currency' ? 'USD' : stored.currency,
       merchantRef: field === 'merchantRef' ? 'somebody-elses-ref' : stored.merchantRef,
-      confirmedAt: new Date(),
+      paidAt: new Date(),
     });
 
     const outcome = await env.provisioning.applyCallback(
@@ -372,7 +383,9 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
       { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: `idem-${unique()}` },
       request(),
     );
-    env.qpay.settle(invoice.providerInvoiceId, { outcome: 'uncertain', reason: 'timeout' });
+    // The provider's status query times out: an indeterminate answer, never a
+    // success (doc 15 §4).
+    env.qpay.failNext({ kind: 'TIMEOUT', retryable: true });
     const outcome = await env.provisioning.applyCallback(
       callbackFor('QPAY', invoice.providerInvoiceId),
       request(),
@@ -398,7 +411,7 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
       { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: `idem-${unique()}` },
       request(),
     );
-    env.qpay.settle(first.providerInvoiceId, { outcome: 'failed', reason: 'declined' });
+    env.qpay.settle(first.providerInvoiceId, { state: 'FAILED', failureCode: 'declined' });
     await env.provisioning.applyCallback(callbackFor('QPAY', first.providerInvoiceId), request());
 
     const second = await env.onboarding.openInvoice(
@@ -425,7 +438,7 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
       { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: `idem-${unique()}` },
       request(),
     );
-    env.qpay.settle(dead.providerInvoiceId, { outcome: 'failed', reason: 'declined' });
+    env.qpay.settle(dead.providerInvoiceId, { state: 'FAILED', failureCode: 'declined' });
     await env.provisioning.applyCallback(callbackFor('QPAY', dead.providerInvoiceId), request());
 
     const latePayment = env.qpay.pay(dead.providerInvoiceId, new Date());
@@ -489,13 +502,19 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
     // Khaan's invoice is opened directly: the application is paid, so the
     // ordinary route would refuse — which is itself the point. This is the
     // provider-side race where both gateways were driven at once.
-    const khaanInvoice = await env.khaan.createInvoice({
-      provider: 'KHAAN',
-      merchantRef: 'race-merchant-ref',
-      amountMnt: 20_000n,
-      currency: 'MNT',
-      expiresAt: new Date(Date.now() + 3_600_000),
-    });
+    const khaanInvoice = unwrap(
+      await env.khaan.createInvoice(
+        {
+          intentId: `race-${ready.applicationId}`,
+          merchantRef: 'race-merchant-ref',
+          amountMnt: 20_000n,
+          currency: 'MNT',
+          expiresAt: new Date(Date.now() + 3_600_000),
+          idempotencyKey: `race-${ready.applicationId}`,
+        },
+        { correlationId: 'test' },
+      ),
+    );
     await env.admin.query(
       `INSERT INTO platform.onboarding_payment_attempt
          (application_id, provider, merchant_ref, provider_invoice_id, amount_mnt, package_code,
@@ -531,7 +550,7 @@ describe('doc 15 §4 — only a provider-confirmed payment activates anything', 
       { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: `idem-${unique()}` },
       request(),
     );
-    env.qpay.settle(first.providerInvoiceId, { outcome: 'expired' });
+    env.qpay.settle(first.providerInvoiceId, { state: 'EXPIRED' });
     await env.provisioning.applyCallback(callbackFor('QPAY', first.providerInvoiceId), request());
 
     const second = await env.onboarding.openInvoice(
@@ -673,14 +692,16 @@ describe('ONB-DEC-006 — durable, all-or-nothing provisioning', () => {
     // provisioning transaction violates its unique key. Everything the wrapper
     // had already written must roll back with it.
     const ready = await readyApplication();
-    await env.admin.query(
-      `INSERT INTO platform.user_account (realm, email_normalized) VALUES ('hotel', $1)`,
-      [ready.email],
-    );
     const paid = await payThrough(ready.applicationId);
     await env.provisioning.applyCallback(
       callbackFor('QPAY', paid.invoiceId, paid.paymentId),
       request(),
+    );
+    // The obstruction appears after payment: before it, the invoice itself
+    // refuses an address another account holds (R2).
+    await env.admin.query(
+      `INSERT INTO platform.user_account (realm, email_normalized) VALUES ('hotel', $1)`,
+      [ready.email],
     );
 
     const before = await count('SELECT count(*)::text AS n FROM platform.hotel');
@@ -720,27 +741,45 @@ describe('ONB-DEC-006 — durable, all-or-nothing provisioning', () => {
 
   it('stops automatic retries at five and requires a permissioned manual one', async () => {
     const ready = await readyApplication();
-    await env.admin.query(
-      `INSERT INTO platform.user_account (realm, email_normalized) VALUES ('hotel', $1)`,
-      [ready.email],
-    );
     const paid = await payThrough(ready.applicationId);
     await env.provisioning.applyCallback(
       callbackFor('QPAY', paid.invoiceId, paid.paymentId),
       request(),
     );
-
-    const outcome = await env.provisioning.provisionWithRetries(
-      ready.applicationId,
-      `provision-${ready.applicationId}`,
-      request(),
+    // The obstruction appears after payment: somebody registers the admin
+    // email in the meantime, so the boundary refuses to create a second
+    // account for it (doc 15 §5.1) until the existing one is proved.
+    await env.admin.query(
+      `INSERT INTO platform.user_account (realm, email_normalized) VALUES ('hotel', $1)`,
+      [ready.email],
     );
-    expect(outcome.kind).toBe('failed');
-    const attempts = await env.admin.query<{ provision_attempts: number }>(
-      `SELECT provision_attempts FROM platform.onboarding_application WHERE application_id = $1`,
+
+    // Five sweeps, each finding the job due again after its persisted backoff.
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await env.admin.query(
+        `UPDATE platform.onboarding_application SET provision_available_at = now(),
+                revision = revision + 1
+          WHERE application_id = $1`,
+        [ready.applicationId],
+      );
+      const swept = await env.worker.provisionDue();
+      expect({ attempt, failed: swept.failed }).toEqual({ attempt, failed: 1 });
+    }
+    const attempts = await env.admin.query<{ provision_attempts: number; state: string }>(
+      `SELECT provision_attempts, state FROM platform.onboarding_application
+        WHERE application_id = $1`,
       [ready.applicationId],
     );
     expect(Number(attempts.rows[0]?.provision_attempts)).toBe(5);
+    expect(attempts.rows[0]?.state).toBe('PROVISIONING_FAILED');
+    // The sweep no longer sees it.
+    await env.admin.query(
+      `UPDATE platform.onboarding_application SET provision_available_at = now(),
+              revision = revision + 1
+        WHERE application_id = $1`,
+      [ready.applicationId],
+    );
+    expect((await env.worker.provisionDue()).claimed).toBe(0);
 
     // A sixth automatic attempt is refused; only the manual path continues.
     const sixth = await env.provisioning.provision(
@@ -752,13 +791,12 @@ describe('ONB-DEC-006 — durable, all-or-nothing provisioning', () => {
 
     // The manual retry is attributed and audited, and it still cannot change a
     // thing about the payment or the terms — it takes no such parameters.
-    const operator = await env.admin.query<{ account_id: string }>(
-      `INSERT INTO platform.user_account (realm, realm_role, email_normalized, email_verified_at)
-       VALUES ('operation', 'OPERATION_ADMIN', $1, now()) RETURNING account_id`,
-      [`operator-${unique()}@example.test`],
-    );
-    const accountId = operator.rows[0]?.account_id as string;
-    await env.provisioning.retryProvisioning(ready.applicationId, accountId, request());
+    const unpermitted = await env.operationActor({ permissions: ['OPERATION_READ'] });
+    await expect(
+      env.provisioning.retryProvisioning(ready.applicationId, unpermitted.actor, request()),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const operator = await env.operationActor({ permissions: ['ONBOARDING_PROVISION_RETRY'] });
+    await env.provisioning.retryProvisioning(ready.applicationId, operator.actor, request());
     expect(
       await count(
         `SELECT count(*)::text AS n FROM audit.platform_event
@@ -770,16 +808,16 @@ describe('ONB-DEC-006 — durable, all-or-nothing provisioning', () => {
 
   it('a retry after the obstruction clears provisions on the same payment', async () => {
     const ready = await readyApplication();
-    const blocker = await env.admin.query<{ account_id: string }>(
-      `INSERT INTO platform.user_account (realm, email_normalized) VALUES ('hotel', $1)
-       RETURNING account_id`,
-      [ready.email],
-    );
     const confirmedAt = new Date('2026-08-21T07:00:00.000Z');
     const paid = await payThrough(ready.applicationId, 'QPAY', confirmedAt);
     await env.provisioning.applyCallback(
       callbackFor('QPAY', paid.invoiceId, paid.paymentId),
       request(),
+    );
+    const blocker = await env.admin.query<{ account_id: string }>(
+      `INSERT INTO platform.user_account (realm, email_normalized) VALUES ('hotel', $1)
+       RETURNING account_id`,
+      [ready.email],
     );
     await env.provisioning.provision(ready.applicationId, `p-${ready.applicationId}`, request());
 
@@ -901,19 +939,23 @@ describe('ONB-DEC-003 — the first Hotel Admin sets their own password', () => 
   });
 
   it('a proved existing active account gets no link, no token and no second account', async () => {
-    // The existing-account branch of doc 15 §5 step 7 and §5.1.
-    const ready = await readyApplication();
-    const existing = await env.admin.query<{ account_id: string }>(
-      `INSERT INTO platform.user_account (realm, email_normalized, email_verified_at)
-       VALUES ('hotel', $1, now()) RETURNING account_id`,
-      [ready.email],
+    // The existing-account branch of doc 15 §5 step 7 and §5.1: the email
+    // already belongs to an active account, which proves itself by signing in
+    // and binding — never by a test writing the column.
+    const elsewhere = await env.iam.createHotel('Elsewhere Hotel', 'P20');
+    const member = await env.iam.seedMembership({
+      hotelId: elsewhere,
+      email: `existing-${unique()}@example.test`,
+      roles: ['HOTEL_ADMIN'],
+      primary: true,
+    });
+    const ready = await readyApplication({ adminEmail: member.email });
+    await env.onboarding.bindExistingAccount(
+      ready.applicationId,
+      await actorFor(env.iam, member),
+      request(),
     );
-    const accountId = existing.rows[0]?.account_id as string;
-    await env.admin.query(
-      `UPDATE platform.onboarding_application SET existing_account_id = $2, revision = revision + 1
-        WHERE application_id = $1`,
-      [ready.applicationId, accountId],
-    );
+    const accountId = member.accountId;
 
     const paid = await payThrough(ready.applicationId);
     await env.provisioning.applyCallback(

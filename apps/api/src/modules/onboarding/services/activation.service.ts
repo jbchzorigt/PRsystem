@@ -1,19 +1,27 @@
 import { ApiError } from '@prsystem/contracts';
 import { recordPlatformAudit } from '@prsystem/db';
 import { AccountRepository } from '../../iam/repositories/account.repository';
+import { MembershipRepository } from '../../iam/repositories/membership.repository';
 import { assertPasswordAcceptable, derivePassword } from '../../iam/services/password.service';
 import type { OnboardingDependencies, RequestContext } from './onboarding-context';
 import { OnboardingServiceBase } from './onboarding-context';
 import { ACTIVATION_SUBJECT } from './provisioning.service';
 
 /**
- * The first Hotel Admin's activation (`ONB-DEC-003`, doc 15 §5).
+ * The first Hotel Admin's activation (`ONB-DEC-003`, doc 15 §5 and §7).
  *
  * The platform never issues a password. The link is single-use, time-limited,
  * and the user chooses their own credential — and every one of those is Phase
  * 04's existing account, credential and session model reused rather than a
  * second one. What Phase 05 adds is the activation *axis* doc 15 §6 requires to
  * be separate from the hotel, the subscription and the public listing.
+ *
+ * Until the link is redeemed the account is `PENDING_ACTIVATION` and the
+ * Primary membership is `PENDING`: no credential, no session, no scope grant,
+ * and stage 2 of the pipeline refuses the account outright. Redemption is one
+ * transaction — the credential, the verified email, the account state, the
+ * membership state, the consumed link and the auth-epoch bump commit together
+ * or not at all, and every one of them is a checked compare-and-set.
  */
 
 export interface ActivationInput {
@@ -32,11 +40,9 @@ export class ActivationService extends OnboardingServiceBase {
    *
    * The token is the gate: there is no membership to gate with, because the
    * person has never signed in. It is compared against the stored digest and
-   * nothing is read, locked or changed until it matches.
-   *
-   * On success the link is destroyed rather than marked used — the row's guard
-   * refuses to re-attach one — and the account's `auth_epoch` is bumped, so any
-   * session that somehow existed before the password did stops being valid.
+   * nothing is read, locked or changed until it matches. Two simultaneous
+   * redemptions serialise on the activation row's lock; the second finds the
+   * digest already destroyed and is refused exactly as an unknown link is.
    */
   async activate(
     input: ActivationInput,
@@ -48,18 +54,20 @@ export class ActivationService extends OnboardingServiceBase {
       ACTIVATION_SUBJECT,
       input.token,
     );
+    // Derived before the transaction opens: a key derivation is slow on purpose
+    // and must not hold a row lock while it runs.
+    const derived = await derivePassword(input.password);
 
     return this.inHotelScope(input.hotelId, request, async (uow) => {
       const found = await uow.query<{
         activation_id: string;
         account_id: string;
         membership_id: string;
-        email_normalized: string;
         state: string;
         revision: number;
         expired: boolean;
       }>(
-        `SELECT activation_id, account_id, membership_id, email_normalized, state, revision,
+        `SELECT activation_id, account_id, membership_id, state, revision,
                 (expires_at IS NULL OR expires_at <= now()) AS expired
            FROM platform.hotel_admin_activation
           WHERE hotel_id = $1 AND token_hash = $2
@@ -83,16 +91,39 @@ export class ActivationService extends OnboardingServiceBase {
       }
 
       const accounts = new AccountRepository(uow);
-      const account = await accounts.findById(activation.account_id);
+      const account = await accounts.lockById(activation.account_id);
       if (account === undefined) throw new ApiError('NOT_FOUND', 'not found');
+      if (account.state !== 'PENDING_ACTIVATION') {
+        throw new ApiError('CONFLICT', 'this account is not awaiting activation');
+      }
+      const memberships = new MembershipRepository(uow);
+      const membership = await memberships.lock(activation.membership_id);
+      if (membership === undefined || membership.state !== 'PENDING') {
+        throw new ApiError('CONFLICT', 'this membership is not awaiting activation');
+      }
 
-      const derived = await derivePassword(input.password);
+      // 1. The credential.
       await accounts.upsertPassword(account.accountId, derived.secretHash, derived.paramsVersion);
-      await accounts.markEmailVerified(account.accountId);
-      // Anything issued before the credential existed is invalidated, which is
-      // the same account-wide revocation a password change performs (doc 19 §10).
-      await accounts.bumpAuthEpoch(account.accountId, account.revision);
 
+      // 2. The account: verified email, ACTIVE, and the epoch bumped, in one
+      //    checked write. The epoch bump invalidates anything issued before the
+      //    credential existed — the same account-wide revocation a password
+      //    change performs (doc 19 §10) — and it is a CAS on the revision the
+      //    lock above read, so a concurrent change fails here rather than
+      //    being ignored.
+      const activated = await accounts.activate(account.accountId, account.revision);
+      if (!activated) throw new ApiError('CONFLICT', 'the account changed concurrently');
+
+      // 3. The Primary membership.
+      const moved = await memberships.transition({
+        membershipId: membership.membershipId,
+        expectedRevision: membership.membershipRevision,
+        state: 'ACTIVE',
+        reason: null,
+      });
+      if (!moved) throw new ApiError('CONFLICT', 'the membership changed concurrently');
+
+      // 4. The link, destroyed rather than marked used.
       const settled = await uow.query(
         `UPDATE platform.hotel_admin_activation
             SET state = 'ACTIVE', activated_at = now(),

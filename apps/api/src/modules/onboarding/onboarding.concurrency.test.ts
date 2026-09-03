@@ -1,6 +1,15 @@
+import type { ApiError } from '@prsystem/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { CommandActor } from '../iam/services/iam-context';
 import type { OnboardingHarness } from './test-support/onboarding-harness';
 import { citizenDraft, createOnboardingHarness } from './test-support/onboarding-harness';
+import { actorFor } from '../iam/test-support/iam-harness';
+
+/** Unwraps a port result, or fails the test with the error it carried. */
+function unwrap<T>(result: { ok: true; value: T } | { ok: false; error: unknown }): T {
+  if (!result.ok) throw new Error(`port refused: ${JSON.stringify(result.error)}`);
+  return result.value;
+}
 import { newOnboardingRequest } from './services/onboarding-context';
 import type { RequestContext } from './services/onboarding-context';
 
@@ -41,12 +50,13 @@ function callbackFor(provider: 'QPAY' | 'KHAAN', invoiceId: string, paymentId?: 
   } as const;
 }
 
-async function readyApplication(): Promise<{ applicationId: string }> {
+async function readyApplication(): Promise<{ applicationId: string; email: string }> {
   const n = unique();
+  const email = `con-${n}@example.test`;
   const created = await env.onboarding.createApplication(
     citizenDraft({
       registrationNumber: `CON${n}0011`,
-      adminEmail: `con-${n}@example.test`,
+      adminEmail: email,
       hotelDisplayName: `Concurrency Hotel ${n}`,
       addressLine: `Concurrency address ${n}`,
       contactPhone: `+9769955${n}`,
@@ -59,10 +69,10 @@ async function readyApplication(): Promise<{ applicationId: string }> {
   const code = env.phone.codeFor(created.applicationId);
   await env.onboarding.confirmPhoneVerification(created.applicationId, code ?? '', request());
   await env.onboarding.resolveOwner(created.applicationId, request());
-  return { applicationId: created.applicationId };
+  return { applicationId: created.applicationId, email };
 }
 
-async function paidApplication(): Promise<{ applicationId: string }> {
+async function paidApplication(): Promise<{ applicationId: string; email: string }> {
   const ready = await readyApplication();
   const invoice = await env.onboarding.openInvoice(
     { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: `con-${unique()}` },
@@ -76,7 +86,11 @@ async function paidApplication(): Promise<{ applicationId: string }> {
   return ready;
 }
 
-async function provisionedHotel(): Promise<{ hotelId: string; startsAt: Date }> {
+async function provisionedHotel(): Promise<{
+  hotelId: string;
+  startsAt: Date;
+  admin: CommandActor;
+}> {
   const paid = await paidApplication();
   const outcome = await env.provisioning.provision(
     paid.applicationId,
@@ -84,9 +98,24 @@ async function provisionedHotel(): Promise<{ hotelId: string; startsAt: Date }> 
     request(),
   );
   if (outcome.kind !== 'provisioned') throw new Error('provisioning failed');
-  const status = await env.subscriptions.status(outcome.hotelId, request());
+  // The Primary Admin activates and signs in: a subscription command is an
+  // authorized Hotel Admin action (R1).
+  await env.worker.deliverActivations();
+  const link = env.notifications.lastInvitationFor(paid.email);
+  const password = ['synthetic', paid.email, 'passphrase'].join('-');
+  await env.activation.activate(
+    { hotelId: outcome.hotelId, token: link?.token ?? '', password },
+    request(),
+  );
+  const admin = await actorFor(env.iam, {
+    membershipId: '',
+    accountId: '',
+    email: paid.email,
+    password,
+  });
+  const status = await env.subscriptions.status(outcome.hotelId, admin, request());
   if (status === undefined) throw new Error('no subscription');
-  return { hotelId: outcome.hotelId, startsAt: status.startsAt };
+  return { hotelId: outcome.hotelId, startsAt: status.startsAt, admin };
 }
 
 async function count(sql: string, values: readonly unknown[]): Promise<number> {
@@ -131,13 +160,19 @@ describe('ONB-DEC-008 — simultaneous payment callbacks', () => {
     // The second gateway's attempt is seeded directly: the service refuses a
     // second live invoice, which is the rule. This is the provider-side race
     // where both were somehow driven — doc 15 §4.1's "two-provider success".
-    const khaanInvoice = await env.khaan.createInvoice({
-      provider: 'KHAAN',
-      merchantRef: `race-${unique()}`,
-      amountMnt: 240_000n,
-      currency: 'MNT',
-      expiresAt: new Date(Date.now() + 3_600_000),
-    });
+    const khaanInvoice = unwrap(
+      await env.khaan.createInvoice(
+        {
+          intentId: `race-${ready.applicationId}`,
+          merchantRef: `race-${unique()}`,
+          amountMnt: 240_000n,
+          currency: 'MNT',
+          expiresAt: new Date(Date.now() + 3_600_000),
+          idempotencyKey: `race-${ready.applicationId}`,
+        },
+        { correlationId: 'test' },
+      ),
+    );
     // Seeded `CANCELLED`, because the live-attempt index allows one at a time and
     // QPay holds it. That is the shape doc 15 §4.1 describes: a superseded
     // attempt that the provider went on to collect anyway.
@@ -146,18 +181,19 @@ describe('ONB-DEC-008 — simultaneous payment callbacks', () => {
          (application_id, provider, merchant_ref, provider_invoice_id, amount_mnt, package_code,
           term_months, monthly_price_mnt, vat_rate_bp, price_book_version, tax_config_version,
           package_feature_version, expires_at, state, terminal_at, terminal_reason)
-       VALUES ($1,'KHAAN',$2,$2,240000,'P20',12,20000,1000,'pb','tax','pkg',
+       VALUES ($1,'KHAAN',$3,$2,240000,'P20',12,20000,1000,'pb','tax','pkg',
                now() + interval '1 hour', 'CANCELLED', now(), 'race-fixture')`,
-      [ready.applicationId, khaanInvoice.providerInvoiceId],
+      [
+        ready.applicationId,
+        khaanInvoice.providerInvoiceId,
+        env.khaan.invoice(khaanInvoice.providerInvoiceId)?.merchantRef ?? '',
+      ],
     );
-    env.khaan.settle(khaanInvoice.providerInvoiceId, {
-      outcome: 'paid',
-      providerPaymentId: `${khaanInvoice.providerInvoiceId}-pay`,
-      paidAmountMnt: 240_000n,
-      currency: 'MNT',
-      merchantRef: khaanInvoice.providerInvoiceId,
-      confirmedAt: new Date(),
-    });
+    env.khaan.pay(
+      khaanInvoice.providerInvoiceId,
+      new Date(),
+      `${khaanInvoice.providerInvoiceId}-pay`,
+    );
 
     const qpayPayment = env.qpay.pay(qpayInvoice.providerInvoiceId, new Date());
     const [a, b] = await Promise.all([
@@ -231,6 +267,79 @@ describe('ONB-DEC-006 — simultaneous provisioning', () => {
   });
 });
 
+describe('R6 — one idempotency key, two simultaneous callers', () => {
+  it('two concurrent invoice requests with one key create one provider invoice and one attempt', async () => {
+    const ready = await readyApplication();
+    const key = `con-same-key-${unique()}`;
+    const before = env.qpay.invoiceCount;
+    const results = await Promise.all(
+      [0, 1].map(() =>
+        env.onboarding
+          .openInvoice(
+            { applicationId: ready.applicationId, provider: 'QPAY', idempotencyKey: key },
+            request(),
+          )
+          .then(
+            (invoice) => ({ kind: 'invoice' as const, id: invoice.providerInvoiceId }),
+            (error: unknown) => ({ kind: 'error' as const, code: (error as ApiError).code }),
+          ),
+      ),
+    );
+    // The provider saw one invoice, and one attempt was stored.
+    expect(env.qpay.invoiceCount).toBe(before + 1);
+    expect(
+      await count(
+        `SELECT count(*)::text AS n FROM platform.onboarding_payment_attempt WHERE application_id = $1`,
+        [ready.applicationId],
+      ),
+    ).toBe(1);
+    // Both callers hold the same invoice, or the loser was told to retry — never a second one.
+    const invoices = new Set(results.filter((r) => r.kind === 'invoice').map((r) => r.id));
+    expect(invoices.size).toBe(1);
+    for (const r of results) {
+      if (r.kind === 'error') expect(r.code).toBe('CONFLICT');
+    }
+  });
+
+  it('two concurrent renewal quotes with one key open one intent against one provider invoice', async () => {
+    const hotel = await provisionedHotel();
+    const key = `con-same-renewal-${unique()}`;
+    const before = env.qpay.invoiceCount;
+    const results = await Promise.all(
+      [0, 1].map(() =>
+        env.subscriptions
+          .quoteRenewal(
+            {
+              hotelId: hotel.hotelId,
+              targetPackage: 'P20',
+              termMonths: 1,
+              provider: 'QPAY',
+              idempotencyKey: key,
+            },
+            hotel.admin,
+            request(),
+          )
+          .then(
+            (quote) => ({ kind: 'quote' as const, id: quote.providerInvoiceId }),
+            (error: unknown) => ({ kind: 'error' as const, code: (error as ApiError).code }),
+          ),
+      ),
+    );
+    expect(env.qpay.invoiceCount).toBe(before + 1);
+    expect(
+      await count(
+        `SELECT count(*)::text AS n FROM platform.subscription_billing_intent WHERE hotel_id = $1`,
+        [hotel.hotelId],
+      ),
+    ).toBe(1);
+    const invoices = new Set(results.filter((r) => r.kind === 'quote').map((r) => r.id));
+    expect(invoices.size).toBe(1);
+    for (const r of results) {
+      if (r.kind === 'error') expect(r.code).toBe('CONFLICT');
+    }
+  });
+});
+
 describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback', () => {
   it('applies a due upgrade exactly once when both commit at the same moment', async () => {
     const hotel = await provisionedHotel();
@@ -239,8 +348,9 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
         hotelId: hotel.hotelId,
         targetPackage: 'P25',
         provider: 'QPAY',
-        idempotencyKey: `u-${unique()}`,
+        idempotencyKey: `upgrade-${unique()}`,
       },
+      hotel.admin,
       request(),
     );
     const firstPayment = env.qpay.pay(first.providerInvoiceId, new Date());
@@ -275,7 +385,7 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
     ]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
 
-    const status = await env.subscriptions.status(hotel.hotelId, request());
+    const status = await env.subscriptions.status(hotel.hotelId, hotel.admin, request());
     expect(status?.effectivePackage).toBe('P25');
     expect(status?.pendingUpgradePackage).toBeNull();
     expect(
@@ -294,8 +404,9 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
         hotelId: hotel.hotelId,
         targetPackage: 'P25',
         provider: 'QPAY',
-        idempotencyKey: `u-${unique()}`,
+        idempotencyKey: `upgrade-${unique()}`,
       },
+      hotel.admin,
       request(),
     );
     const firstPayment = env.qpay.pay(first.providerInvoiceId, new Date());
@@ -325,8 +436,9 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
         hotelId: hotel.hotelId,
         targetPackage: 'P30',
         provider: 'KHAAN',
-        idempotencyKey: `u-${unique()}`,
+        idempotencyKey: `upgrade-${unique()}`,
       },
+      hotel.admin,
       request(),
     );
     const secondPayment = env.khaan.pay(second.providerInvoiceId, new Date());
@@ -342,7 +454,7 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
 
     // Whichever order they landed in, the subscription ends up in exactly one
     // consistent state and the money is recorded once.
-    const status = await env.subscriptions.status(hotel.hotelId, request());
+    const status = await env.subscriptions.status(hotel.hotelId, hotel.admin, request());
     expect(['P25', 'P30']).toContain(status?.effectivePackage);
     expect(status?.packageFloor === 'P30' || callback.kind === 'requires_reconciliation').toBe(
       true,
@@ -366,8 +478,9 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
           targetPackage: 'P20',
           termMonths: 1,
           provider: 'QPAY',
-          idempotencyKey: `r-${unique()}`,
+          idempotencyKey: `renewal-${unique()}`,
         },
+        hotel.admin,
         request(),
       ),
       env.subscriptions.quoteUpgrade(
@@ -375,8 +488,9 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
           hotelId: hotel.hotelId,
           targetPackage: 'P25',
           provider: 'KHAAN',
-          idempotencyKey: `u-${unique()}`,
+          idempotencyKey: `upgrade-${unique()}`,
         },
+        hotel.admin,
         request(),
       ),
     ]);
@@ -394,7 +508,15 @@ describe('LIFE-DEC-006 / LIFE-DEC-007 — the boundary worker versus a callback'
 
 describe('doc 15 §5 — the activation delivery queue', () => {
   it('two drains deliver one message and settle it once', async () => {
-    const hotel = await provisionedHotel();
+    // Provisioned but not yet delivered: the intent is what the two drains race for.
+    const paid = await paidApplication();
+    const outcome = await env.provisioning.provision(
+      paid.applicationId,
+      `con-drain-${unique()}`,
+      request(),
+    );
+    if (outcome.kind !== 'provisioned') throw new Error('provisioning failed');
+    const hotel = { hotelId: outcome.hotelId };
     const [a, b] = await Promise.all([
       env.provisioning.drainActivationDeliveries(),
       env.provisioning.drainActivationDeliveries(),

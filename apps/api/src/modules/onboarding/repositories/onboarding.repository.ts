@@ -1,6 +1,6 @@
 import type { UnitOfWork } from '@prsystem/db';
 import type { PackageCode } from '@prsystem/authz';
-import type { PaymentProvider } from '../contracts/payment-gateway.port';
+import type { PaymentProvider } from '@prsystem/ports';
 
 /**
  * The pre-tenant onboarding graph.
@@ -9,6 +9,11 @@ import type { PaymentProvider } from '../contracts/payment-gateway.port';
  * policies decide which rows exist, so nothing here reasons about visibility. A
  * lookup that returns nothing is a lookup the caller was not entitled to make,
  * and the service turns it into the same `NOT_FOUND` an absent application gets.
+ *
+ * From remediation 1 the application row is also the **durable provisioning
+ * job**: it carries the claim token, the lease, the availability instant, the
+ * attempt count and the last error, and the worker's claim, settlement and
+ * backoff are all compare-and-set writes against it.
  */
 
 export type ApplicationState =
@@ -34,6 +39,8 @@ export type AttemptState =
   | 'EXPIRED'
   | 'CANCELLED'
   | 'PAID_REQUIRES_RECONCILIATION';
+
+export type ExistingAccountProofMethod = 'SIGNED_IN' | 'PASSWORD_RECOVERY';
 
 export interface ApplicationRow {
   readonly applicationId: string;
@@ -66,12 +73,18 @@ export interface ApplicationRow {
   readonly taxConfigVersion: string;
   readonly packageFeatureVersion: string;
   readonly existingAccountId: string | null;
+  readonly existingAccountProofMethod: ExistingAccountProofMethod | null;
+  readonly existingAccountProvedAt: Date | null;
   readonly ownerId: string | null;
   readonly duplicateReviewRequired: boolean;
   readonly provisionedHotelId: string | null;
   readonly paidAttemptId: string | null;
   readonly paymentConfirmedAt: Date | null;
   readonly provisionAttempts: number;
+  readonly provisionAvailableAt: Date;
+  readonly provisionClaimToken: string | null;
+  readonly provisionClaimedUntil: Date | null;
+  readonly provisionLastError: string | null;
   readonly revision: number;
 }
 
@@ -84,6 +97,7 @@ export interface AttemptRow {
   readonly providerPaymentId: string | null;
   readonly state: AttemptState;
   readonly amountMnt: bigint;
+  readonly providerFeeMnt: bigint;
   readonly currency: string;
   readonly packageCode: PackageCode;
   readonly termMonths: number;
@@ -102,13 +116,15 @@ const APPLICATION_COLUMNS = `
   hotel_public_phone, district, khoroo, address_line, latitude_micro, longitude_micro,
   package_code, term_months, monthly_price_mnt, discount_mnt, total_amount_mnt,
   vat_rate_bp, price_book_version, tax_config_version, package_feature_version,
-  existing_account_id, owner_id, duplicate_review_required, provisioned_hotel_id,
-  paid_attempt_id, payment_confirmed_at, provision_attempts, revision`;
+  existing_account_id, existing_account_proof_method, existing_account_proved_at,
+  owner_id, duplicate_review_required, provisioned_hotel_id,
+  paid_attempt_id, payment_confirmed_at, provision_attempts, provision_available_at,
+  provision_claim_token, provision_claimed_until, provision_last_error, revision`;
 
 const ATTEMPT_COLUMNS = `
   attempt_id, application_id, provider, merchant_ref, provider_invoice_id,
-  provider_payment_id, state, amount_mnt, currency, package_code, term_months,
-  monthly_price_mnt, vat_rate_bp, expires_at, confirmed_at, revision`;
+  provider_payment_id, state, amount_mnt, provider_fee_mnt, currency, package_code,
+  term_months, monthly_price_mnt, vat_rate_bp, expires_at, confirmed_at, revision`;
 
 function mapApplication(row: Record<string, unknown> | undefined): ApplicationRow | undefined {
   if (row === undefined) return undefined;
@@ -143,12 +159,20 @@ function mapApplication(row: Record<string, unknown> | undefined): ApplicationRo
     taxConfigVersion: row['tax_config_version'] as string,
     packageFeatureVersion: row['package_feature_version'] as string,
     existingAccountId: row['existing_account_id'] as string | null,
+    existingAccountProofMethod: row[
+      'existing_account_proof_method'
+    ] as ExistingAccountProofMethod | null,
+    existingAccountProvedAt: row['existing_account_proved_at'] as Date | null,
     ownerId: row['owner_id'] as string | null,
     duplicateReviewRequired: row['duplicate_review_required'] as boolean,
     provisionedHotelId: row['provisioned_hotel_id'] as string | null,
     paidAttemptId: row['paid_attempt_id'] as string | null,
     paymentConfirmedAt: row['payment_confirmed_at'] as Date | null,
     provisionAttempts: Number(row['provision_attempts']),
+    provisionAvailableAt: row['provision_available_at'] as Date,
+    provisionClaimToken: row['provision_claim_token'] as string | null,
+    provisionClaimedUntil: row['provision_claimed_until'] as Date | null,
+    provisionLastError: row['provision_last_error'] as string | null,
     revision: Number(row['revision']),
   };
 }
@@ -164,6 +188,7 @@ function mapAttempt(row: Record<string, unknown> | undefined): AttemptRow | unde
     providerPaymentId: row['provider_payment_id'] as string | null,
     state: row['state'] as AttemptState,
     amountMnt: BigInt(row['amount_mnt'] as string),
+    providerFeeMnt: BigInt(row['provider_fee_mnt'] as string),
     currency: row['currency'] as string,
     packageCode: row['package_code'] as PackageCode,
     termMonths: Number(row['term_months']),
@@ -254,6 +279,19 @@ export async function resolvePaymentAttempt(
     [provider, providerInvoiceId],
   );
   return result.rows[0]?.application_id ?? undefined;
+}
+
+/** The provisioning work that is due, as identifiers (R3). */
+export async function pendingProvisioningApplications(
+  uow: UnitOfWork,
+  limit: number,
+  maxAttempts: number,
+): Promise<readonly string[]> {
+  const result = await uow.query<{ application_id: string }>(
+    `SELECT application_id FROM platform.pending_provisioning_applications($1, $2)`,
+    [limit, maxAttempts],
+  );
+  return result.rows.map((row) => row.application_id);
 }
 
 export class OnboardingRepository {
@@ -383,11 +421,10 @@ export class OnboardingRepository {
     state: ApplicationState;
     reason: string;
     ownerId?: string | null;
-    existingAccountId?: string | null;
+    existingAccount?: { accountId: string; method: ExistingAccountProofMethod };
     paidAttemptId?: string | null;
     paymentConfirmedAt?: Date | null;
     contactPhoneVerifiedAt?: Date | null;
-    bumpProvisionAttempts?: boolean;
     duplicateReviewRequired?: boolean;
   }): Promise<boolean> {
     const result = await this.uow.query(
@@ -397,11 +434,18 @@ export class OnboardingRepository {
               state_reason = $4,
               owner_id = COALESCE($5, owner_id),
               existing_account_id = COALESCE($6, existing_account_id),
-              paid_attempt_id = COALESCE($7, paid_attempt_id),
-              payment_confirmed_at = COALESCE($8, payment_confirmed_at),
-              contact_phone_verified_at = COALESCE($9, contact_phone_verified_at),
-              duplicate_review_required = COALESCE($10, duplicate_review_required),
-              provision_attempts = provision_attempts + CASE WHEN $11 THEN 1 ELSE 0 END,
+              existing_account_proof_method = COALESCE($7, existing_account_proof_method),
+              existing_account_proved_at =
+                CASE WHEN $6::uuid IS NULL THEN existing_account_proved_at
+                     ELSE COALESCE(existing_account_proved_at, now()) END,
+              paid_attempt_id = COALESCE($8, paid_attempt_id),
+              payment_confirmed_at = COALESCE($9, payment_confirmed_at),
+              contact_phone_verified_at = COALESCE($10, contact_phone_verified_at),
+              duplicate_review_required = COALESCE($11, duplicate_review_required),
+              -- A transition into the payable state makes the job due now.
+              provision_available_at =
+                CASE WHEN $3 = 'PAID_PENDING_PROVISIONING' THEN now()
+                     ELSE provision_available_at END,
               revision = revision + 1
         WHERE application_id = $1 AND revision = $2`,
       [
@@ -410,13 +454,105 @@ export class OnboardingRepository {
         input.state,
         input.reason,
         input.ownerId ?? null,
-        input.existingAccountId ?? null,
+        input.existingAccount?.accountId ?? null,
+        input.existingAccount?.method ?? null,
         input.paidAttemptId ?? null,
         input.paymentConfirmedAt ?? null,
         input.contactPhoneVerifiedAt ?? null,
         input.duplicateReviewRequired ?? null,
-        input.bumpProvisionAttempts === true,
       ],
+    );
+    return result.rowCount === 1;
+  }
+
+  // ---------------------------------------------------------- the durable job
+
+  /**
+   * Claims the provisioning job: a fresh claim token, a lease, one more
+   * attempt, and the `PROVISIONING` transition, in one compare-and-set on the
+   * revision the caller locked at.
+   */
+  async claimProvisioning(input: {
+    applicationId: string;
+    expectedRevision: number;
+    claimToken: string;
+    leaseSeconds: number;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_application
+          SET state = 'PROVISIONING',
+              state_changed_at = now(),
+              state_reason = 'provisioning_started',
+              provision_claim_token = $3,
+              provision_claimed_until = now() + make_interval(secs => $4),
+              provision_attempts = provision_attempts + 1,
+              revision = revision + 1
+        WHERE application_id = $1 AND revision = $2
+          AND (provision_claim_token IS NULL OR provision_claimed_until < now())`,
+      [input.applicationId, input.expectedRevision, input.claimToken, input.leaseSeconds],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * Re-claims a job whose holder died: the lease has expired and the row is
+   * still `PROVISIONING`. The state does not change here — the caller records
+   * the failure first, in its own transaction — only the ownership does.
+   */
+  async reclaimExpired(input: {
+    applicationId: string;
+    expectedRevision: number;
+    claimToken: string;
+    leaseSeconds: number;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_application
+          SET provision_claim_token = $3,
+              provision_claimed_until = now() + make_interval(secs => $4),
+              revision = revision + 1
+        WHERE application_id = $1 AND revision = $2
+          AND (provision_claim_token IS NULL OR provision_claimed_until < now())`,
+      [input.applicationId, input.expectedRevision, input.claimToken, input.leaseSeconds],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * Settles a failed attempt: `PROVISIONING_FAILED`, the claim released, the
+   * error name recorded, and the next availability pushed out by a persisted
+   * backoff. Fenced on the claim token, so a worker whose lease expired and
+   * whose job another worker has since taken cannot settle it.
+   */
+  async settleProvisioningFailure(input: {
+    applicationId: string;
+    claimToken: string;
+    reason: string;
+    backoffSeconds: number;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_application
+          SET state = 'PROVISIONING_FAILED',
+              state_changed_at = now(),
+              state_reason = $3,
+              provision_claim_token = NULL,
+              provision_claimed_until = NULL,
+              provision_last_error = $3,
+              provision_available_at = now() + make_interval(secs => $4),
+              revision = revision + 1
+        WHERE application_id = $1 AND provision_claim_token = $2 AND state = 'PROVISIONING'`,
+      [input.applicationId, input.claimToken, input.reason, input.backoffSeconds],
+    );
+    return result.rowCount === 1;
+  }
+
+  /** Releases a claim on a row that needs no further work. */
+  async releaseClaim(applicationId: string, claimToken: string): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_application
+          SET provision_claim_token = NULL, provision_claimed_until = NULL,
+              revision = revision + 1
+        WHERE application_id = $1 AND provision_claim_token = $2`,
+      [applicationId, claimToken],
     );
     return result.rowCount === 1;
   }
@@ -457,15 +593,14 @@ export class OnboardingRepository {
 
   /**
    * doc 15 §3.1: the existing owner behind this application's registration
-   * number, if any.
+   * number, if any — probed, never mutated.
    *
    * Through the probe wrapper, not a direct read. An applicant may not read an
    * owner profile they are not linked to — it holds the verified contact a proof
    * would be sent to — so the probe answers with an opaque reference, a masked
    * destination and whether that owner already holds a hotel. Exact match on a
    * versioned keyed HMAC, never the plaintext identifier and never an unkeyed
-   * digest (ADR-0020 §6): a registration-number space is small enough to
-   * enumerate, so an unkeyed hash is a lookup table.
+   * digest (ADR-0020 §6).
    */
   async probeOwner(
     applicationId: string,
@@ -490,6 +625,22 @@ export class OnboardingRepository {
     };
   }
 
+  /**
+   * The owner's stored verified channel, in full, for the delivery port alone.
+   * Never returned to the applicant, never stored on the application.
+   */
+  async ownerChallengeDestination(
+    applicationId: string,
+  ): Promise<{ channel: 'phone' | 'email'; destination: string } | undefined> {
+    const result = await this.uow.query<{ channel: string | null; destination: string | null }>(
+      `SELECT channel, destination FROM platform.owner_challenge_destination($1)`,
+      [applicationId],
+    );
+    const row = result.rows[0];
+    if (row === undefined || row.channel === null || row.destination === null) return undefined;
+    return { channel: row.channel as 'phone' | 'email', destination: row.destination };
+  }
+
   /** doc 15 §3.1's callback-time race: did the owner acquire a hotel elsewhere? */
   async ownerHoldsOtherHotel(applicationId: string): Promise<boolean> {
     const result = await this.uow.query<{ holds: boolean }>(
@@ -499,52 +650,22 @@ export class OnboardingRepository {
     return result.rows[0]?.holds === true;
   }
 
-  async createOwner(input: {
-    /** Minted by the caller: the resealed ciphertext is bound to it. */
-    ownerId: string;
-    ownerType: OwnerType;
-    displayName: string;
-    representativeName: string | null;
-    representativePosition: string | null;
-    identityType: string;
-    countryCode: string;
-    identifierCiphertext: Uint8Array;
-    identifierWrappedDek: Uint8Array;
-    identifierKeyVersion: string;
-    identifierLookupToken: string;
-    identifierLookupKeyVersion: string;
-    verifiedEmail: string | null;
-    verifiedPhone: string | null;
-  }): Promise<string> {
-    // No `RETURNING`: PostgreSQL requires a SELECT policy to permit a returned
-    // row, and an applicant has none until the owner is linked to their
-    // application. The id was minted by the caller anyway, because the resealed
-    // ciphertext is bound to it.
-    await this.uow.query(
-      `INSERT INTO platform.subscription_owner
-         (owner_id, owner_type, display_name, representative_name, representative_position,
-          identity_type, country_code, identifier_ciphertext, identifier_wrapped_dek,
-          identifier_key_version, identifier_lookup_token, identifier_lookup_key_version,
-          verified_email_normalized, verified_phone)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-      [
-        input.ownerId,
-        input.ownerType,
-        input.displayName,
-        input.representativeName,
-        input.representativePosition,
-        input.identityType,
-        input.countryCode,
-        Buffer.from(input.identifierCiphertext),
-        Buffer.from(input.identifierWrappedDek),
-        input.identifierKeyVersion,
-        input.identifierLookupToken,
-        input.identifierLookupKeyVersion,
-        input.verifiedEmail,
-        input.verifiedPhone,
-      ],
+  /** doc 15 §3.1 proof (1): is this account the Primary Admin of a hotel this owner holds? */
+  async accountLinkedToOwner(applicationId: string, accountId: string): Promise<boolean> {
+    const result = await this.uow.query<{ linked: boolean }>(
+      `SELECT platform.account_linked_to_owner($1, $2) AS linked`,
+      [applicationId, accountId],
     );
-    return input.ownerId;
+    return result.rows[0]?.linked === true;
+  }
+
+  /** doc 15 §3.1 / §5.1: does an account already hold this application's admin email? */
+  async existingAccountHoldsEmail(applicationId: string): Promise<boolean> {
+    const result = await this.uow.query<{ held: boolean }>(
+      `SELECT platform.probe_existing_hotel_account($1) AS held`,
+      [applicationId],
+    );
+    return result.rows[0]?.held === true;
   }
 
   // ------------------------------------------------------ phone verification
@@ -731,6 +852,15 @@ export class OnboardingRepository {
     return (result.rows[0]?.n ?? '0') !== '0';
   }
 
+  async hasPendingProof(applicationId: string): Promise<boolean> {
+    const result = await this.uow.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM platform.onboarding_owner_proof
+        WHERE application_id = $1 AND state = 'PENDING'`,
+      [applicationId],
+    );
+    return (result.rows[0]?.n ?? '0') !== '0';
+  }
+
   // ------------------------------------------------------- payment attempts
 
   async openAttempt(input: {
@@ -818,6 +948,7 @@ export class OnboardingRepository {
     reason: string;
     providerPaymentId?: string | null;
     confirmedAt?: Date | null;
+    providerFeeMnt?: bigint;
   }): Promise<boolean> {
     const terminal = input.state !== 'PENDING' && input.state !== 'PAYMENT_UNCERTAIN';
     const result = await this.uow.query(
@@ -827,6 +958,9 @@ export class OnboardingRepository {
               terminal_reason = $5,
               provider_payment_id = COALESCE(provider_payment_id, $6),
               confirmed_at = COALESCE(confirmed_at, $7),
+              provider_fee_mnt = CASE WHEN provider_payment_id IS NULL
+                                      THEN COALESCE($8, provider_fee_mnt)
+                                      ELSE provider_fee_mnt END,
               revision = revision + 1
         WHERE attempt_id = $1 AND revision = $2`,
       [
@@ -837,6 +971,7 @@ export class OnboardingRepository {
         input.reason,
         input.providerPaymentId ?? null,
         input.confirmedAt ?? null,
+        input.providerFeeMnt === undefined ? null : input.providerFeeMnt.toString(),
       ],
     );
     return result.rowCount === 1;
@@ -881,9 +1016,7 @@ export class OnboardingRepository {
    *
    * Integer micro-degree arithmetic, not a distance: a real proximity search is
    * Phase 12's `GeoPort` work, and approximating one here would be inventing the
-   * geocoding EXT-06 has not cleared. This asks the narrower question the
-   * duplicate flag actually needs — is there already a hotel at this address, or
-   * one with this name within a very short distance?
+   * geocoding EXT-06 has not cleared.
    */
   async duplicateSuspected(input: {
     hotelDisplayName: string;

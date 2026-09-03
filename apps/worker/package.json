@@ -7,12 +7,14 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test:unit": "vitest run --exclude 'src/startup.test.ts'",
+    "test:unit": "vitest run --exclude 'src/startup.test.ts' --exclude 'src/onboarding.e2e.test.ts'",
+    "test:integration": "vitest run src/onboarding.e2e.test.ts",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "test:security": "vitest run src/startup.test.ts"
   },
   "dependencies": {
+    "@prsystem/api": "workspace:*",
     "@prsystem/config": "workspace:*",
     "@prsystem/contracts": "workspace:*",
     "@prsystem/db": "workspace:*",
@@ -24,6 +26,7 @@
     "pg": "8.23.0"
   },
   "devDependencies": {
+    "@nestjs/platform-fastify": "11.2.3",
     "@prsystem/testing": "workspace:*",
     "@types/node": "22.20.1",
     "@types/pg": "8.23.1",

@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '@prsystem/contracts';
 import { recordPlatformAudit } from '@prsystem/db';
+import type { IssuedReceipt, PortError } from '@prsystem/ports';
 import { derivedIdempotencyKey } from '../../iam/services/derived-key';
-import type { OnboardingDependencies, RequestContext } from './onboarding-context';
-import { OnboardingServiceBase, backoffSeconds } from './onboarding-context';
-import { pendingEBarimtIssuances } from '../repositories/subscription.repository';
+import type { CommandActor, OnboardingDependencies, RequestContext } from './onboarding-context';
+import { OnboardingServiceBase, backoffSeconds, portContext } from './onboarding-context';
+import {
+  manualEBarimtIssuances,
+  pendingEBarimtIssuances,
+} from '../repositories/subscription.repository';
 
 /**
  * eBarimt issuance and its manual queue (doc 16 §4.1, `SUB-DEC-005`,
@@ -14,15 +18,16 @@ import { pendingEBarimtIssuances } from '../repositories/subscription.repository
  *
  * **A missing receipt never rolls anything back.** doc 16 §5 is explicit: a
  * confirmed payment activates the subscription whether or not the receipt
- * exists yet. So issuance is a queue entry created beside the payment, drained
- * separately, and a failure moves it to `MANUAL_RESOLUTION` — never to a
- * reversed provisioning.
+ * exists yet. So issuance is a queue entry created *with* the payment — in the
+ * provisioning wrapper for the onboarding payment, in the same repository call
+ * for a renewal or an upgrade — drained separately by the worker, and a failure
+ * moves it to `MANUAL_RESOLUTION`, never to a reversed provisioning.
  *
  * **The operator writes nothing.** Every receipt field arrives from the port
  * together or not at all, the database refuses a partial set and refuses to
- * rewrite a complete one, and the retry API takes no receipt parameters. The
- * only thing an operator with `SUBSCRIPTION_EBARIMT_RETRY` can do is ask the
- * issuer again.
+ * rewrite a complete one, and the retry surface takes no receipt parameters.
+ * The only thing an operator holding `SUBSCRIPTION_EBARIMT_RETRY` can do is ask
+ * the issuer again.
  */
 
 export type IssuanceOutcome =
@@ -39,33 +44,23 @@ interface ClaimedIssuance {
   readonly merchantRef: string;
   readonly grossAmountMnt: bigint;
   readonly vatAmountMnt: bigint;
+  readonly vatRateBp: number;
   readonly attempts: number;
   readonly adminEmail: string | null;
+  readonly ownerRef: string;
+  readonly ownerType: 'CITIZEN' | 'ORGANIZATION';
 }
+
+/** doc 18 §5: the one permission that reaches the queue and the retry. */
+/** The catalogued Operation action whose named permission is `SUBSCRIPTION_EBARIMT_RETRY`. */
+const RETRY_ACTION = 'operation.ebarimt_retry';
 
 export class EBarimtService extends OnboardingServiceBase {
   constructor(deps: OnboardingDependencies) {
     super(deps);
   }
 
-  /**
-   * `SUB-DEC-005`: opens the issuance intent for a confirmed payment.
-   *
-   * One per payment, enforced by a unique key rather than by this call being
-   * made once — a duplicate callback that reached here twice creates one row.
-   */
-  async openIssuance(hotelId: string, paymentId: string, request: RequestContext): Promise<void> {
-    await this.inHotelScope(hotelId, request, async (uow) => {
-      await uow.query(
-        `INSERT INTO platform.ebarimt_issuance (hotel_id, payment_id)
-         VALUES ($1, $2)
-         ON CONFLICT (hotel_id, payment_id) DO NOTHING`,
-        [hotelId, paymentId],
-      );
-    });
-  }
-
-  /** Drains the queue. Same leased design as every other queue in the platform. */
+  /** The worker's drain. Same leased design as every other queue in the platform. */
   async drain(limit = 32): Promise<number> {
     const request: RequestContext = { correlationId: `ebarimt-drain-${randomUUID().slice(0, 8)}` };
     const candidates = await this.inOperationScope(request, (uow) =>
@@ -88,40 +83,36 @@ export class EBarimtService extends OnboardingServiceBase {
     const claimed = await this.claim(hotelId, issuanceId, request);
     if (claimed === undefined) return { kind: 'not_claimable' };
 
-    let result;
-    try {
-      result = await this.deps.ebarimt.issue({
+    const result = await this.deps.ebarimt.issue(
+      {
         paymentId: claimed.paymentId,
-        providerPaymentId: claimed.providerPaymentId,
-        merchantRef: claimed.merchantRef,
-        grossAmountMnt: claimed.grossAmountMnt,
-        vatAmountMnt: claimed.vatAmountMnt,
-        currency: 'MNT',
+        totalMnt: claimed.grossAmountMnt,
+        vatBreakdown: { vatMnt: claimed.vatAmountMnt, vatRateBp: claimed.vatRateBp },
+        buyer: { ownerRef: claimed.ownerRef, ownerType: claimed.ownerType },
         // Stable across every retry of this payment, so the issuer recognises a
         // repeat rather than producing a second receipt (doc 16 §6).
         idempotencyKey: derivedIdempotencyKey('subscription.ebarimt', claimed.paymentId),
-      });
-    } catch {
-      // The gate being closed reaches here as a rejection. It is a queue entry
-      // for an operator, exactly like an issuer outage — not a failed payment.
-      result = { outcome: 'retryable' as const, reason: 'adapter_unavailable' };
+      },
+      portContext(request),
+    );
+
+    if (result.ok) {
+      const settled = await this.settleIssued(hotelId, claimed, result.value, request);
+      return settled ?? { kind: 'issued', receiptNumber: result.value.receiptNumber };
     }
 
-    if (result.outcome === 'issued') {
-      const settled = await this.settleIssued(hotelId, claimed, result.receipt, request);
-      // `settleIssued` can still refuse: doc 16 §6 requires the receipt's amount
-      // to equal the payment's, and an issuer that answered with a different
-      // figure has not issued this payment's receipt. Reporting `issued` there
-      // would be the service agreeing with a document the database refused.
-      return settled ?? { kind: 'issued', receiptNumber: result.receipt.receiptNumber };
-    }
-
+    const reason = issuanceFailureReason(result.error);
+    // A closed gate is a queue entry for an operator, exactly like a permanent
+    // refusal — not something to retry into.
     const exhausted =
-      result.outcome === 'permanent' ||
+      result.error.kind === 'DISABLED' ||
+      result.error.kind === 'REJECTED' ||
+      result.error.kind === 'INVALID_SIGNATURE' ||
+      result.error.kind === 'MISMATCH' ||
       claimed.attempts >= this.parameters.ebarimtMaxAutomaticAttempts;
-    await this.settleUnissued(hotelId, claimed, exhausted, result.reason, request);
+    await this.settleUnissued(hotelId, claimed, exhausted, reason, request);
     return exhausted
-      ? { kind: 'manual_resolution', reason: result.reason }
+      ? { kind: 'manual_resolution', reason }
       : { kind: 'retry_scheduled', attempts: claimed.attempts };
   }
 
@@ -140,7 +131,10 @@ export class EBarimtService extends OnboardingServiceBase {
         merchant_ref: string;
         gross_amount_mnt: string;
         vat_amount_mnt: string;
+        vat_rate_bp: number;
         admin_email: string | null;
+        owner_id: string;
+        owner_type: 'CITIZEN' | 'ORGANIZATION';
       }>(
         `WITH claimed AS (
            UPDATE platform.ebarimt_issuance
@@ -155,11 +149,13 @@ export class EBarimtService extends OnboardingServiceBase {
          )
          SELECT c.issuance_id, c.payment_id, c.attempts,
                 p.provider_payment_id, p.merchant_ref,
-                p.gross_amount_mnt, p.vat_amount_mnt,
-                a.email_normalized AS admin_email
+                p.gross_amount_mnt, p.vat_amount_mnt, p.vat_rate_bp,
+                a.email_normalized AS admin_email,
+                l.owner_id, l.owner_type
            FROM claimed c
            JOIN platform.subscription_payment p
              ON p.hotel_id = $1 AND p.payment_id = c.payment_id
+           JOIN platform.hotel_owner_link l ON l.hotel_id = $1
            LEFT JOIN platform.hotel_admin_activation a ON a.hotel_id = $1`,
         [hotelId, claimToken, this.parameters.ebarimtLeaseSeconds, issuanceId],
       );
@@ -173,8 +169,11 @@ export class EBarimtService extends OnboardingServiceBase {
         merchantRef: row.merchant_ref,
         grossAmountMnt: BigInt(row.gross_amount_mnt),
         vatAmountMnt: BigInt(row.vat_amount_mnt),
+        vatRateBp: Number(row.vat_rate_bp),
         attempts: Number(row.attempts),
         adminEmail: row.admin_email,
+        ownerRef: row.owner_id,
+        ownerType: row.owner_type,
       };
     });
   }
@@ -182,24 +181,18 @@ export class EBarimtService extends OnboardingServiceBase {
   private async settleIssued(
     hotelId: string,
     claimed: ClaimedIssuance,
-    receipt: {
-      receiptNumber: string;
-      qr: string;
-      amountMnt: bigint;
-      vatAmountMnt: bigint;
-      issuedAt: Date;
-    },
+    receipt: IssuedReceipt,
     request: RequestContext,
   ): Promise<IssuanceOutcome | undefined> {
     // doc 16 §6: the receipt's amount must equal the confirmed payment's final
     // amount. An issuer that answered with a different figure has not issued a
     // receipt for this payment, and storing it would make the two disagree.
-    if (receipt.amountMnt !== claimed.grossAmountMnt) {
+    if (receipt.totalMnt !== claimed.grossAmountMnt) {
       await this.settleUnissued(hotelId, claimed, true, 'receipt_amount_mismatch', request);
       return { kind: 'manual_resolution', reason: 'receipt_amount_mismatch' };
     }
 
-    const delivered = await this.inHotelScope(hotelId, request, async (uow) => {
+    const recorded = await this.inHotelScope(hotelId, request, async (uow) => {
       const result = await uow.query(
         `UPDATE platform.ebarimt_issuance
             SET state = 'ISSUED', claim_token = NULL, claimed_until = NULL,
@@ -213,8 +206,8 @@ export class EBarimtService extends OnboardingServiceBase {
           claimed.issuanceId,
           receipt.receiptNumber,
           receipt.qr,
-          receipt.amountMnt.toString(),
-          receipt.vatAmountMnt.toString(),
+          receipt.totalMnt.toString(),
+          receipt.vatMnt.toString(),
           receipt.issuedAt,
           claimed.claimToken,
         ],
@@ -229,44 +222,51 @@ export class EBarimtService extends OnboardingServiceBase {
       });
       return true;
     });
-    if (!delivered) return undefined;
+    if (!recorded) return undefined;
 
     // doc 16 §4.1 step 7: the receipt is emailed **only after** it officially
-    // exists. The send is outside the transaction that recorded it, so a mail
-    // outage leaves an issued receipt with a pending delivery rather than an
-    // unissued one.
+    // exists, through its own template. The send is outside the transaction
+    // that recorded it, so a mail outage leaves an issued receipt with a failed
+    // delivery rather than an unissued one.
     if (claimed.adminEmail === null) return undefined;
-    try {
-      await this.deps.notifications.deliver({
-        kind: 'password_reset',
+    const sent = await this.deps.notifications.send(
+      {
+        kind: 'ebarimt_receipt',
         deliveryId: `ebarimt-${claimed.issuanceId}`,
-        accountId: claimed.paymentId,
-        resetId: claimed.issuanceId,
+        hotelId,
+        paymentId: claimed.paymentId,
         emailNormalized: claimed.adminEmail,
-        expiresAt: receipt.issuedAt,
-        // The receipt number is the deliverable, and it is not a secret: it is
-        // the reference a taxpayer quotes. No token, no link, no credential.
-        token: receipt.receiptNumber,
+        receiptNumber: receipt.receiptNumber,
+        receiptQr: receipt.qr,
+        totalMnt: receipt.totalMnt.toString(),
+        issuedAt: receipt.issuedAt,
+      },
+      portContext(request),
+    );
+    await this.inHotelScope(hotelId, request, async (uow) => {
+      await uow.query(
+        `UPDATE platform.ebarimt_issuance
+            SET delivery_state = $3,
+                delivered_at = CASE WHEN $3 = 'SENT' THEN now() ELSE delivered_at END,
+                last_error = CASE WHEN $3 = 'SENT' THEN NULL ELSE 'delivery_failed' END,
+                revision = revision + 1
+          WHERE hotel_id = $1 AND issuance_id = $2 AND delivery_state = 'PENDING'`,
+        [hotelId, claimed.issuanceId, sent.ok ? 'SENT' : 'FAILED'],
+      );
+      await recordPlatformAudit(uow, {
+        action: 'subscription.ebarimt.delivery',
+        outcome: sent.ok ? 'allowed' : 'failed',
+        targetType: 'ebarimt_issuance',
+        targetRef: claimed.issuanceId,
+        // The recipient is recorded masked (doc 16 §4.1); the receipt number is
+        // the reference a taxpayer quotes and is not a secret.
+        payload: {
+          paymentId: claimed.paymentId,
+          recipient: maskEmail(claimed.adminEmail ?? ''),
+          receiptNumber: receipt.receiptNumber,
+        },
       });
-      await this.inHotelScope(hotelId, request, async (uow) => {
-        await uow.query(
-          `UPDATE platform.ebarimt_issuance
-              SET delivery_state = 'SENT', delivered_at = now(), revision = revision + 1
-            WHERE hotel_id = $1 AND issuance_id = $2 AND delivery_state = 'PENDING'`,
-          [hotelId, claimed.issuanceId],
-        );
-      });
-    } catch {
-      await this.inHotelScope(hotelId, request, async (uow) => {
-        await uow.query(
-          `UPDATE platform.ebarimt_issuance
-              SET delivery_state = 'FAILED', last_error = 'delivery_failed',
-                  revision = revision + 1
-            WHERE hotel_id = $1 AND issuance_id = $2 AND delivery_state = 'PENDING'`,
-          [hotelId, claimed.issuanceId],
-        );
-      });
-    }
+    });
     return undefined;
   }
 
@@ -312,22 +312,80 @@ export class EBarimtService extends OnboardingServiceBase {
     });
   }
 
+  // ============================================================ the operator
+
+  /**
+   * doc 16 §4.1 step 5: the queue an operator works from, across every hotel.
+   *
+   * An Operation action — realm, column, the explicit `SUBSCRIPTION_EBARIMT_RETRY`
+   * grant and a recent step-up — evaluated by the Phase 04 pipeline, and
+   * audited as a read: an operator seeing the queue is an operator seeing
+   * which payments have no receipt.
+   */
+  async manualQueue(
+    actor: CommandActor,
+    request: RequestContext,
+  ): Promise<
+    readonly {
+      hotelId: string;
+      issuanceId: string;
+      paymentId: string;
+      lastError: string | null;
+      createdAt: Date;
+    }[]
+  > {
+    return this.runOperationCommand(
+      actor,
+      RETRY_ACTION,
+      { targetType: 'ebarimt_queue', targetRef: 'manual_resolution' },
+      request,
+      async (uow) => {
+        const items = await manualEBarimtIssuances(uow, 256);
+        await recordPlatformAudit(uow, {
+          action: 'subscription.ebarimt.queue_read',
+          outcome: 'allowed',
+          targetType: 'ebarimt_queue',
+          targetRef: 'manual_resolution',
+          payload: { items: items.length },
+        });
+        return items;
+      },
+    );
+  }
+
   /**
    * `SUB-DEC-008`: the operator's retry.
    *
-   * Takes an issuance and an account, and nothing else. There is deliberately no
+   * Takes an issuance and the actor, and nothing else. There is deliberately no
    * parameter for a receipt number, a QR, a tax figure or a payment reference —
-   * so the flow doc 16 §4.1 forbids ("Оператор eBarimt-ийн дугаар, QR, татварын
-   * дүн болон payment reference-ийг гараар зохиохгүй") has no surface to happen
-   * through. The permission and the step-up are checked above this layer.
+   * so the flow doc 16 §4.1 forbids has no surface to happen through. The
+   * permission, the realm and the step-up are the Phase 04 pipeline's decision,
+   * and the request is audited before the issuer is asked again.
    */
   async retry(
     hotelId: string,
     issuanceId: string,
-    accountId: string,
+    actor: CommandActor,
     request: RequestContext,
   ): Promise<IssuanceOutcome> {
-    const reopened = await this.inHotelScope(hotelId, { ...request, accountId }, async (uow) => {
+    const accountId = actor.principal.accountId;
+    await this.runOperationCommand(
+      actor,
+      RETRY_ACTION,
+      { targetType: 'ebarimt_issuance', targetRef: issuanceId },
+      request,
+      async (uow) => {
+        await recordPlatformAudit(uow, {
+          action: 'subscription.ebarimt.retry_requested',
+          outcome: 'allowed',
+          targetType: 'ebarimt_issuance',
+          targetRef: issuanceId,
+          payload: { hotelId, accountId },
+        });
+      },
+    );
+    const scoped = { ...request, accountId };
+    const reopened = await this.inHotelScope(hotelId, scoped, async (uow) => {
       const result = await uow.query(
         `UPDATE platform.ebarimt_issuance
             SET state = 'PENDING', available_at = now(), retried_by_account_id = $3,
@@ -335,42 +393,12 @@ export class EBarimtService extends OnboardingServiceBase {
           WHERE hotel_id = $1 AND issuance_id = $2 AND state = 'MANUAL_RESOLUTION'`,
         [hotelId, issuanceId, accountId],
       );
-      if (result.rowCount !== 1) return false;
-      await recordPlatformAudit(uow, {
-        action: 'subscription.ebarimt.retry_requested',
-        outcome: 'allowed',
-        targetType: 'ebarimt_issuance',
-        targetRef: issuanceId,
-        payload: { accountId },
-      });
-      return true;
+      return result.rowCount === 1;
     });
-    if (!reopened)
+    if (!reopened) {
       throw new ApiError('CONFLICT', 'this issuance is not awaiting manual resolution');
-    return this.processOne(hotelId, issuanceId, { ...request, accountId });
-  }
-
-  /** doc 16 §4.1 step 5: the queue an operator works from. */
-  async manualQueue(
-    hotelId: string,
-    request: RequestContext,
-  ): Promise<readonly { issuanceId: string; paymentId: string; lastError: string | null }[]> {
-    return this.inHotelScope(hotelId, request, async (uow) => {
-      const result = await uow.query<{
-        issuance_id: string;
-        payment_id: string;
-        last_error: string | null;
-      }>(
-        `SELECT issuance_id, payment_id, last_error FROM platform.ebarimt_issuance
-          WHERE hotel_id = $1 AND state = 'MANUAL_RESOLUTION' ORDER BY created_at`,
-        [hotelId],
-      );
-      return result.rows.map((row) => ({
-        issuanceId: row.issuance_id,
-        paymentId: row.payment_id,
-        lastError: row.last_error,
-      }));
-    });
+    }
+    return this.processOne(hotelId, issuanceId, scoped);
   }
 
   async issuanceFor(
@@ -410,4 +438,21 @@ export class EBarimtService extends OnboardingServiceBase {
       };
     });
   }
+}
+
+function issuanceFailureReason(error: PortError): string {
+  switch (error.kind) {
+    case 'DISABLED':
+      return 'adapter_unavailable';
+    case 'REJECTED':
+      return `issuer_rejected:${error.providerCode}`;
+    default:
+      return error.kind.toLowerCase();
+  }
+}
+
+/** `a****@example.test` — the recorded recipient, never the address. */
+function maskEmail(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  return `${local.slice(0, 1)}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
 }

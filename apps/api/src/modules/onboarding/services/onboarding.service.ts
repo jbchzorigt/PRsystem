@@ -3,28 +3,38 @@ import type { PackageCode } from '@prsystem/authz';
 import { isPackageCode } from '@prsystem/authz';
 import { ApiError } from '@prsystem/contracts';
 import type { UnitOfWork } from '@prsystem/db';
-import { claimIdempotencyKey, completeIdempotencyKey, recordPlatformAudit } from '@prsystem/db';
-import { decryptValue, deriveLookupToken, encryptValue } from '@prsystem/ports';
+import {
+  claimIdempotencyKey,
+  completeIdempotencyKey,
+  lockIdempotencyClaim,
+  recordPlatformAudit,
+  withTenantTransaction,
+} from '@prsystem/db';
+import { deriveLookupToken, encryptValue } from '@prsystem/ports';
+import type { PaymentProvider } from '@prsystem/ports';
+import { isPaymentProvider } from '@prsystem/ports';
 import { derivedIdempotencyKey } from '../../iam/services/derived-key';
-import type { OnboardingDependencies, RequestContext } from './onboarding-context';
-import { OnboardingServiceBase } from './onboarding-context';
+import { AccountRepository } from '../../iam/repositories/account.repository';
+import { accountScope } from '../../iam/services/iam-context';
+import type { CommandActor, OnboardingDependencies, RequestContext } from './onboarding-context';
+import { OnboardingServiceBase, portContext, portFailure } from './onboarding-context';
 import type {
   ApplicationRow,
   ApplicationState,
   OwnerType,
 } from '../repositories/onboarding.repository';
 import { OnboardingRepository, resolveApplicantToken } from '../repositories/onboarding.repository';
-import type { PaymentProvider } from '../contracts/payment-gateway.port';
-import { isPaymentProvider } from '../contracts/payment-gateway.port';
 import { isTermMonths, quoteTerm } from '../domain/pricing';
 
 /**
  * Hotel onboarding (doc 15, `ONB-DEC-001`…`008`).
  *
  * The rule the whole file is arranged around is `ONB-DEC-001`: **no hotel,
- * subscription, membership, session, listing, drawer or activation delivery
- * exists before authoritative payment success.** Before payment there is one row
- * — an application — and it carries no tenant.
+ * subscription, membership, session, listing, drawer, activation delivery — or
+ * owner profile — exists before authoritative payment success.** Before payment
+ * there is one row, an application, and it carries no tenant and no canonical
+ * owner: only its own encrypted copy of the identifier, which the provisioning
+ * boundary turns into an owner once the money is real.
  */
 
 /** doc 15 §2.1 and §2.2: the required fields, per registration type. */
@@ -53,7 +63,11 @@ export interface ApplicationDraft {
 export interface CreatedApplication {
   readonly applicationId: string;
   readonly state: ApplicationState;
-  /** The applicant's bearer reference. Returned once and never stored in clear. */
+  /**
+   * The applicant's bearer reference. Returned exactly once, here, so the
+   * applicant can come back to their own draft; it is stored only as a keyed
+   * digest and is never logged, audited or placed in an outbox payload.
+   */
   readonly applicantToken: string;
   readonly totalAmountMnt: string;
   readonly monthlyPriceMnt: string;
@@ -63,6 +77,47 @@ export interface CreatedApplication {
   readonly currency: 'MNT';
   readonly termMonths: number;
   readonly packageCode: PackageCode;
+}
+
+export type OwnerResolution = 'NEW' | 'EXISTING_PROOF_REQUIRED' | 'EXISTING_PROVED';
+
+export interface OwnerResolutionResult {
+  readonly state: ApplicationState;
+  readonly proofRequired: boolean;
+  readonly ownerResolution: OwnerResolution;
+}
+
+/**
+ * R9: the canonical state and the minimal safe progress an applicant needs.
+ *
+ * Identifiers of other things — the owner, the payment, the hotel — are not
+ * here, and neither is any secret; what is here is what a screen has to show.
+ */
+export interface ApplicationProgress {
+  readonly applicationId: string;
+  readonly state: ApplicationState;
+  readonly phoneVerified: boolean;
+  readonly ownerResolution: 'UNRESOLVED' | OwnerResolution;
+  readonly existingAccount: 'NONE' | 'PROOF_REQUIRED' | 'PROVED';
+  readonly payment: {
+    readonly provider: PaymentProvider;
+    readonly state: string;
+    readonly expiresAt: string;
+  } | null;
+  readonly provisioning: {
+    readonly attempts: number;
+    readonly hotelProvisioned: boolean;
+  };
+  readonly packageCode: PackageCode;
+  readonly termMonths: number;
+  readonly totalAmountMnt: string;
+}
+
+export interface OpenedInvoice {
+  readonly attemptId: string;
+  readonly providerInvoiceId: string;
+  readonly checkoutUrl: string;
+  readonly amountMnt: string;
 }
 
 const OWNER_TYPES: readonly OwnerType[] = ['CITIZEN', 'ORGANIZATION'];
@@ -81,10 +136,27 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 export const APPLICANT_LOOKUP_SUBJECT = 'onboarding_applicant';
 
+/** The subject an owner-proof code is bound to: this application's proof, and no other. */
+export function ownerProofSubject(applicationId: string): string {
+  return `${applicationId}:owner-proof`;
+}
+
 function required(value: string | undefined, field: string): string {
   const trimmed = (value ?? '').trim();
   if (trimmed.length === 0) throw new ApiError('VALIDATION_FAILED', `${field} is required`);
   return trimmed;
+}
+
+/** A stored refusal, replayed as the refusal it was. */
+function replayStored(status: number, body: unknown): OpenedInvoice {
+  if (status >= 400) {
+    const stored = body as { error?: { code?: string; message?: string } };
+    throw new ApiError(
+      (stored.error?.code as ApiError['code'] | undefined) ?? 'CONFLICT',
+      stored.error?.message ?? 'this request was refused when it was first made',
+    );
+  }
+  return body as OpenedInvoice;
 }
 
 export class OnboardingService extends OnboardingServiceBase {
@@ -115,9 +187,6 @@ export class OnboardingService extends OnboardingServiceBase {
     const price = quoteTerm(validated.packageCode, validated.termMonths, parameters);
 
     const applicationId = randomUUID();
-    // Bound to a fixed subject, like a session token: the row the digest
-    // identifies is what says which application it belongs to, and there is no
-    // application id to bind to before the lookup that finds it.
     const applicant = await this.tokens.issue('onboarding_draft', APPLICANT_LOOKUP_SUBJECT);
     const namespace = {
       identityType: 'registration_number' as const,
@@ -354,17 +423,12 @@ export class OnboardingService extends OnboardingServiceBase {
   /**
    * Resolves the application a bearer reference names.
    *
-   * The digest is bound to the application it was minted for, so the lookup is
-   * two-sided: the candidate id comes from the resolver wrapper, and the digest
-   * is then recomputed against *that* id and compared. A token minted for one
-   * application therefore cannot be presented against another even if the stored
-   * hashes were somehow swapped, and an unknown token is the same `NOT_FOUND` a
+   * The candidate id comes from the resolver wrapper, which answers an
+   * identifier and nothing else; an unknown token is the same `NOT_FOUND` a
    * deleted application would get.
    */
   async resolveApplicant(applicantToken: string, request: RequestContext): Promise<string> {
     const resolved = await this.inOnboardingScope(undefined, request, async (uow) => {
-      // The subject is unknown before the lookup, so the first digest is bound to
-      // a fixed subject and used only to find a candidate.
       const probe = await this.tokens.digest(
         'onboarding_draft',
         APPLICANT_LOOKUP_SUBJECT,
@@ -374,6 +438,73 @@ export class OnboardingService extends OnboardingServiceBase {
     });
     if (resolved === undefined) throw new ApiError('NOT_FOUND', 'not found');
     return resolved;
+  }
+
+  // ================================================================ progress
+
+  /** R9: the canonical state and the minimal safe progress. */
+  async applicationState(
+    applicationId: string,
+    request: RequestContext,
+  ): Promise<ApplicationProgress> {
+    return this.inOnboardingScope(applicationId, request, async (uow) => {
+      const repository = new OnboardingRepository(uow);
+      const application = await repository.byId(applicationId);
+      if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
+      const attempts = await repository.attemptsFor(applicationId);
+      const latest = attempts[attempts.length - 1];
+      const passed = await repository.hasPassedProof(applicationId);
+      const existingAccountHeld =
+        application.existingAccountId !== null ||
+        (await repository.existingAccountHoldsEmail(applicationId));
+
+      let ownerResolution: ApplicationProgress['ownerResolution'] = 'UNRESOLVED';
+      if (application.ownerId !== null) {
+        ownerResolution =
+          application.state === 'PROVISIONED' && !(await repository.hasPendingProof(applicationId))
+            ? passed
+              ? 'EXISTING_PROVED'
+              : 'NEW'
+            : passed
+              ? 'EXISTING_PROVED'
+              : 'EXISTING_PROOF_REQUIRED';
+      } else if (
+        application.state !== 'DRAFT' ||
+        (await repository.probeOwner(applicationId)) === undefined
+      ) {
+        // A draft is "unresolved" until the applicant asks; once the flow has
+        // moved on, or the number is known to be fresh, it is a new owner.
+        ownerResolution = application.state === 'DRAFT' ? 'UNRESOLVED' : 'NEW';
+      }
+
+      return {
+        applicationId,
+        state: application.state,
+        phoneVerified: application.contactPhoneVerifiedAt !== null,
+        ownerResolution,
+        existingAccount:
+          application.existingAccountId !== null
+            ? 'PROVED'
+            : existingAccountHeld
+              ? 'PROOF_REQUIRED'
+              : 'NONE',
+        payment:
+          latest === undefined
+            ? null
+            : {
+                provider: latest.provider,
+                state: latest.state,
+                expiresAt: latest.expiresAt.toISOString(),
+              },
+        provisioning: {
+          attempts: application.provisionAttempts,
+          hotelProvisioned: application.provisionedHotelId !== null,
+        },
+        packageCode: application.packageCode,
+        termMonths: application.termMonths,
+        totalAmountMnt: application.totalAmountMnt.toString(),
+      };
+    });
   }
 
   // ==================================================================== OTP
@@ -429,13 +560,17 @@ export class OnboardingService extends OnboardingServiceBase {
     // Delivery is outside the transaction that minted the code: a provider
     // outage must not roll back the challenge, and the code is not stored, so a
     // failed send is retried by asking for a new challenge.
-    await this.deps.phone.send({
-      subjectRef: applicationId,
-      phone: prepared.phone,
-      expiresAt: prepared.expiresAt,
-      deliveryId: prepared.verificationId,
-      code: prepared.code,
-    });
+    const sent = await this.deps.phone.send(
+      {
+        subjectRef: applicationId,
+        phone: prepared.phone,
+        expiresAt: prepared.expiresAt,
+        deliveryId: prepared.verificationId,
+        code: prepared.code,
+      },
+      portContext(request),
+    );
+    if (!sent.ok) throw portFailure(sent.error, 'phone verification');
     return { deliveryId: prepared.verificationId };
   }
 
@@ -461,8 +596,6 @@ export class OnboardingService extends OnboardingServiceBase {
       await repository.recordPhoneAttempt(challenge.verificationId);
       const matches = challenge.codeDigest === digest.tokenHash;
       if (!matches) {
-        // The budget is on the row, so a guessing client runs out of attempts
-        // rather than out of patience.
         if (challenge.attempts + 1 >= challenge.maxAttempts) {
           await repository.settlePhoneChallenge(challenge.verificationId, 'FAILED');
         }
@@ -500,63 +633,65 @@ export class OnboardingService extends OnboardingServiceBase {
   /**
    * doc 15 §3.1: resolves the owner behind the application, before any invoice.
    *
-   * A new registration number becomes a new owner profile. A known one does
-   * **not** attach: it moves the application to `OWNER_VERIFICATION_REQUIRED`
-   * and opens a challenge to the owner's *previously stored* verified contact.
-   * The contact on the new application is never treated as proof of anything,
-   * and never overwrites what the owner profile already holds.
+   * A new registration number is exactly that — nothing is created for it;
+   * the owner profile comes into existence inside the paid provisioning
+   * transaction (R2). A known one moves the application to
+   * `OWNER_VERIFICATION_REQUIRED` and opens a challenge to the owner's
+   * *previously stored* verified contact. The owner row is probed and never
+   * touched; the contact on the new application is never treated as proof of
+   * anything, never overwrites what the owner profile holds, and the secret is
+   * never returned — the applicant sees a mask.
    */
   async resolveOwner(
     applicationId: string,
     request: RequestContext,
-  ): Promise<{ state: ApplicationState; proofRequired: boolean }> {
-    const parameters = this.parameters;
-    return this.inOnboardingScope(applicationId, request, async (uow) => {
+  ): Promise<OwnerResolutionResult> {
+    const outcome = await this.inOnboardingScope(applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const application = await repository.lock(applicationId);
       if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
+
       if (application.ownerId !== null) {
-        return { state: application.state, proofRequired: false };
+        if (await repository.hasPassedProof(applicationId)) {
+          return { result: proved(application.state), challenge: undefined };
+        }
+        if (await repository.hasPendingProof(applicationId)) {
+          return { result: proofRequired(application.state), challenge: undefined };
+        }
+        // The previous challenge lapsed or could not be delivered: a new one.
+        const challenge = await this.openChallenge(
+          uow,
+          repository,
+          application,
+          application.ownerId,
+        );
+        return { result: proofRequired(application.state), challenge };
       }
       if (application.state !== 'DRAFT') {
         throw new ApiError('CONFLICT', 'this application is past owner resolution');
       }
 
       const existing = await repository.probeOwner(applicationId);
-
       if (existing === undefined) {
-        const ownerId = await this.createOwnerFor(repository, application);
-        const moved = await repository.transition({
-          applicationId,
-          expectedRevision: application.revision,
-          state: 'DRAFT',
-          reason: 'owner_created',
-          ownerId,
+        await recordPlatformAudit(uow, {
+          action: 'onboarding.owner.resolved',
+          outcome: 'allowed',
+          targetType: 'onboarding_application',
+          targetRef: applicationId,
+          payload: { resolution: 'NEW' },
         });
-        if (!moved) throw new ApiError('CONFLICT', 'the application changed concurrently');
-        return { state: 'DRAFT' as const, proofRequired: false };
+        return {
+          result: {
+            state: 'DRAFT' as const,
+            proofRequired: false,
+            ownerResolution: 'NEW' as const,
+          },
+          challenge: undefined,
+        };
       }
 
-      // An existing owner. The challenge goes to the channel the owner profile
-      // already holds — which the applicant never sees in full: the probe
-      // returned it already masked (doc 15 §8).
-      const destination = existing.maskedDestination;
-      const challenge =
-        destination === null
-          ? null
-          : await this.tokens.issue('onboarding_draft', `${applicationId}:owner-proof`);
-      await repository.openOwnerProof({
-        applicationId,
-        ownerId: existing.ownerId,
-        // With no stored verified channel there is nothing to challenge, so the
-        // only remaining route is the audited offline verification of §3.1.
-        method: destination === null ? 'OFFLINE_VERIFICATION' : 'STORED_CONTACT_CHALLENGE',
-        challengeDigest: challenge?.tokenHash ?? null,
-        challengeKeyVersion: challenge?.keyVersion ?? null,
-        maskedDestination: destination,
-        ttlSeconds: parameters.ownerProofTtlSeconds,
-      });
-
+      // Bound first: the challenge destination is read through the
+      // application's owner binding, never through anything the applicant sent.
       const moved = await repository.transition({
         applicationId,
         expectedRevision: application.revision,
@@ -565,91 +700,138 @@ export class OnboardingService extends OnboardingServiceBase {
         ownerId: existing.ownerId,
       });
       if (!moved) throw new ApiError('CONFLICT', 'the application changed concurrently');
+      const challenge = await this.openChallenge(uow, repository, application, existing.ownerId);
       await repository.recordEvent({
         applicationId,
         fromState: 'DRAFT',
         toState: 'OWNER_VERIFICATION_REQUIRED',
         reason: 'existing_owner_matched',
       });
-      await recordPlatformAudit(uow, {
-        action: 'onboarding.owner.proof_required',
-        outcome: 'allowed',
-        targetType: 'onboarding_application',
-        targetRef: applicationId,
-        payload: {
-          method: destination === null ? 'OFFLINE_VERIFICATION' : 'STORED_CONTACT_CHALLENGE',
-          maskedDestination: destination,
-        },
-      });
-      return { state: 'OWNER_VERIFICATION_REQUIRED' as const, proofRequired: true };
+      return { result: proofRequired('OWNER_VERIFICATION_REQUIRED'), challenge };
     });
+
+    if (outcome.challenge !== undefined) {
+      await this.deliverChallenge(applicationId, outcome.challenge, request);
+    }
+    return outcome.result;
   }
 
-  private async createOwnerFor(
+  /**
+   * Opens the stored-contact challenge — or, with no stored channel at all, the
+   * offline proof of §3.1 (3) — and returns what the delivery port needs. The
+   * plaintext exists only in this process, for the length of the send.
+   */
+  private async openChallenge(
+    uow: UnitOfWork,
     repository: OnboardingRepository,
     application: ApplicationRow,
-  ): Promise<string> {
-    const sealed = await repository.sealedIdentifier(application.applicationId);
-    if (sealed === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-    // The ciphertext is bound to the application row it was sealed against, so
-    // it is decrypted and resealed against the owner row rather than copied.
-    // Moving a ciphertext between rows must fail, and the AAD is what makes it
-    // fail rather than merely be discouraged (ADR-0020 §3).
-    const plaintext = await decryptValue(
-      this.deps.keys,
-      'pii.subscription_owner',
-      {
-        ciphertext: sealed.ciphertext,
-        wrappedDek: sealed.wrappedDek,
-        keyVersion: sealed.keyVersion,
-      },
-      {
-        table: 'onboarding_application',
-        column: 'owner_identifier_ciphertext',
-        rowRef: application.applicationId,
-      },
-    );
-    const ownerId = randomUUID();
-    const resealed = await encryptValue(this.deps.keys, 'pii.subscription_owner', plaintext, {
-      table: 'subscription_owner',
-      column: 'identifier_ciphertext',
-      rowRef: ownerId,
-    });
-
-    return repository.createOwner({
+    ownerId: string,
+  ): Promise<
+    | {
+        channel: 'phone' | 'email';
+        destination: string;
+        code: string;
+        expiresAt: Date;
+        proofId: string;
+      }
+    | undefined
+  > {
+    const parameters = this.parameters;
+    const probe = await repository.probeOwner(application.applicationId);
+    const destination = await repository.ownerChallengeDestination(application.applicationId);
+    const code =
+      destination === undefined
+        ? undefined
+        : await this.tokens.issueNumericCode(
+            ownerProofSubject(application.applicationId),
+            parameters.otpLength,
+          );
+    const proofId = await repository.openOwnerProof({
+      applicationId: application.applicationId,
       ownerId,
-      ownerType: application.ownerType,
-      displayName: application.ownerDisplayName,
-      representativeName: application.representativeName,
-      representativePosition: application.representativePosition,
-      identityType: application.ownerIdentityType,
-      countryCode: application.ownerCountryCode,
-      identifierCiphertext: resealed.ciphertext,
-      identifierWrappedDek: resealed.wrappedDek,
-      identifierKeyVersion: resealed.keyVersion,
-      identifierLookupToken: application.ownerLookupToken,
-      identifierLookupKeyVersion: sealed.lookupKeyVersion,
-      // The owner's verified channels are what a future proof is sent to, so
-      // only a channel this flow actually verified is stored. The phone was
-      // OTP-verified; the email has not been demonstrated yet and is left unset
-      // rather than asserted (doc 15 §3.1).
-      verifiedEmail: null,
-      verifiedPhone: application.contactPhoneVerifiedAt === null ? null : application.contactPhone,
+      method: destination === undefined ? 'OFFLINE_VERIFICATION' : 'STORED_CONTACT_CHALLENGE',
+      challengeDigest: code?.tokenHash ?? null,
+      challengeKeyVersion: code?.keyVersion ?? null,
+      maskedDestination: probe?.maskedDestination ?? null,
+      ttlSeconds: parameters.ownerProofTtlSeconds,
     });
+    await recordPlatformAudit(uow, {
+      action: 'onboarding.owner.proof_required',
+      outcome: 'allowed',
+      targetType: 'onboarding_application',
+      targetRef: application.applicationId,
+      payload: {
+        method: destination === undefined ? 'OFFLINE_VERIFICATION' : 'STORED_CONTACT_CHALLENGE',
+        maskedDestination: probe?.maskedDestination ?? null,
+      },
+    });
+    if (destination === undefined || code === undefined) return undefined;
+    return {
+      channel: destination.channel,
+      destination: destination.destination,
+      code: code.token,
+      expiresAt: new Date(uow.serverNow.getTime() + parameters.ownerProofTtlSeconds * 1000),
+      proofId,
+    };
   }
 
-  /** doc 15 §3.1: redeems the stored-contact challenge. */
+  private async deliverChallenge(
+    applicationId: string,
+    challenge: {
+      channel: 'phone' | 'email';
+      destination: string;
+      code: string;
+      expiresAt: Date;
+      proofId: string;
+    },
+    request: RequestContext,
+  ): Promise<void> {
+    const subjectRef = ownerProofSubject(applicationId);
+    const sent =
+      challenge.channel === 'phone'
+        ? await this.deps.phone.send(
+            {
+              subjectRef,
+              phone: challenge.destination,
+              expiresAt: challenge.expiresAt,
+              deliveryId: challenge.proofId,
+              code: challenge.code,
+            },
+            portContext(request),
+          )
+        : await this.deps.notifications.send(
+            {
+              kind: 'owner_challenge',
+              deliveryId: challenge.proofId,
+              subjectRef,
+              emailNormalized: challenge.destination,
+              expiresAt: challenge.expiresAt,
+              code: challenge.code,
+            },
+            portContext(request),
+          );
+    if (!sent.ok) {
+      // A challenge nobody received is not a live challenge: it is expired so
+      // the next resolution opens a fresh one, and the failure is reported.
+      await this.inOnboardingScope(applicationId, request, async (uow) => {
+        await new OnboardingRepository(uow).settleProof({
+          proofId: challenge.proofId,
+          state: 'EXPIRED',
+          decidedByAccountId: null,
+          reason: 'delivery_failed',
+        });
+      });
+      throw portFailure(sent.error, 'the ownership challenge delivery');
+    }
+  }
+
+  /** doc 15 §3.1 (2): redeems the stored-contact challenge. */
   async proveOwnership(
     applicationId: string,
-    challengeToken: string,
+    code: string,
     request: RequestContext,
   ): Promise<{ state: ApplicationState }> {
-    const digest = await this.tokens.digest(
-      'onboarding_draft',
-      `${applicationId}:owner-proof`,
-      challengeToken,
-    );
+    const digest = await this.tokens.digest('phone_otp', ownerProofSubject(applicationId), code);
     return this.inOnboardingScope(applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const application = await repository.lock(applicationId);
@@ -680,8 +862,70 @@ export class OnboardingService extends OnboardingServiceBase {
       await repository.settleProof({
         proofId: proof.proofId,
         state: 'PASSED',
-        decidedByAccountId: request.accountId ?? null,
+        decidedByAccountId: null,
         reason: 'stored_contact_challenge',
+      });
+      return this.releaseAfterProof(uow, repository, application);
+    });
+  }
+
+  /**
+   * doc 15 §3.1 (1): the signed-in account is already linked to the owner — it
+   * is the Primary Hotel Admin of a hotel the owner holds.
+   *
+   * A stranger's session proves nothing and is refused with the same
+   * `NOT_FOUND` an unknown application gets; the linkage is decided by the
+   * definer from the owner link and the membership, never from anything the
+   * caller claims.
+   */
+  async proveOwnershipByAccount(
+    applicationId: string,
+    actor: CommandActor,
+    request: RequestContext,
+  ): Promise<{ state: ApplicationState }> {
+    if (actor.principal.realm !== 'hotel' || actor.principal.accountState !== 'ACTIVE') {
+      throw new ApiError('NOT_FOUND', 'not found');
+    }
+    const scoped = { ...request, accountId: actor.principal.accountId };
+    return this.inOnboardingScope(applicationId, scoped, async (uow) => {
+      const repository = new OnboardingRepository(uow);
+      const application = await repository.lock(applicationId);
+      if (application === undefined || application.ownerId === null) {
+        throw new ApiError('NOT_FOUND', 'not found');
+      }
+      if (!(await repository.accountLinkedToOwner(applicationId, actor.principal.accountId))) {
+        await recordPlatformAudit(uow, {
+          action: 'onboarding.owner.proof_failed',
+          outcome: 'denied',
+          targetType: 'onboarding_application',
+          targetRef: applicationId,
+          reason: 'account_not_linked',
+        });
+        throw new ApiError('NOT_FOUND', 'not found');
+      }
+      const pending = await repository.lockPendingProof(applicationId);
+      if (pending !== undefined) {
+        await repository.settleProof({
+          proofId: pending.proofId,
+          state: 'EXPIRED',
+          decidedByAccountId: actor.principal.accountId,
+          reason: 'superseded_by_account_proof',
+        });
+      }
+      const proofId = await repository.openOwnerProof({
+        applicationId,
+        ownerId: application.ownerId,
+        method: 'AUTHENTICATED_ACCOUNT',
+        challengeDigest: null,
+        challengeKeyVersion: null,
+        maskedDestination: null,
+        ttlSeconds: this.parameters.ownerProofTtlSeconds,
+      });
+      await repository.settleProof({
+        proofId,
+        state: 'PASSED',
+        decidedByAccountId: actor.principal.accountId,
+        reason: 'authenticated_account',
       });
       return this.releaseAfterProof(uow, repository, application);
     });
@@ -693,10 +937,9 @@ export class OnboardingService extends OnboardingServiceBase {
    * The canonical machine of doc 15 §7 has no edge back to `DRAFT`, so a
    * pre-payment proof leaves the application exactly where it is: still
    * `OWNER_VERIFICATION_REQUIRED`, but now with a passed proof, which is what
-   * `openInvoice` checks before it will quote. The post-payment race — §3.1's
-   * owner appearing between the pre-payment check and the callback — is the one
-   * that moves, from `PAID_OWNER_VERIFICATION_REQUIRED` to
-   * `PAID_PENDING_PROVISIONING`, on the same payment.
+   * `openInvoice` checks before it will quote. The post-payment race moves,
+   * from `PAID_OWNER_VERIFICATION_REQUIRED` to `PAID_PENDING_PROVISIONING`, on
+   * the same payment — and makes the provisioning job due again.
    */
   private async releaseAfterProof(
     uow: UnitOfWork,
@@ -731,33 +974,133 @@ export class OnboardingService extends OnboardingServiceBase {
   }
 
   /**
-   * doc 15 §3.1: the Platform Super Admin's audited offline verification.
+   * doc 15 §3.1 (3): the Platform Super Admin's audited offline verification.
    *
-   * The permission is checked above this layer. What is enforced here is the
-   * part an operator cannot be trusted to remember: the decision is recorded
-   * with the account that made it, and it can only ever *pass* a proof that
-   * exists — it can never attach an owner, skip the proof or rewrite the link.
+   * An Operation action in full: realm, the Platform-only column, the explicit
+   * `SUBSCRIPTION_CONTACT_CHANGE_APPROVE` grant and a recent step-up, all
+   * evaluated by the Phase 04 pipeline. What is enforced here beyond that is
+   * the part an operator cannot be trusted to remember: the decision is
+   * recorded with the account that made it, and it can only ever *pass* a proof
+   * — it can never attach an owner, skip the proof or rewrite the link.
+   *
+   * There is no HTTP route for this in Phase 05. The Platform Operation
+   * surface is Phase 19, so the production action is not reachable yet.
    */
   async approveOfflineOwnership(
     applicationId: string,
-    accountId: string,
+    actor: CommandActor,
     reason: string,
     request: RequestContext,
   ): Promise<{ state: ApplicationState }> {
-    return this.inOperationScope({ ...request, accountId }, async (uow) => {
+    const decidedBy = actor.principal.accountId;
+    return this.runOperationCommand(
+      actor,
+      'operation.subscription_contact_change_approve',
+      { targetType: 'onboarding_application', targetRef: applicationId },
+      request,
+      async (uow) => {
+        const repository = new OnboardingRepository(uow);
+        const application = await repository.lock(applicationId);
+        if (application === undefined || application.ownerId === null) {
+          throw new ApiError('NOT_FOUND', 'not found');
+        }
+        const pending = await repository.lockPendingProof(applicationId);
+        if (pending !== undefined) {
+          await repository.settleProof({
+            proofId: pending.proofId,
+            state: 'EXPIRED',
+            decidedByAccountId: decidedBy,
+            reason: 'superseded_by_offline_verification',
+          });
+        }
+        const proofId = await repository.openOwnerProof({
+          applicationId,
+          ownerId: application.ownerId,
+          method: 'OFFLINE_VERIFICATION',
+          challengeDigest: null,
+          challengeKeyVersion: null,
+          maskedDestination: null,
+          ttlSeconds: this.parameters.ownerProofTtlSeconds,
+        });
+        await repository.settleProof({
+          proofId,
+          state: 'PASSED',
+          decidedByAccountId: decidedBy,
+          reason,
+        });
+        return this.releaseAfterProof(uow, repository, application);
+      },
+    );
+  }
+
+  // ======================================================== existing account
+
+  /**
+   * doc 15 §3.1 and §5.1: the admin email already belongs to an account.
+   *
+   * The applicant proves it by *being* that account: a live session, signed
+   * in — freshly, or after completing Phase 04's password recovery — whose
+   * account holds exactly the application's admin email. The account id is
+   * then bound with the proof that bound it, by this code and nowhere else.
+   * A session for any other email is refused with the same `NOT_FOUND`.
+   */
+  async bindExistingAccount(
+    applicationId: string,
+    actor: CommandActor,
+    request: RequestContext,
+  ): Promise<{ existingAccountId: string }> {
+    if (actor.principal.realm !== 'hotel' || actor.principal.accountState !== 'ACTIVE') {
+      throw new ApiError('NOT_FOUND', 'not found');
+    }
+    const scoped = { ...request, accountId: actor.principal.accountId };
+    // The account's own row, read under its own scope: the email comes from
+    // the server, never from the caller.
+    const account = await withTenantTransaction(this.deps.pool, accountScope(scoped), (uow) =>
+      new AccountRepository(uow).findById(actor.principal.accountId),
+    );
+    if (account === undefined || account.realm !== 'hotel' || account.state !== 'ACTIVE') {
+      throw new ApiError('NOT_FOUND', 'not found');
+    }
+
+    return this.inOnboardingScope(applicationId, scoped, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const application = await repository.lock(applicationId);
       if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
-      const proof = await repository.lockPendingProof(applicationId);
-      if (proof === undefined) throw new ApiError('NOT_FOUND', 'not found');
-
-      await repository.settleProof({
-        proofId: proof.proofId,
-        state: 'PASSED',
-        decidedByAccountId: accountId,
-        reason,
+      if (application.state === 'PROVISIONED' || application.state === 'PROVISIONING') {
+        throw new ApiError('CONFLICT', 'this application is already provisioned');
+      }
+      if (application.existingAccountId !== null) {
+        if (application.existingAccountId === account.accountId) {
+          return { existingAccountId: account.accountId };
+        }
+        throw new ApiError('CONFLICT', 'a different account is already bound');
+      }
+      if (account.emailNormalized !== application.adminEmailNormalized) {
+        await recordPlatformAudit(uow, {
+          action: 'onboarding.account.binding_refused',
+          outcome: 'denied',
+          targetType: 'onboarding_application',
+          targetRef: applicationId,
+          reason: 'email_mismatch',
+        });
+        throw new ApiError('NOT_FOUND', 'not found');
+      }
+      const moved = await repository.transition({
+        applicationId,
+        expectedRevision: application.revision,
+        state: application.state,
+        reason: 'existing_account_bound',
+        existingAccount: { accountId: account.accountId, method: 'SIGNED_IN' },
       });
-      return this.releaseAfterProof(uow, repository, application);
+      if (!moved) throw new ApiError('CONFLICT', 'the application changed concurrently');
+      await recordPlatformAudit(uow, {
+        action: 'onboarding.account.bound',
+        outcome: 'allowed',
+        targetType: 'onboarding_application',
+        targetRef: applicationId,
+        payload: { accountId: account.accountId, method: 'SIGNED_IN' },
+      });
+      return { existingAccountId: account.accountId };
     });
   }
 
@@ -766,144 +1109,124 @@ export class OnboardingService extends OnboardingServiceBase {
   /**
    * doc 15 §3 step 8: creates the payment invoice.
    *
-   * Every precondition doc 15 states is checked here, in the transaction that
-   * would create the attempt: the required fields are complete because the row
-   * exists, the phone is verified, and any existing-owner proof has passed. An
-   * unverified phone or an outstanding proof produces no invoice at all — which
-   * is the acceptance criterion, not a UI convention.
+   * Every precondition doc 15 states is checked in the transaction that claims
+   * the request: the phone is verified, an existing owner has a passed proof,
+   * an existing account has been bound. Then, in order (R6):
+   *
+   *  1. the idempotency key is claimed **before** anything irreversible;
+   *  2. the provider is called with a stable idempotency key of its own, so a
+   *     lost acknowledgement recovers the same invoice on retry;
+   *  3. the claim is locked again in the transaction that persists the
+   *     attempt, so two concurrent completions serialise and the second replays
+   *     the first's result instead of storing a second attempt.
    */
   async openInvoice(
     input: { applicationId: string; provider: string; idempotencyKey: string },
     request: RequestContext,
-  ): Promise<{
-    attemptId: string;
-    providerInvoiceId: string;
-    checkoutUrl: string;
-    amountMnt: string;
-  }> {
+  ): Promise<OpenedInvoice> {
     if (!isPaymentProvider(input.provider)) {
       throw new ApiError('VALIDATION_FAILED', 'the gateway must be QPay or Khaan Bank');
     }
     const provider: PaymentProvider = input.provider;
     const parameters = this.parameters;
+    const operation = 'onboarding.invoice.open';
+    const payload = { applicationId: input.applicationId, provider };
 
     const prepared = await this.inOnboardingScope(input.applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const application = await repository.lock(input.applicationId);
       if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
+      await this.assertInvoiceable(repository, application);
 
-      if (application.contactPhoneVerifiedAt === null) {
-        throw new ApiError('PRECONDITION_FAILED', 'the phone number is not verified');
+      const claimed = await claimIdempotencyKey(uow, {
+        operation,
+        key: input.idempotencyKey,
+        clientRef: input.applicationId,
+        payload,
+      });
+      if (claimed.kind === 'replay') return { replay: replayStored(claimed.status, claimed.body) };
+      if (claimed.kind === 'key_reused_with_different_payload') {
+        throw new ApiError('IDEMPOTENCY_KEY_REUSED', 'this key was used for a different request');
       }
-      if (application.ownerId === null) {
-        throw new ApiError('PRECONDITION_FAILED', 'the subscription owner is not resolved');
-      }
-      // doc 15 §3.1: an outstanding proof means **no invoice at all**. A passed
-      // one lifts the block without moving the state, because §7's machine has
-      // no edge back to `DRAFT` — the invoice is what moves it.
-      if (
-        application.state === 'OWNER_VERIFICATION_REQUIRED' &&
-        !(await repository.hasPassedProof(input.applicationId))
-      ) {
-        throw new ApiError('PRECONDITION_FAILED', 'the ownership proof is outstanding');
-      }
-      if (
-        application.state !== 'DRAFT' &&
-        application.state !== 'OWNER_VERIFICATION_REQUIRED' &&
-        application.state !== 'PAYMENT_FAILED' &&
-        application.state !== 'PAYMENT_EXPIRED'
-      ) {
-        throw new ApiError('CONFLICT', 'this application cannot open a new invoice');
-      }
-
-      // `ONB-DEC-008`: one live attempt. The partial unique index is the arbiter
-      // under concurrency; this check is what turns its refusal into a message.
-      const attempts = await repository.attemptsFor(input.applicationId);
-      const live = attempts.find(
-        (attempt) => attempt.state === 'PENDING' || attempt.state === 'PAYMENT_UNCERTAIN',
-      );
-      if (live !== undefined) {
-        throw new ApiError(
-          'CONFLICT',
-          live.state === 'PAYMENT_UNCERTAIN'
-            ? 'the previous payment is being reconciled with the provider'
-            : 'an invoice is already open for this application',
-        );
-      }
-      return application;
+      // `claimed` or `in_progress`: either this is the first attempt, or an
+      // earlier one lost the provider's reply. Both go to the provider with the
+      // same stable key, and the provider answers with the same invoice.
+      return { application };
     });
+    if ('replay' in prepared) return prepared.replay;
+    const application = prepared.application;
 
-    // The provider call is outside the transaction that will store its result: a
-    // gateway that hangs must not hold a row lock, and an invoice the provider
-    // created but we failed to store is an orphan on their side, not a paid
-    // hotel on ours.
     const merchantRef = derivedIdempotencyKey(
       'onboarding.invoice',
       input.applicationId,
       input.idempotencyKey,
     );
-    const invoice = await this.deps.gateways.gateway(provider).createInvoice({
-      provider,
-      merchantRef,
-      amountMnt: prepared.totalAmountMnt,
-      currency: 'MNT',
-      expiresAt: new Date(Date.now() + parameters.paymentAttemptTtlSeconds * 1000),
-    });
+    const invoice = await this.deps.gateways.gateway(provider).createInvoice(
+      {
+        intentId: input.applicationId,
+        amountMnt: application.totalAmountMnt,
+        currency: 'MNT',
+        merchantRef,
+        expiresAt: new Date(Date.now() + parameters.paymentAttemptTtlSeconds * 1000),
+        idempotencyKey: merchantRef,
+      },
+      portContext(request),
+    );
+    if (!invoice.ok) {
+      const failure = portFailure(invoice.error, 'the payment gateway');
+      // A provider refusal is the request's fault and is stored so a retry gets
+      // the same answer; an outage or a lost reply leaves the claim open so the
+      // retry recovers the invoice instead.
+      if (invoice.error.kind === 'REJECTED' || invoice.error.kind === 'MISMATCH') {
+        await this.inOnboardingScope(input.applicationId, request, async (uow) => {
+          const lock = await lockIdempotencyClaim(uow, { operation, key: input.idempotencyKey });
+          if (lock.kind === 'in_progress') {
+            await completeIdempotencyKey(uow, lock.idempotencyId, failure.status, {
+              error: { code: failure.code, message: failure.message },
+            });
+          }
+        });
+      }
+      throw failure;
+    }
 
     return this.inOnboardingScope(input.applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
-      const application = await repository.lock(input.applicationId);
-      if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
+      const locked = await repository.lock(input.applicationId);
+      if (locked === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
-      const claimed = await claimIdempotencyKey(uow, {
-        operation: 'onboarding.invoice.open',
-        key: input.idempotencyKey,
-        clientRef: input.applicationId,
-        payload: { applicationId: input.applicationId, provider },
-      });
-      if (claimed.kind === 'replay') {
-        return claimed.body as {
-          attemptId: string;
-          providerInvoiceId: string;
-          checkoutUrl: string;
-          amountMnt: string;
-        };
-      }
-      if (claimed.kind !== 'claimed') {
-        throw new ApiError(
-          claimed.kind === 'in_progress'
-            ? 'IDEMPOTENT_REQUEST_IN_PROGRESS'
-            : 'IDEMPOTENCY_KEY_REUSED',
-          'this request is already being processed',
-        );
-      }
+      const claim = await lockIdempotencyClaim(uow, { operation, key: input.idempotencyKey });
+      if (claim.kind === 'replay') return replayStored(claim.status, claim.body);
+      if (claim.kind === 'absent') throw new ApiError('CONFLICT', 'the request claim is gone');
+
+      await this.assertInvoiceable(repository, locked);
 
       const attemptId = await repository.openAttempt({
         applicationId: input.applicationId,
         provider,
         merchantRef,
-        providerInvoiceId: invoice.providerInvoiceId,
-        amountMnt: application.totalAmountMnt,
-        packageCode: application.packageCode,
-        termMonths: application.termMonths,
-        monthlyPriceMnt: application.monthlyPriceMnt,
-        vatRateBp: application.vatRateBp,
-        priceBookVersion: application.priceBookVersion,
-        taxConfigVersion: application.taxConfigVersion,
-        packageFeatureVersion: application.packageFeatureVersion,
+        providerInvoiceId: invoice.value.providerInvoiceId,
+        amountMnt: locked.totalAmountMnt,
+        packageCode: locked.packageCode,
+        termMonths: locked.termMonths,
+        monthlyPriceMnt: locked.monthlyPriceMnt,
+        vatRateBp: locked.vatRateBp,
+        priceBookVersion: locked.priceBookVersion,
+        taxConfigVersion: locked.taxConfigVersion,
+        packageFeatureVersion: locked.packageFeatureVersion,
         ttlSeconds: parameters.paymentAttemptTtlSeconds,
       });
 
       const moved = await repository.transition({
         applicationId: input.applicationId,
-        expectedRevision: application.revision,
+        expectedRevision: locked.revision,
         state: 'PENDING_PAYMENT',
         reason: 'invoice_opened',
       });
       if (!moved) throw new ApiError('CONFLICT', 'the application changed concurrently');
       await repository.recordEvent({
         applicationId: input.applicationId,
-        fromState: application.state,
+        fromState: locked.state,
         toState: 'PENDING_PAYMENT',
         reason: 'invoice_opened',
         detail: { attemptId, provider },
@@ -916,18 +1239,81 @@ export class OnboardingService extends OnboardingServiceBase {
         payload: {
           applicationId: input.applicationId,
           provider,
-          amountMnt: application.totalAmountMnt.toString(),
+          amountMnt: locked.totalAmountMnt.toString(),
         },
       });
 
-      const result = {
+      const result: OpenedInvoice = {
         attemptId,
-        providerInvoiceId: invoice.providerInvoiceId,
-        checkoutUrl: invoice.checkoutUrl,
-        amountMnt: application.totalAmountMnt.toString(),
+        providerInvoiceId: invoice.value.providerInvoiceId,
+        checkoutUrl: invoice.value.payUrl ?? '',
+        amountMnt: locked.totalAmountMnt.toString(),
       };
-      await completeIdempotencyKey(uow, claimed.idempotencyId, 201, result);
+      await completeIdempotencyKey(uow, claim.idempotencyId, 201, result);
       return result;
     });
   }
+
+  /** Every precondition of doc 15 §3 and §3.1, as a refusal with a reason. */
+  private async assertInvoiceable(
+    repository: OnboardingRepository,
+    application: ApplicationRow,
+  ): Promise<void> {
+    if (application.contactPhoneVerifiedAt === null) {
+      throw new ApiError('PRECONDITION_FAILED', 'the phone number is not verified');
+    }
+    if (
+      application.state !== 'DRAFT' &&
+      application.state !== 'OWNER_VERIFICATION_REQUIRED' &&
+      application.state !== 'PAYMENT_FAILED' &&
+      application.state !== 'PAYMENT_EXPIRED'
+    ) {
+      throw new ApiError('CONFLICT', 'this application cannot open a new invoice');
+    }
+    // doc 15 §3.1: an outstanding proof means **no invoice at all**. The owner
+    // is re-probed here rather than trusted from an earlier call: a matching
+    // owner that appeared since is exactly the case this exists to catch.
+    if (application.ownerId !== null) {
+      if (!(await repository.hasPassedProof(application.applicationId))) {
+        throw new ApiError('PRECONDITION_FAILED', 'the ownership proof is outstanding');
+      }
+    } else if ((await repository.probeOwner(application.applicationId)) !== undefined) {
+      throw new ApiError(
+        'PRECONDITION_FAILED',
+        'this registration number belongs to an existing owner; resolve the owner first',
+      );
+    }
+    if (
+      application.existingAccountId === null &&
+      (await repository.existingAccountHoldsEmail(application.applicationId))
+    ) {
+      throw new ApiError(
+        'PRECONDITION_FAILED',
+        'an account already holds this email; sign in with it to continue',
+      );
+    }
+
+    // `ONB-DEC-008`: one live attempt. The partial unique index is the arbiter
+    // under concurrency; this check is what turns its refusal into a message.
+    const attempts = await repository.attemptsFor(application.applicationId);
+    const live = attempts.find(
+      (attempt) => attempt.state === 'PENDING' || attempt.state === 'PAYMENT_UNCERTAIN',
+    );
+    if (live !== undefined) {
+      throw new ApiError(
+        'CONFLICT',
+        live.state === 'PAYMENT_UNCERTAIN'
+          ? 'the previous payment is being reconciled with the provider'
+          : 'an invoice is already open for this application',
+      );
+    }
+  }
+}
+
+function proved(state: ApplicationState): OwnerResolutionResult {
+  return { state, proofRequired: false, ownerResolution: 'EXISTING_PROVED' };
+}
+
+function proofRequired(state: ApplicationState): OwnerResolutionResult {
+  return { state, proofRequired: true, ownerResolution: 'EXISTING_PROOF_REQUIRED' };
 }

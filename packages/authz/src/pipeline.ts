@@ -55,7 +55,13 @@ export const INDISTINGUISHABLE_STAGES: readonly Stage[] = [
   'scope',
 ];
 
-export const ACCOUNT_STATES = ['ACTIVE', 'SUSPENDED', 'DISABLED'] as const;
+/**
+ * `PENDING_ACTIVATION` is a Phase 05 state (doc 15 §5 step 7, §7): a first
+ * Hotel Admin whose account exists but whose activation link has not been
+ * redeemed. It is not `ACTIVE`, so stage 2 refuses it exactly as it refuses a
+ * suspended one — and sign-in never issues a session for it.
+ */
+export const ACCOUNT_STATES = ['PENDING_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'DISABLED'] as const;
 export type AccountState = (typeof ACCOUNT_STATES)[number];
 
 export const MEMBERSHIP_STATES = ['PENDING', 'ACTIVE', 'SUSPENDED', 'TERMINATED'] as const;

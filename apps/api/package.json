@@ -3,16 +3,37 @@
   "version": "0.0.0",
   "private": true,
   "main": "dist/main.js",
+  "exports": {
+    ".": "./dist/main.js",
+    "./bootstrap": {
+      "types": "./dist/bootstrap.d.ts",
+      "default": "./dist/bootstrap.js"
+    },
+    "./onboarding-worker": {
+      "types": "./dist/onboarding-worker.d.ts",
+      "default": "./dist/onboarding-worker.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "bootstrap": [
+        "dist/bootstrap.d.ts"
+      ],
+      "onboarding-worker": [
+        "dist/onboarding-worker.d.ts"
+      ]
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
-    "test:unit": "vitest run --exclude 'src/security/**' --exclude 'src/health/health.http.test.ts' --exclude 'src/modules/iam/iam.integration.test.ts' --exclude 'src/modules/iam/iam.repair.test.ts' --exclude 'src/modules/iam/iam.remediation2.test.ts' --exclude 'src/modules/iam/iam.remediation3.test.ts' --exclude 'src/modules/iam/iam.remediation4.test.ts' --exclude 'src/modules/iam/iam.concurrency.test.ts' --exclude 'src/modules/onboarding/onboarding.integration.test.ts' --exclude 'src/modules/onboarding/subscription.integration.test.ts' --exclude 'src/modules/onboarding/onboarding.concurrency.test.ts' --exclude 'src/modules/onboarding/onboarding.security.test.ts'",
+    "test:unit": "vitest run --exclude 'src/security/**' --exclude 'src/health/health.http.test.ts' --exclude 'src/modules/iam/iam.integration.test.ts' --exclude 'src/modules/iam/iam.repair.test.ts' --exclude 'src/modules/iam/iam.remediation2.test.ts' --exclude 'src/modules/iam/iam.remediation3.test.ts' --exclude 'src/modules/iam/iam.remediation4.test.ts' --exclude 'src/modules/iam/iam.concurrency.test.ts' --exclude 'src/modules/onboarding/onboarding.integration.test.ts' --exclude 'src/modules/onboarding/subscription.integration.test.ts' --exclude 'src/modules/onboarding/onboarding.concurrency.test.ts' --exclude 'src/modules/onboarding/onboarding.security.test.ts' --exclude 'src/modules/onboarding/onboarding.remediation1.test.ts' --exclude 'src/modules/onboarding/subscription.remediation1.test.ts' --exclude 'src/modules/onboarding/onboarding.authorization.http.test.ts' --exclude 'src/modules/onboarding/contracts/bullmq-provisioning-signal.test.ts'",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "openapi": "tsx src/openapi.ts",
     "test:security": "vitest run src/security src/modules/onboarding/onboarding.security.test.ts",
-    "test:integration": "vitest run src/health/health.http.test.ts src/modules/iam/iam.integration.test.ts src/modules/iam/iam.repair.test.ts src/modules/iam/iam.remediation2.test.ts src/modules/iam/iam.remediation3.test.ts src/modules/iam/iam.remediation4.test.ts src/modules/onboarding/onboarding.integration.test.ts src/modules/onboarding/subscription.integration.test.ts",
+    "test:integration": "vitest run src/health/health.http.test.ts src/modules/iam/iam.integration.test.ts src/modules/iam/iam.repair.test.ts src/modules/iam/iam.remediation2.test.ts src/modules/iam/iam.remediation3.test.ts src/modules/iam/iam.remediation4.test.ts src/modules/onboarding/onboarding.integration.test.ts src/modules/onboarding/subscription.integration.test.ts src/modules/onboarding/onboarding.remediation1.test.ts src/modules/onboarding/subscription.remediation1.test.ts src/modules/onboarding/onboarding.authorization.http.test.ts src/modules/onboarding/contracts/bullmq-provisioning-signal.test.ts",
     "test:concurrency": "vitest run src/modules/iam/iam.concurrency.test.ts src/modules/onboarding/onboarding.concurrency.test.ts"
   },
   "dependencies": {
@@ -28,6 +49,7 @@
     "@prsystem/ports": "workspace:*",
     "@prsystem/telemetry": "workspace:*",
     "@prsystem/time": "workspace:*",
+    "bullmq": "5.81.3",
     "fastify": "5.11.3",
     "ioredis": "5.11.1",
     "pg": "8.23.0",

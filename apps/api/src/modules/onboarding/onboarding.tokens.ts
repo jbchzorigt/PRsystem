@@ -10,3 +10,4 @@ export const EBARIMT = Symbol('onboarding.ebarimt');
 export const PHONE_VERIFICATION = Symbol('onboarding.phoneVerification');
 export const ONBOARDING_POOL = Symbol('onboarding.pool');
 export const ONBOARDING_PARAMS = Symbol('onboarding.parameters');
+export const PROVISIONING_SIGNAL = Symbol('onboarding.provisioningSignal');

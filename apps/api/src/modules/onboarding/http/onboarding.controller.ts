@@ -1,26 +1,43 @@
-import { Controller, Get, HttpCode, Inject, Param, Post, Req, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { ApiError } from '@prsystem/contracts';
+import { isPaymentProvider } from '@prsystem/ports';
+import type { AuthenticatedRequest } from '../../iam/http/session.guard';
+import { SessionGuard, actorOf } from '../../iam/http/session.guard';
 import { body, idempotencyKey, requireString, requireUuid } from '../../iam/http/validation';
 import { OnboardingService } from '../services/onboarding.service';
 import { ProvisioningService } from '../services/provisioning.service';
 import { ActivationService } from '../services/activation.service';
 import { newOnboardingRequest } from '../services/onboarding-context';
-import { isPaymentProvider } from '../contracts/payment-gateway.port';
 
 /**
  * The public onboarding surface (doc 15).
  *
  * Every route here is reached **without a session**, because the whole point of
  * the flow is that the applicant does not have one yet. Authority comes from the
- * bearer reference their own draft was minted with, presented in the
- * `X-Onboarding-Token` header and resolved server-side; a path parameter alone
- * reaches nothing.
+ * bearer reference their own draft was minted with — returned exactly once, at
+ * creation, and never persisted, logged, audited or placed in an outbox payload
+ * — presented in the `X-Onboarding-Token` header and resolved server-side; a
+ * path parameter alone reaches nothing.
  *
- * The one exception is the provider callback, which carries no applicant secret
- * at all — its authority is the gateway's own signature verification, and the
- * invoice reference it names.
+ * Two routes take a session as well as the reference: binding an account that
+ * already holds the admin email, and proving ownership as the account already
+ * linked to the owner (doc 15 §3.1). In both the session identifies who is
+ * acting; the reference still says which draft.
+ *
+ * The one route with neither is the provider callback, whose authority is the
+ * gateway's own signature verification and the invoice reference it names.
  */
 const APPLICANT_HEADER = 'x-onboarding-token';
 
@@ -53,7 +70,10 @@ export class OnboardingController {
 
   @Post('applications')
   @ApiOperation({ summary: 'Create a pre-payment hotel registration request' })
-  @ApiResponse({ status: 201, description: 'An application exists; no hotel or subscription does' })
+  @ApiResponse({
+    status: 201,
+    description: 'An application exists; no hotel, owner or subscription does',
+  })
   async create(
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
@@ -108,6 +128,14 @@ export class OnboardingController {
     return { ...created };
   }
 
+  @Get('applications/state')
+  @ApiOperation({ summary: 'The canonical application state and the applicant’s progress' })
+  async state(@Req() request: FastifyRequest): Promise<Record<string, unknown>> {
+    const context = newOnboardingRequest();
+    const applicationId = await this.onboarding.resolveApplicant(applicantToken(request), context);
+    return { ...(await this.onboarding.applicationState(applicationId, context)) };
+  }
+
   @Post('applications/owner-resolution')
   @HttpCode(200)
   @ApiOperation({ summary: 'Resolve the subscription owner behind an application' })
@@ -143,7 +171,7 @@ export class OnboardingController {
 
   @Post('applications/ownership-proof')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Redeem an existing-owner challenge' })
+  @ApiOperation({ summary: 'Redeem the existing-owner challenge sent to the stored contact' })
   async proveOwnership(@Req() request: FastifyRequest): Promise<Record<string, unknown>> {
     const payload = body(request);
     const context = newOnboardingRequest();
@@ -151,15 +179,46 @@ export class OnboardingController {
     return {
       ...(await this.onboarding.proveOwnership(
         applicationId,
-        requireString(payload['challengeToken'], 'challengeToken'),
+        requireString(payload['code'], 'code', 10),
         context,
       )),
     };
   }
 
+  @Post('applications/ownership-proof/account')
+  @HttpCode(200)
+  @UseGuards(SessionGuard)
+  @ApiOperation({ summary: 'Prove ownership as the account already linked to the owner' })
+  async proveOwnershipByAccount(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<Record<string, unknown>> {
+    const context = newOnboardingRequest();
+    const applicationId = await this.onboarding.resolveApplicant(applicantToken(request), context);
+    return {
+      ...(await this.onboarding.proveOwnershipByAccount(applicationId, actorOf(request), context)),
+    };
+  }
+
+  @Post('applications/account-binding')
+  @HttpCode(200)
+  @UseGuards(SessionGuard)
+  @ApiOperation({
+    summary: 'Bind the signed-in account that already holds the admin email to the application',
+  })
+  async bindAccount(@Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> {
+    const context = newOnboardingRequest();
+    const applicationId = await this.onboarding.resolveApplicant(applicantToken(request), context);
+    return {
+      ...(await this.onboarding.bindExistingAccount(applicationId, actorOf(request), context)),
+    };
+  }
+
   @Post('applications/invoice')
   @ApiOperation({ summary: 'Create the subscription payment invoice' })
-  @ApiResponse({ status: 412, description: 'The phone is unverified or a proof is outstanding' })
+  @ApiResponse({
+    status: 412,
+    description: 'The phone, the owner proof or the account proof is outstanding',
+  })
   @ApiResponse({ status: 503, description: 'No payment adapter is configured (EXT-03/EXT-04)' })
   async invoice(
     @Req() request: FastifyRequest,
@@ -221,14 +280,6 @@ export class OnboardingController {
       newOnboardingRequest(),
     );
     return { accepted: true };
-  }
-
-  @Get('applications/state')
-  @ApiOperation({ summary: 'The canonical application state' })
-  async state(@Req() request: FastifyRequest): Promise<{ applicationId: string }> {
-    const context = newOnboardingRequest();
-    const applicationId = await this.onboarding.resolveApplicant(applicantToken(request), context);
-    return { applicationId };
   }
 
   /**

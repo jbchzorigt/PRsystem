@@ -32,6 +32,12 @@ export const envSchema = z.object({
 
   DATABASE_URL: postgresUrl,
   REDIS_URL: redisUrl,
+  /**
+   * The BullMQ key prefix the API signals into and the worker consumes from.
+   * Optional: one deployment, one namespace, and only a test that runs several
+   * against one Redis needs to set it.
+   */
+  QUEUE_PREFIX: z.string().min(1).optional(),
 
   /** Key management adapter. `none` fails closed; `local` is refused outside local/ci/test. */
   KMS_ADAPTER: z.string().default('none'),
