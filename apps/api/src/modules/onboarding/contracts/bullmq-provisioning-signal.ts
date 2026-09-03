@@ -38,29 +38,46 @@ export interface BullMqSignalOptions {
 
 export class BullMqProvisioningSignal implements ProvisioningSignalPort {
   readonly id = 'bullmq';
-  private readonly queue: Queue;
+  private queue: Queue | undefined;
+  private readonly connection: RedisOptions;
+  private readonly prefix: string | undefined;
   private readonly timeoutMs: number;
 
   constructor(options: BullMqSignalOptions) {
     // A signal must never wait on a Redis that is down: no offline queue, no
-    // unbounded reconnects, and a lazy connection so constructing the port
-    // contacts nothing. The connection is always plain options here — the
+    // unbounded reconnects. The connection is always plain options here — the
     // worker registry hands over host and port, never a live client.
-    const connection: RedisOptions = {
+    this.connection = {
       ...(options.connection as RedisOptions),
       enableOfflineQueue: false,
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       retryStrategy: () => null,
     };
-    this.queue = new Queue(PROVISIONING_QUEUE, {
-      connection,
-      ...(options.prefix === undefined ? {} : { prefix: options.prefix }),
-    });
+    this.prefix = options.prefix;
     this.timeoutMs = options.timeoutMs ?? 1_500;
+  }
+
+  /**
+   * The queue is built on the first signal, not in the constructor: BullMQ
+   * opens its connection as soon as a `Queue` exists, so an API that refused to
+   * start — or one whose Redis is not there — would otherwise hold a half-open
+   * connection whose close surfaced as an unhandled rejection. Constructing the
+   * port contacts nothing.
+   */
+  private handle(): Queue {
+    if (this.queue !== undefined) return this.queue;
+    const queue = new Queue(PROVISIONING_QUEUE, {
+      connection: this.connection,
+      ...(this.prefix === undefined ? {} : { prefix: this.prefix }),
+    });
     // Connection errors are reported through `signal`'s result; an unhandled
-    // 'error' event on the queue would otherwise crash the process.
-    this.queue.on('error', () => undefined);
+    // 'error' event or an unobserved readiness rejection would otherwise crash
+    // the process.
+    queue.on('error', () => undefined);
+    queue.waitUntilReady().catch(() => undefined);
+    this.queue = queue;
+    return queue;
   }
 
   async signal(applicationId: string): Promise<boolean> {
@@ -70,7 +87,7 @@ export class BullMqProvisioningSignal implements ProvisioningSignalPort {
     });
     try {
       const accepted = await Promise.race([
-        this.queue
+        this.handle()
           .add(
             'signal',
             { kind: 'signal', applicationId },
@@ -89,6 +106,8 @@ export class BullMqProvisioningSignal implements ProvisioningSignalPort {
   }
 
   async close(): Promise<void> {
-    await this.queue.close().catch(() => undefined);
+    const queue = this.queue;
+    this.queue = undefined;
+    if (queue !== undefined) await queue.close().catch(() => undefined);
   }
 }
