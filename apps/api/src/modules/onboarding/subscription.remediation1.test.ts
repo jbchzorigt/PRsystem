@@ -382,9 +382,12 @@ describe('R6 — invoice creation is idempotent and the quote is re-locked', () 
     );
     // The provider did create the invoice; we never stored it.
     expect(env.qpay.invoiceCount).toBe(before + 1);
+    // The attempt was prepared before the provider was called and is still
+    // waiting for the reply that was lost: no live attempt exists (remediation 2).
     expect(
       await count(
-        `SELECT count(*)::text AS n FROM platform.onboarding_payment_attempt WHERE application_id = $1`,
+        `SELECT count(*)::text AS n FROM platform.onboarding_payment_attempt
+          WHERE application_id = $1 AND state <> 'PREPARING'`,
         [created.applicationId],
       ),
     ).toBe(0);
@@ -418,7 +421,8 @@ describe('R6 — invoice creation is idempotent and the quote is re-locked', () 
     expect(env.khaan.invoiceCount).toBe(billingBefore + 1);
     expect(
       await count(
-        `SELECT count(*)::text AS n FROM platform.subscription_billing_intent WHERE hotel_id = $1`,
+        `SELECT count(*)::text AS n FROM platform.subscription_billing_intent
+          WHERE hotel_id = $1 AND state <> 'PREPARING'`,
         [hotel.hotelId],
       ),
     ).toBe(0);
@@ -482,7 +486,7 @@ describe('R6 — invoice creation is idempotent and the quote is re-locked', () 
       `SELECT i.quoted_billing_revision AS quoted, s.billing_revision AS current
          FROM platform.subscription_billing_intent i
          JOIN platform.hotel_subscription s ON s.hotel_id = i.hotel_id
-        WHERE i.hotel_id = $1 AND i.kind = 'RENEWAL'`,
+        WHERE i.hotel_id = $1 AND i.kind = 'RENEWAL' AND i.state <> 'ABANDONED'`,
       [hotel.hotelId],
     );
     expect(stale.rows).toEqual([]);
@@ -520,7 +524,11 @@ describe('R6 — invoice creation is idempotent and the quote is re-locked', () 
       `SELECT intent_id, state FROM platform.subscription_billing_intent WHERE hotel_id = $1`,
       [hotel.hotelId],
     );
-    expect(intents.rows).toEqual([{ intent_id: renewal.intentId, state: 'PENDING' }]);
+    // The renewal is untouched; the upgrade the provider could not answer is a
+    // prepared row waiting for a retry, never a live one (remediation 2).
+    expect(intents.rows.filter((row) => row.state !== 'PREPARING')).toEqual([
+      { intent_id: renewal.intentId, state: 'PENDING' },
+    ]);
   });
 });
 

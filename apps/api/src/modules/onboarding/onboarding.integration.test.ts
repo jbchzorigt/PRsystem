@@ -225,7 +225,8 @@ describe('ONB-DEC-001 — nothing exists before authoritative payment', () => {
       await expect(
         client.query(
           `SELECT platform.provision_paid_hotel($1, 'probe-key-0001', NULL, NULL, NULL, NULL,
-                                                NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
+                                                NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                                                gen_random_uuid())`,
           [ready.applicationId],
         ),
       ).rejects.toMatchObject({ code: '42501' });
@@ -826,6 +827,13 @@ describe('ONB-DEC-006 — durable, all-or-nothing provisioning', () => {
       `UPDATE platform.user_account SET email_normalized = $2, revision = revision + 1
         WHERE account_id = $1`,
       [blocker.rows[0]?.account_id, `moved-${unique()}@example.test`],
+    );
+    // The failed attempt persisted a backoff that every claim honours
+    // (remediation 2); the retry is due once it has elapsed.
+    await env.admin.query(
+      `UPDATE platform.onboarding_application SET provision_available_at = now(), revision = revision + 1
+        WHERE application_id = $1`,
+      [ready.applicationId],
     );
 
     const outcome = await env.provisioning.provision(

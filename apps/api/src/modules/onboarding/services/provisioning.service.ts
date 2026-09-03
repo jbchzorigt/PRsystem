@@ -47,7 +47,9 @@ export type ProvisioningOutcome =
   | { readonly kind: 'already_provisioned'; readonly hotelId: string }
   | { readonly kind: 'failed'; readonly reason: string; readonly attempts: number }
   | { readonly kind: 'exhausted'; readonly attempts: number }
-  | { readonly kind: 'blocked'; readonly state: string };
+  | { readonly kind: 'blocked'; readonly state: string }
+  /** Not due yet: the persisted backoff has not elapsed (remediation 2, finding 3). */
+  | { readonly kind: 'deferred'; readonly availableAt: Date };
 
 export interface SweepOutcome {
   readonly claimed: number;
@@ -64,7 +66,8 @@ type ProviderStatus =
       readonly currency: string;
       readonly merchantRef: string;
       readonly confirmedAt: Date;
-      readonly providerFeeMnt: bigint;
+      /** The fee the provider stated, or null when it stated none (finding 6). */
+      readonly providerFeeMnt: bigint | null;
     }
   | { readonly outcome: 'pending' }
   | { readonly outcome: 'failed'; readonly reason: string }
@@ -94,7 +97,7 @@ export function providerStatusFrom(status: InvoiceStatus): ProviderStatus {
         currency: status.currency,
         merchantRef: status.merchantRef,
         confirmedAt: status.paidAt,
-        providerFeeMnt: status.providerFeeMnt ?? 0n,
+        providerFeeMnt: status.providerFeeMnt ?? null,
       };
     case 'FAILED':
       return { outcome: 'failed', reason: status.failureCode ?? 'failed' };
@@ -170,11 +173,19 @@ export class ProvisioningService extends OnboardingServiceBase {
     callback: RawCallback,
     status: ProviderStatus,
   ): Promise<CallbackOutcome> {
+    // One lock order with the invoice's finalization: the application row
+    // first, then the attempt (remediation 2, finding 1).
+    const scoped = uow.context.onboardingRef;
+    if (scoped === undefined) return { kind: 'rejected', reason: 'unknown_reference' };
+    const held = await repository.lock(scoped);
+    if (held === undefined) return { kind: 'rejected', reason: 'unknown_reference' };
     const attempt = await repository.lockAttemptByInvoice(
       callback.provider,
       callback.providerInvoiceId,
     );
-    if (attempt === undefined) return { kind: 'rejected', reason: 'unknown_reference' };
+    if (attempt === undefined || attempt.applicationId !== held.applicationId) {
+      return { kind: 'rejected', reason: 'unknown_reference' };
+    }
 
     if (attempt.state === 'PAID') {
       return { kind: 'replay', applicationId: attempt.applicationId };
@@ -495,12 +506,25 @@ export class ProvisioningService extends OnboardingServiceBase {
         // has to take it on, through `retryProvisioning`.
         return { outcome: 'exhausted', attempts: application.provisionAttempts } as const;
       }
+      if (
+        options.manual !== true &&
+        application.provisionAvailableAt.getTime() > uow.serverNow.getTime()
+      ) {
+        // The persisted backoff binds a signal exactly as it binds the sweep
+        // (remediation 2, finding 3): a claim before it elapsed is refused.
+        return { outcome: 'deferred', availableAt: application.provisionAvailableAt } as const;
+      }
 
       // The §3.1 race, discovered at claim time: an owner with this number
       // appeared since the pre-payment probe. Back to proof, on the same
       // payment; nothing is provisioned.
       const race = await this.ownerRaceDetected(repository, application);
       if (race !== false) {
+        // Bound to the owner it collided with, and sent back to proof. No proof
+        // row is opened here: a proof without a delivered challenge is one
+        // nobody can pass (remediation 2, finding 2). The applicant's next
+        // owner resolution opens the challenge and delivers it to the owner's
+        // stored contact.
         const moved = await repository.transition({
           applicationId,
           expectedRevision: application.revision,
@@ -509,18 +533,6 @@ export class ProvisioningService extends OnboardingServiceBase {
           ownerId: race.ownerId,
         });
         if (!moved) throw new ApiError('CONFLICT', 'the application changed concurrently');
-        if (race.openProof) {
-          await repository.openOwnerProof({
-            applicationId,
-            ownerId: race.ownerId,
-            method:
-              race.maskedDestination === null ? 'OFFLINE_VERIFICATION' : 'STORED_CONTACT_CHALLENGE',
-            challengeDigest: null,
-            challengeKeyVersion: null,
-            maskedDestination: race.maskedDestination,
-            ttlSeconds: parameters.ownerProofTtlSeconds,
-          });
-        }
         await repository.recordEvent({
           applicationId,
           fromState: application.state,
@@ -558,6 +570,8 @@ export class ProvisioningService extends OnboardingServiceBase {
     if (claimed.outcome === 'exhausted') {
       return { kind: 'exhausted', attempts: claimed.attempts };
     }
+    if (claimed.outcome === 'deferred')
+      return { kind: 'deferred', availableAt: claimed.availableAt };
 
     // The owner's resealed identifier and the activation link are minted here,
     // outside the build transaction, because they need the key-management port.
@@ -577,7 +591,7 @@ export class ProvisioningService extends OnboardingServiceBase {
     try {
       const hotelId = await this.inOnboardingScope(applicationId, request, async (uow) => {
         const result = await uow.query<{ hotel_id: string }>(
-          `SELECT platform.provision_paid_hotel($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          `SELECT platform.provision_paid_hotel($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
               AS hotel_id`,
           [
             applicationId,
@@ -593,6 +607,9 @@ export class ProvisioningService extends OnboardingServiceBase {
             link === undefined ? null : Buffer.from(link.sealed.ciphertext),
             link === undefined ? null : Buffer.from(link.sealed.wrappedDek),
             link?.sealed.keyVersion ?? null,
+            // The fence: the boundary runs only under this claim and its
+            // unexpired lease (remediation 2, finding 3).
+            claimToken,
           ],
         );
         const id = result.rows[0]?.hotel_id;
@@ -753,14 +770,17 @@ export class ProvisioningService extends OnboardingServiceBase {
 
       if (failure.ownerAppeared) {
         // The boundary refused because an owner with this number now exists:
-        // back to proof, on the same payment.
+        // back to proof, on the same payment, bound to that owner so the
+        // challenge can reach its stored contact (remediation 2, finding 2).
         const failed = await repository.lock(applicationId);
         if (failed !== undefined) {
+          const collided = await repository.probeOwner(applicationId);
           await repository.transition({
             applicationId,
             expectedRevision: failed.revision,
             state: 'PAID_OWNER_VERIFICATION_REQUIRED',
             reason: 'existing_owner_detected',
+            ...(collided === undefined ? {} : { ownerId: collided.ownerId }),
           });
           await repository.recordEvent({
             applicationId,
@@ -790,6 +810,7 @@ export class ProvisioningService extends OnboardingServiceBase {
     for (const applicationId of due) {
       const outcome = await this.provisionOne(applicationId, request);
       if (outcome.kind === 'provisioned' || outcome.kind === 'failed') claimed += 1;
+      if (outcome.kind === 'exhausted') claimed += 1;
       if (outcome.kind === 'already_provisioned') claimed += 1;
       if (outcome.kind === 'provisioned') provisioned += 1;
       if (outcome.kind === 'failed') failed += 1;

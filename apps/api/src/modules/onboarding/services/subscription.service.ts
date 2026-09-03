@@ -14,6 +14,7 @@ import type { InvoiceStatus, PaymentProvider, RawCallback } from '@prsystem/port
 import { isPaymentProvider } from '@prsystem/ports';
 import { derivedIdempotencyKey } from '../../iam/services/derived-key';
 import type { CommandActor, OnboardingDependencies, RequestContext } from './onboarding-context';
+import { AuthorizationDenied } from '../../iam/services/authorization.service';
 import { OnboardingServiceBase, portContext, portFailure } from './onboarding-context';
 import type { IntentRow, SubscriptionRow } from '../repositories/subscription.repository';
 import {
@@ -119,6 +120,50 @@ function snapshotOf(row: SubscriptionRow): QuotedSnapshot {
     expiresAt: row.expiresAt.getTime(),
     termMonths: row.termMonths,
   };
+}
+
+/**
+ * The snapshot a prepared quote was priced from, as the row recorded it. A row
+ * without one — there are none after remediation 2 — can never match.
+ */
+function quotedSnapshotOf(row: IntentRow): QuotedSnapshot | undefined {
+  const stored = row.quotedSnapshot;
+  if (stored === null) return undefined;
+  return {
+    billingRevision: Number(stored['billingRevision']),
+    effectivePackage: stored['effectivePackage'] as PackageCode,
+    packageFloor: stored['packageFloor'] as PackageCode,
+    pendingUpgradePackage: (stored['pendingUpgradePackage'] as PackageCode | null) ?? null,
+    pendingUpgradeEffectiveAt:
+      stored['pendingUpgradeEffectiveAt'] === null
+        ? null
+        : Number(stored['pendingUpgradeEffectiveAt']),
+    startsAt: Number(stored['startsAt']),
+    expiresAt: Number(stored['expiresAt']),
+    termMonths: Number(stored['termMonths']),
+  };
+}
+
+/** The audit a finalized quote records, derived from the row and nothing else. */
+function auditFor(row: IntentRow): { action: string; payload: Record<string, unknown> } {
+  return row.kind === 'RENEWAL'
+    ? {
+        action: 'subscription.renewal.quoted',
+        payload: {
+          targetPackage: row.targetPackage,
+          termMonths: row.termMonths,
+          amountMnt: row.amountMnt.toString(),
+        },
+      }
+    : {
+        action: 'subscription.upgrade.quoted',
+        payload: {
+          basisPackage: row.currentPackage,
+          targetPackage: row.targetPackage,
+          remainingServiceMonths: row.remainingServiceMonths,
+          amountMnt: row.amountMnt.toString(),
+        },
+      };
 }
 
 function sameSnapshot(left: QuotedSnapshot, right: QuotedSnapshot): boolean {
@@ -427,7 +472,16 @@ export class SubscriptionService extends OnboardingServiceBase {
   ): Promise<QuoteResult> {
     const parameters = this.parameters;
     const scoped = { ...request, accountId: actor.principal.accountId };
+    const merchantRef = derivedIdempotencyKey(key.operation, key.hotelId, key.idempotencyKey);
 
+    // T1 — authorization, then the claim, then eligibility, then a prepared
+    // quote (remediation 2, finding 1). A completed request is replayed as soon
+    // as the actor is known to hold the hotel, before the present row is
+    // judged: the retry of an upgrade that was quoted and since paid gets the
+    // stored answer, not a refusal to raise a package that is already raised.
+    // The quote is prepared with its complete priced snapshot and no provider
+    // invoice; a retry after a lost acknowledgement recovers that row and its
+    // price and never re-prices the provider's invoice.
     const prepared = await this.runAuthorizedHotelCommand(
       actor,
       { hotelId: key.hotelId },
@@ -438,7 +492,6 @@ export class SubscriptionService extends OnboardingServiceBase {
         const subscription = await repository.lock();
         if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
         await authorize(portFromRow(subscription));
-        const priced = price(subscription, uow.serverNow);
 
         const claimed = await claimIdempotencyKey(uow, {
           operation: key.operation,
@@ -451,23 +504,41 @@ export class SubscriptionService extends OnboardingServiceBase {
         if (claimed.kind === 'key_reused_with_different_payload') {
           throw new ApiError('IDEMPOTENCY_KEY_REUSED', 'this key was used for a different request');
         }
-        return {
-          priced,
-          snapshot: snapshotOf(subscription),
+
+        const existing = await repository.lockIntentByMerchantRef(merchantRef);
+        if (existing !== undefined) {
+          if (existing.state !== 'PREPARING') {
+            throw new ApiError('CONFLICT', 'the request claim is gone');
+          }
+          return { intent: existing, subscriptionId: subscription.subscriptionId };
+        }
+        const priced = price(subscription, uow.serverNow);
+        const intentId = await repository.prepareIntent({
           subscriptionId: subscription.subscriptionId,
-        };
+          provider: key.provider,
+          merchantRef,
+          amountMnt: priced.amountMnt,
+          quotedBillingRevision: subscription.billingRevision,
+          quotedSnapshot: { ...snapshotOf(subscription) },
+          quotedExpiresAt: subscription.expiresAt,
+          ttlSeconds: parameters.billingIntentTtlSeconds,
+          ...priced.intent,
+        });
+        const intent = await repository.intentById(intentId);
+        if (intent === undefined) throw new Error('the prepared quote could not be read back');
+        return { intent, subscriptionId: subscription.subscriptionId };
       },
     );
     if ('replay' in prepared) return prepared.replay;
+    const intent = prepared.intent;
 
-    const merchantRef = derivedIdempotencyKey(key.operation, key.hotelId, key.idempotencyKey);
     const invoice = await this.deps.gateways.gateway(key.provider).createInvoice(
       {
         intentId: merchantRef,
-        amountMnt: prepared.priced.amountMnt,
+        amountMnt: intent.amountMnt,
         currency: 'MNT',
         merchantRef,
-        expiresAt: new Date(Date.now() + parameters.billingIntentTtlSeconds * 1000),
+        expiresAt: intent.expiresAt,
         idempotencyKey: merchantRef,
       },
       portContext(request),
@@ -476,6 +547,7 @@ export class SubscriptionService extends OnboardingServiceBase {
       const failure = portFailure(invoice.error, 'the payment gateway');
       if (invoice.error.kind === 'REJECTED' || invoice.error.kind === 'MISMATCH') {
         await this.inHotelScope(key.hotelId, scoped, async (uow) => {
+          const repository = new SubscriptionRepository(uow);
           const lock = await lockIdempotencyClaim(uow, {
             operation: key.operation,
             key: key.idempotencyKey,
@@ -485,78 +557,130 @@ export class SubscriptionService extends OnboardingServiceBase {
               error: { code: failure.code, message: failure.message },
             });
           }
+          const row = await repository.lockIntentByMerchantRef(merchantRef);
+          if (row !== undefined && row.state === 'PREPARING') {
+            await repository.abandonIntent({
+              intentId: row.intentId,
+              expectedRevision: row.revision,
+              providerInvoiceId: null,
+              reason: `provider_${invoice.error.kind.toLowerCase()}`,
+            });
+          }
         });
       }
       throw failure;
     }
+    const providerInvoiceId = invoice.value.providerInvoiceId;
 
-    return this.inHotelScope(key.hotelId, scoped, async (uow) => {
-      const repository = new SubscriptionRepository(uow);
-      const subscription = await repository.lock();
-      if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
+    // T2 — the final mutation, authorized again against the row as it is now
+    // (remediation 2, finding 5): a principal who lost the hotel while the
+    // provider was being called persists nothing, and the provider's invoice is
+    // recorded on the abandoned quote so it is never an untracked orphan.
+    let settled: { result: QuoteResult } | { refusal: ApiError };
+    try {
+      settled = await this.runAuthorizedHotelCommand(
+        actor,
+        { hotelId: key.hotelId },
+        PAY_PERMISSION,
+        scoped,
+        async (uow, _gate, authorize) => {
+          const repository = new SubscriptionRepository(uow);
+          const subscription = await repository.lock();
+          if (subscription === undefined) throw new ApiError('NOT_FOUND', 'not found');
+          await authorize(portFromRow(subscription));
 
-      const claim = await lockIdempotencyClaim(uow, {
-        operation: key.operation,
-        key: key.idempotencyKey,
-      });
-      if (claim.kind === 'replay') return replayStored(claim.status, claim.body);
-      if (claim.kind === 'absent') throw new ApiError('CONFLICT', 'the request claim is gone');
+          const claim = await lockIdempotencyClaim(uow, {
+            operation: key.operation,
+            key: key.idempotencyKey,
+          });
+          if (claim.kind === 'replay') return { result: replayStored(claim.status, claim.body) };
+          if (claim.kind === 'absent') throw new ApiError('CONFLICT', 'the request claim is gone');
+          const row = await repository.lockIntentByMerchantRef(merchantRef);
+          if (row === undefined || row.state !== 'PREPARING') {
+            throw new ApiError('CONFLICT', 'the request claim is gone');
+          }
 
-      // doc 17 §4.4: the snapshot the price was computed from must be the row
-      // as it is now. Anything else — a renewal that moved the expiry, an
-      // upgrade that moved the revision — makes this quote stale before it
-      // exists, and a stale quote is never persisted.
-      if (!sameSnapshot(prepared.snapshot, snapshotOf(subscription))) {
-        const stale = new ApiError(
-          'CONFLICT',
-          'the subscription changed while the quote was being prepared; quote again',
-        );
-        await completeIdempotencyKey(uow, claim.idempotencyId, stale.status, {
-          error: { code: stale.code, message: stale.message },
-        });
-        throw stale;
-      }
+          // doc 17 §4.4: the snapshot the price was computed from must be the
+          // row as it is now. Anything else — a renewal that moved the expiry,
+          // an upgrade that moved the revision — makes this quote stale before
+          // it exists. A stale quote is never live: it is abandoned with the
+          // provider's invoice on it, the refusal is stored against the key, and
+          // both are committed before the refusal is thrown (finding 1).
+          const quoted = quotedSnapshotOf(row);
+          if (quoted === undefined || !sameSnapshot(quoted, snapshotOf(subscription))) {
+            const stale = new ApiError(
+              'CONFLICT',
+              'the subscription changed while the quote was being prepared; quote again',
+            );
+            await repository.abandonIntent({
+              intentId: row.intentId,
+              expectedRevision: row.revision,
+              providerInvoiceId,
+              reason: 'stale_snapshot',
+            });
+            await completeIdempotencyKey(uow, claim.idempotencyId, stale.status, {
+              error: { code: stale.code, message: stale.message },
+            });
+            return { refusal: stale };
+          }
 
-      // doc 17 §4.4: one unpaid intent at a time. The previous quote is
-      // superseded here, with the replacement's invoice already durable at the
-      // provider — never before.
-      await repository.staleLiveIntent(
-        subscription.subscriptionId,
-        `superseded_by_${prepared.priced.intent.kind.toLowerCase()}`,
+          // doc 17 §4.4: one unpaid intent at a time. The previous quote is
+          // superseded here, with the replacement's invoice already durable at
+          // the provider — never before.
+          await repository.staleLiveIntent(
+            subscription.subscriptionId,
+            `superseded_by_${row.kind.toLowerCase()}`,
+          );
+          const live = await repository.finalizeIntent({
+            intentId: row.intentId,
+            expectedRevision: row.revision,
+            providerInvoiceId,
+          });
+          if (!live) throw new ApiError('CONFLICT', 'the quote changed concurrently');
+
+          const audit = auditFor(row);
+          await recordPlatformAudit(uow, {
+            action: audit.action,
+            outcome: 'allowed',
+            targetType: 'subscription_billing_intent',
+            targetRef: row.intentId,
+            payload: audit.payload,
+          });
+          const result: QuoteResult = {
+            intentId: row.intentId,
+            providerInvoiceId,
+            checkoutUrl: invoice.value.payUrl ?? '',
+            amountMnt: row.amountMnt.toString(),
+            vatAmountMnt: vatInsideInclusive(mnt(row.amountMnt), row.vatRateBp).toString(),
+            targetPackage: row.targetPackage,
+            ...(row.effectiveAt === null ? {} : { effectiveAt: row.effectiveAt.toISOString() }),
+          };
+          await completeIdempotencyKey(uow, claim.idempotencyId, 201, result);
+          return { result };
+        },
       );
-
-      const intentId = await repository.openIntent({
-        subscriptionId: subscription.subscriptionId,
-        provider: key.provider,
-        merchantRef,
-        providerInvoiceId: invoice.value.providerInvoiceId,
-        amountMnt: prepared.priced.amountMnt,
-        quotedBillingRevision: subscription.billingRevision,
-        quotedExpiresAt: subscription.expiresAt,
-        ttlSeconds: parameters.billingIntentTtlSeconds,
-        ...prepared.priced.intent,
-      });
-      await recordPlatformAudit(uow, {
-        action: prepared.priced.audit.action,
-        outcome: 'allowed',
-        targetType: 'subscription_billing_intent',
-        targetRef: intentId,
-        payload: prepared.priced.audit.payload,
-      });
-      const result: QuoteResult = {
-        intentId,
-        providerInvoiceId: invoice.value.providerInvoiceId,
-        checkoutUrl: invoice.value.payUrl ?? '',
-        amountMnt: prepared.priced.amountMnt.toString(),
-        vatAmountMnt: prepared.priced.vatAmountMnt.toString(),
-        targetPackage: prepared.priced.intent.targetPackage,
-        ...(prepared.priced.effectiveAt === undefined
-          ? {}
-          : { effectiveAt: prepared.priced.effectiveAt.toISOString() }),
-      };
-      await completeIdempotencyKey(uow, claim.idempotencyId, 201, result);
-      return result;
-    });
+    } catch (error) {
+      // Denied at the final mutation: the provider's invoice exists and the
+      // prepared quote is abandoned with it, as bookkeeping and never as an
+      // entitlement. The existing live intent is untouched.
+      if (error instanceof AuthorizationDenied) {
+        await this.inHotelScope(key.hotelId, scoped, async (uow) => {
+          const repository = new SubscriptionRepository(uow);
+          const row = await repository.lockIntentByMerchantRef(merchantRef);
+          if (row !== undefined && row.state === 'PREPARING') {
+            await repository.abandonIntent({
+              intentId: row.intentId,
+              expectedRevision: row.revision,
+              providerInvoiceId,
+              reason: 'authorization_denied',
+            });
+          }
+        }).catch(() => undefined);
+      }
+      throw error;
+    }
+    if ('refusal' in settled) throw settled.refusal;
+    return settled.result;
   }
 
   // ================================================================= callbacks
@@ -588,6 +712,13 @@ export class SubscriptionService extends OnboardingServiceBase {
 
     return this.inHotelScope(hotelId, request, async (uow) => {
       const repository = new SubscriptionRepository(uow);
+      // One lock order with the replacement quote: the subscription row first,
+      // then the intent (remediation 2, finding 1). The quote's finalization
+      // locks the subscription and then stales the live intent; a callback
+      // that took the intent first and then waited on the subscription was the
+      // other half of a deadlock.
+      const subscription = await repository.lock();
+      if (subscription === undefined) return { kind: 'rejected', reason: 'unknown_reference' };
       const intent = await repository.lockIntentByInvoice(
         callback.provider,
         callback.providerInvoiceId,
@@ -632,9 +763,6 @@ export class SubscriptionService extends OnboardingServiceBase {
         });
         return { kind: 'rejected', reason: mismatch };
       }
-
-      const subscription = await repository.lock();
-      if (subscription === undefined) return { kind: 'rejected', reason: 'unknown_reference' };
 
       const stale =
         intent.state !== 'PENDING' || intent.quotedBillingRevision !== subscription.billingRevision;
@@ -686,7 +814,7 @@ export class SubscriptionService extends OnboardingServiceBase {
     intent: IntentRow,
     purpose: 'RENEWAL' | 'UPGRADE',
     termMonths: number | null,
-    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint },
+    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint | null },
   ): Promise<string> {
     return repository.recordPayment({
       subscriptionId: subscription.subscriptionId,
@@ -713,7 +841,7 @@ export class SubscriptionService extends OnboardingServiceBase {
     repository: SubscriptionRepository,
     subscription: SubscriptionRow,
     intent: IntentRow,
-    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint },
+    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint | null },
   ): Promise<BillingCallbackOutcome> {
     const termMonths = intent.termMonths ?? subscription.termMonths;
     const confirmedAt = settlement.confirmedAt;
@@ -782,7 +910,7 @@ export class SubscriptionService extends OnboardingServiceBase {
     repository: SubscriptionRepository,
     subscription: SubscriptionRow,
     intent: IntentRow,
-    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint },
+    settlement: { providerPaymentId: string; confirmedAt: Date; providerFeeMnt: bigint | null },
     now: Date,
   ): Promise<BillingCallbackOutcome> {
     const effectiveAt = intent.effectiveAt ?? now;
@@ -914,6 +1042,10 @@ export class SubscriptionService extends OnboardingServiceBase {
     request: RequestContext,
   ): Promise<void> {
     const accountId = actor.principal.accountId;
+    // Authorization and mutation in one transaction, under the Operation realm
+    // (remediation 2, finding 5): the decision that was permitted is the
+    // decision that commits, and a decision that cannot be applied leaves no
+    // audit of having been requested.
     await this.runOperationCommand(
       actor,
       'operation.subscription_payment_reconcile',
@@ -927,31 +1059,29 @@ export class SubscriptionService extends OnboardingServiceBase {
           targetRef: input.intentId,
           payload: { hotelId: input.hotelId, outcome: input.outcome, accountId },
         });
+        const repository = new SubscriptionRepository(uow, input.hotelId);
+        const intent = await repository.intentById(input.intentId);
+        if (intent === undefined) throw new ApiError('NOT_FOUND', 'not found');
+        if (intent.state !== 'PAID_REQUIRES_RECONCILIATION') {
+          throw new ApiError('CONFLICT', 'this payment is not in the reconciliation queue');
+        }
+        const closed = await repository.closeIntentReconciliation({
+          intentId: input.intentId,
+          expectedRevision: intent.revision,
+          outcome: input.outcome,
+          accountId,
+          reason: input.reason,
+        });
+        if (!closed) throw new ApiError('CONFLICT', 'the case changed concurrently');
+        await recordPlatformAudit(uow, {
+          action: 'subscription.payment.reconciled',
+          outcome: 'allowed',
+          targetType: 'subscription_billing_intent',
+          targetRef: input.intentId,
+          payload: { outcome: input.outcome, accountId },
+        });
       },
     );
-    await this.inHotelScope(input.hotelId, { ...request, accountId }, async (uow) => {
-      const repository = new SubscriptionRepository(uow);
-      const intent = await repository.intentById(input.intentId);
-      if (intent === undefined) throw new ApiError('NOT_FOUND', 'not found');
-      if (intent.state !== 'PAID_REQUIRES_RECONCILIATION') {
-        throw new ApiError('CONFLICT', 'this payment is not in the reconciliation queue');
-      }
-      const closed = await repository.closeIntentReconciliation({
-        intentId: input.intentId,
-        expectedRevision: intent.revision,
-        outcome: input.outcome,
-        accountId,
-        reason: input.reason,
-      });
-      if (!closed) throw new ApiError('CONFLICT', 'the case changed concurrently');
-      await recordPlatformAudit(uow, {
-        action: 'subscription.payment.reconciled',
-        outcome: 'allowed',
-        targetType: 'subscription_billing_intent',
-        targetRef: input.intentId,
-        payload: { outcome: input.outcome, accountId },
-      });
-    });
   }
 }
 

@@ -6,7 +6,8 @@ import { createLogger, newRequestId, runWithCorrelation } from '@prsystem/teleme
 import { createOnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
 import type { OnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
-import { createOnboardingWorkers, scheduleOnboardingSweeps } from './jobs/onboarding';
+import { startOnboardingConsumers } from './jobs/onboarding';
+import type { OnboardingConsumers } from './jobs/onboarding';
 import { startWorker } from './startup';
 
 async function main(): Promise<void> {
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
     level: config.LOG_LEVEL,
     serviceName: `${config.OTEL_SERVICE_NAME}-worker`,
   });
-  let runtime: OnboardingWorkerRuntime | undefined;
+  let onboarding: OnboardingConsumers | undefined;
 
   // Startup order is enforced by startWorker: the security preconditions run to
   // completion before Redis is contacted or any consumer is constructed.
@@ -44,31 +45,38 @@ async function main(): Promise<void> {
         logger.error({ jobId: job?.id, err: error }, 'job failed');
       });
 
-      // The Phase 05 operations, bound to this deployment's own restricted
-      // login and the environment's ports (R3, R5).
-      runtime = createOnboardingWorkerRuntime({
-        databaseUrl: config.DATABASE_URL,
-        appEnv: config.APP_ENV,
-        kmsAdapter: config.KMS_ADAPTER,
-        ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
-      });
-      const onboarding = createOnboardingWorkers(connection, runtime, logger, {
-        ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }),
-      });
-      return [heartbeat, ...onboarding];
+      return [heartbeat];
     },
   });
 
-  await scheduleOnboardingSweeps(connectionFromUrl(config.REDIS_URL), {
-    ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }),
+  // The Phase 05 operations, bound to this deployment's own restricted login
+  // and the environment's ports (R3, R5). Consumers and sweeps open together
+  // or not at all: a failure here closes what was opened, then the heartbeat,
+  // and the process exits non-zero (remediation 2, finding 3).
+  const runtime: OnboardingWorkerRuntime = createOnboardingWorkerRuntime({
+    databaseUrl: config.DATABASE_URL,
+    appEnv: config.APP_ENV,
+    kmsAdapter: config.KMS_ADAPTER,
+    ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
   });
+  try {
+    onboarding = await startOnboardingConsumers({
+      connection: connectionFromUrl(config.REDIS_URL),
+      runtime,
+      logger,
+      options: { ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }) },
+    });
+  } catch (error) {
+    await started.close();
+    throw error;
+  }
 
   logger.info({ queues: Object.values(QUEUE_NAMES) }, 'worker started');
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'worker shutting down');
+    await onboarding?.close();
     await started.close();
-    await runtime?.close();
     process.exit(0);
   };
 

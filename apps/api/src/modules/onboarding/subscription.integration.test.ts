@@ -895,11 +895,14 @@ describe('SUB-DEC-009 — a confirmed subscription payment is never reversed', (
          FROM platform.subscription_payment WHERE hotel_id = $1`,
       [hotel.hotelId],
     );
+    // The provider stated no fee for this payment: the fee is unknown and no
+    // net amount is derived from it (remediation 2, finding 6). A stated zero
+    // is a different fact, recorded as zero.
     expect(payment.rows[0]).toEqual({
       gross: '25000',
       vat: '2273',
-      fee: '0',
-      net: '25000',
+      fee: null,
+      net: null,
     });
   });
 });

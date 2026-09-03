@@ -68,6 +68,8 @@ export interface OnboardingHarness {
   readonly ebarimt: EBarimtService;
   /** The Phase 05 background operations, on the worker's own login. */
   readonly worker: OnboardingWorkerRuntime;
+  /** The worker deployment's own restricted login, for direct boundary probes. */
+  readonly workerDb: Pool;
   /** The Phase 04 harness on the same database, sharing the notification simulator. */
   readonly iam: IamHarness;
   readonly gateways: PaymentGatewayRegistry;
@@ -153,6 +155,7 @@ export function attachOnboardingHarness(
     subscriptions: new SubscriptionService(deps),
     ebarimt: new EBarimtService(deps),
     worker: attachOnboardingWorkerRuntime({ ...deps, pool: workerPool }),
+    workerDb: workerPool,
     iam,
     gateways,
     qpay,

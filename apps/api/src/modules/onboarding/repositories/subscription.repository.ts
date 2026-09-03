@@ -14,7 +14,9 @@ import type { PaymentProvider } from '@prsystem/ports';
 
 export type IntentKind = 'RENEWAL' | 'UPGRADE';
 export type IntentState =
+  | 'PREPARING'
   | 'PENDING'
+  | 'ABANDONED'
   | 'PAID'
   | 'FAILED'
   | 'EXPIRED'
@@ -45,10 +47,12 @@ export interface IntentRow {
   readonly state: IntentState;
   readonly provider: PaymentProvider;
   readonly merchantRef: string;
-  readonly providerInvoiceId: string;
+  /** NULL while the quote is `PREPARING`: the provider has not answered yet. */
+  readonly providerInvoiceId: string | null;
   readonly providerPaymentId: string | null;
   readonly amountMnt: bigint;
-  readonly providerFeeMnt: bigint;
+  /** NULL when the provider stated no fee; never a fabricated zero. */
+  readonly providerFeeMnt: bigint | null;
   readonly quotedBillingRevision: number;
   readonly currentPackage: PackageCode;
   readonly targetPackage: PackageCode;
@@ -64,6 +68,8 @@ export interface IntentRow {
   readonly packageFeatureVersion: string;
   readonly expiresAt: Date;
   readonly confirmedAt: Date | null;
+  /** The complete snapshot the quote was priced from; null on rows older than remediation 2. */
+  readonly quotedSnapshot: Record<string, unknown> | null;
   readonly revision: number;
 }
 
@@ -78,7 +84,7 @@ const INTENT_COLUMNS = `
   quoted_billing_revision, current_package, target_package, term_months, monthly_price_mnt,
   price_delta_mnt, remaining_service_months, effective_at, quoted_expires_at, vat_rate_bp,
   price_book_version, tax_config_version, package_feature_version, expires_at,
-  confirmed_at, revision`;
+  confirmed_at, quoted_snapshot, revision`;
 
 function mapSubscription(row: Record<string, unknown> | undefined): SubscriptionRow | undefined {
   if (row === undefined) return undefined;
@@ -109,10 +115,11 @@ function mapIntent(row: Record<string, unknown> | undefined): IntentRow | undefi
     state: row['state'] as IntentState,
     provider: row['provider'] as PaymentProvider,
     merchantRef: row['merchant_ref'] as string,
-    providerInvoiceId: row['provider_invoice_id'] as string,
+    providerInvoiceId: row['provider_invoice_id'] as string | null,
     providerPaymentId: row['provider_payment_id'] as string | null,
     amountMnt: BigInt(row['amount_mnt'] as string),
-    providerFeeMnt: BigInt(row['provider_fee_mnt'] as string),
+    providerFeeMnt:
+      row['provider_fee_mnt'] === null ? null : BigInt(row['provider_fee_mnt'] as string),
     quotedBillingRevision: Number(row['quoted_billing_revision']),
     currentPackage: row['current_package'] as PackageCode,
     targetPackage: row['target_package'] as PackageCode,
@@ -129,6 +136,7 @@ function mapIntent(row: Record<string, unknown> | undefined): IntentRow | undefi
     packageFeatureVersion: row['package_feature_version'] as string,
     expiresAt: row['expires_at'] as Date,
     confirmedAt: row['confirmed_at'] as Date | null,
+    quotedSnapshot: (row['quoted_snapshot'] as Record<string, unknown> | null) ?? null,
     revision: Number(row['revision']),
   };
 }
@@ -267,14 +275,22 @@ export class SubscriptionRepository {
 
   // ------------------------------------------------------------ billing intents
 
-  async openIntent(input: {
+  /**
+   * Prepares a quote before the provider is called (remediation 2, finding 1).
+   *
+   * The row carries the complete priced snapshot from the moment the price was
+   * computed, and no provider invoice yet. A retry under the same key finds it
+   * by merchant reference and recovers the same invoice at the same price; a
+   * finalization that is refused abandons it with the provider's invoice on it.
+   */
+  async prepareIntent(input: {
     subscriptionId: string;
     kind: IntentKind;
     provider: PaymentProvider;
     merchantRef: string;
-    providerInvoiceId: string;
     amountMnt: bigint;
     quotedBillingRevision: number;
+    quotedSnapshot: Record<string, unknown>;
     currentPackage: PackageCode;
     targetPackage: PackageCode;
     termMonths: number | null;
@@ -291,13 +307,13 @@ export class SubscriptionRepository {
   }): Promise<string> {
     const result = await this.uow.query<{ intent_id: string }>(
       `INSERT INTO platform.subscription_billing_intent
-         (hotel_id, subscription_id, kind, provider, merchant_ref, provider_invoice_id,
+         (hotel_id, subscription_id, kind, provider, merchant_ref, state,
           amount_mnt, quoted_billing_revision, current_package, target_package, term_months,
           monthly_price_mnt, price_delta_mnt, remaining_service_months, effective_at,
           quoted_expires_at, vat_rate_bp, price_book_version, tax_config_version,
-          package_feature_version, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-               now() + make_interval(secs => $21))
+          package_feature_version, expires_at, quoted_snapshot)
+       VALUES ($1,$2,$3,$4,$5,'PREPARING',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+               now() + make_interval(secs => $20), $21::jsonb)
        RETURNING intent_id`,
       [
         this.hotelId,
@@ -305,7 +321,6 @@ export class SubscriptionRepository {
         input.kind,
         input.provider,
         input.merchantRef,
-        input.providerInvoiceId,
         input.amountMnt.toString(),
         input.quotedBillingRevision,
         input.currentPackage,
@@ -321,11 +336,60 @@ export class SubscriptionRepository {
         input.taxConfigVersion,
         input.packageFeatureVersion,
         input.ttlSeconds,
+        JSON.stringify(input.quotedSnapshot),
       ],
     );
     const intentId = result.rows[0]?.intent_id;
     if (intentId === undefined) throw new Error('the billing intent insert returned no row');
     return intentId;
+  }
+
+  /** The prepared quote a merchant reference names, locked. */
+  async lockIntentByMerchantRef(merchantRef: string): Promise<IntentRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${INTENT_COLUMNS} FROM platform.subscription_billing_intent
+        WHERE hotel_id = $1 AND merchant_ref = $2 FOR UPDATE`,
+      [this.hotelId, merchantRef],
+    );
+    return mapIntent(result.rows[0]);
+  }
+
+  /** The provider answered and the snapshot still holds: the quote goes live. */
+  async finalizeIntent(input: {
+    intentId: string;
+    expectedRevision: number;
+    providerInvoiceId: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.subscription_billing_intent
+          SET state = 'PENDING', provider_invoice_id = $3, revision = revision + 1
+        WHERE hotel_id = $1 AND intent_id = $2 AND revision = $4 AND state = 'PREPARING'`,
+      [this.hotelId, input.intentId, input.providerInvoiceId, input.expectedRevision],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * The quote was never live: the provider refused it, its snapshot moved, or
+   * its principal lost the hotel while the provider was being called. The
+   * provider's invoice, when one exists, is kept on the row so a payment
+   * against it finds a case to attach to rather than nothing.
+   */
+  async abandonIntent(input: {
+    intentId: string;
+    expectedRevision: number;
+    providerInvoiceId: string | null;
+    reason: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.subscription_billing_intent
+          SET state = 'ABANDONED', terminal_at = now(), terminal_reason = $3,
+              provider_invoice_id = COALESCE(provider_invoice_id, $4),
+              revision = revision + 1
+        WHERE hotel_id = $1 AND intent_id = $2 AND revision = $5 AND state = 'PREPARING'`,
+      [this.hotelId, input.intentId, input.reason, input.providerInvoiceId, input.expectedRevision],
+    );
+    return result.rowCount === 1;
   }
 
   async livePendingIntent(subscriptionId: string): Promise<IntentRow | undefined> {
@@ -366,7 +430,7 @@ export class SubscriptionRepository {
     reason: string;
     providerPaymentId?: string | null;
     confirmedAt?: Date | null;
-    providerFeeMnt?: bigint;
+    providerFeeMnt?: bigint | null;
   }): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.subscription_billing_intent
@@ -387,7 +451,9 @@ export class SubscriptionRepository {
         input.providerPaymentId ?? null,
         input.confirmedAt ?? null,
         input.expectedRevision,
-        input.providerFeeMnt === undefined ? null : input.providerFeeMnt.toString(),
+        input.providerFeeMnt === undefined || input.providerFeeMnt === null
+          ? null
+          : input.providerFeeMnt.toString(),
       ],
     );
     return result.rowCount === 1;
@@ -454,7 +520,8 @@ export class SubscriptionRepository {
     merchantRef: string;
     grossAmountMnt: bigint;
     vatAmountMnt: bigint;
-    providerFeeMnt: bigint;
+    /** The fee the provider stated, or null: no net amount is derived from nothing. */
+    providerFeeMnt: bigint | null;
     vatRateBp: number;
     packageCode: PackageCode;
     termMonths: number | null;
@@ -471,7 +538,9 @@ export class SubscriptionRepository {
           gross_amount_mnt, vat_amount_mnt, provider_fee_mnt, net_amount_mnt, vat_rate_bp,
           package_code, term_months, monthly_price_mnt, price_book_version,
           tax_config_version, package_feature_version, intent_id, confirmed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$7::bigint - $9::bigint,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
+               CASE WHEN $9::bigint IS NULL THEN NULL ELSE $7::bigint - $9::bigint END,
+               $10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING payment_id`,
       [
         this.hotelId,
@@ -482,7 +551,7 @@ export class SubscriptionRepository {
         input.merchantRef,
         input.grossAmountMnt.toString(),
         input.vatAmountMnt.toString(),
-        input.providerFeeMnt.toString(),
+        input.providerFeeMnt === null ? null : input.providerFeeMnt.toString(),
         input.vatRateBp,
         input.packageCode,
         input.termMonths,
@@ -610,6 +679,18 @@ export async function pendingEBarimtIssuances(
 ): Promise<readonly { hotelId: string; issuanceId: string }[]> {
   const result = await uow.query<{ hotel_id: string; issuance_id: string }>(
     `SELECT hotel_id, issuance_id FROM platform.pending_ebarimt_issuances($1)`,
+    [limit],
+  );
+  return result.rows.map((row) => ({ hotelId: row.hotel_id, issuanceId: row.issuance_id }));
+}
+
+/** The issued receipts whose email is due: never sent, or failed and past its backoff. */
+export async function pendingEBarimtDeliveries(
+  uow: UnitOfWork,
+  limit: number,
+): Promise<readonly { hotelId: string; issuanceId: string }[]> {
+  const result = await uow.query<{ hotel_id: string; issuance_id: string }>(
+    `SELECT hotel_id, issuance_id FROM platform.pending_ebarimt_deliveries($1)`,
     [limit],
   );
   return result.rows.map((row) => ({ hotelId: row.hotel_id, issuanceId: row.issuance_id }));

@@ -32,7 +32,9 @@ export type ApplicationState =
 export type OwnerType = 'CITIZEN' | 'ORGANIZATION';
 
 export type AttemptState =
+  | 'PREPARING'
   | 'PENDING'
+  | 'ABANDONED'
   | 'PAYMENT_UNCERTAIN'
   | 'PAID'
   | 'FAILED'
@@ -93,11 +95,13 @@ export interface AttemptRow {
   readonly applicationId: string;
   readonly provider: PaymentProvider;
   readonly merchantRef: string;
-  readonly providerInvoiceId: string;
+  /** NULL while the attempt is `PREPARING`: the provider has not answered yet. */
+  readonly providerInvoiceId: string | null;
   readonly providerPaymentId: string | null;
   readonly state: AttemptState;
   readonly amountMnt: bigint;
-  readonly providerFeeMnt: bigint;
+  /** NULL when the provider stated no fee; never a fabricated zero. */
+  readonly providerFeeMnt: bigint | null;
   readonly currency: string;
   readonly packageCode: PackageCode;
   readonly termMonths: number;
@@ -184,11 +188,12 @@ function mapAttempt(row: Record<string, unknown> | undefined): AttemptRow | unde
     applicationId: row['application_id'] as string,
     provider: row['provider'] as PaymentProvider,
     merchantRef: row['merchant_ref'] as string,
-    providerInvoiceId: row['provider_invoice_id'] as string,
+    providerInvoiceId: row['provider_invoice_id'] as string | null,
     providerPaymentId: row['provider_payment_id'] as string | null,
     state: row['state'] as AttemptState,
     amountMnt: BigInt(row['amount_mnt'] as string),
-    providerFeeMnt: BigInt(row['provider_fee_mnt'] as string),
+    providerFeeMnt:
+      row['provider_fee_mnt'] === null ? null : BigInt(row['provider_fee_mnt'] as string),
     currency: row['currency'] as string,
     packageCode: row['package_code'] as PackageCode,
     termMonths: Number(row['term_months']),
@@ -863,11 +868,15 @@ export class OnboardingRepository {
 
   // ------------------------------------------------------- payment attempts
 
-  async openAttempt(input: {
+  /**
+   * Prepares an attempt before the provider is called (remediation 2, finding
+   * 1): the terms are on the row, the provider's invoice is not yet. A retry
+   * under the same key recovers it by merchant reference.
+   */
+  async prepareAttempt(input: {
     applicationId: string;
     provider: PaymentProvider;
     merchantRef: string;
-    providerInvoiceId: string;
     amountMnt: bigint;
     packageCode: PackageCode;
     termMonths: number;
@@ -880,16 +889,15 @@ export class OnboardingRepository {
   }): Promise<string> {
     const result = await this.uow.query<{ attempt_id: string }>(
       `INSERT INTO platform.onboarding_payment_attempt
-         (application_id, provider, merchant_ref, provider_invoice_id, amount_mnt,
+         (application_id, provider, merchant_ref, state, amount_mnt,
           package_code, term_months, monthly_price_mnt, vat_rate_bp, price_book_version,
           tax_config_version, package_feature_version, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now() + make_interval(secs => $13))
+       VALUES ($1,$2,$3,'PREPARING',$4,$5,$6,$7,$8,$9,$10,$11, now() + make_interval(secs => $12))
        RETURNING attempt_id`,
       [
         input.applicationId,
         input.provider,
         input.merchantRef,
-        input.providerInvoiceId,
         input.amountMnt.toString(),
         input.packageCode,
         input.termMonths,
@@ -904,6 +912,48 @@ export class OnboardingRepository {
     const attemptId = result.rows[0]?.attempt_id;
     if (attemptId === undefined) throw new Error('the attempt insert returned no row');
     return attemptId;
+  }
+
+  /** The prepared attempt a merchant reference names, locked. */
+  async lockAttemptByMerchantRef(merchantRef: string): Promise<AttemptRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${ATTEMPT_COLUMNS} FROM platform.onboarding_payment_attempt
+        WHERE merchant_ref = $1 FOR UPDATE`,
+      [merchantRef],
+    );
+    return mapAttempt(result.rows[0]);
+  }
+
+  /** The provider answered and the application is still invoiceable: the attempt goes live. */
+  async finalizeAttempt(input: {
+    attemptId: string;
+    expectedRevision: number;
+    providerInvoiceId: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_payment_attempt
+          SET state = 'PENDING', provider_invoice_id = $2, revision = revision + 1
+        WHERE attempt_id = $1 AND revision = $3 AND state = 'PREPARING'`,
+      [input.attemptId, input.providerInvoiceId, input.expectedRevision],
+    );
+    return result.rowCount === 1;
+  }
+
+  /** The attempt was never live; the provider's invoice, if any, stays recorded on it. */
+  async abandonAttempt(input: {
+    attemptId: string;
+    expectedRevision: number;
+    providerInvoiceId: string | null;
+    reason: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_payment_attempt
+          SET state = 'ABANDONED', terminal_at = now(), terminal_reason = $2,
+              provider_invoice_id = COALESCE(provider_invoice_id, $3), revision = revision + 1
+        WHERE attempt_id = $1 AND revision = $4 AND state = 'PREPARING'`,
+      [input.attemptId, input.reason, input.providerInvoiceId, input.expectedRevision],
+    );
+    return result.rowCount === 1;
   }
 
   async lockAttemptByInvoice(
@@ -948,7 +998,7 @@ export class OnboardingRepository {
     reason: string;
     providerPaymentId?: string | null;
     confirmedAt?: Date | null;
-    providerFeeMnt?: bigint;
+    providerFeeMnt?: bigint | null;
   }): Promise<boolean> {
     const terminal = input.state !== 'PENDING' && input.state !== 'PAYMENT_UNCERTAIN';
     const result = await this.uow.query(
@@ -971,8 +1021,30 @@ export class OnboardingRepository {
         input.reason,
         input.providerPaymentId ?? null,
         input.confirmedAt ?? null,
-        input.providerFeeMnt === undefined ? null : input.providerFeeMnt.toString(),
+        input.providerFeeMnt === undefined || input.providerFeeMnt === null
+          ? null
+          : input.providerFeeMnt.toString(),
       ],
+    );
+    return result.rowCount === 1;
+  }
+
+  /**
+   * Binds an application to the owner it collided with, without moving its
+   * state (remediation 2, finding 2): the application is already
+   * `PAID_OWNER_VERIFICATION_REQUIRED`, and what it lacked was the owner whose
+   * stored contact the challenge must go to.
+   */
+  async bindOwner(input: {
+    applicationId: string;
+    expectedRevision: number;
+    ownerId: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.onboarding_application
+          SET owner_id = $3, revision = revision + 1
+        WHERE application_id = $1 AND revision = $2 AND owner_id IS NULL`,
+      [input.applicationId, input.expectedRevision, input.ownerId],
     );
     return result.rowCount === 1;
   }

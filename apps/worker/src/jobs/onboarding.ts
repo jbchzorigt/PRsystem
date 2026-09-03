@@ -78,7 +78,19 @@ export function createOnboardingWorkers(
   logger: Logger,
   options: OnboardingWorkerOptions = {},
 ): readonly Worker[] {
-  return ONBOARDING_QUEUES.map((queue) => {
+  return ONBOARDING_QUEUES.map((queue) =>
+    createOnboardingWorker(queue, connection, runtime, logger, options),
+  );
+}
+
+function createOnboardingWorker(
+  queue: QueueName,
+  connection: ConnectionOptions,
+  runtime: OnboardingWorkerRuntime,
+  logger: Logger,
+  options: OnboardingWorkerOptions,
+): Worker {
+  {
     const worker = new Worker(
       queue,
       (job) =>
@@ -101,7 +113,69 @@ export function createOnboardingWorkers(
       logger.error({ queue, err: { name: error.name } }, 'worker error');
     });
     return worker;
-  });
+  }
+}
+
+export interface OnboardingConsumersStart {
+  readonly connection: ConnectionOptions;
+  readonly runtime: OnboardingWorkerRuntime;
+  readonly logger: Logger;
+  readonly options?: OnboardingWorkerOptions;
+  /** Registers the sweeps; the real one is `scheduleOnboardingSweeps`. */
+  readonly schedule?: (
+    connection: ConnectionOptions,
+    options: OnboardingWorkerOptions,
+  ) => Promise<void>;
+  /** Constructs one consumer; a seam for a test that fails the third. */
+  readonly construct?: (queue: QueueName, make: () => Worker) => Worker;
+  readonly onWorkerClosed?: (queue: string) => void;
+}
+
+export interface OnboardingConsumers {
+  readonly workers: readonly Worker[];
+  close(): Promise<void>;
+}
+
+/**
+ * Opens every Phase 05 consumer and registers the sweeps — or opens nothing.
+ *
+ * `main.ts` used to construct the consumers inside the startup guard and
+ * register the sweeps after it, with no failure path between: a scheduler that
+ * could not reach Redis, or a fourth consumer that could not be constructed,
+ * left the consumers already running and the runtime's pool open behind an
+ * exited startup (remediation 2, finding 3). Here every consumer opened before
+ * a failure is closed, the runtime is closed with them, and the failure is
+ * rethrown.
+ */
+export async function startOnboardingConsumers(
+  start: OnboardingConsumersStart,
+): Promise<OnboardingConsumers> {
+  const options = start.options ?? {};
+  const opened: Worker[] = [];
+  const closeAll = async (): Promise<void> => {
+    await Promise.all(
+      opened.map(async (worker) => {
+        await worker.close().catch(() => undefined);
+        start.onWorkerClosed?.(worker.name);
+      }),
+    );
+    await start.runtime.close().catch(() => undefined);
+  };
+  try {
+    for (const queue of ONBOARDING_QUEUES) {
+      const make = (): Worker =>
+        createOnboardingWorker(queue, start.connection, start.runtime, start.logger, options);
+      opened.push(start.construct === undefined ? make() : start.construct(queue, make));
+    }
+    await (start.schedule ?? scheduleOnboardingSweeps)(start.connection, options);
+  } catch (error) {
+    await closeAll();
+    throw error;
+  }
+  return {
+    workers: opened,
+    close: closeAll,
+  };
 }
 
 /**

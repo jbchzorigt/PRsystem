@@ -451,7 +451,9 @@ export class OnboardingService extends OnboardingServiceBase {
       const repository = new OnboardingRepository(uow);
       const application = await repository.byId(applicationId);
       if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
-      const attempts = await repository.attemptsFor(applicationId);
+      const attempts = (await repository.attemptsFor(applicationId)).filter(
+        (attempt) => attempt.state !== 'PREPARING' && attempt.state !== 'ABANDONED',
+      );
       const latest = attempts[attempts.length - 1];
       const passed = await repository.hasPassedProof(applicationId);
       const existingAccountHeld =
@@ -655,16 +657,45 @@ export class OnboardingService extends OnboardingServiceBase {
         if (await repository.hasPassedProof(applicationId)) {
           return { result: proved(application.state), challenge: undefined };
         }
-        if (await repository.hasPendingProof(applicationId)) {
-          return { result: proofRequired(application.state), challenge: undefined };
+        const pending = await repository.lockPendingProof(applicationId);
+        if (pending !== undefined) {
+          // A live challenge is live. One that was never delivered — opened
+          // without a digest by a claim-time collision — or has expired is not
+          // (remediation 2, finding 2): it is settled and a fresh one opened.
+          const stale =
+            pending.expired ||
+            (pending.method === 'STORED_CONTACT_CHALLENGE' && pending.challengeDigest === null);
+          if (!stale) return { result: proofRequired(application.state), challenge: undefined };
+          await repository.settleProof({
+            proofId: pending.proofId,
+            state: 'EXPIRED',
+            decidedByAccountId: null,
+            reason: pending.expired ? 'expired' : 'never_challenged',
+          });
         }
-        // The previous challenge lapsed or could not be delivered: a new one.
         const challenge = await this.openChallenge(
           uow,
           repository,
           application,
           application.ownerId,
         );
+        return { result: proofRequired(application.state), challenge };
+      }
+      if (application.state === 'PAID_OWNER_VERIFICATION_REQUIRED') {
+        // The collision was discovered after payment and the application was
+        // sent back to proof without an owner binding. The owner is the one the
+        // identifier names, found by the probe and never by the applicant.
+        const collided = await repository.probeOwner(applicationId);
+        if (collided === undefined) {
+          throw new ApiError('CONFLICT', 'this application is past owner resolution');
+        }
+        const bound = await repository.bindOwner({
+          applicationId,
+          expectedRevision: application.revision,
+          ownerId: collided.ownerId,
+        });
+        if (!bound) throw new ApiError('CONFLICT', 'the application changed concurrently');
+        const challenge = await this.openChallenge(uow, repository, application, collided.ownerId);
         return { result: proofRequired(application.state), challenge };
       }
       if (application.state !== 'DRAFT') {
@@ -832,7 +863,11 @@ export class OnboardingService extends OnboardingServiceBase {
     request: RequestContext,
   ): Promise<{ state: ApplicationState }> {
     const digest = await this.tokens.digest('phone_otp', ownerProofSubject(applicationId), code);
-    return this.inOnboardingScope(applicationId, request, async (uow) => {
+    // A refusal is recorded — the proof expired, the mismatch audited — in the
+    // transaction, and thrown only once that transaction has committed
+    // (remediation 2, finding 2). Thrown inside it, the record rolled back with
+    // the refusal and the row kept saying "pending" to the next attempt.
+    const outcome = await this.inOnboardingScope(applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const application = await repository.lock(applicationId);
       if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
@@ -846,7 +881,7 @@ export class OnboardingService extends OnboardingServiceBase {
           decidedByAccountId: null,
           reason: 'expired',
         });
-        throw new ApiError('CONFLICT', 'this challenge has expired');
+        return { refusal: new ApiError('CONFLICT', 'this challenge has expired') };
       }
       if (proof.challengeDigest === null || proof.challengeDigest !== digest.tokenHash) {
         await recordPlatformAudit(uow, {
@@ -856,7 +891,7 @@ export class OnboardingService extends OnboardingServiceBase {
           targetRef: applicationId,
           reason: 'challenge_mismatch',
         });
-        throw new ApiError('NOT_FOUND', 'not found');
+        return { refusal: new ApiError('NOT_FOUND', 'not found') };
       }
 
       await repository.settleProof({
@@ -865,8 +900,10 @@ export class OnboardingService extends OnboardingServiceBase {
         decidedByAccountId: null,
         reason: 'stored_contact_challenge',
       });
-      return this.releaseAfterProof(uow, repository, application);
+      return { result: await this.releaseAfterProof(uow, repository, application) };
     });
+    if ('refusal' in outcome) throw outcome.refusal;
+    return outcome.result;
   }
 
   /**
@@ -1131,12 +1168,24 @@ export class OnboardingService extends OnboardingServiceBase {
     const parameters = this.parameters;
     const operation = 'onboarding.invoice.open';
     const payload = { applicationId: input.applicationId, provider };
+    const merchantRef = derivedIdempotencyKey(
+      'onboarding.invoice',
+      input.applicationId,
+      input.idempotencyKey,
+    );
 
+    // T1 — the claim first, then eligibility, then a prepared attempt.
+    //
+    // A completed request is replayed before anything about the application's
+    // present state is judged (remediation 2, finding 1): the retry of an
+    // invoice that was opened and since paid gets the invoice, not a refusal.
+    // The attempt is prepared with the terms it was priced at and no provider
+    // invoice yet, so a retry after a lost acknowledgement recovers the same
+    // provider invoice at the same amount and never re-prices it.
     const prepared = await this.inOnboardingScope(input.applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const application = await repository.lock(input.applicationId);
       if (application === undefined) throw new ApiError('NOT_FOUND', 'not found');
-      await this.assertInvoiceable(repository, application);
 
       const claimed = await claimIdempotencyKey(uow, {
         operation,
@@ -1148,26 +1197,45 @@ export class OnboardingService extends OnboardingServiceBase {
       if (claimed.kind === 'key_reused_with_different_payload') {
         throw new ApiError('IDEMPOTENCY_KEY_REUSED', 'this key was used for a different request');
       }
-      // `claimed` or `in_progress`: either this is the first attempt, or an
-      // earlier one lost the provider's reply. Both go to the provider with the
-      // same stable key, and the provider answers with the same invoice.
-      return { application };
+
+      const existing = await repository.lockAttemptByMerchantRef(merchantRef);
+      if (existing !== undefined) {
+        // An earlier run of this same request prepared the attempt and lost
+        // the provider's reply. Its terms are the terms; nothing is re-priced.
+        if (existing.state !== 'PREPARING') {
+          throw new ApiError('CONFLICT', 'the request claim is gone');
+        }
+        return { attempt: existing };
+      }
+      await this.assertInvoiceable(repository, application);
+      const attemptId = await repository.prepareAttempt({
+        applicationId: input.applicationId,
+        provider,
+        merchantRef,
+        amountMnt: application.totalAmountMnt,
+        packageCode: application.packageCode,
+        termMonths: application.termMonths,
+        monthlyPriceMnt: application.monthlyPriceMnt,
+        vatRateBp: application.vatRateBp,
+        priceBookVersion: application.priceBookVersion,
+        taxConfigVersion: application.taxConfigVersion,
+        packageFeatureVersion: application.packageFeatureVersion,
+        ttlSeconds: parameters.paymentAttemptTtlSeconds,
+      });
+      const attempt = await repository.attemptById(attemptId);
+      if (attempt === undefined) throw new Error('the prepared attempt could not be read back');
+      return { attempt };
     });
     if ('replay' in prepared) return prepared.replay;
-    const application = prepared.application;
+    const attempt = prepared.attempt;
 
-    const merchantRef = derivedIdempotencyKey(
-      'onboarding.invoice',
-      input.applicationId,
-      input.idempotencyKey,
-    );
     const invoice = await this.deps.gateways.gateway(provider).createInvoice(
       {
         intentId: input.applicationId,
-        amountMnt: application.totalAmountMnt,
+        amountMnt: attempt.amountMnt,
         currency: 'MNT',
         merchantRef,
-        expiresAt: new Date(Date.now() + parameters.paymentAttemptTtlSeconds * 1000),
+        expiresAt: attempt.expiresAt,
         idempotencyKey: merchantRef,
       },
       portContext(request),
@@ -1175,47 +1243,72 @@ export class OnboardingService extends OnboardingServiceBase {
     if (!invoice.ok) {
       const failure = portFailure(invoice.error, 'the payment gateway');
       // A provider refusal is the request's fault and is stored so a retry gets
-      // the same answer; an outage or a lost reply leaves the claim open so the
-      // retry recovers the invoice instead.
+      // the same answer, and the prepared attempt is abandoned; an outage or a
+      // lost reply leaves both open so the retry recovers the invoice instead.
       if (invoice.error.kind === 'REJECTED' || invoice.error.kind === 'MISMATCH') {
         await this.inOnboardingScope(input.applicationId, request, async (uow) => {
+          const repository = new OnboardingRepository(uow);
           const lock = await lockIdempotencyClaim(uow, { operation, key: input.idempotencyKey });
           if (lock.kind === 'in_progress') {
             await completeIdempotencyKey(uow, lock.idempotencyId, failure.status, {
               error: { code: failure.code, message: failure.message },
             });
           }
+          const row = await repository.lockAttemptByMerchantRef(merchantRef);
+          if (row !== undefined && row.state === 'PREPARING') {
+            await repository.abandonAttempt({
+              attemptId: row.attemptId,
+              expectedRevision: row.revision,
+              providerInvoiceId: null,
+              reason: `provider_${invoice.error.kind.toLowerCase()}`,
+            });
+          }
         });
       }
       throw failure;
     }
+    const providerInvoiceId = invoice.value.providerInvoiceId;
 
-    return this.inOnboardingScope(input.applicationId, request, async (uow) => {
+    // T2 — the final mutation, with eligibility judged again on the row as it
+    // is now. A refusal here is persisted — the attempt abandoned with the
+    // provider's invoice on it, the claim completed with the refusal — and only
+    // then thrown, after the transaction committed (finding 1).
+    const settled = await this.inOnboardingScope(input.applicationId, request, async (uow) => {
       const repository = new OnboardingRepository(uow);
       const locked = await repository.lock(input.applicationId);
       if (locked === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
       const claim = await lockIdempotencyClaim(uow, { operation, key: input.idempotencyKey });
-      if (claim.kind === 'replay') return replayStored(claim.status, claim.body);
+      if (claim.kind === 'replay') return { result: replayStored(claim.status, claim.body) };
       if (claim.kind === 'absent') throw new ApiError('CONFLICT', 'the request claim is gone');
+      const row = await repository.lockAttemptByMerchantRef(merchantRef);
+      if (row === undefined || row.state !== 'PREPARING') {
+        throw new ApiError('CONFLICT', 'the request claim is gone');
+      }
 
-      await this.assertInvoiceable(repository, locked);
+      const refusal = await this.assertInvoiceable(repository, locked).then(
+        () => undefined,
+        (error: unknown) => (error instanceof ApiError ? error : undefined),
+      );
+      if (refusal !== undefined) {
+        await repository.abandonAttempt({
+          attemptId: row.attemptId,
+          expectedRevision: row.revision,
+          providerInvoiceId,
+          reason: 'refused_at_finalization',
+        });
+        await completeIdempotencyKey(uow, claim.idempotencyId, refusal.status, {
+          error: { code: refusal.code, message: refusal.message },
+        });
+        return { refusal };
+      }
 
-      const attemptId = await repository.openAttempt({
-        applicationId: input.applicationId,
-        provider,
-        merchantRef,
-        providerInvoiceId: invoice.value.providerInvoiceId,
-        amountMnt: locked.totalAmountMnt,
-        packageCode: locked.packageCode,
-        termMonths: locked.termMonths,
-        monthlyPriceMnt: locked.monthlyPriceMnt,
-        vatRateBp: locked.vatRateBp,
-        priceBookVersion: locked.priceBookVersion,
-        taxConfigVersion: locked.taxConfigVersion,
-        packageFeatureVersion: locked.packageFeatureVersion,
-        ttlSeconds: parameters.paymentAttemptTtlSeconds,
+      const live = await repository.finalizeAttempt({
+        attemptId: row.attemptId,
+        expectedRevision: row.revision,
+        providerInvoiceId,
       });
+      if (!live) throw new ApiError('CONFLICT', 'the attempt changed concurrently');
 
       const moved = await repository.transition({
         applicationId: input.applicationId,
@@ -1229,29 +1322,31 @@ export class OnboardingService extends OnboardingServiceBase {
         fromState: locked.state,
         toState: 'PENDING_PAYMENT',
         reason: 'invoice_opened',
-        detail: { attemptId, provider },
+        detail: { attemptId: row.attemptId, provider },
       });
       await recordPlatformAudit(uow, {
         action: 'onboarding.invoice.opened',
         outcome: 'allowed',
         targetType: 'onboarding_payment_attempt',
-        targetRef: attemptId,
+        targetRef: row.attemptId,
         payload: {
           applicationId: input.applicationId,
           provider,
-          amountMnt: locked.totalAmountMnt.toString(),
+          amountMnt: row.amountMnt.toString(),
         },
       });
 
       const result: OpenedInvoice = {
-        attemptId,
-        providerInvoiceId: invoice.value.providerInvoiceId,
+        attemptId: row.attemptId,
+        providerInvoiceId,
         checkoutUrl: invoice.value.payUrl ?? '',
-        amountMnt: locked.totalAmountMnt.toString(),
+        amountMnt: row.amountMnt.toString(),
       };
       await completeIdempotencyKey(uow, claim.idempotencyId, 201, result);
-      return result;
+      return { result };
     });
+    if ('refusal' in settled) throw settled.refusal;
+    return settled.result;
   }
 
   /** Every precondition of doc 15 §3 and §3.1, as a refusal with a reason. */

@@ -98,3 +98,57 @@ describe('processOnboardingJob', () => {
     expect(runtime.calls).toEqual([]);
   });
 });
+
+describe('startOnboardingConsumers', () => {
+  it('closes every consumer it opened when the sweep registration fails', async () => {
+    // Finding 3: `main.ts` registered the sweeps after the consumers were
+    // running and had no failure path — a scheduler that could not reach Redis
+    // left four live consumers and a runtime behind an exited startup.
+    const runtime = stubRuntime();
+    const closed: string[] = [];
+    const { startOnboardingConsumers } = await import('./onboarding');
+    await expect(
+      startOnboardingConsumers({
+        connection: { host: '127.0.0.1', port: 59998, maxRetriesPerRequest: null },
+        runtime,
+        logger,
+        options: { autorun: false },
+        schedule: () => Promise.reject(new Error('redis unreachable')),
+        onWorkerClosed: (name) => closed.push(name),
+      }),
+    ).rejects.toThrow(/redis unreachable/);
+    expect(closed.sort()).toEqual(
+      [
+        QUEUE_NAMES.provisioning,
+        QUEUE_NAMES.activationDelivery,
+        QUEUE_NAMES.ebarimtIssuance,
+        QUEUE_NAMES.subscriptionBoundary,
+      ].sort(),
+    );
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the consumers already opened when a later consumer cannot be constructed', async () => {
+    const runtime = stubRuntime();
+    const closed: string[] = [];
+    const { startOnboardingConsumers } = await import('./onboarding');
+    let constructed = 0;
+    await expect(
+      startOnboardingConsumers({
+        connection: { host: '127.0.0.1', port: 59998, maxRetriesPerRequest: null },
+        runtime,
+        logger,
+        options: { autorun: false },
+        schedule: () => Promise.resolve(),
+        onWorkerClosed: (name) => closed.push(name),
+        construct: (queue, make) => {
+          constructed += 1;
+          if (constructed === 3) throw new Error(`cannot construct ${queue}`);
+          return make();
+        },
+      }),
+    ).rejects.toThrow(/cannot construct/);
+    expect(closed).toHaveLength(2);
+    expect(runtime.close).toHaveBeenCalledTimes(1);
+  });
+});
