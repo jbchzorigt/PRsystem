@@ -27,6 +27,7 @@ const { results, failed } = runGovernanceChecks({
   runbookPath: join(IMPL, 'database-bootstrap-runbook.md'),
   phaseStatusPath: join(IMPL, 'phase-status.md'),
   manifestPath: join(IMPL, 'phase-03-evidence.json'),
+  phase05ManifestPath: join(IMPL, 'phase-05-evidence.json'),
 });
 
 const width = Math.max(...results.map((r) => r.title.length));

@@ -207,6 +207,17 @@ Every port's simulator, and later every adapter, must pass the same eight scenar
 Plus, for every port: invoking an adapter whose gate is uncleared returns `DISABLED` and makes no
 network call.
 
+**Phase 05 conformance (remediation 1).** The suite is code, not prose:
+`packages/ports/src/conformance.test.ts` runs the eight scenarios and the `DISABLED` rule against
+the canonical `packages/ports` contracts — `PaymentGatewayPort` (`qpay`, `khaan`), `EBarimtPort`,
+`PhoneVerificationPort` and `StaffNotificationPort`. Every operation answers a typed
+`PortResult` (`ok` or a `PortError` of kind `DISABLED | UNAVAILABLE | TIMEOUT | REJECTED |
+INVALID_SIGNATURE | MISMATCH`) rather than throwing; every port carries its `id` and `mode`; and
+every irreversible provider effect takes a **caller-supplied idempotency key** — the same key the
+domain claims in its own idempotency table before the provider is called — so a retry after a lost
+acknowledgement recovers the same invoice or receipt and never creates a second one. A gate is
+recorded as "port and simulator shipped" only on that evidence.
+
 ---
 
 ## 4. Gate mapping

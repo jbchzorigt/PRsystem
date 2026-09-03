@@ -278,6 +278,9 @@ decision, and none reopens an approved DEC.
 | 1 | **Phone OTP.** doc 15 §2.1 makes an OTP-verified phone a precondition of the invoice; the early-port table places phone OTP in Phase 12. | Only the **reusable typed port and its deterministic simulator** moved forward. Guest registration and Guest authentication stay Phase 12 and nothing here touches either. CallPro is **not** assumed to carry it: EXT-05 is an SMS *send* contract, not an OTP service, so the capability has its own blocked production control, `INT-OTP-01`, and the adapter fails closed outside local, CI and test. The code itself is a purpose- and subject-bound keyed digest with an attempt budget on the row — never plaintext. |
 | 2 | **Hotel location.** doc 15 §2.1 requires the district, khoroo, address and map coordinate to be captured and stored server-side. | Persisted and validated, as **integer micro-degrees** rather than floating point (CLAUDE.md §5), with range constraints in the database. No `GeoPort`, no Google Maps geocoding, no distance calculation and no public discovery: those stay Phase 12 behind EXT-06. The duplicate-review flag of doc 15 §5.1 asks the narrower question integer coordinates can answer — same name within a very short distance, or the same district and address — and never approximates a geocoder. |
 | 3 | **Default drawer.** doc 24 §2.1 requires exactly one `Үндсэн касс` when a hotel's subscription activates. | Created inside the provisioning transaction, so it commits with the tenant or not at all. Only the **cash-location root** was introduced: kind, name, code, state and the single-default index. No shifts, movements, balances, expenses, safes or cash APIs — those are Phase 11 — and the table carries no column for any of them. The early introduction is recorded in the implementation architecture documents. |
+| 4 | **Offline ownership verification** (doc 15 §3.1 (3), Phase 05 remediation 1). doc 18 names no permission for the offline proof; the nearest catalogued Operation action is the subscription contact offline exception. | Mapped to `operation.subscription_contact_change_approve` (`SUBSCRIPTION_CONTACT_CHANGE_APPROVE`, Platform-only, step-up) through the Phase 04 pipeline: realm, explicit grant, recent step-up and audit, evaluated inside the transaction. The decision records the deciding account and can only *pass* a proof — never attach an owner or skip it. **No HTTP route exists for it in Phase 05**: the Platform Operation surface is Phase 19, so the production action is not reachable and is not claimed to be. |
+| 5 | **`PROVISIONING_FAILED → PAID_OWNER_VERIFICATION_REQUIRED`** (Phase 05 remediation 1). doc 15 §3.1 describes the existing-owner race at resolution time, not after a failed provisioning attempt. | The §3.1 race can be discovered at claim time — an owner with this identifier appeared between resolution and provisioning — and the boundary refuses with its own SQLSTATE rather than building a second owner. The application returns to the proof state through the one added edge; the payment stays confirmed, nothing is re-priced, and the operator retry path is unchanged. |
+| 6 | **An account holding the admin email after payment** (doc 15 §3.1, Phase 05 remediation 1). doc 15 requires the existing-account path to be proved by that account's sign-in or a completed password recovery. | The invoice already refuses an address another Hotel account holds unless the application is bound to that account by a signed-in proof (`existing_account_id`, `existing_account_proof_method`). An account that appears **after** payment is treated as a provisioning failure: the boundary refuses to create a second account and the row waits, with its payment, for the existing-account proof or the permissioned retry. It is never resolved by guessing which account the applicant meant. |
 
 Two further notes, recorded here rather than left implied:
 
@@ -289,11 +292,13 @@ Two further notes, recorded here rather than left implied:
   the payment, the state and the owner from the rows it locks, and it is not
   exempt from row level security — it binds the new tenant's scope and every row
   it writes has to satisfy the ordinary policy.
-- **The scheduled invokers remain open.** Phase 05 implements the service-month
-  boundary operation, the activation-delivery drain and the eBarimt issuance
-  drain, and registers their queue names. What invokes them on a cadence is the
-  scheduler work assigned to a later phase, exactly as the Phase 04
-  password-reset drain was left.
+- **The scheduled invokers.** Recorded as open at the end of Phase 05 and closed
+  by Phase 05 remediation 1: the worker deployment registers a BullMQ consumer
+  per Phase 05 queue (`apps/worker/src/jobs/onboarding.ts`) and a repeatable
+  sweep for each, and PostgreSQL is the job record — a paid application carries
+  its claim token, lease, availability instant and attempt count on its own
+  row; the Redis message is a best-effort latency signal and never the job.
+  The Phase 04 password-reset drain is still where it was.
 
 ---
 

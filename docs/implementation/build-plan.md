@@ -54,7 +54,7 @@ Phases permitted to define ports early, and the minimum surface each may define:
 
 | Phase | Port | Reason it cannot be deferred |
 | --- | --- | --- |
-| 05 | payment gateway, eBarimt, email | Payment-gated provisioning and receipt fallback are the phase's core state machine |
+| 05 | payment gateway, eBarimt, email, phone OTP (port and simulator only) | Payment-gated provisioning and receipt fallback are the phase's core state machine; doc 15 §2.1 makes an OTP-verified phone a precondition of the invoice, so the reusable phone-verification port moves forward under `INT-OTP-01` — recorded in assumptions-and-conflicts.md §3.9, no DEC changes |
 | 08 | XYP identity | Check-in identity provenance (`XYP_VERIFIED` vs `MANUAL`) is a stored field |
 | 10 | payment gateway, POS reference | Deposit receipt/refund channels define the deposit aggregate |
 | 12 | e-Mongolia, phone OTP, geo | Guest authentication and discovery have no other entry path |
@@ -245,7 +245,8 @@ upgrade-only package floor with service-month boundary, incremental second upgra
 `billing_revision` CAS serialisation; 48-hour grace, hard lock, public listing hide;
 `PAID_REQUIRES_RECONCILIATION` queue.
 
-**Ports (simulator only).** payment gateway, eBarimt, email.
+**Ports (simulator only).** payment gateway, eBarimt, email, phone OTP (`INT-OTP-01`; the port and
+simulator only — Guest registration and authentication stay Phase 12).
 
 **Gates.** Concurrency: duplicate payment callback; two providers paying one intent; late capture on
 an expired attempt; boundary worker racing an upgrade callback on one `billing_revision`.

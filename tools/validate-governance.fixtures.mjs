@@ -21,9 +21,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNBOOK = join(ROOT, 'docs', 'implementation', 'database-bootstrap-runbook.md');
 const PHASE_STATUS = join(ROOT, 'docs', 'implementation', 'phase-status.md');
 const EVIDENCE_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-03-evidence.json');
+const PHASE05_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-05-evidence.json');
 const originalRunbook = readFileSync(RUNBOOK, 'utf8');
 const originalPhaseStatus = readFileSync(PHASE_STATUS, 'utf8');
 const originalManifest = readFileSync(EVIDENCE_MANIFEST, 'utf8');
+const originalPhase05Manifest = readFileSync(PHASE05_MANIFEST, 'utf8');
 
 const SOURCES = {
   runbook: { text: originalRunbook, env: 'PRSYSTEM_RUNBOOK', file: 'doc.md' },
@@ -33,7 +35,24 @@ const SOURCES = {
     env: 'PRSYSTEM_EVIDENCE_MANIFEST',
     file: 'phase-03-evidence.json',
   },
+  'phase05-manifest': {
+    text: originalPhase05Manifest,
+    env: 'PRSYSTEM_PHASE05_MANIFEST',
+    file: 'phase-05-evidence.json',
+  },
 };
+
+/** Applies `change` only inside the Phase 05 evidence region (check 16). */
+function inPhase05Region(text, change) {
+  const begin = text.indexOf('<!-- phase-05-evidence:begin -->');
+  const endMarker = '<!-- phase-05-evidence:end -->';
+  const end = text.indexOf(endMarker);
+  if (begin < 0 || end < 0) throw new Error('the Phase 05 evidence markers are missing');
+  const region = text.slice(begin, end + endMarker.length);
+  const changed = change(region);
+  if (changed === region) throw new Error('the change did not alter the Phase 05 evidence region');
+  return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
+}
 
 /**
  * Applies `change` only inside the canonical evidence region.
@@ -66,6 +85,114 @@ function removeCommand(sources, command) {
 }
 
 const FIXTURES = [
+  // ------------------------------------------------ Phase 05 evidence (check 16)
+  {
+    // The acceptance is the customer's to give. The manifest may restate the
+    // governed `AWAITING_CUSTOMER_ACCEPTANCE` and nothing else.
+    name: 'phase 05 manifest: the acceptance declared by the manifest',
+    file: 'phase05-manifest',
+    expect: /Phase 05 manifest declares acceptance = "ACCEPTED"/,
+    mutate: (text) =>
+      text.replace('"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"', '"acceptance": "ACCEPTED"'),
+  },
+  {
+    name: 'phase 05 manifest: a non-zero exit recorded',
+    file: 'phase05-manifest',
+    expect: /records a non-zero exit code in the Phase 05 manifest/,
+    mutate: (text) => text.replace('"exits": [0]', '"exits": [1]'),
+  },
+  {
+    // Evidence for an unaccepted phase pointing at a tree the customer already
+    // accepted would let the old acceptance stand in for the new review.
+    name: 'phase 05 manifest: measured at the Phase 04 acceptance commit',
+    file: 'phase05-manifest',
+    expect: /names the Phase 04 acceptance commit as its measured commit/,
+    mutate: (text) =>
+      text.replace(
+        /"measuredAtCommit": "[0-9a-f]{40}"/,
+        '"measuredAtCommit": "e5fcf19c4164c72106b6d2408f460751ad30685f"',
+      ),
+  },
+  {
+    name: 'phase 05 manifest: a required command removed',
+    file: 'phase05-manifest',
+    expect: /Phase 05 manifest omits required battery commands: pnpm run test:security/,
+    mutate: (text) => {
+      const manifest = JSON.parse(text);
+      manifest.battery = manifest.battery.filter(
+        (entry) => entry.command !== 'pnpm run test:security',
+      );
+      return `${JSON.stringify(manifest, null, 2)}\n`;
+    },
+  },
+  {
+    name: 'phase 05 manifest: an unknown key added',
+    file: 'phase05-manifest',
+    expect: /Phase 05 manifest declares keys \[.*customerAcceptance/,
+    mutate: (text) =>
+      text.replace(
+        '"remediationNumber":',
+        '"customerAcceptance": "ACCEPTED",\n  "remediationNumber":',
+      ),
+  },
+  {
+    name: 'phase 05 evidence: a result recorded as failed in the document',
+    file: 'phase-status',
+    expect: /the Phase 05 evidence records a status other than PASS/,
+    mutate: (text) =>
+      inPhase05Region(text, (region) =>
+        region.replace(
+          '| `pnpm run test:e2e` | PASS |',
+          '| `pnpm run test:e2e` | FAILED — not run |',
+        ),
+      ),
+  },
+  {
+    name: 'phase 05 evidence: a result restated differently from the manifest',
+    file: 'phase-status',
+    expect: /the Phase 05 evidence result for pnpm run test:e2e is/,
+    mutate: (text) =>
+      inPhase05Region(text, (region) => {
+        const row = /^\| `pnpm run test:e2e` \| PASS \|[^\n]*$/m.exec(region)?.[0];
+        if (row === undefined) throw new Error('no test:e2e result row in the Phase 05 evidence');
+        return region.replace(row, '| `pnpm run test:e2e` | PASS | 0 |');
+      }),
+  },
+  {
+    name: 'phase 05 evidence: the measured commit restated as another tree',
+    file: 'phase-status',
+    expect: /the Phase 05 evidence was measured at 0{40}/,
+    mutate: (text) =>
+      inPhase05Region(text, (region) =>
+        region.replace(
+          /Measured at implementation commit [0-9a-f]{40}/,
+          `Measured at implementation commit ${'0'.repeat(40)}`,
+        ),
+      ),
+  },
+  {
+    name: 'phase 05 evidence: the region markers removed',
+    file: 'phase-status',
+    expect: /phase-05-evidence: the begin marker text occurs 0 times/,
+    mutate: (text) =>
+      text
+        .replace('<!-- phase-05-evidence:begin -->\n', '')
+        .replace('<!-- phase-05-evidence:end -->\n', ''),
+  },
+  {
+    // A second table inside the region — as a blockquote, so it renders beside
+    // the real one — is refused by shape before its rows are read.
+    name: 'phase 05 evidence: a second table smuggled into the region',
+    file: 'phase-status',
+    expect: /phase-05-evidence region carries a blockquote block/,
+    mutate: (text) =>
+      inPhase05Region(text, (region) =>
+        region.replace(
+          '<!-- phase-05-evidence:end -->',
+          '> | Command | Status | Result |\n> | --- | --- | --- |\n> | `pnpm run test:e2e` | PASS | 0 |\n\n<!-- phase-05-evidence:end -->',
+        ),
+      ),
+  },
   {
     name: 'catalogue: a sub-gate removed',
     file: 'runbook',
@@ -1455,11 +1582,13 @@ for (const fixture of FIXTURES) {
       runbookPath: RUNBOOK,
       phaseStatusPath: PHASE_STATUS,
       manifestPath: EVIDENCE_MANIFEST,
+      phase05ManifestPath: PHASE05_MANIFEST,
     };
     const KEY = {
       runbook: 'runbookPath',
       'phase-status': 'phaseStatusPath',
       manifest: 'manifestPath',
+      'phase05-manifest': 'phase05ManifestPath',
     };
     for (const name of names) {
       const path = join(dir, SOURCES[name].file);
@@ -1504,6 +1633,7 @@ for (const [name, path, original] of [
   ['runbook', RUNBOOK, originalRunbook],
   ['phase-status', PHASE_STATUS, originalPhaseStatus],
   ['the evidence manifest', EVIDENCE_MANIFEST, originalManifest],
+  ['the Phase 05 manifest', PHASE05_MANIFEST, originalPhase05Manifest],
 ]) {
   const unchanged = readFileSync(path, 'utf8') === original;
   results.push({
@@ -1528,17 +1658,17 @@ const DECOY_DIR = mkdtempSync(join(tmpdir(), 'prsystem-gov-decoy-'));
 const decoyPhaseStatus = originalPhaseStatus.replace(/^\| 22 \|[^\n]*\n/m, '');
 const decoyManifest = originalManifest.replace('"exits": [0]', '"exits": [1]');
 const decoyRunbook = originalRunbook.replace('`SEC-SCHEDULER`, ', '');
-for (const [label, contents] of [
-  ['phase status', decoyPhaseStatus],
-  ['manifest', decoyManifest],
-  ['runbook', decoyRunbook],
+const decoyPhase05Manifest = originalPhase05Manifest.replace(
+  '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
+  '"acceptance": "ACCEPTED"',
+);
+for (const [label, contents, original] of [
+  ['phase status', decoyPhaseStatus, originalPhaseStatus],
+  ['manifest', decoyManifest, originalManifest],
+  ['runbook', decoyRunbook, originalRunbook],
+  ['phase 05 manifest', decoyPhase05Manifest, originalPhase05Manifest],
 ]) {
-  const changed =
-    label === 'phase status'
-      ? contents !== originalPhaseStatus
-      : label === 'manifest'
-        ? contents !== originalManifest
-        : contents !== originalRunbook;
+  const changed = contents !== original;
   results.push({
     name: `control: the ${label} decoy is a document that would fail`,
     ok: changed,
@@ -1549,6 +1679,7 @@ for (const [label, contents] of [
 writeFileSync(join(DECOY_DIR, 'doc.md'), decoyPhaseStatus);
 writeFileSync(join(DECOY_DIR, 'phase-03-evidence.json'), decoyManifest);
 writeFileSync(join(DECOY_DIR, 'runbook.md'), decoyRunbook);
+writeFileSync(join(DECOY_DIR, 'phase-05-evidence.json'), decoyPhase05Manifest);
 
 // And the decoys really would fail, read through the core the CLI uses.
 for (const [label, paths, expected] of [
@@ -1559,12 +1690,18 @@ for (const [label, paths, expected] of [
     /records a non-zero exit code/,
   ],
   ['runbook', { runbookPath: join(DECOY_DIR, 'runbook.md') }, /the catalogue omits SEC-SCHEDULER/],
+  [
+    'phase 05 manifest',
+    { phase05ManifestPath: join(DECOY_DIR, 'phase-05-evidence.json') },
+    /Phase 05 manifest declares acceptance = "ACCEPTED"/,
+  ],
 ]) {
   const outcome = runGovernanceChecks({
     root: ROOT,
     runbookPath: RUNBOOK,
     phaseStatusPath: PHASE_STATUS,
     manifestPath: EVIDENCE_MANIFEST,
+    phase05ManifestPath: PHASE05_MANIFEST,
     ...paths,
   });
   const rejected = outcome.results.some((r) => !r.ok && expected.test(r.detail));
@@ -1580,6 +1717,7 @@ for (const [name, value] of [
   ['PRSYSTEM_PHASE_STATUS', join(DECOY_DIR, 'doc.md')],
   ['PRSYSTEM_EVIDENCE_MANIFEST', join(DECOY_DIR, 'phase-03-evidence.json')],
   ['PRSYSTEM_RUNBOOK', join(DECOY_DIR, 'runbook.md')],
+  ['PRSYSTEM_PHASE05_MANIFEST', join(DECOY_DIR, 'phase-05-evidence.json')],
 ]) {
   const run = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-governance.mjs')], {
     cwd: ROOT,

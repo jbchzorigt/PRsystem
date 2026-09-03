@@ -33,15 +33,15 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | --- | --- | --- | --- | --- | --- |
 | EXT-01 | XYP / ХУР | Identity verification at check-in and Wanted-record creation | **BLOCKED** | 08 | 20 |
 | EXT-02 | e-Mongolia | Guest registration and login channel | **BLOCKED** | 12 | 20 |
-| EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 — port and simulator shipped | 20 |
-| EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — port and simulator shipped | 20 |
+| EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
+| EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 | EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 | 20 |
 | EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 | 20 |
 | EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 | 20 |
 | EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 | 20 |
 | EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 | 20 |
 | EXT-10 | Police security | Human-rights and security assessment, DR, penetration test | **BLOCKED** | 18 | 20 |
-| EXT-11 | eBarimt | Subscription tax receipts | **BLOCKED** | 05 — port and simulator shipped | 20 |
+| EXT-11 | eBarimt | Subscription tax receipts | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 
 All eleven gates are **production release gates**. None blocks development in Phases 01–19.
 
@@ -91,7 +91,12 @@ centralized settlement and per-payment-type refund capability must be confirmed 
 (doc 11 §12).
 
 **Port surface.** `PaymentGatewayPort`, shared with EXT-04: `createInvoice`, `queryStatus`, `refund`,
-`verifyCallback`.
+`verifyCallback`. The canonical contract lives in `packages/ports` (Phase 05 remediation 1): every
+operation answers a typed, non-throwing `PortResult`, the port carries its `id` and `mode`, and
+`createInvoice` takes a **caller-supplied idempotency key** so a retry after a lost acknowledgement
+recovers the same provider invoice. The `qpay` and `khaan` simulators pass the §3 conformance suite
+of the port catalog in `packages/ports/src/conformance.test.ts`; the production adapters answer
+`DISABLED` and make no network call. "Port and simulator shipped" is claimed only on that evidence.
 **Fail-closed rule.** No screenshot, redirect or client-reported success is ever authoritative
 (`PAY-DEC-005`). Late or duplicate capture creates a refund obligation or a reconciliation case, never
 an entitlement change (`PAY-DEC-006`, `ONB-DEC-008`, `LIFE-DEC-006`).
@@ -230,7 +235,13 @@ access and audit review.
 breakdown, callback, status and cancel-correction semantics, sandbox and production access, and tax
 authority approval.
 
-**Port surface.** `EBarimtPort.issue(paymentId, amount, breakdown)`, `.queryStatus`, `.cancel`.
+**Port surface.** `EBarimtPort.issue({ paymentId, totalMnt, vatBreakdown, buyer, idempotencyKey })`,
+`.queryStatus`, `.cancel` — the canonical contract in `packages/ports`, answering a typed
+non-throwing `PortResult`. An issued receipt is returned whole (number, QR, amounts, issue time) or
+not at all, so a retry has nothing to fabricate; the simulator is idempotent by the caller's key and
+passes the §3 conformance suite (`packages/ports/src/conformance.test.ts`). Each confirmed onboarding,
+renewal and upgrade payment opens exactly one durable issuance intent in the payment's own
+transaction, consumed by the worker's issuance queue (Phase 05 remediation 1).
 **Fail-closed rule.** A missing receipt never blocks or reverses a confirmed subscription activation
 (`SUB-DEC-005`, `SUB-DEC-008`). Failed issuance moves the payment to a manual-resolution queue actioned
 by `SUBSCRIPTION_EBARIMT_RETRY`. Operators never hand-author receipt numbers, QR codes, tax amounts or
