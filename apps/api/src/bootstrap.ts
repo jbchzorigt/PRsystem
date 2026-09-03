@@ -83,6 +83,7 @@ export async function createApp(
           ...(config.QUEUE_PREFIX === undefined ? {} : { queuePrefix: config.QUEUE_PREFIX }),
         },
       },
+      catalog: { config: { databaseUrl: config.DATABASE_URL } },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

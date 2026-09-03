@@ -81,11 +81,12 @@ describe('R2 — two runners against a completely empty database', () => {
 
     // The whole journal: 0000_baseline, 0001_kernel, 0002_iam_rbac_staff,
     // 0003_onboarding_subscription, 0004_onboarding_remediation,
-    // 0005_onboarding_remediation2, 0006_onboarding_remediation3.
-    expect(first.appliedAfter).toBe(7);
-    expect(second.appliedAfter).toBe(7);
+    // 0005_onboarding_remediation2, 0006_onboarding_remediation3,
+    // 0007_hotel_catalog.
+    expect(first.appliedAfter).toBe(8);
+    expect(second.appliedAfter).toBe(8);
     // Exactly one of them did the applying.
-    const applied = [first, second].filter((r) => r.appliedBefore === 0 && r.appliedAfter === 7);
+    const applied = [first, second].filter((r) => r.appliedBefore === 0 && r.appliedAfter === 8);
     expect(applied).toHaveLength(1);
   }, 120000);
 });

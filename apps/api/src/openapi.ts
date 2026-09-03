@@ -58,6 +58,9 @@ async function generate(): Promise<void> {
         notifications: new UnavailableStaffNotification(),
         signals: new NoProvisioningSignal(),
       },
+      // The catalog has no port of its own; a pool that is never connected is
+      // all it needs to describe its routes.
+      catalog: { pool: new Pool({ max: 1 }) },
     }),
     new FastifyAdapter(),
     { logger: false },

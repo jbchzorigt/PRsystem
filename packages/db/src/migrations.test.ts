@@ -79,6 +79,12 @@ describe('migration journal', () => {
       // doc 03 §1: `tenancy` owns the hotel, `iam` owns membership and the
       // staff lifecycle. Both are introduced in Phase 04.
       '0002_iam_rbac_staff.sql': ['hotel', 'staff_membership', 'staff_invitation'],
+      // doc 03 §1 and doc 07 §3: the catalog owns the physical room, and Phase 06
+      // is the phase that introduces it. Its other tables — `room_category`,
+      // `hotel_stay_configuration`, `minibar_product`, `minibar_template`,
+      // `catalog_event` and `stay_rate_snapshot` — are compound names the rule
+      // does not match, so only the bare one is named here.
+      '0007_hotel_catalog.sql': ['room'],
     };
 
     for (const file of sqlFiles) {

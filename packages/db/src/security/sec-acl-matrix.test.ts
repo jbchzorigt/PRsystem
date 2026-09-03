@@ -157,15 +157,19 @@ describe.each(TENANT_TABLES)('$name', (table) => {
               return;
             }
             // UPDATE and DELETE must actually affect the rows seeded for tenant
-            // A. A false predicate would prove only that the parser ran.
-            const visible = await query(`SELECT count(*)::int AS n FROM ${table.name}`);
+            // A. A false predicate would prove only that the parser ran. The
+            // fixture's own predicate — the rows no other fixture references —
+            // is applied to the count and to the statement alike, so the cell
+            // still compares a statement against real rows.
+            const scopeSql = table.probeWhere === undefined ? '' : ` WHERE ${table.probeWhere}`;
+            const visible = await query(`SELECT count(*)::int AS n FROM ${table.name}${scopeSql}`);
             const expected = Number(visible.rows[0]?.['n']);
             expect(expected).toBeGreaterThan(0);
 
             const verbSql =
               verb === 'UPDATE'
-                ? `UPDATE ${table.name} SET ${updateSet(table)}`
-                : `DELETE FROM ${table.name}`;
+                ? `UPDATE ${table.name} SET ${updateSet(table)}${scopeSql}`
+                : `DELETE FROM ${table.name}${scopeSql}`;
             const affected = await query(verbSql);
             expect(affected.rowCount).toBe(expected);
           });

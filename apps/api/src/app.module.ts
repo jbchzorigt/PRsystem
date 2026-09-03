@@ -8,6 +8,8 @@ import type { IamModuleOptions } from './modules/iam/iam.module';
 import { IamModule } from './modules/iam/iam.module';
 import type { OnboardingModuleOptions } from './modules/onboarding/onboarding.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
+import type { CatalogModuleOptions } from './modules/catalog/catalog.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 
 export interface AppModuleOptions {
   /**
@@ -33,6 +35,12 @@ export interface AppModuleOptions {
    * it lives and handed to the module that consumes it (ADR-0019 §4).
    */
   readonly onboarding: OnboardingModuleOptions;
+  /**
+   * The Phase 06 catalog. Its subscription-state port is not an option: the
+   * module reads the IAM module's export, so there is exactly one entitlement
+   * gate in the process.
+   */
+  readonly catalog: CatalogModuleOptions;
   /**
    * A pool the application should close on shutdown.
    *
@@ -76,6 +84,7 @@ export class AppModule {
         MaintenanceModule.forRoot(options.scheduler),
         iam,
         OnboardingModule.forRoot({ ...options.onboarding, iam }),
+        CatalogModule.forRoot({ ...options.catalog, iam }),
       ],
     };
   }

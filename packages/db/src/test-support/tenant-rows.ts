@@ -49,6 +49,18 @@ export interface TenantRowSpec {
    * a fixture limitation but an impossibility.
    */
   readonly rowsPerTenant?: number;
+  /**
+   * The subset of this tenant's rows the UPDATE and DELETE probes address.
+   *
+   * Defaults to every visible row, which is what a table nothing references
+   * wants. A parent table whose other fixtures deliberately reference some of
+   * its rows names the free ones here instead: `DELETE FROM parent` would
+   * otherwise be refused by the child's foreign key, and a referential refusal
+   * is not evidence about a grant. The count the probe compares against is
+   * taken through the same predicate, so the cell still proves the statement
+   * reached real rows.
+   */
+  readonly probeWhere?: string;
   /** The grants each runtime holds on this table, exactly as the migration sets them. */
   readonly grants: Readonly<Record<Runtime, readonly Verb[]>>;
 }
@@ -606,6 +618,102 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     rowsPerTenant: 1,
     updateColumn: 'last_error',
     updateSet: `attempts = attempts + 1, last_error = 'acl-probe'`,
+  },
+  // ------------------------------------------------------------- Phase 06
+  {
+    name: 'platform.hotel_stay_configuration',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    // An upsert, because the tenant *is* the key: the second probe has no free
+    // slot to insert into. The statement still needs the INSERT privilege — a
+    // runtime without it is refused before the conflict is ever reached — and it
+    // is the shape the service itself uses, since a hotel provisioned in Phase
+    // 05 has no configuration row until somebody configures one.
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.hotel_stay_configuration (hotel_id) VALUES ($1)
+            ON CONFLICT (hotel_id) DO UPDATE
+               SET revision = platform.hotel_stay_configuration.revision + 1`,
+      values: [hotelId],
+    }),
+    // One configuration per hotel: the tenant *is* the key.
+    rowsPerTenant: 1,
+    updateColumn: 'cleaning_buffer_minutes',
+    // A configuration change has to advance the version, so the probe advances
+    // it: the guard refuses an edit that leaves a snapshot attributable to two
+    // different configurations.
+    updateSet: `cleaning_buffer_minutes = 30, config_version = config_version + 1,
+                revision = revision + 1`,
+  },
+  {
+    name: 'platform.room_category',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.room_category (hotel_id, name) VALUES ($1, $2)`,
+      values: [hotelId, `fixture-category-${String(n)}`],
+    }),
+    // The room and snapshot fixtures below deliberately reference the lowest
+    // category id, so the delete probe addresses the ones nothing references.
+    probeWhere: `category_id NOT IN (SELECT category_id FROM platform.room)
+                 AND category_id NOT IN (SELECT category_id FROM platform.stay_rate_snapshot)`,
+    updateColumn: 'description',
+    updateSet: `description = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.room',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.room (hotel_id, room_number, category_id)
+            VALUES ($1, $2,
+                    coalesce((SELECT category_id FROM platform.room_category
+                               WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))`,
+      values: [hotelId, `fixture-room-${String(n)}`],
+    }),
+    updateColumn: 'floor_label',
+    updateSet: `floor_label = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.minibar_product',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.minibar_product (hotel_id, name) VALUES ($1, $2)`,
+      values: [hotelId, `fixture-product-${String(n)}`],
+    }),
+    updateColumn: 'name',
+    updateSet: `name = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.minibar_template',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.minibar_template (hotel_id, name) VALUES ($1, $2)`,
+      values: [hotelId, `fixture-template-${String(n)}`],
+    }),
+    updateColumn: 'name',
+    updateSet: `name = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.catalog_event',
+    // Append-only history: no role holds UPDATE or DELETE, and the trigger
+    // refuses them behind the grant.
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.catalog_event (hotel_id, entity_type, entity_id, event_type)
+            VALUES ($1, 'ROOM', gen_random_uuid(), 'CREATED')`,
+      values: [hotelId],
+    }),
+  },
+  {
+    name: 'platform.stay_rate_snapshot',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.stay_rate_snapshot
+              (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+               source_entity_id, pricing_config_version, category_id, cleaning_buffer_minutes)
+            VALUES ($1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                    coalesce((SELECT category_id FROM platform.room_category
+                               WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}),
+                    30)`,
+      values: [hotelId],
+    }),
   },
 ];
 

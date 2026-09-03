@@ -12,6 +12,9 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     )
     .setVersion('0.0.0')
     .addTag('health', 'Liveness and readiness probes')
+    .addTag('catalog', 'Hotel stay configuration, room categories, rooms and minibar entities')
+    .addTag('catalog-lifecycle', 'ACTIVE → RETIRING → INACTIVE lifecycle of catalog entities')
+    .addTag('tariffs', 'Server-resolved effective rates and confirmed rate snapshots')
     .build();
 
   return SwaggerModule.createDocument(app, config);

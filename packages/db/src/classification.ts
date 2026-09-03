@@ -294,6 +294,48 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: 'carries hotel_id; the sealed activation link is one hotel\u2019s outbound delivery (doc 15 §5)',
   },
   {
+    schema: 'platform',
+    table: 'hotel_stay_configuration',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the default tariffs, fixed check-out time and cleaning minimum are tenant configuration (STAY-DEC-004, STAY-DEC-005)',
+  },
+  {
+    schema: 'platform',
+    table: 'room_category',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a category and its overrides are tenant data (doc 07 §2)',
+  },
+  {
+    schema: 'platform',
+    table: 'room',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a physical room and its walk-in overrides are tenant data (doc 07 §3)',
+  },
+  {
+    schema: 'platform',
+    table: 'minibar_product',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a minibar product belongs to one hotel (doc 26 §6)',
+  },
+  {
+    schema: 'platform',
+    table: 'minibar_template',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a minibar template belongs to one hotel (doc 26 §7)',
+  },
+  {
+    schema: 'platform',
+    table: 'catalog_event',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; append-only catalog and lifecycle history (RML-DEC-006)',
+  },
+  {
+    schema: 'platform',
+    table: 'stay_rate_snapshot',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a confirmed price and the configuration it came from (STAY-DEC-005)',
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

@@ -3012,6 +3012,513 @@ export const activationDelivery = platform
   .enableRLS();
 
 /**
+ * Phase 06 — the hotel catalog.
+ *
+ * Every tariff column is nullable because *unset* is a state the resolver has to
+ * see: a level that has configured nothing inherits, and a hotel that has
+ * configured nothing has no effective price at all (`STAY-DEC-005`). Hourly and
+ * nightly are separate columns at every level because doc 05 §13.1 resolves them
+ * independently.
+ */
+export const hotelStayConfiguration = platform
+  .table(
+    'hotel_stay_configuration',
+    {
+      cleaningBufferMinutes: integer('cleaning_buffer_minutes'),
+      configVersion: integer('config_version')
+        .notNull()
+        .default(sql`1`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      fixedCheckoutMinute: integer('fixed_checkout_minute'),
+      hotelId: uuid('hotel_id').primaryKey(),
+      hourlyRateMnt: bigint('hourly_rate_mnt', { mode: 'bigint' }),
+      nightlyRateMnt: bigint('nightly_rate_mnt', { mode: 'bigint' }),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      check(
+        'hotel_stay_configuration_buffer_range',
+        sql`((cleaning_buffer_minutes IS NULL) OR ((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440)))`,
+      ),
+      check(
+        'hotel_stay_configuration_checkout_minute_range',
+        sql`((fixed_checkout_minute IS NULL) OR ((fixed_checkout_minute >= 0) AND (fixed_checkout_minute <= 1439)))`,
+      ),
+      check(
+        'hotel_stay_configuration_hourly_non_negative',
+        sql`((hourly_rate_mnt IS NULL) OR (hourly_rate_mnt >= 0))`,
+      ),
+      check(
+        'hotel_stay_configuration_nightly_non_negative',
+        sql`((nightly_rate_mnt IS NULL) OR (nightly_rate_mnt >= 0))`,
+      ),
+      check('hotel_stay_configuration_revision_non_negative', sql`(revision >= 0)`),
+      check('hotel_stay_configuration_version_positive', sql`(config_version >= 1)`),
+      foreignKey({
+        name: 'hotel_stay_configuration_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const roomCategory = platform
+  .table(
+    'room_category',
+    {
+      categoryId: uuid('category_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      cleaningBufferMinutes: integer('cleaning_buffer_minutes'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      description: text('description'),
+      hotelId: uuid('hotel_id').notNull(),
+      hourlyRateMnt: bigint('hourly_rate_mnt', { mode: 'bigint' }),
+      name: text('name').notNull(),
+      nightlyRateMnt: bigint('nightly_rate_mnt', { mode: 'bigint' }),
+      retirementReason: text('retirement_reason'),
+      retirementRequestedAt: timestamp('retirement_requested_at', { withTimezone: true }),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      check(
+        'room_category_active_is_clear',
+        sql`((state <> 'ACTIVE'::text) OR ((retirement_requested_at IS NULL) AND (deactivated_at IS NULL)))`,
+      ),
+      check(
+        'room_category_buffer_range',
+        sql`((cleaning_buffer_minutes IS NULL) OR ((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440)))`,
+      ),
+      check(
+        'room_category_description_bounded',
+        sql`((description IS NULL) OR ((length(description) >= 1) AND (length(description) <= 500)))`,
+      ),
+      check(
+        'room_category_hourly_non_negative',
+        sql`((hourly_rate_mnt IS NULL) OR (hourly_rate_mnt >= 0))`,
+      ),
+      check(
+        'room_category_inactive_has_time',
+        sql`((state <> 'INACTIVE'::text) OR (deactivated_at IS NOT NULL))`,
+      ),
+      check('room_category_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 120))`),
+      check(
+        'room_category_nightly_non_negative',
+        sql`((nightly_rate_mnt IS NULL) OR (nightly_rate_mnt >= 0))`,
+      ),
+      check(
+        'room_category_retiring_has_request',
+        sql`((state <> 'RETIRING'::text) OR (retirement_requested_at IS NOT NULL))`,
+      ),
+      check('room_category_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'room_category_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'RETIRING'::text, 'INACTIVE'::text]))`,
+      ),
+      unique('room_category_hotel_scope_uq').on(table.hotelId, table.categoryId),
+      foreignKey({
+        name: 'room_category_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const room = platform
+  .table(
+    'room',
+    {
+      categoryId: uuid('category_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      floorLabel: text('floor_label'),
+      hotelId: uuid('hotel_id').notNull(),
+      hourlyRateMnt: bigint('hourly_rate_mnt', { mode: 'bigint' }),
+      nightlyRateMnt: bigint('nightly_rate_mnt', { mode: 'bigint' }),
+      retirementReason: text('retirement_reason'),
+      retirementRequestedAt: timestamp('retirement_requested_at', { withTimezone: true }),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      roomNumber: text('room_number').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      check(
+        'room_active_is_clear',
+        sql`((state <> 'ACTIVE'::text) OR ((retirement_requested_at IS NULL) AND (deactivated_at IS NULL)))`,
+      ),
+      check(
+        'room_floor_bounded',
+        sql`((floor_label IS NULL) OR ((length(floor_label) >= 1) AND (length(floor_label) <= 20)))`,
+      ),
+      check('room_hourly_non_negative', sql`((hourly_rate_mnt IS NULL) OR (hourly_rate_mnt >= 0))`),
+      check(
+        'room_inactive_has_time',
+        sql`((state <> 'INACTIVE'::text) OR (deactivated_at IS NOT NULL))`,
+      ),
+      check(
+        'room_nightly_non_negative',
+        sql`((nightly_rate_mnt IS NULL) OR (nightly_rate_mnt >= 0))`,
+      ),
+      check(
+        'room_number_bounded',
+        sql`((length(room_number) >= 1) AND (length(room_number) <= 20))`,
+      ),
+      check(
+        'room_retiring_has_request',
+        sql`((state <> 'RETIRING'::text) OR (retirement_requested_at IS NOT NULL))`,
+      ),
+      check('room_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'room_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'RETIRING'::text, 'INACTIVE'::text]))`,
+      ),
+      unique('room_hotel_scope_uq').on(table.hotelId, table.roomId),
+      unique('room_number_unique_per_hotel').on(table.hotelId, table.roomNumber),
+      foreignKey({
+        name: 'room_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'room_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      index('room_category_idx').on(table.hotelId, table.categoryId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * Identity and lifecycle only.
+ *
+ * Selling price, purchase cost, stock and the template versions are Phase 07's,
+ * and they are added to this row rather than to a second product model
+ * (`RML-DEC-015`, doc 26 §§6–7).
+ */
+export const minibarProduct = platform
+  .table(
+    'minibar_product',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      name: text('name').notNull(),
+      productId: uuid('product_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      retirementReason: text('retirement_reason'),
+      retirementRequestedAt: timestamp('retirement_requested_at', { withTimezone: true }),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      check(
+        'minibar_product_active_is_clear',
+        sql`((state <> 'ACTIVE'::text) OR ((retirement_requested_at IS NULL) AND (deactivated_at IS NULL)))`,
+      ),
+      check(
+        'minibar_product_inactive_has_time',
+        sql`((state <> 'INACTIVE'::text) OR (deactivated_at IS NOT NULL))`,
+      ),
+      check('minibar_product_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 120))`),
+      check(
+        'minibar_product_retiring_has_request',
+        sql`((state <> 'RETIRING'::text) OR (retirement_requested_at IS NOT NULL))`,
+      ),
+      check('minibar_product_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'minibar_product_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'RETIRING'::text, 'INACTIVE'::text]))`,
+      ),
+      unique('minibar_product_hotel_scope_uq').on(table.hotelId, table.productId),
+      foreignKey({
+        name: 'minibar_product_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const minibarTemplate = platform
+  .table(
+    'minibar_template',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      name: text('name').notNull(),
+      retirementReason: text('retirement_reason'),
+      retirementRequestedAt: timestamp('retirement_requested_at', { withTimezone: true }),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      templateId: uuid('template_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check(
+        'minibar_template_active_is_clear',
+        sql`((state <> 'ACTIVE'::text) OR ((retirement_requested_at IS NULL) AND (deactivated_at IS NULL)))`,
+      ),
+      check(
+        'minibar_template_inactive_has_time',
+        sql`((state <> 'INACTIVE'::text) OR (deactivated_at IS NOT NULL))`,
+      ),
+      check('minibar_template_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 120))`),
+      check(
+        'minibar_template_retiring_has_request',
+        sql`((state <> 'RETIRING'::text) OR (retirement_requested_at IS NOT NULL))`,
+      ),
+      check('minibar_template_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'minibar_template_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'RETIRING'::text, 'INACTIVE'::text]))`,
+      ),
+      unique('minibar_template_hotel_scope_uq').on(table.hotelId, table.templateId),
+      foreignKey({
+        name: 'minibar_template_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The catalog's append-only history.
+ *
+ * `entity_id` carries no foreign key on purpose: `RML-DEC-005` allows a
+ * never-used entity to be hard-deleted, and the record of that deletion has to
+ * survive the row it describes.
+ */
+export const catalogEvent = platform
+  .table(
+    'catalog_event',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      configVersion: integer('config_version'),
+      entityId: uuid('entity_id').notNull(),
+      entityType: text('entity_type').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      eventType: text('event_type').notNull(),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      payload: jsonb('payload')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      reason: text('reason'),
+      toState: text('to_state'),
+    },
+    (table) => [
+      check(
+        'catalog_event_entity_type_known',
+        sql`(entity_type = ANY (ARRAY['ROOM'::text, 'ROOM_CATEGORY'::text, 'MINIBAR_PRODUCT'::text, 'MINIBAR_TEMPLATE'::text, 'HOTEL_STAY_CONFIGURATION'::text]))`,
+      ),
+      check(
+        'catalog_event_payload_has_no_denied_key',
+        sql`(NOT platform.contains_denied_key(payload))`,
+      ),
+      check(
+        'catalog_event_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check(
+        'catalog_event_state_known',
+        sql`(((from_state IS NULL) OR (from_state = ANY (ARRAY['ACTIVE'::text, 'RETIRING'::text, 'INACTIVE'::text]))) AND ((to_state IS NULL) OR (to_state = ANY (ARRAY['ACTIVE'::text, 'RETIRING'::text, 'INACTIVE'::text]))))`,
+      ),
+      check(
+        'catalog_event_type_known',
+        sql`(event_type = ANY (ARRAY['CREATED'::text, 'UPDATED'::text, 'TARIFF_SET'::text, 'TARIFF_CLEARED'::text, 'CONFIGURATION_SET'::text, 'RETIREMENT_REQUESTED'::text, 'RETIREMENT_CANCELLED'::text, 'DEACTIVATED'::text, 'REACTIVATED'::text, 'HARD_DELETED'::text]))`,
+      ),
+      check(
+        'catalog_event_version_positive',
+        sql`((config_version IS NULL) OR (config_version >= 1))`,
+      ),
+      foreignKey({
+        name: 'catalog_event_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      index('catalog_event_entity_idx').on(
+        table.hotelId,
+        table.entityType,
+        table.entityId,
+        table.occurredAt,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The confirmation snapshot (`STAY-DEC-005`, doc 05 §13.2).
+ *
+ * Append-only, and carrying what re-proves the price: the unit rate, the level
+ * it came from, the entity at that level and the configuration version in force.
+ * The `ONLINE_BOOKING` check is the decision itself in constraint form — an
+ * online price can never have come from a room override.
+ */
+export const stayRateSnapshot = platform
+  .table(
+    'stay_rate_snapshot',
+    {
+      capturedAt: timestamp('captured_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      categoryId: uuid('category_id').notNull(),
+      cleaningBufferMinutes: integer('cleaning_buffer_minutes').notNull(),
+      fixedCheckoutMinute: integer('fixed_checkout_minute'),
+      hotelId: uuid('hotel_id').notNull(),
+      pricingConfigVersion: integer('pricing_config_version').notNull(),
+      roomId: uuid('room_id'),
+      snapshotId: uuid('snapshot_id')
+        .primaryKey()
+        .default(sql`gen_random_uuid()`),
+      sourceEntityId: uuid('source_entity_id').notNull(),
+      sourceLevel: text('source_level').notNull(),
+      stayType: text('stay_type').notNull(),
+      subjectRef: uuid('subject_ref').notNull(),
+      subjectType: text('subject_type').notNull(),
+      unitPriceMnt: bigint('unit_price_mnt', { mode: 'bigint' }).notNull(),
+    },
+    (table) => [
+      check(
+        'stay_rate_snapshot_buffer_range',
+        sql`((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440))`,
+      ),
+      check(
+        'stay_rate_snapshot_checkout_minute_range',
+        sql`((fixed_checkout_minute IS NULL) OR ((fixed_checkout_minute >= 0) AND (fixed_checkout_minute <= 1439)))`,
+      ),
+      check(
+        'stay_rate_snapshot_nightly_has_checkout',
+        sql`((stay_type = 'NIGHTLY'::text) = (fixed_checkout_minute IS NOT NULL))`,
+      ),
+      check(
+        'stay_rate_snapshot_online_never_room_source',
+        sql`((subject_type <> 'ONLINE_BOOKING'::text) OR (source_level <> 'ROOM'::text))`,
+      ),
+      check('stay_rate_snapshot_price_non_negative', sql`(unit_price_mnt >= 0)`),
+      check(
+        'stay_rate_snapshot_room_source_has_room',
+        sql`((source_level <> 'ROOM'::text) OR (room_id IS NOT NULL))`,
+      ),
+      check(
+        'stay_rate_snapshot_source_level_known',
+        sql`(source_level = ANY (ARRAY['ROOM'::text, 'CATEGORY'::text, 'HOTEL'::text]))`,
+      ),
+      check(
+        'stay_rate_snapshot_source_matches_level',
+        sql`(((source_level = 'ROOM'::text) AND (source_entity_id = room_id)) OR ((source_level = 'CATEGORY'::text) AND (source_entity_id = category_id)) OR ((source_level = 'HOTEL'::text) AND (source_entity_id = hotel_id)))`,
+      ),
+      check(
+        'stay_rate_snapshot_stay_type_known',
+        sql`(stay_type = ANY (ARRAY['HOURLY'::text, 'NIGHTLY'::text]))`,
+      ),
+      check(
+        'stay_rate_snapshot_subject_known',
+        sql`(subject_type = ANY (ARRAY['WALK_IN_STAY'::text, 'ONLINE_BOOKING'::text]))`,
+      ),
+      check('stay_rate_snapshot_version_positive', sql`(pricing_config_version >= 1)`),
+      unique('stay_rate_snapshot_subject_uq').on(
+        table.hotelId,
+        table.subjectType,
+        table.subjectRef,
+      ),
+      foreignKey({
+        name: 'stay_rate_snapshot_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_rate_snapshot_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_rate_snapshot_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      index('stay_rate_snapshot_category_idx').on(table.hotelId, table.categoryId),
+      index('stay_rate_snapshot_room_idx').on(table.hotelId, table.roomId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
  * The PostgreSQL enum types this declaration covers.
  *
  * An explicit inventory, not something derived from the columns that happen to
@@ -3075,4 +3582,12 @@ export const DECLARED_TABLES = [
   cashLocation,
   hotelAdminActivation,
   activationDelivery,
+  // Phase 06.
+  hotelStayConfiguration,
+  roomCategory,
+  room,
+  minibarProduct,
+  minibarTemplate,
+  catalogEvent,
+  stayRateSnapshot,
 ] as const;
