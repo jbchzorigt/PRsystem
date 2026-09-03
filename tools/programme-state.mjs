@@ -85,9 +85,56 @@ export const GOVERNED_STATE = {
    * it reads as covering whatever HEAD happens to be.
    */
   implementedPhaseAcceptedAtCommit: '35314ba210f609269863f0b528bbe827e6a5d3ce',
-  currentPhase: '06 — Hotel, room, category, and tariffs',
+  currentPhase: '07 — Minibar inventory and templates',
   currentPhaseState: 'NOT STARTED',
 };
+
+/**
+ * The standing implementation authorization for Phases 06 to 23.
+ *
+ * On 2026-09-03 the customer authorized the remaining approved phases to be
+ * implemented sequentially, each continuing to the next once its blocking
+ * gates pass, without a further per-phase "may I proceed". It is recorded here
+ * because it changes what `currentPhaseState: 'NOT STARTED'` means: the
+ * current phase is authorized to begin, and the commit that completes it is
+ * what advances this module. What it does **not** change is written down just
+ * as plainly — it is implementation authorization only. No phase it covers is
+ * accepted by it, no gate is weakened by it, and no phase is skipped or
+ * narrowed under it.
+ */
+export const PROGRESSION_AUTHORIZATION = {
+  grantedOn: '2026-09-03',
+  grantedBy: 'customer',
+  scope: 'implementation authorization for Phases 06–23, sequential',
+  firstPhase: '06',
+  lastPhase: '23',
+  isCustomerAcceptance: false,
+  isReleaseApproval: false,
+};
+
+/**
+ * The phases completed under that authorization, in order.
+ *
+ * Each is `DONE` — implemented and measured — and `AWAITING_CUSTOMER_ACCEPTANCE`
+ * until the customer accepts it, which would be a change to this entry. Its
+ * evidence manifest declares what was measured and on which implementation
+ * commit; governance check 17 holds the manifest, the governed state and the
+ * `phase-status.md` record to one another the way check 16 holds Phase 05's.
+ */
+export const PROGRESSED_PHASES = [
+  {
+    number: '06',
+    name: '06 — Hotel, room, category, and tariffs',
+    state: 'DONE',
+    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidence: {
+      manifest: 'phase-06-evidence.json',
+      region: 'phase-06-evidence',
+      heading: 'Phase 06 record',
+      manifestKeys: ['phase', 'phaseState', 'acceptance', 'measuredAtCommit', 'battery'],
+    },
+  },
+];
 
 /**
  * Every phase whose ledger row and position cell are governed, in ledger order.
@@ -104,7 +151,12 @@ export const GOVERNED_PHASES = [
     name: GOVERNED_STATE.implementedPhase,
     state: GOVERNED_STATE.implementedPhaseState,
   },
-  { number: '06', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
+  ...PROGRESSED_PHASES.map((phase) => ({
+    number: phase.number,
+    name: phase.name,
+    state: phase.state,
+  })),
+  { number: '07', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
 ];
 
 /**

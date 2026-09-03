@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.18 (Phase 05 remediation 3 — four Phase 05 decisions gain migration `0006`, the
-durable pre-invoice refusal; no status changes, 52 of 279 `COVERED`)
+**Version:** 1.19 (Phase 06 — the 11 hotel, room, category and tariff decisions move to `COVERED`
+with code and test references; 63 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -202,52 +202,52 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 3. RC-DEC — Reception system scope (doc 02, 44)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| RC-DEC-001 | One consolidated bill per stay | 10 | PENDING |
-| RC-DEC-002 | Deposit amount 50 000–100 000₮, hotel/category configuration | 10 | PENDING |
-| RC-DEC-003 | Deposit driven by booking source | 10 | PENDING |
-| RC-DEC-004 | Deposit channels and deduction without extra approval | 10 | PENDING |
-| RC-DEC-005 | Online booking source is the platform's own registry | 13 | PENDING |
-| RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | PENDING |
-| RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | PENDING |
-| RC-DEC-008 | Cleaning status authority by package | 09 | PENDING |
-| RC-DEC-009 | Shift close authority | 11 | PENDING |
-| RC-DEC-010 | Cleaner dashboard and minibar report | 09 | PENDING |
-| RC-DEC-011 | Cleaner and minibar restricted to 25 000/30 000₮ | 07 | PENDING |
-| RC-DEC-012 | Hourly versus nightly stay model | 08 | PENDING |
-| RC-DEC-013 | No automatic overdue fee | 08 | PENDING |
-| RC-DEC-014 | Cleaning buffer between bookings | 08 | PENDING |
-| RC-DEC-015 | Separate room state axes and badges | 08 | PENDING |
-| RC-DEC-016 | Cleaner minibar refill from warehouse | 09 | PENDING |
-| RC-DEC-017 | Room readiness conditions | 08 | PENDING |
-| RC-DEC-018 | Minibar optional per room, template required when ON | 07 | PENDING |
-| RC-DEC-019 | Restaurant registration and access | 15 | PENDING |
-| RC-DEC-020 | Food order confirmed only on QPay success | 15 | PENDING |
-| RC-DEC-021 | Restaurant's own QPay merchant | 15 | PENDING |
-| RC-DEC-022 | Restaurant ordering schedule | 15 | PENDING |
-| RC-DEC-023 | Invoice validity versus closing time, late payment refund | 15 | PENDING |
-| RC-DEC-024 | Restaurant-initiated refund authority | 15 | PENDING |
-| RC-DEC-025 | Restaurant contact number visibility | 15 | PENDING |
-| RC-DEC-026 | Room QR and one-time guest access code | 15 | PENDING |
-| RC-DEC-027 | At most five concurrent guest sessions per stay | 15 | PENDING |
-| RC-DEC-028 | Checkout with an unfinished restaurant order | 15 | PENDING |
-| RC-DEC-029 | Checkout handoff option per order | 15 | PENDING |
-| RC-DEC-030 | Restaurant acceptance 5/10-minute SLA | 15 | PENDING |
-| RC-DEC-031 | Refund request resolution SLA | 15 | PENDING |
-| RC-DEC-032 | Guest list and Excel export columns | 17 | PENDING |
-| RC-DEC-033 | One primary guest per stay | 08 | PENDING |
-| RC-DEC-034 | Primary guest Police match boundary | 18 | PENDING |
-| RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | PENDING |
-| RC-DEC-036 | Minibar stock, cost and shortage override | 07 | PENDING |
-| RC-DEC-037 | Hotel Admin financial reporting | 17 | PENDING |
-| RC-DEC-038 | Cash drawer and physical cash ledger | 11 | PENDING |
-| RC-DEC-039 | Minibar selling price snapshot | 09 | PENDING |
-| RC-DEC-040 | Room and minibar entity lifecycle | 06 | PENDING |
-| RC-DEC-041 | Room minibar configuration change | 07 | PENDING |
-| RC-DEC-042 | Explicit exact-version Rollout | 07 | PENDING |
-| RC-DEC-043 | Multi-room Rollout batch | 07 | PENDING |
-| RC-DEC-044 | Mongolian, foreign and no-document primary guest identity | 08 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| RC-DEC-001 | One consolidated bill per stay | 10 | PENDING | — | — |
+| RC-DEC-002 | Deposit amount 50 000–100 000₮, hotel/category configuration | 10 | PENDING | — | — |
+| RC-DEC-003 | Deposit driven by booking source | 10 | PENDING | — | — |
+| RC-DEC-004 | Deposit channels and deduction without extra approval | 10 | PENDING | — | — |
+| RC-DEC-005 | Online booking source is the platform's own registry | 13 | PENDING | — | — |
+| RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | PENDING | — | — |
+| RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | PENDING | — | — |
+| RC-DEC-008 | Cleaning status authority by package | 09 | PENDING | — | — |
+| RC-DEC-009 | Shift close authority | 11 | PENDING | — | — |
+| RC-DEC-010 | Cleaner dashboard and minibar report | 09 | PENDING | — | — |
+| RC-DEC-011 | Cleaner and minibar restricted to 25 000/30 000₮ | 07 | PENDING | — | — |
+| RC-DEC-012 | Hourly versus nightly stay model | 08 | PENDING | — | — |
+| RC-DEC-013 | No automatic overdue fee | 08 | PENDING | — | — |
+| RC-DEC-014 | Cleaning buffer between bookings | 08 | PENDING | — | — |
+| RC-DEC-015 | Separate room state axes and badges | 08 | PENDING | — | — |
+| RC-DEC-016 | Cleaner minibar refill from warehouse | 09 | PENDING | — | — |
+| RC-DEC-017 | Room readiness conditions | 08 | PENDING | — | — |
+| RC-DEC-018 | Minibar optional per room, template required when ON | 07 | PENDING | — | — |
+| RC-DEC-019 | Restaurant registration and access | 15 | PENDING | — | — |
+| RC-DEC-020 | Food order confirmed only on QPay success | 15 | PENDING | — | — |
+| RC-DEC-021 | Restaurant's own QPay merchant | 15 | PENDING | — | — |
+| RC-DEC-022 | Restaurant ordering schedule | 15 | PENDING | — | — |
+| RC-DEC-023 | Invoice validity versus closing time, late payment refund | 15 | PENDING | — | — |
+| RC-DEC-024 | Restaurant-initiated refund authority | 15 | PENDING | — | — |
+| RC-DEC-025 | Restaurant contact number visibility | 15 | PENDING | — | — |
+| RC-DEC-026 | Room QR and one-time guest access code | 15 | PENDING | — | — |
+| RC-DEC-027 | At most five concurrent guest sessions per stay | 15 | PENDING | — | — |
+| RC-DEC-028 | Checkout with an unfinished restaurant order | 15 | PENDING | — | — |
+| RC-DEC-029 | Checkout handoff option per order | 15 | PENDING | — | — |
+| RC-DEC-030 | Restaurant acceptance 5/10-minute SLA | 15 | PENDING | — | — |
+| RC-DEC-031 | Refund request resolution SLA | 15 | PENDING | — | — |
+| RC-DEC-032 | Guest list and Excel export columns | 17 | PENDING | — | — |
+| RC-DEC-033 | One primary guest per stay | 08 | PENDING | — | — |
+| RC-DEC-034 | Primary guest Police match boundary | 18 | PENDING | — | — |
+| RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | PENDING | — | — |
+| RC-DEC-036 | Minibar stock, cost and shortage override | 07 | PENDING | — | — |
+| RC-DEC-037 | Hotel Admin financial reporting | 17 | PENDING | — | — |
+| RC-DEC-038 | Cash drawer and physical cash ledger | 11 | PENDING | — | — |
+| RC-DEC-039 | Minibar selling price snapshot | 09 | PENDING | — | — |
+| RC-DEC-040 | Room and minibar entity lifecycle | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/http/lifecycle.controller.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts` |
+| RC-DEC-041 | Room minibar configuration change | 07 | PENDING | — | — |
+| RC-DEC-042 | Explicit exact-version Rollout | 07 | PENDING | — | — |
+| RC-DEC-043 | Multi-room Rollout batch | 07 | PENDING | — | — |
+| RC-DEC-044 | Mongolian, foreign and no-document primary guest identity | 08 | PENDING | — | — |
 
 ## 4. SHIFT-DEC — Reception shift handover (doc 03, 7)
 
@@ -263,22 +263,22 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 5. STAY-DEC — Room stay and time (doc 05, 14)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| STAY-DEC-001 | Nightly stay uses the fixed hotel checkout time | 08 | PENDING |
-| STAY-DEC-002 | Hourly base price formula | 06 | PENDING |
-| STAY-DEC-003 | No automatic overdue charge | 08 | PENDING |
-| STAY-DEC-004 | Cleaning duration configuration and actual clean state | 06 | PENDING |
-| STAY-DEC-005 | Tariff precedence, snapshot and permission | 06 | PENDING |
-| STAY-DEC-006 | No configurable hourly minimum, maximum or increment | 06 | PENDING |
-| STAY-DEC-007 | Nightly calendar, price and early-arrival rule | 08 | PENDING |
-| STAY-DEC-008 | Exclusive-end interval with planned and actual readiness | 08 | PENDING |
-| STAY-DEC-009 | Initial actual check-in and the 120-minute backdate | 08 | PENDING |
-| STAY-DEC-010 | Active-stay actual-time immutable correction | 08 | PENDING |
-| STAY-DEC-011 | Planned-checkout direct-overwrite guard | 08 | PENDING |
-| STAY-DEC-012 | No planned-checkout change in MVP | 08 | PENDING |
-| STAY-DEC-013 | Overdue conflict blocker and deterministic remedy | 08 | PENDING |
-| STAY-DEC-014 | Half-hour fractional hourly stay precision | 08 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| STAY-DEC-001 | Nightly stay uses the fixed hotel checkout time | 08 | PENDING | — | — |
+| STAY-DEC-002 | Hourly base price formula | 06 | COVERED | `apps/api/src/modules/catalog/domain/tariffs.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts` | `apps/api/src/modules/catalog/domain/tariffs.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts` |
+| STAY-DEC-003 | No automatic overdue charge | 08 | PENDING | — | — |
+| STAY-DEC-004 | Cleaning duration configuration and actual clean state | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/domain/tariffs.ts`, `apps/api/src/modules/catalog/services/catalog.service.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts` | `apps/api/src/modules/catalog/domain/tariffs.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts` |
+| STAY-DEC-005 | Tariff precedence, snapshot and permission | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/domain/tariffs.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts`, `apps/api/src/modules/catalog/services/catalog.service.ts`, `apps/api/src/modules/catalog/http/tariff.controller.ts` | `apps/api/src/modules/catalog/domain/tariffs.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
+| STAY-DEC-006 | No configurable hourly minimum, maximum or increment | 06 | COVERED | `apps/api/src/modules/catalog/services/catalog.service.ts`, `apps/api/src/modules/catalog/http/catalog-validation.ts`, `apps/api/src/modules/catalog/http/catalog.controller.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts` |
+| STAY-DEC-007 | Nightly calendar, price and early-arrival rule | 08 | PENDING | — | — |
+| STAY-DEC-008 | Exclusive-end interval with planned and actual readiness | 08 | PENDING | — | — |
+| STAY-DEC-009 | Initial actual check-in and the 120-minute backdate | 08 | PENDING | — | — |
+| STAY-DEC-010 | Active-stay actual-time immutable correction | 08 | PENDING | — | — |
+| STAY-DEC-011 | Planned-checkout direct-overwrite guard | 08 | PENDING | — | — |
+| STAY-DEC-012 | No planned-checkout change in MVP | 08 | PENDING | — | — |
+| STAY-DEC-013 | Overdue conflict blocker and deterministic remedy | 08 | PENDING | — | — |
+| STAY-DEC-014 | Half-hour fractional hourly stay precision | 08 | PENDING | — | — |
 
 ## 6. REST-DEC — Restaurant (doc 08, 6)
 
@@ -558,36 +558,36 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 24. RML-DEC — Room and minibar lifecycle (doc 26, 28)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| RML-DEC-001 | Unified ACTIVE, RETIRING, INACTIVE lifecycle | 06 | PENDING |
-| RML-DEC-002 | Active stay and future booking protection | 06 | PENDING |
-| RML-DEC-003 | Entity-specific deactivation blockers | 06 | PENDING |
-| RML-DEC-004 | Historical snapshot protection | 06 | PENDING |
-| RML-DEC-005 | Hard-delete limits | 06 | PENDING |
-| RML-DEC-006 | Reactivation, permission and audit | 06 | PENDING |
-| RML-DEC-007 | Current configuration and one pending change | 07 | PENDING |
-| RML-DEC-008 | Active stay safe point | 07 | PENDING |
-| RML-DEC-009 | ON to OFF reconciliation | 07 | PENDING |
-| RML-DEC-010 | OFF to ON and shortage | 07 | PENDING |
-| RML-DEC-011 | Template A to B delta reconciliation | 07 | PENDING |
-| RML-DEC-012 | Future booking and effective configuration | 07 | PENDING |
-| RML-DEC-013 | Action permission and task boundary | 07 | PENDING |
-| RML-DEC-014 | Cancel, rollback, atomic apply and audit | 07 | PENDING |
-| RML-DEC-015 | Entity, version and room configuration separate | 07 | PENDING |
-| RML-DEC-016 | Draft, immutable Published and Archived history | 07 | PENDING |
-| RML-DEC-017 | Multiple Published, Default and exact binding | 07 | PENDING |
-| RML-DEC-018 | Publish validation | 07 | PENDING |
-| RML-DEC-019 | First and subsequent Default | 07 | PENDING |
-| RML-DEC-020 | Publish and Default isolation, entitlement, Rollout separation | 07 | PENDING |
-| RML-DEC-021 | Version Archive blockers, history and permission | 07 | PENDING |
-| RML-DEC-022 | Rollout target and eligible room | 07 | PENDING |
-| RML-DEC-023 | Pending, blocker and safe-point task trigger | 07 | PENDING |
-| RML-DEC-024 | Rollout isolation, apply, permission and batch boundary | 07 | PENDING |
-| RML-DEC-025 | Batch parent, exact target and read-only preview | 07 | PENDING |
-| RML-DEC-026 | Partial success, independent child and derived progress | 07 | PENDING |
-| RML-DEC-027 | Cancel remaining, rollback and linked retry | 07 | PENDING |
-| RML-DEC-028 | Target and Archive, concurrency, permission and audit | 07 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| RML-DEC-001 | Unified ACTIVE, RETIRING, INACTIVE lifecycle | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/domain/lifecycle.ts`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/repositories/catalog.repository.ts` | `apps/api/src/modules/catalog/domain/lifecycle.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts`, `packages/db/src/migrate.test.ts` |
+| RML-DEC-002 | Active stay and future booking protection | 06 | COVERED | `apps/api/src/modules/catalog/contracts/dependency-sources.ts`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts`, `apps/api/src/modules/catalog/services/catalog.service.ts` | `apps/api/src/modules/catalog/contracts/dependency-sources.test.ts`, `apps/api/src/modules/catalog/catalog.dependency.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts` |
+| RML-DEC-003 | Entity-specific deactivation blockers | 06 | COVERED | `apps/api/src/modules/catalog/contracts/dependency-sources.ts`, `apps/api/src/modules/catalog/services/dependency-evidence.ts`, `apps/api/src/modules/catalog/repositories/catalog.repository.ts`, `apps/api/src/modules/catalog/services/lifecycle.service.ts` | `apps/api/src/modules/catalog/domain/lifecycle.test.ts`, `apps/api/src/modules/catalog/catalog.dependency.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts` |
+| RML-DEC-004 | Historical snapshot protection | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/tariff.service.ts`, `apps/api/src/modules/catalog/repositories/catalog.repository.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
+| RML-DEC-005 | Hard-delete limits | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts` |
+| RML-DEC-006 | Reactivation, permission and audit | 06 | COVERED | `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/http/lifecycle.controller.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts` |
+| RML-DEC-007 | Current configuration and one pending change | 07 | PENDING | — | — |
+| RML-DEC-008 | Active stay safe point | 07 | PENDING | — | — |
+| RML-DEC-009 | ON to OFF reconciliation | 07 | PENDING | — | — |
+| RML-DEC-010 | OFF to ON and shortage | 07 | PENDING | — | — |
+| RML-DEC-011 | Template A to B delta reconciliation | 07 | PENDING | — | — |
+| RML-DEC-012 | Future booking and effective configuration | 07 | PENDING | — | — |
+| RML-DEC-013 | Action permission and task boundary | 07 | PENDING | — | — |
+| RML-DEC-014 | Cancel, rollback, atomic apply and audit | 07 | PENDING | — | — |
+| RML-DEC-015 | Entity, version and room configuration separate | 07 | PENDING | — | — |
+| RML-DEC-016 | Draft, immutable Published and Archived history | 07 | PENDING | — | — |
+| RML-DEC-017 | Multiple Published, Default and exact binding | 07 | PENDING | — | — |
+| RML-DEC-018 | Publish validation | 07 | PENDING | — | — |
+| RML-DEC-019 | First and subsequent Default | 07 | PENDING | — | — |
+| RML-DEC-020 | Publish and Default isolation, entitlement, Rollout separation | 07 | PENDING | — | — |
+| RML-DEC-021 | Version Archive blockers, history and permission | 07 | PENDING | — | — |
+| RML-DEC-022 | Rollout target and eligible room | 07 | PENDING | — | — |
+| RML-DEC-023 | Pending, blocker and safe-point task trigger | 07 | PENDING | — | — |
+| RML-DEC-024 | Rollout isolation, apply, permission and batch boundary | 07 | PENDING | — | — |
+| RML-DEC-025 | Batch parent, exact target and read-only preview | 07 | PENDING | — | — |
+| RML-DEC-026 | Partial success, independent child and derived progress | 07 | PENDING | — | — |
+| RML-DEC-027 | Cancel remaining, rollback and linked retry | 07 | PENDING | — | — |
+| RML-DEC-028 | Target and Archive, concurrency, permission and audit | 07 | PENDING | — | — |
 
 ---
 
@@ -600,7 +600,7 @@ phase touching the invariant must re-assert it in its own gates.
 | --- | --- | --- | --- |
 | MNT stored as bigint, rates as basis points, single `ROUND_HALF_UP` | PAY-DEC-008, STAY-DEC-014 | 03 | `packages/money`, DB column types |
 | Occupancy interval `[start_at, end_at)` | STAY-DEC-008 | 03 | `packages/time`, exclusion constraint |
-| Confirmation snapshots are never repriced | STAY-DEC-005, STAY-DEC-007, PRICE-DEC-001, PRICE-DEC-002 | 06 | immutable snapshot tables |
+| Confirmation snapshots are never repriced | STAY-DEC-005, STAY-DEC-007, PRICE-DEC-001, PRICE-DEC-002 | 06 | immutable snapshot tables — `platform.stay_rate_snapshot` is append-only by trigger and grant, keyed once per subject, and carries source level, source entity and configuration version |
 | Append-only financial and lifecycle history | DEP-DEC-006, CASH-DEC-004, INV-DEC-003, FIN-DEC-009 | 03 | DB rules/triggers plus repository policy |
 | One non-terminal pending per scope | RML-DEC-007, DEP-DEC-007, STAY-DEC-010, STAFF-DEC-009 | 04 | partial unique indexes |
 | Idempotency on every money or lifecycle command | ONB-DEC-006, ONB-DEC-008, PAY-DEC-005, REST-DEC-001 | 03 | `packages/outbox` idempotency store |

@@ -14,8 +14,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 06 — Hotel, room, category, and tariffs |
-| Phase state | `NOT STARTED` — implementation requires explicit authorization to begin |
+| Current phase | 07 — Minibar inventory and templates |
+| Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
 | Phase 05 state | `DONE` |
@@ -23,6 +23,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |
 | Phase 05 acceptance | `ACCEPTED` |
 | Phase 05 accepted at | `35314ba210f609269863f0b528bbe827e6a5d3ce` |
+| Phase 06 state | `DONE` |
+| Phase 06 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -41,7 +43,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
 | 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2`, `0006_onboarding_remediation3` | the Phase 05 battery — counts in [Phase 05 remediation 3](#phase-05-remediation-3) | accepted at the commit named in [Phase 05 acceptance](#phase-05-acceptance); the work itself is in the Phase 05 record and remediations 1 to 3 |
-| 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
+| 06 | Hotel, room, category, and tariffs | `DONE` | `0007_hotel_catalog` | the Phase 06 battery — counts in [Phase 06 record](#phase-06-record) | implemented at `a44fd58` and `dcca709`; the record and its evidence are the commit after them |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
 | 09 | Cleaner and checkout coordination | `NOT STARTED` | — | — | — |
@@ -179,6 +181,31 @@ Carried forward past the acceptance, unchanged and still open:
 
 Phase 03's and Phase 04's acceptances, their commits and their evidence are untouched by this and
 remain exactly as recorded above.
+
+---
+
+## Standing progression authorization
+
+On 2026-09-03 the customer authorized the implementation of the remaining approved phases, **06
+through 23**, sequentially: each phase, once its required blocking gates pass, continues to the next
+without a further per-phase "may I proceed". The authorization is declared in
+[`tools/programme-state.mjs`](../../tools/programme-state.mjs) (`PROGRESSION_AUTHORIZATION`); this
+section restates it and may not widen it.
+
+What it grants is implementation. What it does not grant is stated just as plainly:
+
+- **No acceptance.** Every phase completed under it is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`
+  until the customer accepts it, which is a change to `programme-state.mjs` and never something a
+  document or a manifest declares about itself.
+- **No release.** It is not production-release approval, and it authorizes no push, merge,
+  deployment, purchase or change to an external account.
+- **No weakening.** No test, security control, gate multiplicity or release condition is reduced
+  under it, and no phase is skipped or narrowed.
+
+Under it, the "Current phase" row of the current position names the phase authorized to begin; its
+ledger state advances when the commit completing it lands. Each completed phase is recorded in
+`PROGRESSED_PHASES` with its own evidence manifest, and governance check 17 holds the manifest, the
+governed entry and the phase's record here to one another exactly as check 16 holds Phase 05's.
 
 ---
 
@@ -3199,3 +3226,266 @@ Phase 05 was `AWAITING_CUSTOMER_ACCEPTANCE` at the end of remediation 3 and has
 since been accepted at this record's own commit; see
 [Phase 05 acceptance](#phase-05-acceptance). Phase 06 has **not** started and
 requires a further explicit authorization.
+
+---
+
+## Phase 06 record
+
+Hotel, room, category, and tariffs. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the accepted Phase 05 commit `35314ba`. Phase 06 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`;
+Phase 07 is the current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the 11 this phase owns — `RML-DEC-001`…`006`, `STAY-DEC-002`, `STAY-DEC-004`,
+`STAY-DEC-005`, `STAY-DEC-006` and `RC-DEC-040`. With Phase 04's 26 and Phase 05's 26, 63 of the 279
+canonical decisions are now `COVERED`.
+
+### Scope completed
+
+**Hotel stay configuration.** The hotel's fixed check-out time (integer minutes from local midnight),
+its cleaning minimum, and the default hourly and nightly tariffs, each nullable and nullable meaning
+*unset* — never zero. Every configuration write advances a hotel-wide `config_version`, and a database
+trigger refuses a configuration edit that does not; that number is what every confirmation snapshot
+records. There is no field, anywhere on the surface or in the schema, for an hourly minimum, maximum
+or increment: `STAY-DEC-006` refused that configuration and the type has nowhere for it to arrive.
+
+**Room categories and rooms.** Categories with name, description, optional hourly and nightly
+overrides and an optional cleaning-buffer override; physical rooms with a hotel-scoped unique room
+number, floor, category and walk-in-only hourly and nightly overrides. The room→category reference is
+a composite foreign key on `(hotel_id, category_id)`, so a room cannot point at another tenant's
+category even if a caller supplies its id; the same composite key ties a snapshot to its category and
+room. Create and edit run under one discipline: claim the client idempotency key, lock in the fixed
+order `hotel_stay_configuration → room_category → room → minibar entity`, evaluate the Phase 04
+pipeline against the named action on the locked state, apply as a compare-and-set on the revision
+that was read, then history, audit and outbox in the same transaction. Writing a tariff value while
+creating or editing an entity is two named actions — `hotel.catalog.room_manage` and
+`hotel.tariff.config_manage` — and both are checked; neither stands in for the other.
+
+**Server-authoritative tariffs.** Walk-in resolves `room → category → hotel`; an online quote resolves
+`category → hotel`, and the room level is structurally absent from that chain rather than skipped: the
+online branch never receives a room, the query refuses one, and a check constraint on the snapshot
+table refuses a room-sourced online price. Hourly and nightly resolve independently, so a category
+nightly override leaves the hourly rate to the hotel. A stay type no level prices, a cleaning buffer
+no level sets, and a nightly stay with no fixed check-out time are each a named `412` refusal — no
+default rate, no zero-minute buffer, no assumed check-out time exists. The resolution and the
+capture take the configuration, the category and the room `FOR SHARE` in lock order, so a tariff
+writer or a lifecycle transition holding them `FOR UPDATE` is waited for, and the version a snapshot
+names belongs to a configuration that was whole when it was read.
+
+**The confirmation snapshot.** `platform.stay_rate_snapshot` stores the unit price, the source level,
+the source entity id, the pricing configuration version, the category, the room, the snapshotted
+cleaning buffer and — for a nightly stay — the fixed check-out time, keyed uniquely by
+`(hotel, subject_type, subject_ref)`. It is append-only: no role holds `UPDATE` or `DELETE`, and a
+trigger refuses both. A later tariff or configuration edit therefore cannot reprice a captured
+snapshot, and the version proves which configuration priced it. `captureRateSnapshot` is a
+**transaction-bound contract**, not a route: Phases 08 and 13 call it inside the transaction that
+confirms a walk-in stay or an online booking, and a second call for the same subject returns the
+snapshot the first one wrote. Nothing in Phase 06 confirms anything, so nothing in Phase 06 captures
+one operationally.
+
+**The entity lifecycle.** Room, category, minibar product and minibar template share
+`ACTIVE → RETIRING → INACTIVE`, with `RETIRING → ACTIVE` (a withdrawn request) and
+`INACTIVE → ACTIVE` (reactivation). A creating actor may name `ACTIVE` or `INACTIVE` and nothing else;
+`RETIRING` exists only as the server's record of an accepted deactivation request, and a database
+trigger enforces the edges as well as the service. A deactivation request stops new operational use
+at once — a retiring or inactive category takes no new room and no room moving into it, and a
+retiring or inactive room or category is refused a price with `ENTITY_NOT_ACTIVE` — and resolves to
+`INACTIVE` when no operational dependency is outstanding, or to `RETIRING` with the blockers recorded.
+`RETIRING → INACTIVE` is completed two ways: on request, refused with the blockers named while one
+remains; and by the server itself when a Phase 06 action resolves the last one — a room in a retiring
+category becoming `INACTIVE` or moving to another category — with the event recording who asked for
+the deactivation and that the system completed it. Reactivation validates the related category and
+the hotel scope and package; the hotel-scoped room number is unique whatever the state, so that
+check is structural. Hard delete is permitted only when every dependency source — operational and
+historical — answers `clear` or `not_yet_provisioned`; a pending request refuses it, the composite
+foreign keys refuse it a second time, and the deletion leaves a security audit and a history event
+that outlive the row.
+
+**Dependency evidence that fails closed.** A registry names every consumer that may hold a reference
+to a catalog entity — stays, bookings, tasks, stock, configuration, versions, snapshots, child rooms —
+with its owning phase, relation, column and blocking predicate. A probe reports one of four answers:
+`blocked`, `clear`, `not_yet_provisioned` (the relation does not exist yet, which is evidence, not an
+assumption) and `unavailable` (the relation exists but could not be read; the probe runs under a
+savepoint so the transaction survives to refuse cleanly). `unavailable` refuses every transition and
+every deletion. The lifecycle view shows all four, so Reception sees what is outstanding, and the
+registry is held to the live schema by a test: a Phase 06 entry must exist with its column, and an
+entry for a later phase must either not exist yet or exist with the column it names.
+
+**Minibar entities.** Product and template rows with identity and lifecycle only, in the tables
+Phase 07 extends with price, cost, stock and template versions — not a second model of the same
+entity. The action exists on the 25,000₮ and 30,000₮ packages only.
+
+**Authorization.** Every route authenticates with `SessionGuard` and authorizes nothing at the edge;
+each command resolves the live membership and scope grant before it binds the hotel and evaluates
+the named action inside the transaction. doc 18 §3 row by row: the Manager holds the catalog, the
+tariffs and the lifecycle; the Manager Plus holds them on 30,000₮; the Hotel Admin holds none of the
+writes without the Manager role and reads the lifecycle state and the resolved tariff; Reception reads
+both as `.read` and writes nothing; the Cleaner is refused the tariff; a Manager on 20,000₮ is refused
+the minibar. A missing role, a wrong package, a foreign hotel, an unknown hotel and a stale session
+scope are the same opaque `NOT_FOUND` with no side effect and a denial audit.
+
+### What Phase 06 deliberately did not build
+
+- **No deposit amount.** doc 07 §2 lists a category deposit; `hotel.deposit.*` and the `DEP-DEC`
+  family are Phase 10's, so no deposit column exists here.
+- **No duration model.** `STAY-DEC-014`'s half-hour units and `ROUND_HALF_UP(rate × units / 2)` are
+  Phase 08's (D-03). The unit test proves the resolved rate feeds that formula in integer arithmetic
+  and nothing more.
+- **No stock, cost, price book, template version, room configuration or Rollout.** Phase 07's.
+- **No snapshot route.** A client that could ask for a snapshot would be a client deciding when a
+  price is fixed.
+- **No automatic finalization for blockers later phases own.** The server completes a retirement
+  only when a Phase 06 action resolves the last blocker; a checkout, a moved booking or a completed
+  task is a later phase's resolution, and that phase calls `finalizeIfClear` in its transaction.
+
+### Changed file groups
+
+- **Database:** `0007_hotel_catalog.sql` and the journal; `schema.ts`, `schema-snapshot.ts`,
+  `classification.ts`; the frozen Phase 05 migration set under `test-support/frozen-phase-05/` with
+  its checksum README; `migrate.test.ts` (8 migrations, the Phase 05 → Phase 06 upgrade path),
+  `migrations.test.ts`, the two Phase 03 regression suites (migration counts), `tenant-rows.ts` and
+  `sec-acl-matrix.test.ts` (`probeWhere`).
+- **API:** `apps/api/src/modules/catalog/` — domain (`tariffs.ts`, `lifecycle.ts`), contracts
+  (`dependency-sources.ts`), repository, services (`catalog-context.ts`, `catalog.service.ts`,
+  `lifecycle.service.ts`, `tariff.service.ts`, `dependency-evidence.ts`), HTTP (validation and three
+  controllers), `catalog.module.ts`, `catalog.tokens.ts`, the test harness and seven test suites;
+  `app.module.ts`, `bootstrap.ts`, `openapi.ts`, `openapi-document.ts`, the scheduler boundary test's
+  construction site, and the package scripts.
+- **Governance:** `tools/programme-state.mjs` (the standing authorization, `PROGRESSED_PHASES`, the
+  current phase), `tools/governance-checks.mjs` (the shared evidence check, check 17, the acceptance
+  rows), `tools/validate-governance.mjs`, the drift fixtures, this document, traceability,
+  assumptions, the manifest and the checkpoint.
+
+### Migrations
+
+`0007_hotel_catalog.sql`, forward-only, on top of `0006`. `0000`–`0006` are untouched and
+checksum-pinned by the frozen Phase 05 set. `GATE-MIGR` runs the fresh install, the upgrade of an
+accepted Phase 05 database by exactly this migration, a repeat that applies nothing, fresh/upgrade
+schema equality, and the comparator on the upgraded database.
+
+Seven tables, all `TENANT_RLS`, forced, owned by `prsystem_migrate`: `hotel_stay_configuration`,
+`room_category`, `room`, `minibar_product`, `minibar_template`, `catalog_event`,
+`stay_rate_snapshot`. The API holds `DELETE` on the four entity tables and nowhere else; no role
+holds `UPDATE` or `DELETE` on either history table; the worker reads and writes none of it.
+
+### DEC coverage
+
+All 11 owned decisions move `PENDING → COVERED` with code and test references in
+[requirements-traceability.md](requirements-traceability.md) §§3, 5 and 24.
+
+### Integration duties recorded for later phases
+
+- **Phases 08 and 13** call `TariffService.captureRateSnapshot(uow, …)` inside the confirmation
+  transaction, with `subject_type` `WALK_IN_STAY` or `ONLINE_BOOKING` and the stay or booking id as
+  `subject_ref`; the snapshot's `cleaning_buffer_minutes` and `fixed_checkout_minute` are the values
+  the stay or booking computes with.
+- **Phases 07, 08, 09 and 13** either create the relation and column each registry entry names
+  (`platform.room_minibar_configuration.room_id` / `.template_id`,
+  `platform.minibar_template_version_item.product_id`, `platform.minibar_template_version.template_id`,
+  `platform.room_minibar_stock.product_id` / `.room_id`, `platform.inventory_movement.product_id`,
+  `platform.minibar_refill_task.product_id`, `platform.stay.room_id` / `.category_id`,
+  `platform.cleaning_task.room_id`, `platform.booking.assigned_room_id` / `.category_id`) with a
+  `hotel_id` column and the stated blocking predicate, or update the entry in the same change;
+  `catalog.dependency.test.ts` refuses a relation that exists without its column.
+- **Every phase that resolves a blocker** — a checkout, a booking moved or cancelled, a task
+  completed, stock returned — calls `LifecycleService.finalizeIfClear(uow, kind, id, trigger)` in
+  the transaction that resolves it, so a `RETIRING` entity completes its retirement when its last
+  blocker clears (doc 26 §2).
+
+### Test gates
+
+Every command ran during implementation on the disposable Compose project `prsystem-p06`, through
+the restricted `prsystem_api` login; the governed battery below ran afterwards in a clean checkout
+of `dcca709`. Development-time results, all exit 0 (the catalog concurrency and HTTP suites were
+run three times after the lock-order fix of `dcca709`, 16 passed each run):
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/catalog/domain src/modules/catalog/contracts` | 25 passed, 3 files |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/catalog/catalog.dependency.test.ts src/modules/catalog/catalog.integration.test.ts` | 30 passed, 2 files |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/catalog/catalog.authorization.http.test.ts src/modules/catalog/catalog.concurrency.test.ts` | 15 passed, 2 files |
+| `pnpm --filter @prsystem/db run test:migrations` | 148 passed |
+| `pnpm --filter @prsystem/db run test:security` | 824 passed, 12 files |
+| `pnpm --filter @prsystem/db run test:integration` / `test:concurrency` / `test:regression` / `test:unit` | 41 / 16 / 51 / 88 passed |
+| `pnpm run lint`, `pnpm run typecheck`, `pnpm run test:unit`, `pnpm run build`, `pnpm run openapi`, `pnpm run format:check` | exit 0; 1,354 unit tests across 11 projects; 16 catalog and tariff paths in the document |
+
+### Security and concurrency evidence
+
+- **Tenant boundary.** Another hotel's Manager sees `NOT_FOUND` for every catalog read and write,
+  with no row and no history written; a category id from another hotel is refused at room creation
+  under RLS and the composite foreign key.
+- **Package and role.** The 20,000₮ Manager is refused the minibar with the same opaque denial as a
+  missing role, because the pipeline evaluates the named permission with the effective package
+  (stage 3, doc 06 §5); the Hotel Admin's six refused writes leave six denial audits and no row.
+- **Append-only.** `UPDATE` and `DELETE` on `stay_rate_snapshot` are refused for the superuser by
+  trigger and for every runtime role by grant; the ACL matrix holds every new table × login × verb to
+  its exact SQLSTATE.
+- **State machine in the database.** `RETIRING` on insert, `INACTIVE → RETIRING` on update and a
+  revision that does not move are each refused by trigger, whoever issues the statement.
+- **Fail closed on evidence.** With a registry relation provisioned in the wrong shape, deactivation
+  and deletion refuse with `DEPENDENCY_UNAVAILABLE`, the view shows `unavailable`, and the entity is
+  untouched; with the stub gone the same request completes.
+- **Races on real PostgreSQL.** Two deactivation requests at one revision: one transition, one
+  `CONFLICT`. A deactivation racing a hard delete: an `INACTIVE` row or no row, never both effects.
+  A room created into a category racing that category's deactivation, six rounds: never a room
+  `ACTIVE` inside an `INACTIVE` category — either the room won the category lock and the category is
+  `RETIRING` with the child recorded, or the retirement won and the room was refused. Three identical
+  requests under one idempotency key: one effect, and the replay returns the stored answer. Two
+  confirmations for one subject: one snapshot, both read it. A snapshot racing a tariff edit, five
+  rounds: the price belongs to the configuration version the snapshot names. Rate resolutions
+  racing category moves in both directions, three rounds: every command completes — a reader locks
+  the category before the room and a mover locks both categories in id order before the room, so
+  there is one lock order and no cycle for PostgreSQL to break (`dcca709`).
+
+### Remaining blockers
+
+Unchanged from Phase 05: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators;
+`INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items; `DSR-01`; the
+`GATE-SEC` required-check selection. Phase 06 introduces no external provider and opens no EXT gate.
+No customer decision is pending on its scope.
+
+### Evidence
+
+<!-- phase-06-evidence:begin -->
+
+Measured at implementation commit dcca709ded1be4bf33c25b4d1ca37b4da647dbd7, the tree of the
+implementation commit and its lock-order fix, in a clean detached checkout of that commit with a fresh install, a fresh
+Turborepo cache directory and forced task execution — no task was replayed from any cache — on the
+disposable Compose project `prsystem-p06`. The record itself — the manifest and this table — is the
+commit after it; the governance validator and its fixtures were run again on that final tree and are
+what the two governance rows report. Every command exited 0.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 16 of 16 at the measured commit; 17 of 17 on the final tree (check 17 added by the record) |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 135 of 135 drift fixtures caught at the measured commit; 150 of 150 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 477 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,354 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 06, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 306: db 41, outbox 5, api 258, worker 2 |
+| `pnpm run test:concurrency` | PASS | 42 each run: db 16, api 26 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-06-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-06-battery-log.md](phase-06-battery-log.md).
+
+Phase 06 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 07 is authorized to begin under the
+standing progression authorization and has **not** started.

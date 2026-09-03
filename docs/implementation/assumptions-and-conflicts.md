@@ -306,6 +306,53 @@ Two further notes, recorded here rather than left implied:
 
 ---
 
+### 3.10 Phase 06 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P06-1 — `config_version` is hotel-wide.** doc 05 §13.2 requires a snapshot to carry the
+  "pricing config version". Any tariff write at hotel, category or room level advances one monotonic
+  number on `platform.hotel_stay_configuration`, and that number is what a snapshot stores beside the
+  source level and source entity. The configuration row is therefore the per-hotel serialisation
+  point for tariff writers (`FOR UPDATE`) and for rate resolutions (`FOR SHARE`), which is what makes
+  a stored version attributable to exactly one configuration state.
+- **A-P06-2 — no deposit column.** doc 07 §2 lists a category-level deposit amount. `hotel.deposit.*`
+  and the `DEP-DEC` family are assigned to Phase 10, so Phase 06 adds no deposit field; Phase 10 adds
+  it to the category and the hotel configuration.
+- **A-P06-3 — a package refusal is the opaque denial.** doc 07 §1 says the minibar is refused on
+  20,000₮ whatever role the caller holds. The accepted Phase 04 pipeline evaluates the named
+  permission with the *effective* package at stage 3, so a role the package does not carry is refused
+  as `NOT_AUTHORIZED` and rendered as the same `NOT_FOUND` as a missing role (doc 06 §5), not as
+  `PACKAGE_NOT_ENTITLED`. Phase 06 documents and tests this; it does not change the pipeline.
+- **A-P06-4 — dependency sources of later phases are named now.** The lifecycle cannot answer "what
+  still depends on this entity" without naming the stays, bookings, tasks, stock, versions and
+  configuration that Phases 07, 08, 09 and 13 own. The registry names each relation and column and
+  the probe reports `not_yet_provisioned` while it does not exist — evidence, never "no blockers". The
+  names are predictions; each owning phase must use them or update the entry in the same change, and
+  `catalog.dependency.test.ts` refuses a relation that exists without its column.
+- **A-P06-5 — the server completes a retirement only for blockers Phase 06 can resolve.** doc 26 §2
+  says the server moves `RETIRING → INACTIVE` when the last blocker is resolved. Today the only
+  resolutions Phase 06 itself performs are a child room becoming `INACTIVE` or leaving a retiring
+  category, and those complete the category's retirement with the requester and the system actor
+  both recorded. An operator may also ask for finalization and is told what remains. Later phases
+  call `LifecycleService.finalizeIfClear` in the transaction that resolves their own blocker.
+- **A-P06-6 — snapshot capture has no route.** `captureRateSnapshot` is a transaction-bound contract
+  for the confirmation transactions of Phases 08 and 13. Nothing in Phase 06 confirms a stay or a
+  booking, so exposing a capture route would let a client decide when a price is fixed.
+- **A-P06-7 — room-number uniqueness on reactivation is structural.** doc 26 §9 lists the
+  hotel-scoped room number among the checks a reactivation performs. The unique constraint applies
+  in every state, the inactive row keeps its number, and no other room can have taken it, so the
+  check is satisfied by the schema rather than re-derived by the service.
+- **A-P06-8 — minibar entities carry identity and lifecycle only.** Product and template rows are
+  created in the tables Phase 07 extends with selling price, purchase cost, stock and template
+  versions, so the lifecycle the four entities share is one model, not two.
+- **A-P06-9 — the hourly minimum, maximum and increment are absent by construction.** `STAY-DEC-006`
+  refused that configuration; the command types, the validation and the schema have no field for it
+  and a payload carrying one is not read.
+
+---
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

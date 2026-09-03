@@ -15,7 +15,12 @@ import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 import { BATTERY_ENTRY_KEYS, MANIFEST_KEYS, REQUIRED_BATTERY } from './phase-03-battery.mjs';
-import { GOVERNED_PHASES, GOVERNED_STATE, PHASE_05_EVIDENCE } from './programme-state.mjs';
+import {
+  GOVERNED_PHASES,
+  GOVERNED_STATE,
+  PHASE_05_EVIDENCE,
+  PROGRESSED_PHASES,
+} from './programme-state.mjs';
 import { SUB_GATES } from './gate-sec-config.mjs';
 
 /**
@@ -82,6 +87,7 @@ export function runGovernanceChecks({
   phaseStatusPath,
   manifestPath,
   phase05ManifestPath,
+  phase06ManifestPath,
 }) {
   const ROOT = root;
   const RUNBOOK_PATH = runbookPath;
@@ -90,6 +96,10 @@ export function runGovernanceChecks({
   const DOCS = join(ROOT, 'docs');
   const IMPL = join(DOCS, 'implementation');
   const PHASE05_MANIFEST_PATH = phase05ManifestPath ?? join(IMPL, 'phase-05-evidence.json');
+  const PHASE06_MANIFEST_PATH = phase06ManifestPath ?? join(IMPL, 'phase-06-evidence.json');
+  // The manifests of the phases completed under the standing authorization,
+  // each overridable by the fixture harness the way the Phase 05 one is.
+  const PROGRESSED_MANIFEST_PATHS = new Map([['06', PHASE06_MANIFEST_PATH]]);
 
   const PHASE_MIN = 1;
   const PHASE_MAX = 23;
@@ -823,6 +833,12 @@ export function runGovernanceChecks({
       // The Phase 05 evidence region, governed by check 16.
       `<!-- ${PHASE_05_EVIDENCE.region}:begin -->`,
       `<!-- ${PHASE_05_EVIDENCE.region}:end -->`,
+      // One evidence region per phase completed under the standing
+      // authorization, each governed by check 17.
+      ...PROGRESSED_PHASES.flatMap((phase) => [
+        `<!-- ${phase.evidence.region}:begin -->`,
+        `<!-- ${phase.evidence.region}:end -->`,
+      ]),
     ]);
 
     const inSpan = (token, span) => token.start >= span.start && token.end <= span.end;
@@ -1377,6 +1393,14 @@ export function runGovernanceChecks({
       // as covering whatever HEAD happened to be.
       ['Phase 04 accepted at', `\`${GOVERNED_STATE.completedPhaseAcceptedAtCommit}\``],
       ['Phase 05 accepted at', `\`${GOVERNED_STATE.implementedPhaseAcceptedAtCommit}\``],
+      // Every phase completed under the standing progression authorization
+      // states its own acceptance, which is `AWAITING_CUSTOMER_ACCEPTANCE` until
+      // a customer decision changes `programme-state.mjs`. The row cannot claim
+      // more than the governed entry does.
+      ...PROGRESSED_PHASES.map((phase) => [
+        `Phase ${phase.number} acceptance`,
+        `\`${phase.acceptance}\``,
+      ]),
       ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
       ['Latest implemented repair number', String(manifest.latestRepairNumber)],
@@ -1608,7 +1632,19 @@ export function runGovernanceChecks({
     );
   });
 
-  check('16', 'Phase 05 remediation evidence matches its manifest', () => {
+  /**
+   * The evidence contract every implemented-but-not-Phase-03 phase is held to.
+   *
+   * Written once and applied to Phase 05 (check 16) and to each phase completed
+   * under the standing progression authorization (check 17), so the discipline
+   * cannot drift between phases: the manifest declares what was measured and on
+   * which implementation commit; `programme-state.mjs` declares what the phase's
+   * state and acceptance are; `phase-03-battery.mjs` declares what must be
+   * measured; and the section of `phase-status.md` inside the phase's markers
+   * may only restate the manifest.
+   */
+  const phaseEvidence = (spec) => {
+    const LABEL = spec.label;
     // The same discipline as check 15, for the most recently implemented phase:
     // `phase-05-evidence.json` declares what was measured, on which
     // implementation commit; `programme-state.mjs` declares what the phase's
@@ -1617,104 +1653,103 @@ export function runGovernanceChecks({
     // only restate the manifest. Nothing here is Phase 03's — the closed phase's
     // manifest is never consulted, and its regions are not touched.
     const text = readFileSync(PHASE_STATUS_PATH, 'utf8');
-    const manifestText = readFileSync(PHASE05_MANIFEST_PATH, 'utf8');
+    const manifestText = readFileSync(spec.manifestPath, 'utf8');
     assertNoDuplicateJsonKeys(manifestText);
     const manifest = JSON.parse(manifestText);
 
     // ------------------------------------------------ the manifest's own shape
     const manifestKeys = Object.keys(manifest).sort();
-    const wantKeys = [...PHASE_05_EVIDENCE.manifestKeys].sort();
+    const wantKeys = [...spec.manifestKeys].sort();
     assert(
       manifestKeys.join(',') === wantKeys.join(','),
-      `the Phase 05 manifest declares keys [${manifestKeys.join(', ')}]; it must declare exactly ` +
+      `the ${LABEL} manifest declares keys [${manifestKeys.join(', ')}]; it must declare exactly ` +
         `[${wantKeys.join(', ')}]`,
     );
     for (const [key, governed] of [
-      ['phase', GOVERNED_STATE.implementedPhase],
-      ['phaseState', GOVERNED_STATE.implementedPhaseState],
-      ['acceptance', GOVERNED_STATE.implementedPhaseAcceptance],
+      ['phase', spec.governed.phase],
+      ['phaseState', spec.governed.phaseState],
+      ['acceptance', spec.governed.acceptance],
     ]) {
       assert(
         manifest[key] === governed,
-        `the Phase 05 manifest declares ${key} = ${JSON.stringify(manifest[key])}; the governed ` +
+        `the ${LABEL} manifest declares ${key} = ${JSON.stringify(manifest[key])}; the governed ` +
           `state is ${JSON.stringify(governed)}`,
       );
     }
-    assert(
-      manifest.remediationNumber === PHASE_05_EVIDENCE.remediationNumber,
-      `the Phase 05 manifest declares remediation ${JSON.stringify(manifest.remediationNumber)}; ` +
-        `the governed remediation is ${String(PHASE_05_EVIDENCE.remediationNumber)}`,
-    );
+    if (spec.remediationNumber !== undefined) {
+      assert(
+        manifest.remediationNumber === spec.remediationNumber,
+        `the ${LABEL} manifest declares remediation ${JSON.stringify(manifest.remediationNumber)}; ` +
+          `the governed remediation is ${String(spec.remediationNumber)}`,
+      );
+    }
     // One implementation tree, named in full, and not a tree an earlier phase's
-    // acceptance names: Phase 05's evidence cannot point at a commit that
+    // acceptance names: the phase's evidence cannot point at a commit that
     // predates the phase.
     assert(
       /^[0-9a-f]{40}$/.test(manifest.measuredAtCommit),
-      'the Phase 05 manifest does not name a full lowercase object name as its measured commit: ' +
+      `the ${LABEL} manifest does not name a full lowercase object name as its measured commit: ` +
         JSON.stringify(manifest.measuredAtCommit),
     );
-    for (const [phase, commit] of [
-      ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
-      ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
-    ]) {
+    for (const [phase, commit] of spec.earlierAcceptanceCommits) {
       assert(
         manifest.measuredAtCommit !== commit,
-        `the Phase 05 manifest names the ${phase} acceptance commit as its measured commit`,
+        `the ${LABEL} manifest names the ${phase} acceptance commit as its measured commit`,
       );
     }
 
     // ------------------------------------------------- the required battery
-    assert(Array.isArray(manifest.battery), 'the Phase 05 manifest has no battery');
+    assert(Array.isArray(manifest.battery), `the ${LABEL} manifest has no battery`);
     const required = REQUIRED_BATTERY.map((entry) => entry.command);
     const declared = manifest.battery.map((entry) => entry.command);
     assert(
       new Set(declared).size === declared.length,
-      `the Phase 05 manifest lists a command twice: ${declared.join('; ')}`,
+      `the ${LABEL} manifest lists a command twice: ${declared.join('; ')}`,
     );
     const missing = required.filter((command) => !declared.includes(command));
     const extra = declared.filter((command) => !required.includes(command));
     assert(
       missing.length === 0,
-      `the Phase 05 manifest omits required battery commands: ${missing.join('; ')}`,
+      `the ${LABEL} manifest omits required battery commands: ${missing.join('; ')}`,
     );
     assert(
       extra.length === 0,
-      `the Phase 05 manifest declares commands the required battery does not: ${extra.join('; ')}`,
+      `the ${LABEL} manifest declares commands the required battery does not: ${extra.join('; ')}`,
     );
     assert(
       declared.join('\n') === required.join('\n'),
-      'the Phase 05 manifest lists the required commands in a different order',
+      `the ${LABEL} manifest lists the required commands in a different order`,
     );
     for (const wanted of REQUIRED_BATTERY) {
       const entry = manifest.battery.find((candidate) => candidate.command === wanted.command);
       const keys = Object.keys(entry).sort();
       assert(
         keys.join(',') === [...BATTERY_ENTRY_KEYS].sort().join(','),
-        `a Phase 05 battery entry declares keys [${keys.join(', ')}]; it must declare exactly ` +
+        `a ${LABEL} battery entry declares keys [${keys.join(', ')}]; it must declare exactly ` +
           `[${[...BATTERY_ENTRY_KEYS].sort().join(', ')}]`,
       );
       assert(
         entry.executions === wanted.runs,
-        `${wanted.command} must be executed ${String(wanted.runs)} time(s); the Phase 05 manifest ` +
+        `${wanted.command} must be executed ${String(wanted.runs)} time(s); the ${LABEL} manifest ` +
           `records ${String(entry.executions)}`,
       );
       assert(
         Array.isArray(entry.exits) && entry.exits.length === entry.executions,
         `${entry.command} declares ${String(entry.executions)} executions and ` +
-          `${String(entry.exits?.length)} exit codes in the Phase 05 manifest`,
+          `${String(entry.exits?.length)} exit codes in the ${LABEL} manifest`,
       );
       assert(
         entry.exits.every((code) => code === 0),
-        `${entry.command} records a non-zero exit code in the Phase 05 manifest: ` +
+        `${entry.command} records a non-zero exit code in the ${LABEL} manifest: ` +
           JSON.stringify(entry.exits),
       );
       assert(
         typeof entry.result === 'string' && entry.result !== '',
-        `${entry.command} has no result in the Phase 05 manifest`,
+        `${entry.command} has no result in the ${LABEL} manifest`,
       );
       assert(
         !/\b(fail|failed|failing|skip|skipped|not run|non-?zero|error)\b/i.test(entry.result),
-        `${entry.command} exited zero but its Phase 05 result claims otherwise: ${entry.result}`,
+        `${entry.command} exited zero but its ${LABEL} result claims otherwise: ${entry.result}`,
       );
     }
 
@@ -1730,8 +1765,8 @@ export function runGovernanceChecks({
     }
     assert(offset === text.length, 'the parsed document does not reconstruct the source exactly');
 
-    const open = `<!-- ${PHASE_05_EVIDENCE.region}:begin -->`;
-    const close = `<!-- ${PHASE_05_EVIDENCE.region}:end -->`;
+    const open = `<!-- ${spec.region}:begin -->`;
+    const close = `<!-- ${spec.region}:end -->`;
     for (const [marker, label] of [
       [open, 'begin'],
       [close, 'end'],
@@ -1739,7 +1774,7 @@ export function runGovernanceChecks({
       const occurrences = text.split(marker).length - 1;
       assert(
         occurrences === 1,
-        `${PHASE_05_EVIDENCE.region}: the ${label} marker text occurs ${String(occurrences)} ` +
+        `${spec.region}: the ${label} marker text occurs ${String(occurrences)} ` +
           'times in the document; it must occur exactly once, as its own boundary',
       );
     }
@@ -1747,12 +1782,12 @@ export function runGovernanceChecks({
     const end = tokens.filter((token) => token.type === 'html' && token.raw.trim() === close);
     assert(
       begin.length === 1 && end.length === 1,
-      `${PHASE_05_EVIDENCE.region}: expected exactly one top-level begin marker and one end ` +
+      `${spec.region}: expected exactly one top-level begin marker and one end ` +
         `marker, found ${String(begin.length)} and ${String(end.length)}`,
     );
     assert(
       end[0].start > begin[0].start,
-      `${PHASE_05_EVIDENCE.region}: the end marker precedes the begin marker`,
+      `${spec.region}: the end marker precedes the begin marker`,
     );
     const region = { start: begin[0].start, end: end[0].end };
 
@@ -1760,13 +1795,11 @@ export function runGovernanceChecks({
     // that section ends at the next H1/H2.
     const headings = tokens.filter(
       (token) =>
-        token.type === 'heading' &&
-        token.depth === 2 &&
-        token.text.trim() === PHASE_05_EVIDENCE.heading,
+        token.type === 'heading' && token.depth === 2 && token.text.trim() === spec.heading,
     );
     assert(
       headings.length === 1,
-      `there are ${String(headings.length)} "${PHASE_05_EVIDENCE.heading}" H2 headings; there ` +
+      `there are ${String(headings.length)} "${spec.heading}" H2 headings; there ` +
         'must be exactly one',
     );
     const nextTop = tokens.find(
@@ -1778,7 +1811,7 @@ export function runGovernanceChecks({
     };
     assert(
       region.start >= section.start && region.end <= section.end,
-      `the ${PHASE_05_EVIDENCE.region} region is not inside the "${PHASE_05_EVIDENCE.heading}" section`,
+      `the ${spec.region} region is not inside the "${spec.heading}" section`,
     );
 
     const inside = tokens.filter((token) => token.start >= region.start && token.end <= region.end);
@@ -1787,14 +1820,14 @@ export function runGovernanceChecks({
       // the two markers. A blockquote or a list could carry a second table.
       assert(
         ['table', 'paragraph', 'space', 'html'].includes(token.type),
-        `the ${PHASE_05_EVIDENCE.region} region carries a ${token.type} block; only its table, ` +
+        `the ${spec.region} region carries a ${token.type} block; only its table, ` +
           'prose and the two markers may appear in it',
       );
     }
     const tables = inside.filter((token) => token.type === 'table');
     assert(
       tables.length === 1,
-      `the ${PHASE_05_EVIDENCE.region} region holds ${String(tables.length)} tables; there must ` +
+      `the ${spec.region} region holds ${String(tables.length)} tables; there must ` +
         'be exactly one',
     );
     const table = tables[0];
@@ -1804,14 +1837,14 @@ export function runGovernanceChecks({
       const cells = inner.split(/(?<!\\)\|/).length;
       assert(
         cells === width,
-        `a Phase 05 evidence row has ${String(cells)} cells; the table declares ${String(width)}: ` +
+        `a ${LABEL} evidence row has ${String(cells)} cells; the table declares ${String(width)}: ` +
           line.trim().slice(0, 70),
       );
     }
     const header = table.header.map((cell) => cell.text.trim());
     assert(
       header.join(' | ') === 'Command | Status | Result',
-      `the Phase 05 evidence table header is "${header.join(' | ')}"; it must be ` +
+      `the ${LABEL} evidence table header is "${header.join(' | ')}"; it must be ` +
         '"Command | Status | Result"',
     );
     const byCommand = new Map();
@@ -1820,22 +1853,22 @@ export function runGovernanceChecks({
       const quoted = [...commandCell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
       assert(
         quoted.length === 1 && commandCell === `\`${quoted[0]}\``,
-        `a Phase 05 evidence row's command cell is not exactly one backticked command: ${commandCell}`,
+        `a ${LABEL} evidence row's command cell is not exactly one backticked command: ${commandCell}`,
       );
       const command = quoted[0];
       const entry = manifest.battery.find((candidate) => candidate.command === command);
       assert(
         entry !== undefined,
-        `the Phase 05 evidence reports a command the manifest does not declare: ${command}`,
+        `the ${LABEL} evidence reports a command the manifest does not declare: ${command}`,
       );
-      assert(!byCommand.has(command), `the Phase 05 evidence carries two rows for ${command}`);
+      assert(!byCommand.has(command), `the ${LABEL} evidence carries two rows for ${command}`);
       assert(
         statusCell === 'PASS',
-        `the Phase 05 evidence records a status other than PASS: ${command} → ${statusCell}`,
+        `the ${LABEL} evidence records a status other than PASS: ${command} → ${statusCell}`,
       );
       assert(
         resultCell === entry.result,
-        `the Phase 05 evidence result for ${command} is "${resultCell}"; the manifest declares ` +
+        `the ${LABEL} evidence result for ${command} is "${resultCell}"; the manifest declares ` +
           `"${entry.result}"`,
       );
       byCommand.set(command, resultCell);
@@ -1843,7 +1876,7 @@ export function runGovernanceChecks({
     const unreported = declared.filter((command) => !byCommand.has(command));
     assert(
       unreported.length === 0,
-      `the Phase 05 evidence has no row for: ${unreported.join('; ')}`,
+      `the ${LABEL} evidence has no row for: ${unreported.join('; ')}`,
     );
 
     // The commit, stated once in visible prose inside the region, and it is the
@@ -1856,12 +1889,12 @@ export function runGovernanceChecks({
     const stated = [...prose.matchAll(/Measured at implementation commit ([0-9a-f]{40})\b/g)];
     assert(
       stated.length === 1,
-      `the ${PHASE_05_EVIDENCE.region} region states the measured commit ${String(stated.length)} ` +
+      `the ${spec.region} region states the measured commit ${String(stated.length)} ` +
         'times; it must state it exactly once',
     );
     assert(
       stated[0][1] === manifest.measuredAtCommit,
-      `the Phase 05 evidence was measured at ${stated[0][1]}; the manifest declares ` +
+      `the ${LABEL} evidence was measured at ${stated[0][1]}; the manifest declares ` +
         manifest.measuredAtCommit,
     );
 
@@ -1869,6 +1902,55 @@ export function runGovernanceChecks({
       `manifest for ${manifest.phase} (${manifest.acceptance}) at ${manifest.measuredAtCommit.slice(0, 7)}; ` +
       `${String(declared.length)} battery commands, all exits zero; the evidence table restates it`
     );
+  };
+
+  check('16', 'Phase 05 remediation evidence matches its manifest', () =>
+    phaseEvidence({
+      label: 'Phase 05',
+      manifestPath: PHASE05_MANIFEST_PATH,
+      manifestKeys: PHASE_05_EVIDENCE.manifestKeys,
+      region: PHASE_05_EVIDENCE.region,
+      heading: PHASE_05_EVIDENCE.heading,
+      remediationNumber: PHASE_05_EVIDENCE.remediationNumber,
+      governed: {
+        phase: GOVERNED_STATE.implementedPhase,
+        phaseState: GOVERNED_STATE.implementedPhaseState,
+        acceptance: GOVERNED_STATE.implementedPhaseAcceptance,
+      },
+      earlierAcceptanceCommits: [
+        ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
+        ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
+      ],
+    }),
+  );
+
+  check('17', 'Progressed-phase evidence matches its manifest', () => {
+    // One check, every phase completed under the standing authorization: each
+    // manifest is held to the governed entry, the required battery and its own
+    // region of `phase-status.md`. A manifest cannot claim an acceptance the
+    // governed state does not record, and its measured commit cannot be a tree
+    // an earlier phase was accepted at.
+    assert(PROGRESSED_PHASES.length > 0, 'no phase has been completed under the authorization');
+    const summaries = [];
+    for (const phase of PROGRESSED_PHASES) {
+      summaries.push(
+        phaseEvidence({
+          label: `Phase ${phase.number}`,
+          manifestPath:
+            PROGRESSED_MANIFEST_PATHS.get(phase.number) ?? join(IMPL, phase.evidence.manifest),
+          manifestKeys: phase.evidence.manifestKeys,
+          region: phase.evidence.region,
+          heading: phase.evidence.heading,
+          governed: { phase: phase.name, phaseState: phase.state, acceptance: phase.acceptance },
+          earlierAcceptanceCommits: [
+            ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
+            ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
+            ['Phase 05', GOVERNED_STATE.implementedPhaseAcceptedAtCommit],
+          ],
+        }),
+      );
+    }
+    return summaries.join('; ');
   });
 
   return { results, failed: results.filter((entry) => !entry.ok).length };
