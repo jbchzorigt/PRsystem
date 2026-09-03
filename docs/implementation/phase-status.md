@@ -39,7 +39,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
-| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription` | the Phase 05 battery — counts in [Phase 05 record](#phase-05-record) | see the Phase 05 record |
+| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation` | the Phase 05 battery — counts in [Phase 05 remediation 1](#phase-05-remediation-1) | see the Phase 05 record and remediation 1 |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
@@ -2620,8 +2620,11 @@ their own application and nobody else's; an anonymous statement reaches none;
 an applicant cannot write into another's scope or read an owner profile they are
 not linked to; the pre-tenant and tenant axes are disjoint in both directions;
 the runtime holds no INSERT on anything provisioning creates; and no plaintext
-registration number, one-time code, bearer reference or activation token reaches
-a row, an audit record, an outbox payload or a response body.
+registration number, one-time code or activation token reaches a row, an audit
+record, an outbox payload or a response body. The applicant bearer token is the
+one deliberate exception: it is returned once, in the creation response, and
+is never persisted, logged, audited or placed in an outbox payload — only its
+keyed digest is stored (wording corrected in remediation 1, R9).
 
 Concurrency is proved with genuinely simultaneous calls on separate
 connections: two identical callbacks make one paid transition; two providers
@@ -2656,3 +2659,199 @@ leave at most one live intent; and two activation drains deliver one message.
 
 Phase 06 is the current phase and has **not** started. Beginning it requires a
 further explicit authorization.
+
+---
+
+## Phase 05 remediation 1
+
+Phase 05 was **not accepted**. One bounded remediation pass was performed on
+top of `2ca6e26187ccf54f44be05d564e3b8d482758dc7`, the Phase 05 record's
+final commit, against the ten blockers R1–R10 of the customer's review. Phase
+05 stays `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 06 has **not**
+started. No acceptance is claimed by this record.
+
+### Method
+
+Every defect was reproduced before it was fixed. The regressions were written
+first — `onboarding.remediation1.test.ts`, `subscription.remediation1.test.ts`
+and `onboarding.authorization.http.test.ts` under `apps/api`, the worker
+end-to-end suite `apps/worker/src/onboarding.e2e.test.ts` and its consumer
+unit test, the BullMQ signal test, and the `packages/ports` conformance suite —
+and run against `2ca6e26`: in `apps/api` 25 of 36 cases failed and 11 could
+not run (the harness lacked the Operation actor, the worker runtime and the
+application-state query; the schema lacked the claim columns); both worker
+suites failed to load, because no `@prsystem/api/onboarding-worker` entry
+existed; all 27 conformance cases failed, because no canonical contract
+existed. The wiring defects were reproduced over real HTTP and the real worker
+entry points rather than by direct service calls.
+
+### What changed, by blocker
+
+- **R1 — authorization.** Subscription status, renewal and upgrade resolve the
+  live membership and the session's scope grant through the Phase 04 gate
+  before the hotel is bound, then authorize the catalogued action
+  `hotel.subscription.pay` against the locked subscription row. Manager,
+  Reception, a suspended membership, a stale grant and a foreign or unknown
+  hotel all receive the same `NOT_FOUND`, with no lock, provider invoice,
+  billing intent or hotel-scoped audit side effect. The Hotel-session eBarimt
+  queue route is gone; `/operation/ebarimt/manual-queue` and the retry,
+  provisioning-retry and reconciliation routes are an Operation surface that
+  requires the realm, an explicit named grant, a step-up inside its window and
+  an audit record. Proved over HTTP with two hotels.
+- **R2 — owners.** No `subscription_owner` row exists before payment: the
+  runtime lost INSERT on the table and the applicant policy went with it. An
+  existing owner is probed by identifier token and never mutated; the
+  challenge goes to the **stored** verified contact, its plaintext is never
+  returned and the new application's contact is never proof. Ownership is also
+  proved by a signed-in account already linked to the owner. The
+  existing-email path binds the application to the signed-in account with the
+  proof method recorded, and the boundary revalidates realm, state, email and
+  proof under the row lock. Offline verification is an Operation action
+  mapped to `operation.subscription_contact_change_approve` with no HTTP route
+  in this phase (assumptions §3.9 (4)).
+- **R3 — the durable job.** A confirmed payment makes the application row
+  itself due: claim token, lease, `provision_available_at` and attempt count
+  live on it, discovered by a definer that hides exhausted rows. The worker
+  deployment registers a BullMQ consumer per Phase 05 queue and a repeatable
+  sweep; the callback's Redis message is a best-effort latency signal, and a
+  signal that fails changes nothing. An expired lease is reclaimed, a crash
+  while `PROVISIONING` is recovered, five persisted exponential attempts are
+  followed only by the permissioned manual retry. Proved end to end from the
+  provider callback over HTTP through the worker's own consumer to exactly one
+  hotel, subscription, owner link, Primary membership, drawer and activation
+  delivery.
+- **R4 — one transaction.** Hotel, owner link, subscription, membership,
+  activation, delivery intent, `onboarding.hotel.provisioned` outbox event and
+  the `PROVISIONED` transition share one `xmin`. A failure after that commit
+  — proved with a trap on the settlement write — never reports the hotel as
+  failed, and a replay of a settled row creates nothing.
+- **R5 — eBarimt.** Onboarding, renewal and upgrade payments each open exactly
+  one issuance intent inside the payment's transaction; replays and duplicate
+  callbacks add none. The worker's issuance consumer issues through the port
+  and emails the receipt with its own `ebarimt_receipt` template. Manual
+  retry accepts no receipt field and requires the Operation permission and a
+  step-up.
+- **R6 — idempotency.** The business key is claimed before the provider is
+  called and the same key is the provider's idempotency key; a lost
+  acknowledgement recovers the same invoice; a changed payload under the same
+  key is refused; two simultaneous callers with one key create one invoice
+  and one attempt or intent; the quoted snapshot is re-locked and compared
+  before the intent is persisted, so a moved `billing_revision` refuses the
+  quote; the previous usable intent is staled only when the replacement is
+  durable.
+- **R7 — pending upgrade.** Renewal at the pending target keeps the target and
+  its `effective_at` while extending expiry; renewal directly above it is
+  refused until the incremental upgrade is done; renewal never touches the
+  paid pending upgrade.
+- **R8 — activation.** The new account and its Primary membership stay
+  `PENDING_ACTIVATION` / `PENDING` until the link is redeemed; a proved
+  existing account is `ACTIVE` at once with no new credential token; redemption
+  sets the credential, verifies the email, activates both rows, consumes the
+  link and bumps the auth epoch in one transaction through a checked CAS on the
+  revision the previous write returned. A trap rolls every write back and the
+  link stays redeemable; two simultaneous redemptions activate once.
+- **R9 — state and ledger.** `GET /onboarding/applications/state` returns the
+  canonical state and minimal safe progress. Payment attempts, subscription
+  payments and billing intents carry the provider fee and derive the net
+  amount; nothing hard-codes a fee of zero. The security wording is
+  corrected: the applicant bearer token is intentionally returned **once**, in
+  the creation response, and is never persisted, logged, audited or placed in
+  an outbox payload; only its keyed digest is stored.
+- **R10 — governance.** EXT-03, EXT-04 and EXT-11 are recorded as port and
+  simulator shipped only on the canonical contracts and the passing
+  conformance suite. The phone-OTP early-port entry in the build plan matches
+  the recorded §3.9 alignment. The programme's governed state moved out of the
+  Phase 03 evidence owner into `tools/programme-state.mjs`; Phase 03 and 04
+  evidence are byte-identical. This section's evidence is a machine-readable
+  manifest, `phase-05-evidence.json`, validated by governance check 16.
+
+### Migration path
+
+`0004_onboarding_remediation.sql`, forward-only, on top of `0003`. `0000`–`0003`
+are untouched and checksum-pinned. `GATE-MIGR` runs the fresh install, the two
+upgrade paths (an accepted Phase 03 database and an accepted Phase 04 database
+reaching head), a repeat that applies nothing, and fresh/upgrade schema
+equality, with the declaration and snapshot aligned.
+
+### Changed file groups
+
+- **Ports:** `packages/ports/src/` — `port.ts`, `payment-gateway.port.ts`,
+  `ebarimt.port.ts`, `phone-verification.port.ts`, `notification.port.ts`,
+  `conformance.test.ts`; the `apps/api` contract files re-export them.
+- **Database:** the migration and journal, `schema.ts`, `schema-snapshot.ts`,
+  `ownership-manifest.ts`, `kernel/idempotency.ts`, `test-support/tenant-rows.ts`,
+  the migration, regression and scheduler tests.
+- **API:** `modules/onboarding/` services, repositories, controllers
+  (`operation.controller.ts` new), contracts (`provisioning-signal.ts`,
+  `bullmq-provisioning-signal.ts` new), `worker/onboarding-worker.ts` new, the
+  test harness and the suites; `modules/iam` account repository and context;
+  `bootstrap.ts`, `openapi.ts`, the package's `exports`.
+- **Worker:** `jobs/onboarding.ts`, `main.ts`, `queues.ts` and the suites.
+- **Authorization and configuration:** `packages/authz` account states,
+  `packages/config` `QUEUE_PREFIX`, `.env.example`.
+- **Dependencies:** `fastify` 5.11.3 → 5.12.1 in `apps/api` and as a workspace
+  override (`@nestjs/platform-fastify` 11.2.3 pins the older patch), closing
+  GHSA-w2qp-rph6-63g4 and GHSA-3m5p-2c4r-xxw2 — two moderate advisories
+  published after the Phase 05 battery that `audit:prod` refused on this
+  tree. A compatible stable upgrade, so no register entry (CLAUDE.md §1).
+- **Governance:** `tools/programme-state.mjs` new, `tools/phase-03-battery.mjs`,
+  `tools/governance-checks.mjs`, `tools/validate-governance*.mjs`, this document,
+  the traceability, gate, plan, assumptions and port-catalog documents.
+
+### DEC coverage
+
+No status changes: the 26 Phase 05 decisions stay `COVERED`, with their code and
+test columns extended to the canonical ports, migration `0004`, the worker
+consumers and the remediation, HTTP-authorization and end-to-end suites. No
+decision was marked `COVERED` without production wiring and a regression.
+
+### Remaining blockers
+
+- `EXT-03`, `EXT-04`, `EXT-11` — BLOCKED; canonical ports and simulators,
+  conformance-gated; production adapters are Phase 20.
+- `INT-OTP-01`, `INT-MAIL-01` — unchanged.
+- The offline ownership-verification HTTP surface — Phase 19; the production
+  action is not reachable and is not claimed to be.
+- 17 P1 items, `DSR-01`, and the `GATE-SEC` required-check selection — unchanged.
+
+### Evidence
+
+<!-- phase-05-evidence:begin -->
+
+Measured at implementation commit 2f94a14740c44679560c79eee13f24905c67328e, the tree of the five remediation
+commits. The record itself — the manifest and this table — is the commit
+after it; the governance validator and its fixtures were run again on that
+final tree and are what the two governance rows report. Every command exited
+0.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | pending measurement |
+| `node tools/validate-governance.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-workspace.mjs` | PASS | pending measurement |
+| `node tools/validate-regression-coverage.mjs` | PASS | pending measurement |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | pending measurement |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | pending measurement |
+| `node tools/scan-secrets.mjs` | PASS | pending measurement |
+| `pnpm run format:check` | PASS | pending measurement |
+| `pnpm run lint` | PASS | pending measurement |
+| `pnpm run typecheck` | PASS | pending measurement |
+| `pnpm run test:unit` | PASS | pending measurement |
+| `pnpm run test:migrations` | PASS | pending measurement |
+| `pnpm run test:integration` | PASS | pending measurement |
+| `pnpm run test:concurrency` | PASS | pending measurement |
+| `pnpm run test:regression` | PASS | pending measurement |
+| `pnpm run test:security` | PASS | pending measurement |
+| `pnpm run test:e2e` | PASS | pending measurement |
+| `pnpm run audit:prod` | PASS | pending measurement |
+| `pnpm run audit:tree` | PASS | pending measurement |
+| `pnpm run build` | PASS | pending measurement |
+| `pnpm run openapi` | PASS | pending measurement |
+| `pnpm run compose:config` | PASS | pending measurement |
+| `git diff --check` | PASS | pending measurement |
+
+<!-- phase-05-evidence:end -->
+
+Phase 05 remains `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 06 has **not** started
+and requires a further explicit authorization.
