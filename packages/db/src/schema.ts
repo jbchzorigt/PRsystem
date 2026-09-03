@@ -2083,11 +2083,11 @@ export const onboardingPaymentAttempt = platform
       check('onboarding_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
       check(
         'onboarding_payment_attempt_state_known',
-        sql`(state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+        sql`(state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'ABANDONED'::text, 'REFUSED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
       ),
       check(
         'onboarding_payment_attempt_invoice_once_live',
-        sql`((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL))`,
+        sql`((state = 'PREPARING'::text) OR ((state = 'REFUSED'::text) AND (provider_invoice_id IS NULL)) OR ((state <> 'REFUSED'::text) AND (provider_invoice_id IS NOT NULL)))`,
       ),
       check('onboarding_payment_attempt_term_known', sql`(term_months = ANY (ARRAY[1, 3, 7, 12]))`),
       check(
@@ -2468,7 +2468,7 @@ export const subscriptionBillingIntent = platform
       check('subscription_billing_intent_revision_non_negative', sql`(revision >= 0)`),
       check(
         'subscription_billing_intent_state_known',
-        sql`(state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
+        sql`(state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'ABANDONED'::text, 'REFUSED'::text, 'PAID_REQUIRES_RECONCILIATION'::text]))`,
       ),
       check(
         'subscription_billing_intent_terminal_has_time',
@@ -2476,7 +2476,7 @@ export const subscriptionBillingIntent = platform
       ),
       check(
         'subscription_billing_intent_invoice_once_live',
-        sql`((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL))`,
+        sql`((state = 'PREPARING'::text) OR ((state = 'REFUSED'::text) AND (provider_invoice_id IS NULL)) OR ((state <> 'REFUSED'::text) AND (provider_invoice_id IS NOT NULL)))`,
       ),
       check(
         'subscription_billing_intent_upgrade_shape',

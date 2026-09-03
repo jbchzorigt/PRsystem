@@ -43,6 +43,13 @@
       "when": 1756684800000,
       "tag": "0005_onboarding_remediation2",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1756771200000,
+      "tag": "0006_onboarding_remediation3",
+      "breakpoints": true
     }
   ]
 }

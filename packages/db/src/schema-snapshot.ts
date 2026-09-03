@@ -6008,7 +6008,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'onboarding_payment_attempt',
       name: 'onboarding_payment_attempt_invoice_once_live',
       kind: 'c',
-      definition: "CHECK (((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL)))",
+      definition:
+        "CHECK (((state = 'PREPARING'::text) OR ((state = 'REFUSED'::text) AND (provider_invoice_id IS NULL)) OR ((state <> 'REFUSED'::text) AND (provider_invoice_id IS NOT NULL))))",
     },
     {
       schema: 'platform',
@@ -6076,7 +6077,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'onboarding_payment_attempt_state_known',
       kind: 'c',
       definition:
-        "CHECK ((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
+        "CHECK ((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAYMENT_UNCERTAIN'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'ABANDONED'::text, 'REFUSED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
     },
     {
       schema: 'platform',
@@ -6240,7 +6241,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'subscription_billing_intent',
       name: 'subscription_billing_intent_invoice_once_live',
       kind: 'c',
-      definition: "CHECK (((state = 'PREPARING'::text) OR (provider_invoice_id IS NOT NULL)))",
+      definition:
+        "CHECK (((state = 'PREPARING'::text) OR ((state = 'REFUSED'::text) AND (provider_invoice_id IS NULL)) OR ((state <> 'REFUSED'::text) AND (provider_invoice_id IS NOT NULL))))",
     },
     {
       schema: 'platform',
@@ -6338,7 +6340,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'subscription_billing_intent_state_known',
       kind: 'c',
       definition:
-        "CHECK ((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'ABANDONED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
+        "CHECK ((state = ANY (ARRAY['PREPARING'::text, 'PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text, 'CANCELLED'::text, 'STALE'::text, 'ABANDONED'::text, 'REFUSED'::text, 'PAID_REQUIRES_RECONCILIATION'::text])))",
     },
     {
       schema: 'platform',

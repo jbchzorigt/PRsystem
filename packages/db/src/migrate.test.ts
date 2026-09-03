@@ -216,12 +216,12 @@ describe('migration runner', () => {
     expect(outcome.appliedBefore).toBe(0);
     // 0000_baseline, 0001_kernel, 0002_iam_rbac_staff, 0003_onboarding_subscription,
     // 0004_onboarding_remediation.
-    expect(outcome.appliedAfter).toBe(6);
+    expect(outcome.appliedAfter).toBe(7);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
-      expect(freshLedger).toHaveLength(6);
+      expect(freshLedger).toHaveLength(7);
     } finally {
       await pool.end();
     }
@@ -237,7 +237,7 @@ describe('migration runner', () => {
 
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
-    expect(upgradeOutcome.appliedAfter).toBe(6);
+    expect(upgradeOutcome.appliedAfter).toBe(7);
   }, 60000);
 
   it('holds the accepted Phase 03 migrations byte-for-byte, and only those', () => {
@@ -284,11 +284,11 @@ describe('migration runner', () => {
     const toHead = await runMigrations(phase04Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 2,
-      after: 6,
+      after: 7,
     });
   }, 120000);
 
-  it('applies exactly the three Phase 05 migrations to an accepted Phase 04 database', async () => {
+  it('applies exactly the four Phase 05 migrations to an accepted Phase 04 database', async () => {
     // The deployment step a running cluster actually takes.
     const accepted = await runMigrations(phase05Url, { migrationsFolder: FROZEN_PHASE_04 });
     expect({ before: accepted.appliedBefore, after: accepted.appliedAfter }).toEqual({
@@ -297,20 +297,21 @@ describe('migration runner', () => {
     });
 
     // `0003_onboarding_subscription` and its forward-only remediations
-    // `0004_onboarding_remediation` and `0005_onboarding_remediation2`; nothing
+    // `0004_onboarding_remediation`, `0005_onboarding_remediation2` and
+    // `0006_onboarding_remediation3`; nothing
     // accepted is rewritten.
     const phase05 = await runMigrations(phase05Url);
     expect({ before: phase05.appliedBefore, after: phase05.appliedAfter }).toEqual({
       before: 3,
-      after: 6,
+      after: 7,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase05Url, ledgerRows);
     const repeat = await runMigrations(phase05Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 6,
-      after: 6,
+      before: 7,
+      after: 7,
     });
     expect(await withPool(phase05Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -531,8 +532,8 @@ describe('migration runner', () => {
   it('treats a second application as a safe no-op', async () => {
     const outcome = await runMigrations(freshUrl);
 
-    expect(outcome.appliedBefore).toBe(6);
-    expect(outcome.appliedAfter).toBe(6);
+    expect(outcome.appliedBefore).toBe(7);
+    expect(outcome.appliedAfter).toBe(7);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
@@ -1424,7 +1425,7 @@ describe('the migration runner requires the canonical migration login', () => {
     const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
     await expect(
       runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
-    ).resolves.toMatchObject({ appliedAfter: 6 });
+    ).resolves.toMatchObject({ appliedAfter: 7 });
   }, 180000);
 });
 
