@@ -1152,14 +1152,15 @@ export function runGovernanceChecks({
       );
     }
 
-    // Two acceptances, two commits, and they are not the same commit. Both are
-    // governed outside this document; asserting their shape here means a typo or
-    // a copied SHA in `phase-03-battery.mjs` is caught by the gate rather than by
-    // a reader. Reusing Phase 03's commit would have let one acceptance stand in
-    // for the other.
+    // Three acceptances, three commits, and no two of them are the same commit.
+    // All are governed outside this document; asserting their shape here means a
+    // typo or a copied SHA in `programme-state.mjs` is caught by the gate rather
+    // than by a reader. Reusing an earlier phase's commit would let one
+    // acceptance stand in for another.
     const ACCEPTED_COMMITS = [
       ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
       ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
+      ['Phase 05', GOVERNED_STATE.implementedPhaseAcceptedAtCommit],
     ];
     for (const [phase, commit] of ACCEPTED_COMMITS) {
       assert(
@@ -1168,10 +1169,15 @@ export function runGovernanceChecks({
           `${JSON.stringify(commit)}`,
       );
     }
-    assert(
-      ACCEPTED_COMMITS[0][1] !== ACCEPTED_COMMITS[1][1],
-      'the governed state names one commit as both the Phase 03 and the Phase 04 acceptance',
-    );
+    for (let i = 0; i < ACCEPTED_COMMITS.length; i += 1) {
+      for (let j = i + 1; j < ACCEPTED_COMMITS.length; j += 1) {
+        assert(
+          ACCEPTED_COMMITS[i][1] !== ACCEPTED_COMMITS[j][1],
+          `the governed state names one commit as both the ${ACCEPTED_COMMITS[i][0]} and the ` +
+            `${ACCEPTED_COMMITS[j][0]} acceptance`,
+        );
+      }
+    }
     // An acceptance is not an authorization to start what comes next. Phase 04
     // being accepted and Phase 05 being unstarted are independent facts, and the
     // governed state must keep saying the second while it says the first.
@@ -1363,13 +1369,14 @@ export function runGovernanceChecks({
       // Phase 04's own acceptance, distinct from its ledger state: a repaired
       // phase whose battery is green is still a phase nobody has accepted.
       ['Phase 04 acceptance', `\`${GOVERNED_STATE.completedPhaseAcceptance}\``],
-      // Phase 05's own, which is not the same fact: it is implemented and gated
-      // and nobody has taken it.
+      // Phase 05's own, which is not the same fact: a remediated phase whose
+      // battery is green is a separate matter from a customer having taken it.
       ['Phase 05 acceptance', `\`${GOVERNED_STATE.implementedPhaseAcceptance}\``],
-      // And the one commit it was accepted at. Without this row the acceptance
-      // was a token with no tree behind it: it could have been read as covering
-      // whatever HEAD happened to be.
+      // And the one commit each was accepted at. Without these rows an
+      // acceptance was a token with no tree behind it: it could have been read
+      // as covering whatever HEAD happened to be.
       ['Phase 04 accepted at', `\`${GOVERNED_STATE.completedPhaseAcceptedAtCommit}\``],
+      ['Phase 05 accepted at', `\`${GOVERNED_STATE.implementedPhaseAcceptedAtCommit}\``],
       ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
       ['Latest implemented repair number', String(manifest.latestRepairNumber)],
@@ -1602,8 +1609,8 @@ export function runGovernanceChecks({
   });
 
   check('16', 'Phase 05 remediation evidence matches its manifest', () => {
-    // The same discipline as check 15, for a phase that is implemented and not
-    // accepted: `phase-05-evidence.json` declares what was measured, on which
+    // The same discipline as check 15, for the most recently implemented phase:
+    // `phase-05-evidence.json` declares what was measured, on which
     // implementation commit; `programme-state.mjs` declares what the phase's
     // state is; `phase-03-battery.mjs` declares what must be measured; and the
     // section of `phase-status.md` inside the `phase-05-evidence` markers may
@@ -1638,9 +1645,9 @@ export function runGovernanceChecks({
       `the Phase 05 manifest declares remediation ${JSON.stringify(manifest.remediationNumber)}; ` +
         `the governed remediation is ${String(PHASE_05_EVIDENCE.remediationNumber)}`,
     );
-    // One implementation tree, named in full, and not one the customer already
-    // accepted: evidence for a phase awaiting review cannot point at a commit
-    // that predates the phase.
+    // One implementation tree, named in full, and not a tree an earlier phase's
+    // acceptance names: Phase 05's evidence cannot point at a commit that
+    // predates the phase.
     assert(
       /^[0-9a-f]{40}$/.test(manifest.measuredAtCommit),
       'the Phase 05 manifest does not name a full lowercase object name as its measured commit: ' +

@@ -1,7 +1,7 @@
 // The programme's governed state, in one neutral module.
 //
-// Which phase is accepted, which is implemented and awaiting the customer, and
-// which is current are facts about the programme, not about Phase 03 — yet they
+// Which phases are accepted, which is implemented most recently, and which is
+// current are facts about the programme, not about Phase 03 — yet they
 // used to live in `phase-03-battery.mjs`, so every later phase extended the
 // evidence owner of a closed phase. They live here now. `phase-03-battery.mjs`
 // keeps only what Phase 03 owns: its required battery and its manifest shape.
@@ -32,8 +32,9 @@
  * the one after it, which has not started. Beginning a phase requires a further
  * explicit authorization and a change to this module — the document cannot
  * advance the programme by editing a cell. An acceptance is not that
- * authorization: Phase 04 being `ACCEPTED` says nothing about Phase 05, which
- * stays `NOT STARTED` until it is separately authorized.
+ * authorization: Phase 05 being `ACCEPTED` says nothing about Phase 06, which
+ * stays `NOT STARTED` until it is separately authorized, exactly as Phase 04's
+ * acceptance said nothing about Phase 05.
  */
 export const GOVERNED_STATE = {
   acceptedPhase: '03 — Platform kernel',
@@ -65,14 +66,25 @@ export const GOVERNED_STATE = {
   /**
    * The phase implemented most recently, and its own acceptance.
    *
-   * Phase 05 was authorized, implemented and gated; it has **not** been
-   * accepted. The two facts stay separate and are recorded separately, exactly
-   * as Phase 04's were: `DONE` says the work is finished and measured, and only
-   * a customer decision — a change to this module — can say more than that.
+   * Phase 05 was authorized, implemented, gated and remediated three times, and
+   * the customer has now accepted it. The two facts stay separate and are
+   * recorded separately, exactly as Phase 04's are: `DONE` says the work is
+   * finished and measured, and the acceptance says the customer has taken it.
+   * Only a customer decision — a change to this module — can say either, and the
+   * documents that restate them can no more withdraw the acceptance than they
+   * could have granted it.
    */
   implementedPhase: '05 — Hotel onboarding and subscription',
   implementedPhaseState: 'DONE',
-  implementedPhaseAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+  implementedPhaseAcceptance: 'ACCEPTED',
+  /**
+   * The one tree Phase 05's acceptance was given at: the commit that records
+   * remediation 3 and its measured evidence. Governed separately from Phase 03's
+   * and Phase 04's, and required to differ from both — a copied SHA would let
+   * one acceptance stand in for another, and an acceptance with no tree behind
+   * it reads as covering whatever HEAD happens to be.
+   */
+  implementedPhaseAcceptedAtCommit: '35314ba210f609269863f0b528bbe827e6a5d3ce',
   currentPhase: '06 — Hotel, room, category, and tariffs',
   currentPhaseState: 'NOT STARTED',
 };
@@ -98,13 +110,15 @@ export const GOVERNED_PHASES = [
 /**
  * The Phase 05 remediation evidence contract.
  *
- * Phase 05 is implemented and not accepted. Its evidence is a machine-readable
- * manifest of the standing battery as measured on one named implementation
- * commit, validated by governance check 16 the way Phase 03's is by check 15:
- * the manifest declares what was measured, the required battery says what must
- * be, and the document may only restate the manifest. The commit it names is
- * the implementation tree the customer reviews, so it is required to be a full
- * object name and to differ from every accepted commit.
+ * Phase 05 is implemented and, since the closeout, accepted. Its evidence is a
+ * machine-readable manifest of the standing battery as measured on one named
+ * implementation commit, validated by governance check 16 the way Phase 03's is
+ * by check 15: the manifest declares what was measured, the required battery
+ * says what must be, and the document may only restate the manifest. The commit
+ * it names is the implementation tree the customer reviewed, so it is required
+ * to be a full object name and to differ from the Phase 03 and Phase 04
+ * acceptance commits. The acceptance itself is `implementedPhaseAcceptance`
+ * above, restated by the manifest and never declared by it.
  */
 export const PHASE_05_EVIDENCE = {
   /** The bounded region in `phase-status.md`: `<!-- phase-05-evidence:begin/end -->`. */

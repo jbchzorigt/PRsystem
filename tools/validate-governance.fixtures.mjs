@@ -87,13 +87,14 @@ function removeCommand(sources, command) {
 const FIXTURES = [
   // ------------------------------------------------ Phase 05 evidence (check 16)
   {
-    // The acceptance is the customer's to give. The manifest may restate the
-    // governed `AWAITING_CUSTOMER_ACCEPTANCE` and nothing else.
-    name: 'phase 05 manifest: the acceptance declared by the manifest',
+    // The acceptance is the customer's to give and the customer's to withdraw.
+    // The manifest may restate the governed `ACCEPTED` and nothing else — it can
+    // no more roll the decision back than it could have made it.
+    name: 'phase 05 manifest: the acceptance withdrawn by the manifest',
     file: 'phase05-manifest',
-    expect: /Phase 05 manifest declares acceptance = "ACCEPTED"/,
+    expect: /Phase 05 manifest declares acceptance = "AWAITING_CUSTOMER_ACCEPTANCE"/,
     mutate: (text) =>
-      text.replace('"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"', '"acceptance": "ACCEPTED"'),
+      text.replace('"acceptance": "ACCEPTED"', '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"'),
   },
   {
     name: 'phase 05 manifest: a non-zero exit recorded',
@@ -413,6 +414,40 @@ const FIXTURES = [
     expect: /the current position has no "Phase 04 accepted at" row/,
     mutate: (text) =>
       text.replace('| Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |\n', ''),
+  },
+  {
+    // Phase 05's acceptance is governed exactly as Phase 03's and Phase 04's
+    // are, and withdrawing it in the document would erase a decision the
+    // customer made.
+    name: 'current position: the Phase 05 acceptance withdrawn',
+    file: 'phase-status',
+    expect: /states Phase 05 acceptance = "`AWAITING_CUSTOMER_ACCEPTANCE`"/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase 05 acceptance | `ACCEPTED` |',
+        '| Phase 05 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |',
+      ),
+  },
+  {
+    // One acceptance, one tree. Repointing it at a later commit would bring work
+    // the customer never saw under a decision they already made.
+    name: 'current position: the Phase 05 acceptance moved to another commit',
+    file: 'phase-status',
+    expect: /states Phase 05 accepted at = "`0{40}`"/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase 05 accepted at | `35314ba210f609269863f0b528bbe827e6a5d3ce` |',
+        `| Phase 05 accepted at | \`${'0'.repeat(40)}\` |`,
+      ),
+  },
+  {
+    // Deleting the row rather than editing it, as for Phase 04: an acceptance
+    // with no tree behind it reads as covering whatever HEAD happens to be.
+    name: 'current position: the Phase 05 accepted-at row removed',
+    file: 'phase-status',
+    expect: /the current position has no "Phase 05 accepted at" row/,
+    mutate: (text) =>
+      text.replace('| Phase 05 accepted at | `35314ba210f609269863f0b528bbe827e6a5d3ce` |\n', ''),
   },
   {
     // Reading the acceptance as authorization for what comes next, in both cells
@@ -1659,8 +1694,8 @@ const decoyPhaseStatus = originalPhaseStatus.replace(/^\| 22 \|[^\n]*\n/m, '');
 const decoyManifest = originalManifest.replace('"exits": [0]', '"exits": [1]');
 const decoyRunbook = originalRunbook.replace('`SEC-SCHEDULER`, ', '');
 const decoyPhase05Manifest = originalPhase05Manifest.replace(
-  '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
   '"acceptance": "ACCEPTED"',
+  '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
 );
 for (const [label, contents, original] of [
   ['phase status', decoyPhaseStatus, originalPhaseStatus],
@@ -1693,7 +1728,7 @@ for (const [label, paths, expected] of [
   [
     'phase 05 manifest',
     { phase05ManifestPath: join(DECOY_DIR, 'phase-05-evidence.json') },
-    /Phase 05 manifest declares acceptance = "ACCEPTED"/,
+    /Phase 05 manifest declares acceptance = "AWAITING_CUSTOMER_ACCEPTANCE"/,
   ],
 ]) {
   const outcome = runGovernanceChecks({

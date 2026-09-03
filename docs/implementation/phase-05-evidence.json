@@ -1,7 +1,7 @@
 {
   "phase": "05 — Hotel onboarding and subscription",
   "phaseState": "DONE",
-  "acceptance": "AWAITING_CUSTOMER_ACCEPTANCE",
+  "acceptance": "ACCEPTED",
   "remediationNumber": 3,
   "measuredAtCommit": "0c67eca1fc687b443199d3ff11114d68285d9f60",
   "battery": [

@@ -21,7 +21,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 05 state | `DONE` |
 | Phase 04 acceptance | `ACCEPTED` |
 | Phase 04 accepted at | `e5fcf19c4164c72106b6d2408f460751ad30685f` |
-| Phase 05 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 05 acceptance | `ACCEPTED` |
+| Phase 05 accepted at | `35314ba210f609269863f0b528bbe827e6a5d3ce` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -39,7 +40,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 02 | Monorepo scaffold | `DONE` | `0000_baseline` | `GATE-GOV` 13/13, workspace 15/15, `GATE-LINT`, `GATE-TYPES`, `GATE-UNIT` 108, `GATE-MIGR` 4, `GATE-E2E` 15, audits | `f3d7b3d`, `071362a` |
 | 03 | Platform kernel | `DONE` | `0001_kernel` | the full battery — counts in [Current Phase 03 evidence](#current-phase-03-evidence) | `8a62b0b` …; every repair is listed in the same section |
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
-| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2`, `0006_onboarding_remediation3` | the Phase 05 battery — counts in [Phase 05 remediation 3](#phase-05-remediation-3) | see the Phase 05 record and remediations 1 to 3 |
+| 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2`, `0006_onboarding_remediation3` | the Phase 05 battery — counts in [Phase 05 remediation 3](#phase-05-remediation-3) | accepted at the commit named in [Phase 05 acceptance](#phase-05-acceptance); the work itself is in the Phase 05 record and remediations 1 to 3 |
 | 06 | Hotel, room, category, and tariffs | `NOT STARTED` | — | — | — |
 | 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
@@ -130,6 +131,53 @@ Carried forward past the acceptance, unchanged:
   that needs push authorisation and has not been attempted.
 
 Phase 03's acceptance, its commit, its review number and its evidence are untouched by this and
+remain exactly as recorded above.
+
+---
+
+## Phase 05 acceptance
+
+The customer accepted Phase 05 at commit `35314ba210f609269863f0b528bbe827e6a5d3ce` — the commit
+that records remediation 3 and its measured evidence. That is the accepted evidence and it is
+frozen: the battery in [Phase 05 remediation 3](#phase-05-remediation-3), measured at implementation
+commit `0c67eca1fc687b443199d3ff11114d68285d9f60`, is not re-run to restate it, and the remediation
+1 and 2 tables above it stay what they are — historical measurements, labelled as such.
+
+The acceptance and the commit it was given at are declared in
+[`tools/programme-state.mjs`](../../tools/programme-state.mjs), outside this document, and
+`validate-governance` check 15 holds the Current position rows to both. Three acceptances now name
+three distinct commits, and the check refuses any two of them being the same. This document can no
+more withdraw the acceptance, or move it to a different tree, than it could have granted it.
+
+The three Phase 05 remediation records below are history. Each states the state it was written
+under and keeps saying it; the acceptance does not rewrite them.
+
+The CI ledger for the accepted commit is a separate persisted artifact,
+[phase-05-ci-ledger.md](phase-05-ci-ledger.md): the workflow's 41 run steps with their commands,
+exit codes, per-step log hashes, the disposable Compose projects and their volume cleanup, and the
+two deviations from the workflow. It states in its own terms that its five jobs shared one checkout
+and one build cache and that it is therefore not a proof of five independently pristine workspaces.
+
+**Phase 06 is unchanged by this.** It remains the current phase in `NOT STARTED`, and implementing
+it requires a further explicit authorization. An acceptance closes the phase behind it and
+authorizes nothing ahead of it.
+
+Carried forward past the acceptance, unchanged and still open:
+
+- **`EXT-03`, `EXT-04` and `EXT-11`** — BLOCKED, running against conformance-gated deterministic
+  simulators with the production adapters disabled, in
+  [external-integration-gates.md](external-integration-gates.md).
+- **`INT-OTP-01`** and **`INT-MAIL-01`** — no contracted OTP or transactional mail provider.
+- **The Phase 19 offline verification surface**, assigned to its owning phase.
+- **17 P1 configuration items**, open, in
+  [assumptions-and-conflicts.md](assumptions-and-conflicts.md).
+- **`DSR-01`**, OPEN and contained, in
+  [dependency-security-register.md](dependency-security-register.md), with its mandatory review in
+  Phase 23.
+- **Selecting `GATE-SEC` as a required GitHub status check**, an external repository-settings action
+  that needs push authorisation and has not been attempted.
+
+Phase 03's and Phase 04's acceptances, their commits and their evidence are untouched by this and
 remain exactly as recorded above.
 
 ---
@@ -3066,10 +3114,17 @@ code.
   the application's phone, the passed proof, and provisioning on the original
   attempt with the hotel linked to that owner and exactly one owner for the
   identifier.
-- **4 — CI evidence.** The pristine-clone ledger below follows the workflow's
-  41 run steps one by one, with the compose and gate-sec jobs each on a
-  disposable Compose project of its own — a unique project name, free ports
+- **4 — CI evidence.** The ledger is a persisted artifact of its own,
+  [phase-05-ci-ledger.md](phase-05-ci-ledger.md); it is not reproduced here. It
+  follows the workflow's 41 run steps one by one, with the compose and gate-sec
+  jobs each on a disposable Compose project — a unique project name, free ports
   and fresh volumes — so every cleanup step runs, against those projects only.
+  It was executed at the accepted commit `35314ba`, and it records what it does
+  not prove: all five jobs ran in **one** clone and shared one install and one
+  Turborepo cache, so it is not five independently pristine workspaces. Its two
+  deviations from the workflow — the gate-sec port-conflict retry and the
+  `REDIS_URL_TEST` override on the six database-backed steps — are recorded
+  there per step.
 
 ### Migration path
 
@@ -3140,5 +3195,7 @@ above are historical.
 
 <!-- phase-05-evidence:end -->
 
-Phase 05 remains `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 06 has **not** started
-and requires a further explicit authorization.
+Phase 05 was `AWAITING_CUSTOMER_ACCEPTANCE` at the end of remediation 3 and has
+since been accepted at this record's own commit; see
+[Phase 05 acceptance](#phase-05-acceptance). Phase 06 has **not** started and
+requires a further explicit authorization.
