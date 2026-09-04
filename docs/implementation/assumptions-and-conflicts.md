@@ -493,6 +493,76 @@ recorded so a reviewer can see where a judgement was made.
 
 ---
 
+### 3.13 Phase 09 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P09-1 — starting a checkout has no action of its own.** doc 18 §3 carries one checkout row,
+  `Early/on-time/late actual checkout бүртгэх, room/minibar тооцоо`
+  (`hotel.stay.checkout_record`), and no separate row for `Check-out эхлүүлэх`, which doc 21 §9
+  gives to Reception with the same "additional Reception role" rule for everyone else. Starting a
+  checkout, calling it off and locking a payment attempt therefore all check that one action; the
+  matrix is not widened and no new permission was invented.
+- **A-P09-2 — the stay gained exactly one backward edge.** doc 04 §8 requires a started checkout to
+  be callable off, leaving the report and the tasks as cancelled history. Phase 08's stay guard was
+  forward-only because nothing could yet call one off; migration `0010` replaces the guard with the
+  same rules plus `CHECKOUT_IN_PROGRESS → ACTIVE`. Write-once times, the increasing revision, the
+  actual checkout recorded only with the completing transition and the immutability of a completed
+  stay are unchanged.
+- **A-P09-3 — the payment is a contract, the lock is Phase 09's.** doc 21 §5 requires the exact
+  version to be locked and released only on a provider status that proves no money moved. The lock,
+  its uniqueness and the reconciliation are implemented here; the money is Phase 10's.
+  `PaymentAttemptsPort` asks the provider's own status, `UnprovisionedPaymentAttempts` answers
+  `UNKNOWN` while `platform.payment_attempt` does not exist — which holds the lock, as the
+  requirement wants — and refuses outright once that relation appears without an implementation.
+  No client field, screen or Reception statement can set a provider status (CLAUDE.md §7).
+- **A-P09-4 — the billable formula is a database constraint.** doc 22 §8 states
+  `max(0, opening + refill − non-guest stock-out − counted)`. The service computes it and
+  `minibar_usage_report_line_billable_formula` holds every stored line to it, so a line that does
+  not follow the documented arithmetic cannot exist even if a future service is wrong. The line
+  total is held the same way, and the unit price is a foreign key into the stay's own price book, so
+  `PRICE-DEC-006`'s "a product absent from the snapshot cannot be charged" is structural rather
+  than a check in code.
+- **A-P09-5 — a waiver is an amount, not an edit.** `CHK-DEC-006` says a waived line reduces what
+  is payable without changing the report. The waived amount is the disputed quantity at the
+  version's own snapshot unit price, stored on the dispute; the version's total is untouched, and
+  the payable amount is the total less the waivers decided on that version.
+- **A-P09-6 — the report exists only where the minibar does.** `CHK-DEC-001` binds the report to a
+  minibar-enabled room. The checkout opens one when the stay's `minibar_applicable` snapshot says
+  so; a 20,000₮ hotel and a room whose minibar is off close their checkouts with no report, and
+  therefore with no obligation to settle.
+- **A-P09-7 — the non-guest stock-out stays in the minibar module, behind its own action.** doc 22
+  §6.2's return, waste and negative adjustment are inventory movements, so they remain
+  `ProductService.recordCorrection`; naming a stay now requires
+  `hotel.minibar.non_guest_stock_out` beside the waste action, exactly as doc 18 §3 lists them as
+  two rows. The room-to-warehouse return joined the correction kinds because doc 22 §6.2 names it,
+  and it must name the room it leaves.
+- **A-P09-8 — the routine refill belongs to no stay.** doc 04 §5.2 (12) refills the room for the
+  *next* guest, so its transfers carry no `stay_id`: they are not billable to anyone. They are
+  bounded by the room's current version target, refused entirely while a configuration change is
+  pending, and refused for a product the room does not stock.
+- **A-P09-9 — the guest's consumption posts at settlement.** A submitted version is a priced
+  statement, not a movement; doc 04 §8 makes the charge and the stock leave together. The
+  `GUEST_CONSUMPTION` movements are written in the transaction that settles the payment, so a
+  returned or released version never takes stock out of the room.
+- **A-P09-10 — a Cleaner's task holds a retirement open.** doc 04 §4 keeps a retiring room's
+  existing tasks alive, and the catalog registry already named `room.cleaning_task` as an
+  operational blocker. A room whose retirement is requested while a checkout is in progress
+  therefore stays `RETIRING` until the Cleaner finishes; completing the task hands the lifecycle
+  back (`RML-DEC-002`), as does closing a refill task for a retiring product.
+- **A-P09-11 — the exception version records which role wrote it.** doc 21 §9 gives the exception
+  report to Manager and Manager Plus. The version stores the actor's own role rather than a fixed
+  `MANAGER`, so the audit says which of the two inspected the room.
+- **A-P09-12 — the folio is Phase 10's.** doc 21 §2 settles `room + minibar + other charges −
+  deposit`. Phase 09 owns the minibar side of that arithmetic and the lock the attempt puts on it;
+  the folio, the deposit and the cash are Phase 10's and Phase 11's, and the stay still completes
+  through `StayService.recordActualCheckout` once every obligation the registry names is settled.
+- **A-P09-13 — one open cleaning task per room, one live report per stay.** Both are partial unique
+  indexes rather than service checks, so a repeated checkout of the same room queues no second task
+  and a stay cannot carry two live reports; the claim of either is a single conditional statement, so
+  two Cleaners racing produce one winner and one `CONFLICT`.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

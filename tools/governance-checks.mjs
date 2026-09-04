@@ -90,6 +90,7 @@ export function runGovernanceChecks({
   phase06ManifestPath,
   phase07ManifestPath,
   phase08ManifestPath,
+  phase09ManifestPath,
 }) {
   const ROOT = root;
   const RUNBOOK_PATH = runbookPath;
@@ -101,12 +102,14 @@ export function runGovernanceChecks({
   const PHASE06_MANIFEST_PATH = phase06ManifestPath ?? join(IMPL, 'phase-06-evidence.json');
   const PHASE07_MANIFEST_PATH = phase07ManifestPath ?? join(IMPL, 'phase-07-evidence.json');
   const PHASE08_MANIFEST_PATH = phase08ManifestPath ?? join(IMPL, 'phase-08-evidence.json');
+  const PHASE09_MANIFEST_PATH = phase09ManifestPath ?? join(IMPL, 'phase-09-evidence.json');
   // The manifests of the phases completed under the standing authorization,
   // each overridable by the fixture harness the way the Phase 05 one is.
   const PROGRESSED_MANIFEST_PATHS = new Map([
     ['06', PHASE06_MANIFEST_PATH],
     ['07', PHASE07_MANIFEST_PATH],
     ['08', PHASE08_MANIFEST_PATH],
+    ['09', PHASE09_MANIFEST_PATH],
   ]);
 
   const PHASE_MIN = 1;
@@ -1014,10 +1017,18 @@ export function runGovernanceChecks({
     // the whole document. A second, blockquoted ledger declaring Phase 03 `DONE`
     // rendered beside the real one and was never counted.
     const governedNumbers = GOVERNED_PHASES.map((phase) => phase.number);
+    // A ledger is a table with the ledger's own header. Counting any table with
+    // a governed number in its first cell counted the repair history too, whose
+    // first column is a repair number and whose tenth row is `10`; a decoy
+    // ledger still has to render the ledger's header to be read as one, so the
+    // defence this check exists for — a second, blockquoted ledger declaring a
+    // phase `DONE` beside the real one — is unchanged.
+    const isLedger = (token) => {
+      const header = (token.header ?? []).map((cell) => cell.text.trim());
+      return header[0] === '#' && header[1] === 'Phase' && header[2] === 'State';
+    };
     const ledgerTables_ = allTokens.filter(
-      (entry) =>
-        entry.token.type === 'table' &&
-        (entry.token.rows ?? []).some((row) => governedNumbers.includes(row[0]?.text.trim())),
+      (entry) => entry.token.type === 'table' && isLedger(entry.token),
     );
     assert(
       ledgerTables_.length === 1,
@@ -1027,7 +1038,7 @@ export function runGovernanceChecks({
     const ledgerTable = ledgerTables_[0];
     for (const phase of governedNumbers) {
       const rows = allTokens
-        .filter((entry) => entry.token.type === 'table')
+        .filter((entry) => entry.token.type === 'table' && isLedger(entry.token))
         .flatMap((entry) => entry.token.rows ?? [])
         .filter((row) => row[0]?.text.trim() === phase);
       assert(

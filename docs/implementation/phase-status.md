@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 09 — Cleaner and checkout coordination |
+| Current phase | 10 — Folio, deposit, payment, and correction |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -29,6 +29,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 07 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 08 state | `DONE` |
 | Phase 08 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 09 state | `DONE` |
+| Phase 09 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -50,7 +52,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 06 | Hotel, room, category, and tariffs | `DONE` | `0007_hotel_catalog` | the Phase 06 battery — counts in [Phase 06 record](#phase-06-record) | implemented at `a44fd58` and `dcca709`; the record and its evidence are the commit after them |
 | 07 | Minibar inventory and templates | `DONE` | `0008_minibar_inventory` | the Phase 07 battery — counts in [Phase 07 record](#phase-07-record) | implemented at `1d2c764` and `0b40820`; the record and its evidence are the commit after them |
 | 08 | Availability, guest identity, reception, and stay | `DONE` | `0009_stay_reception` | the Phase 08 battery — counts in [Phase 08 record](#phase-08-record) | implemented at `621e17d`, corrected at `5b3603a` (the interval commitment); the record and its evidence are the commit after it |
-| 09 | Cleaner and checkout coordination | `NOT STARTED` | — | — | — |
+| 09 | Cleaner and checkout coordination | `DONE` | `0010_cleaner_checkout` | the Phase 09 battery — counts in [Phase 09 record](#phase-09-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 10 | Folio, deposit, payment, and correction | `NOT STARTED` | — | — | — |
 | 11 | Shift, cash drawer, expense, and hotel finance | `NOT STARTED` | — | — | — |
 | 12 | Public discovery and Guest authentication | `NOT STARTED` | — | — | — |
@@ -4043,5 +4045,177 @@ and its fixtures were run again on that final tree and are what the two governan
 The per-command exit codes, durations and execution environment are recorded in
 [phase-08-battery-log.md](phase-08-battery-log.md).
 
-Phase 08 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 09 is authorized to begin under the
+Phase 08 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 09 followed it under the same
+authorization; its own record is below.
+
+---
+
+## Phase 09 record
+
+Cleaner and checkout coordination. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 08 tree. Phase 09 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 10 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the 18 this phase owns — `CHK-DEC-001`…`-006`, `PRICE-DEC-002`…`-008`,
+`RC-DEC-008`, `-010`, `-016`, `-035` and `-039`. With the 118 already closed, 136 of the 279
+canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0010_cleaner_checkout`** — nine tenant tables and one replaced guard.
+  `cleaning_task` is the Cleaner's assignable unit of work over a room whose checkout is done, one
+  open per room. `minibar_usage_report` is the obligation a minibar-enabled checkout cannot close
+  without, one live per stay, with a forward-only state and one backward edge for the attempt that
+  took no money. `minibar_usage_report_version`, `_line` and `_movement` are append-only: a version
+  is never edited, its priced lines hold the documented billable formula and the line total as
+  CHECK constraints, and the movements the version counted are recorded so its arithmetic can be
+  read back from the ledger. `minibar_report_dispute` carries the guest's disputed line and the
+  Manager's decision. `minibar_payment_lock` is unique per settled version and per held report.
+  `minibar_report_adjustment` is the append-only correction of a settled charge.
+  `minibar_refill_task` is the active-stay refill, one open per room and product, referencing the
+  stay's price book so a product the check-in never priced cannot be added to the stay. The stay
+  guard is replaced with the same rules plus `CHECKOUT_IN_PROGRESS → ACTIVE`, so a checkout can be
+  called off (`A-P09-2`).
+- **The checkout** (`services/checkout.service.ts`) — `Check-out эхлүүлэх` moves the stay to
+  `CHECKOUT_IN_PROGRESS` and opens the report for a minibar-enabled room; a pending actual-time
+  correction and an unfinished active-stay refill refuse the start. Calling it off returns the stay
+  to `ACTIVE` and cancels the report without deleting anything, and is itself refused while a
+  payment attempt holds the report.
+- **The report** (`services/report.service.ts`, `repositories/report.repository.ts`) — the Cleaner
+  claims the inspection in one statement, counts, and submits; the server prices every line from
+  the stay's own price book and never from the catalogue. `Минибар хэрэглээгүй` is a stated fact
+  that prices to zero rather than an empty report. Reception returns a report with a reason and the
+  Cleaner's correction is a new version; a Manager's exception version records the reason and which
+  of Manager or Manager Plus wrote it.
+- **The dispute** (`services/dispute.service.ts`) — Reception marks a line and changes nothing
+  about it; a Manager upholds it or waives it at the version's own unit price. An open dispute
+  refuses the payment attempt outright.
+- **The payment lock and the adjustments** (`services/payment-lock.service.ts`) — starting a
+  payment recomputes the amount from the current version, less every waiver decided on it, and
+  locks that exact version. Reconciliation asks `PaymentAttemptsPort` for the provider's own
+  status: `SUCCEEDED` settles the report and posts the guest's consumption to the stock ledger,
+  `FAILED_NO_FUNDS` releases the version back to correction, and `PENDING` or `UNKNOWN` keep the
+  hold and record what the provider last said. After a settlement the report, its lines and the
+  attempt are history, and an overcharge, an undercharge or a late waiver is an append-only
+  adjustment priced from the original snapshot.
+- **The active-stay refill** (`services/refill.service.ts`) — Reception or a Manager asks; the
+  request moves no stock. A Cleaner claims the task and confirms what was actually put in the room,
+  and that confirmation is the one warehouse → room transfer, linked to the stay, the room, the
+  product and the task. A partial refill completes at what was confirmed.
+- **The cleaning queue** (`services/cleaning-task.service.ts`) — the actual checkout leaves one
+  task behind; a Cleaner claims it, which moves the cleaning axis to `Цэвэрлэж байгаа`, and
+  completing it records the routine refill of the room's current version — bounded by its targets,
+  refused while a configuration change is pending — and marks the room `Цэвэр`. Closing the task
+  hands the lifecycle back, so a room whose retirement was requested mid-checkout finalizes when
+  the Cleaner is done.
+- **The minibar contract** — `ConfigurationService` gained the four reads and writes the checkout
+  needs (`roomHoldings`, `transferToRoom`, `postGuestConsumption`, `nonGuestStockOut`), so the stay
+  module still touches no inventory table of its own. `ProductService` now requires
+  `hotel.minibar.non_guest_stock_out` beside the waste action whenever a correction names a stay,
+  and accepts the room-to-warehouse return doc 22 §6.2 counts as a non-guest stock-out.
+- **HTTP** — four controllers and 22 paths: the checkout, the report with its versions, disputes,
+  attempts and adjustments, the refill queue and its tasks, and the cleaning queue.
+- **Tests** — `domain/checkout.test.ts` (10), `checkout.integration.test.ts` (12),
+  `checkout.concurrency.test.ts` (3), and the Phase 09 block of
+  `stay.authorization.http.test.ts` (3).
+
+### Integration obligations now open on later phases
+
+- **Phase 10** implements `PaymentAttemptsPort` against `platform.payment_attempt`, creates
+  `platform.stay_folio`, and settles `room + minibar + other charges − deposit`; the minibar side of
+  that total and the lock on it are already here.
+- **Phase 13** consumes `stay.minibar_report_settled` for the online-booking side of the same
+  checkout.
+- **Phase 17** reads the settled report and its adjustments for the hotel's financial reporting.
+
+### Test gates
+
+Every command ran during implementation on the disposable Compose project `prsystem-p06`, through
+the restricted `prsystem_api` login; the governed battery below ran afterwards in a clean checkout
+of the implementation commit. Development-time results, all exit 0:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/stay/domain/checkout.test.ts` | 10 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/stay/checkout.integration.test.ts` | 12 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/stay/checkout.concurrency.test.ts` | 3 passed |
+| `pnpm --filter @prsystem/api run test:integration` / `test:concurrency` (every module) | 332 / 37 passed |
+| `pnpm --filter @prsystem/db run test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,398 / 88 / 41 / 16 / 51 |
+| `pnpm --filter @prsystem/api run test:unit` | 163 passed |
+| `turbo run lint typecheck` (forced), `pnpm run openapi`, `pnpm exec prettier --check .` | exit 0; 22 checkout, report, refill and cleaning paths in the document |
+
+### Security and concurrency evidence
+
+- **The Cleaner never sees a price.** The refill task and the cleaning task views carry no amount at
+  all, and the priced report is behind `hotel.minibar.locked_price_view`, which a Cleaner does not
+  hold — the HTTP suite asks for a report as the Cleaner and is answered `NOT_FOUND`.
+- **The arithmetic is the database's.** A line whose billable quantity does not equal
+  `max(0, opening + refill − non-guest out − counted)`, or whose total is not the snapshot price
+  times that quantity, cannot be stored. A product absent from the check-in price book has no row to
+  reference, so it cannot be charged at all.
+- **Append-only where money is.** `UPDATE` and `DELETE` of a version, a line, a counted movement and
+  an adjustment are refused by trigger for the superuser; a settled report and a resolved dispute
+  or attempt are terminal.
+- **Refusals follow authorization.** Every Phase 09 command authorizes before it refuses on state,
+  and a Hotel Admin without the operational role is `NOT_FOUND` on the queue, the refill request and
+  the checkout.
+- **Races on real PostgreSQL.** Three Cleaners claiming one inspection: one wins, two are
+  `CONFLICT`, and the report's revision moved exactly once. Two Cleaners claiming one cleaning task:
+  one wins. Two Receptions starting a payment on one report: one hold exists. Two reconciliations of
+  one successful attempt: one settlement, one consumption movement, one charge.
+- **Nothing pending is ever released.** The integration suite walks a provider through `PENDING`,
+  `UNKNOWN` and `FAILED_NO_FUNDS` on the same attempt and asserts the lock through each.
+
+### Remaining blockers
+
+Unchanged from Phase 08: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators;
+`EXT-01` BLOCKED for its contract; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification
+surface; 17 P1 items; `DSR-01`; and selecting `GATE-SEC` as a required GitHub status check. Phase 09
+adds no external gate of its own: the payment provider it locks a version for is Phase 10's, and
+until that module exists the contract answers `UNKNOWN` and holds.
+
+### Evidence
+
+<!-- phase-09-evidence:begin -->
+
+Measured at implementation commit 4063ac530ee536bb2cda5c27a1cb2526d22a660a, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the disposable Compose project `prsystem-p06`.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 176 of 176 drift fixtures caught at the measured commit; 189 of 189 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 567 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,414 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 09, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 380: db 41, outbox 5, api 332, worker 2 |
+| `pnpm run test:concurrency` | PASS | 53 each run: db 16, api 37 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-09-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-09-battery-log.md](phase-09-battery-log.md).
+
+Phase 09 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 10 is authorized to begin under the
 standing progression authorization and has **not** started.
