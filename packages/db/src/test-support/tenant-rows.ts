@@ -1177,12 +1177,12 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     insert: (hotelId) => ({
       sql: `INSERT INTO platform.booking_fulfillment_conflict
               (hotel_id, booking_ref, category_id, room_id, overdue_stay_id, planned_checkin_at,
-               cleaning_buffer_minutes)
+               planned_checkout_at, cleaning_buffer_minutes)
             SELECT $1, gen_random_uuid(),
                    coalesce(f.category_id, ${ABSENT_UUID}),
                    coalesce(f.room_id, ${ABSENT_UUID}),
                    coalesce(f.stay_id, ${ABSENT_UUID}),
-                   now() + interval '2 hours', 30
+                   now() + interval '2 hours', now() + interval '1 day', 30
               FROM (SELECT 1) AS one
               LEFT JOIN LATERAL (SELECT category_id, room_id, stay_id FROM platform.stay
                                   WHERE hotel_id = $1 ORDER BY created_at LIMIT 1) AS f ON true`,

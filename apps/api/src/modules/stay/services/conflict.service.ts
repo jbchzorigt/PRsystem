@@ -41,6 +41,7 @@ export interface ConflictView {
   readonly roomId: string;
   readonly overdueStayId: string;
   readonly plannedCheckInAt: string;
+  readonly plannedCheckoutAt: string;
   readonly state: ConflictState;
   readonly assignedRoomId: string | null;
   readonly resolvedAt: string | null;
@@ -58,6 +59,7 @@ export function conflictView(row: ConflictRow): ConflictView {
     roomId: row.roomId,
     overdueStayId: row.overdueStayId,
     plannedCheckInAt: row.plannedCheckInAt.toISOString(),
+    plannedCheckoutAt: row.plannedCheckoutAt.toISOString(),
     state: row.state,
     assignedRoomId: row.assignedRoomId,
     resolvedAt: row.resolvedAt === null ? null : row.resolvedAt.toISOString(),
@@ -115,6 +117,7 @@ export class ConflictService extends StayServiceBase {
         roomId: booking.assignedRoomId,
         overdueStayId: live.stayId,
         plannedCheckInAt: booking.plannedCheckInAt,
+        plannedCheckoutAt: booking.plannedCheckoutAt,
         cleaningBufferMinutes: booking.cleaningBufferMinutes,
         detectedAt: now,
       });
@@ -285,7 +288,7 @@ export class ConflictService extends StayServiceBase {
           const eligible = await this.eligibleRooms(uow, locked.categoryId, now, {
             bookingRef: locked.bookingRef,
             plannedCheckInAt: locked.plannedCheckInAt,
-            plannedCheckoutAt: locked.plannedCheckInAt,
+            plannedCheckoutAt: locked.plannedCheckoutAt,
             cleaningBufferMinutes: locked.cleaningBufferMinutes,
             categoryId: locked.categoryId,
             assignedRoomId: locked.roomId,
@@ -404,11 +407,16 @@ export class ConflictService extends StayServiceBase {
       minibarBlockers: pin.blockers,
     });
     if (blockers.length > 0) return false;
-    const next = (await this.deps.bookings.nextForRoom(uow, room.roomId, at)).find(
+    const next = (await this.deps.bookings.commitmentsForRoom(uow, room.roomId, at)).find(
       (other) => other.bookingRef !== booking.bookingRef,
     );
-    if (next !== undefined && next.plannedCheckInAt.getTime() < booking.plannedCheckoutAt.getTime())
+    if (
+      next !== undefined &&
+      next.plannedCheckInAt.getTime() < booking.plannedCheckoutAt.getTime() &&
+      next.plannedCheckoutAt.getTime() > booking.plannedCheckInAt.getTime()
+    ) {
       return false;
+    }
     const conflicts = new ConflictRepository(uow);
     if ((await conflicts.openForRoom(room.roomId)).length > 0) return false;
     // An assignment this module recorded is a commitment of the room until
@@ -417,7 +425,8 @@ export class ConflictService extends StayServiceBase {
     return !assignments.some(
       (assignment) =>
         assignment.bookingRef !== booking.bookingRef &&
-        assignment.plannedCheckInAt.getTime() < booking.plannedCheckoutAt.getTime(),
+        assignment.plannedCheckInAt.getTime() < booking.plannedCheckoutAt.getTime() &&
+        assignment.plannedCheckoutAt.getTime() > booking.plannedCheckInAt.getTime(),
     );
   }
 
@@ -445,7 +454,7 @@ export class ConflictService extends StayServiceBase {
       categoryId: conflict.categoryId,
       assignedRoomId: conflict.roomId,
       plannedCheckInAt: conflict.plannedCheckInAt,
-      plannedCheckoutAt: conflict.plannedCheckInAt,
+      plannedCheckoutAt: conflict.plannedCheckoutAt,
       cleaningBufferMinutes: conflict.cleaningBufferMinutes,
     };
     if (!(await this.isEligible(uow, target, now, booking))) {

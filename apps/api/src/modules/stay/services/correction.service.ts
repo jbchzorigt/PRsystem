@@ -341,7 +341,7 @@ export class CorrectionService extends StayServiceBase {
     ) {
       blockers.push('MINIBAR_CONFIGURATION_CHANGED_AFTER');
     }
-    const next = (await this.deps.bookings.nextForRoom(uow, stay.roomId, at)).find(
+    const next = (await this.deps.bookings.commitmentsForRoom(uow, stay.roomId, at)).find(
       (booking) => booking.bookingRef !== stay.bookingRef,
     );
     if (

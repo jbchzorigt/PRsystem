@@ -4811,102 +4811,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'assigned_room_id',
-      shape: 'uuid | NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'booking_ref',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'category_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'cleaning_buffer_minutes',
-      shape: 'integer | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'conflict_id',
-      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'detected_at',
-      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'hotel_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'overdue_stay_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'planned_checkin_at',
-      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'reason',
-      shape: 'text | NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'resolved_at',
-      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'resolved_by_account_id',
-      shape: 'uuid | NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'revision',
-      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'room_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'self_approved',
-      shape: 'boolean | NOT NULL | default false | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      column: 'state',
-      shape: "text | NOT NULL | default 'OPEN'::text | no identity | not generated",
-    },
-    {
-      schema: 'platform',
       table: 'reception_shift',
       column: 'closed_at',
       shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
@@ -5666,6 +5570,108 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'stay_time_correction',
       column: 'stay_id',
       shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'assigned_room_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'booking_ref',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'category_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'cleaning_buffer_minutes',
+      shape: 'integer | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'conflict_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'detected_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'overdue_stay_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'planned_checkin_at',
+      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'planned_checkout_at',
+      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'resolved_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'resolved_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'room_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'self_approved',
+      shape: 'boolean | NOT NULL | default false | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      column: 'state',
+      shape: "text | NOT NULL | default 'OPEN'::text | no identity | not generated",
     },
   ],
   constraints: [
@@ -9994,97 +10000,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_assigned_room_fkey',
-      kind: 'f',
-      definition:
-        'FOREIGN KEY (hotel_id, assigned_room_id) REFERENCES platform.room(hotel_id, room_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_assignment_shape',
-      kind: 'c',
-      definition:
-        "CHECK (((state = ANY (ARRAY['RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text])) = (assigned_room_id IS NOT NULL)))",
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_buffer_range',
-      kind: 'c',
-      definition: 'CHECK (((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440)))',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_cancel_has_reason',
-      kind: 'c',
-      definition: "CHECK (((state <> 'CANCELLED_HOTEL'::text) OR (reason IS NOT NULL)))",
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_category_fkey',
-      kind: 'f',
-      definition:
-        'FOREIGN KEY (hotel_id, category_id) REFERENCES platform.room_category(hotel_id, category_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_hotel_fkey',
-      kind: 'f',
-      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_pkey',
-      kind: 'p',
-      definition: 'PRIMARY KEY (conflict_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_reason_bounded',
-      kind: 'c',
-      definition:
-        'CHECK (((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))))',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_resolution_shape',
-      kind: 'c',
-      definition: "CHECK (((state = 'OPEN'::text) = (resolved_at IS NULL)))",
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_room_fkey',
-      kind: 'f',
-      definition:
-        'FOREIGN KEY (hotel_id, room_id) REFERENCES platform.room(hotel_id, room_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_state_known',
-      kind: 'c',
-      definition:
-        "CHECK ((state = ANY (ARRAY['OPEN'::text, 'RESOLVED_READY'::text, 'RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text, 'CANCELLED_HOTEL'::text])))",
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_stay_fkey',
-      kind: 'f',
-      definition:
-        'FOREIGN KEY (hotel_id, overdue_stay_id) REFERENCES platform.stay(hotel_id, stay_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
       table: 'reception_shift',
       name: 'reception_shift_closed_after_opened',
       kind: 'c',
@@ -10824,6 +10739,104 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'f',
       definition:
         'FOREIGN KEY (hotel_id, stay_id) REFERENCES platform.stay(hotel_id, stay_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_assigned_room_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, assigned_room_id) REFERENCES platform.room(hotel_id, room_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_assignment_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state = ANY (ARRAY['RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text])) = (assigned_room_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_buffer_range',
+      kind: 'c',
+      definition: 'CHECK (((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440)))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_cancel_has_reason',
+      kind: 'c',
+      definition: "CHECK (((state <> 'CANCELLED_HOTEL'::text) OR (reason IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_category_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, category_id) REFERENCES platform.room_category(hotel_id, category_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_interval',
+      kind: 'c',
+      definition: 'CHECK ((planned_checkout_at > planned_checkin_at))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (conflict_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_reason_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_resolution_shape',
+      kind: 'c',
+      definition: "CHECK (((state = 'OPEN'::text) = (resolved_at IS NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_room_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, room_id) REFERENCES platform.room(hotel_id, room_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['OPEN'::text, 'RESOLVED_READY'::text, 'RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text, 'CANCELLED_HOTEL'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_stay_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, overdue_stay_id) REFERENCES platform.stay(hotel_id, stay_id) ON DELETE RESTRICT',
     },
   ],
   indexes: [
@@ -12089,27 +12102,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_one_open_uq',
-      definition:
-        "CREATE UNIQUE INDEX booking_fulfillment_conflict_one_open_uq ON platform.booking_fulfillment_conflict USING btree (hotel_id, booking_ref) WHERE (state = 'OPEN'::text)",
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_pkey',
-      definition:
-        'CREATE UNIQUE INDEX booking_fulfillment_conflict_pkey ON platform.booking_fulfillment_conflict USING btree (conflict_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'booking_fulfillment_conflict_room_idx',
-      definition:
-        'CREATE INDEX booking_fulfillment_conflict_room_idx ON platform.booking_fulfillment_conflict USING btree (hotel_id, room_id, state)',
-    },
-    {
-      schema: 'platform',
       table: 'reception_shift',
       name: 'reception_shift_hotel_scope_uq',
       definition:
@@ -12274,6 +12266,27 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'stay_time_correction_stay_idx',
       definition:
         'CREATE INDEX stay_time_correction_stay_idx ON platform.stay_time_correction USING btree (hotel_id, stay_id, decided_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_one_open_uq',
+      definition:
+        "CREATE UNIQUE INDEX booking_fulfillment_conflict_one_open_uq ON platform.booking_fulfillment_conflict USING btree (hotel_id, booking_ref) WHERE (state = 'OPEN'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_pkey',
+      definition:
+        'CREATE UNIQUE INDEX booking_fulfillment_conflict_pkey ON platform.booking_fulfillment_conflict USING btree (conflict_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_room_idx',
+      definition:
+        'CREATE INDEX booking_fulfillment_conflict_room_idx ON platform.booking_fulfillment_conflict USING btree (hotel_id, room_id, state)',
     },
   ],
   identitySequences: [
@@ -12579,12 +12592,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      enabled: true,
-      forced: true,
-    },
-    {
-      schema: 'platform',
       table: 'reception_shift',
       enabled: true,
       forced: true,
@@ -12634,6 +12641,12 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'stay_time_correction',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
       enabled: true,
       forced: true,
     },
@@ -13381,16 +13394,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'booking_fulfillment_conflict',
-      name: 'tenant_isolation',
-      as: 'PERMISSIVE',
-      command: 'ALL',
-      to: ['public'],
-      using: '(hotel_id = platform.current_hotel_id())',
-      withCheck: '(hotel_id = platform.current_hotel_id())',
-    },
-    {
-      schema: 'platform',
       table: 'reception_shift',
       name: 'tenant_isolation',
       as: 'PERMISSIVE',
@@ -13472,6 +13475,16 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'stay_time_correction',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
       name: 'tenant_isolation',
       as: 'PERMISSIVE',
       command: 'ALL',

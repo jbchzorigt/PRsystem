@@ -681,6 +681,7 @@ CREATE TABLE platform.booking_fulfillment_conflict (
   room_id                uuid NOT NULL,
   overdue_stay_id        uuid NOT NULL,
   planned_checkin_at     timestamptz NOT NULL,
+  planned_checkout_at    timestamptz NOT NULL,
   cleaning_buffer_minutes integer NOT NULL,
   state                  text NOT NULL DEFAULT 'OPEN',
   assigned_room_id       uuid,
@@ -705,6 +706,8 @@ CREATE TABLE platform.booking_fulfillment_conflict (
                               'RESOLVED_HIGHER_CATEGORY'::text, 'CANCELLED_HOTEL'::text])),
   CONSTRAINT booking_fulfillment_conflict_buffer_range
     CHECK (cleaning_buffer_minutes BETWEEN 0 AND 1440),
+  CONSTRAINT booking_fulfillment_conflict_interval
+    CHECK (planned_checkout_at > planned_checkin_at),
   CONSTRAINT booking_fulfillment_conflict_resolution_shape
     CHECK ((state = 'OPEN'::text) = (resolved_at IS NULL)),
   CONSTRAINT booking_fulfillment_conflict_assignment_shape
@@ -733,6 +736,7 @@ BEGIN
      OR NEW.room_id IS DISTINCT FROM OLD.room_id
      OR NEW.overdue_stay_id IS DISTINCT FROM OLD.overdue_stay_id
      OR NEW.planned_checkin_at IS DISTINCT FROM OLD.planned_checkin_at
+     OR NEW.planned_checkout_at IS DISTINCT FROM OLD.planned_checkout_at
      OR NEW.cleaning_buffer_minutes IS DISTINCT FROM OLD.cleaning_buffer_minutes
      OR NEW.detected_at IS DISTINCT FROM OLD.detected_at THEN
     RAISE EXCEPTION 'a conflict and the facts it was opened on are immutable' USING ERRCODE = '42501';

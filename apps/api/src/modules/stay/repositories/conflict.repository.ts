@@ -20,6 +20,7 @@ export interface ConflictRow {
   readonly roomId: string;
   readonly overdueStayId: string;
   readonly plannedCheckInAt: Date;
+  readonly plannedCheckoutAt: Date;
   readonly cleaningBufferMinutes: number;
   readonly state: ConflictState;
   readonly assignedRoomId: string | null;
@@ -32,8 +33,8 @@ export interface ConflictRow {
 }
 
 const COLUMNS = `conflict_id, booking_ref, category_id, room_id, overdue_stay_id, planned_checkin_at,
-  cleaning_buffer_minutes, state, assigned_room_id, resolved_by_account_id, resolved_at, reason,
-  self_approved, detected_at, revision`;
+  planned_checkout_at, cleaning_buffer_minutes, state, assigned_room_id, resolved_by_account_id,
+  resolved_at, reason, self_approved, detected_at, revision`;
 
 function mapConflict(row: Record<string, unknown> | undefined): ConflictRow | undefined {
   if (row === undefined) return undefined;
@@ -44,6 +45,7 @@ function mapConflict(row: Record<string, unknown> | undefined): ConflictRow | un
     roomId: row['room_id'] as string,
     overdueStayId: row['overdue_stay_id'] as string,
     plannedCheckInAt: row['planned_checkin_at'] as Date,
+    plannedCheckoutAt: row['planned_checkout_at'] as Date,
     cleaningBufferMinutes: Number(row['cleaning_buffer_minutes']),
     state: row['state'] as ConflictState,
     assignedRoomId: (row['assigned_room_id'] as string | null) ?? null,
@@ -74,14 +76,15 @@ export class ConflictRepository {
     roomId: string;
     overdueStayId: string;
     plannedCheckInAt: Date;
+    plannedCheckoutAt: Date;
     cleaningBufferMinutes: number;
     detectedAt: Date;
   }): Promise<{ readonly conflict: ConflictRow; readonly opened: boolean }> {
     const inserted = await this.uow.query<Record<string, unknown>>(
       `INSERT INTO platform.booking_fulfillment_conflict
          (hotel_id, booking_ref, category_id, room_id, overdue_stay_id, planned_checkin_at,
-          cleaning_buffer_minutes, detected_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          planned_checkout_at, cleaning_buffer_minutes, detected_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (hotel_id, booking_ref) WHERE state = 'OPEN' DO NOTHING
        RETURNING ${COLUMNS}`,
       [
@@ -91,6 +94,7 @@ export class ConflictRepository {
         input.roomId,
         input.overdueStayId,
         input.plannedCheckInAt,
+        input.plannedCheckoutAt,
         input.cleaningBufferMinutes,
         input.detectedAt,
       ],
@@ -121,18 +125,19 @@ export class ConflictRepository {
   }
 
   /**
-   * Resolutions that assigned this room to a booking whose start is still
-   * ahead: until the booking module applies them, they are the room's
-   * commitments as far as this module knows.
+   * Resolutions that assigned this room to a booking whose interval has not
+   * ended: until the booking module applies them, they are the room's
+   * commitments as far as this module knows — a booking that has started and
+   * is still awaited holds the room as much as one that starts later.
    */
-  async assignedToRoom(roomId: string, from: Date): Promise<readonly ConflictRow[]> {
+  async assignedToRoom(roomId: string, at: Date): Promise<readonly ConflictRow[]> {
     const result = await this.uow.query<Record<string, unknown>>(
       `SELECT ${COLUMNS} FROM platform.booking_fulfillment_conflict
         WHERE hotel_id = $1 AND assigned_room_id = $2
           AND state IN ('RESOLVED_REASSIGNED', 'RESOLVED_HIGHER_CATEGORY')
-          AND planned_checkin_at >= $3
+          AND planned_checkout_at > $3
         ORDER BY planned_checkin_at`,
-      [this.hotelId, roomId, from],
+      [this.hotelId, roomId, at],
     );
     return result.rows.map((row) => mapConflict(row) as ConflictRow);
   }

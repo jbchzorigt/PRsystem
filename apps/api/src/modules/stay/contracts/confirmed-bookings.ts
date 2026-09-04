@@ -26,8 +26,16 @@ export interface NextBookingFacts {
 }
 
 export interface ConfirmedBookingsPort {
-  /** Confirmed bookings assigned to this room that start at or after `from`, earliest first. */
-  nextForRoom(uow: UnitOfWork, roomId: string, from: Date): Promise<readonly NextBookingFacts[]>;
+  /**
+   * Confirmed bookings assigned to this room whose interval has not ended at
+   * `at`, earliest start first — including one that has started and is still
+   * awaited, which holds the room as much as a later one (doc 05 §5).
+   */
+  commitmentsForRoom(
+    uow: UnitOfWork,
+    roomId: string,
+    at: Date,
+  ): Promise<readonly NextBookingFacts[]>;
   /** The confirmed booking with this reference, for the check-in that fulfils it. */
   byReference(uow: UnitOfWork, bookingRef: string): Promise<NextBookingFacts | undefined>;
   /** Confirmed bookings of the category whose cleaning-preparation boundary has been reached. */
@@ -57,7 +65,7 @@ export class UnprovisionedConfirmedBookings implements ConfirmedBookingsPort {
     if (result.rows[0]?.present === true) throw new BookingsUnavailableError();
   }
 
-  async nextForRoom(uow: UnitOfWork): Promise<readonly NextBookingFacts[]> {
+  async commitmentsForRoom(uow: UnitOfWork): Promise<readonly NextBookingFacts[]> {
     await this.ensureAbsent(uow);
     return [];
   }
@@ -85,12 +93,14 @@ export class SimulatedConfirmedBookings implements ConfirmedBookingsPort {
     this.bookings.length = 0;
   }
 
-  nextForRoom(_uow: UnitOfWork, roomId: string, from: Date): Promise<readonly NextBookingFacts[]> {
+  commitmentsForRoom(
+    _uow: UnitOfWork,
+    roomId: string,
+    at: Date,
+  ): Promise<readonly NextBookingFacts[]> {
     return Promise.resolve(
       this.bookings
-        .filter(
-          (b) => b.assignedRoomId === roomId && b.plannedCheckInAt.getTime() >= from.getTime(),
-        )
+        .filter((b) => b.assignedRoomId === roomId && b.plannedCheckoutAt.getTime() > at.getTime())
         .sort((a, b) => a.plannedCheckInAt.getTime() - b.plannedCheckInAt.getTime()),
     );
   }

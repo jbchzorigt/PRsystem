@@ -562,7 +562,7 @@ export class CheckInService extends StayServiceBase {
         minibarBlockers: minibar.blockers,
       }),
     ];
-    const next = (await this.deps.bookings.nextForRoom(uow, room.roomId, at)).find(
+    const next = (await this.deps.bookings.commitmentsForRoom(uow, room.roomId, at)).find(
       (booking) => booking.bookingRef !== fulfillingBookingRef,
     );
     if (!fitsBeforeNext(plannedCheckoutAt, cleaningBufferMinutes, next?.plannedCheckInAt)) {
@@ -575,11 +575,13 @@ export class CheckInService extends StayServiceBase {
     const conflicts = await conflictRepository.openForRoom(room.roomId);
     if (conflicts.length > 0 && live === undefined) blockers.push('OVERDUE_CONFLICT_OPEN');
     const assignments = await conflictRepository.assignedToRoom(room.roomId, at);
+    const ready = readyNotBefore(plannedCheckoutAt, cleaningBufferMinutes);
     if (
       assignments.some(
         (assignment) =>
           assignment.bookingRef !== fulfillingBookingRef &&
-          !fitsBeforeNext(plannedCheckoutAt, cleaningBufferMinutes, assignment.plannedCheckInAt),
+          at.getTime() < assignment.plannedCheckoutAt.getTime() &&
+          ready.getTime() > assignment.plannedCheckInAt.getTime(),
       )
     ) {
       blockers.push('ASSIGNED_BOOKING_CONFLICT');

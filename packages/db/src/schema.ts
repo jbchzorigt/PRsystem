@@ -5015,6 +5015,7 @@ export const bookingFulfillmentConflict = platform
       hotelId: uuid('hotel_id').notNull(),
       overdueStayId: uuid('overdue_stay_id').notNull(),
       plannedCheckinAt: timestamp('planned_checkin_at', { withTimezone: true }).notNull(),
+      plannedCheckoutAt: timestamp('planned_checkout_at', { withTimezone: true }).notNull(),
       reason: text('reason'),
       resolvedAt: timestamp('resolved_at', { withTimezone: true }),
       resolvedByAccountId: uuid('resolved_by_account_id'),
@@ -5042,6 +5043,10 @@ export const bookingFulfillmentConflict = platform
       check(
         'booking_fulfillment_conflict_buffer_range',
         sql`((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440))`,
+      ),
+      check(
+        'booking_fulfillment_conflict_interval',
+        sql`(planned_checkout_at > planned_checkin_at)`,
       ),
       check(
         'booking_fulfillment_conflict_cancel_has_reason',

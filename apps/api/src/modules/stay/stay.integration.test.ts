@@ -1095,7 +1095,7 @@ describe('the overdue conflict (STAY-DEC-013)', () => {
     // A second open row for the booking is refused by the index even bypassing the service.
     await expect(
       env.admin.query(
-        `INSERT INTO platform.booking_fulfillment_conflict (hotel_id, booking_ref, category_id, room_id, overdue_stay_id, planned_checkin_at, cleaning_buffer_minutes) VALUES ($1, $2, $3, $4, $5, now(), 30)`,
+        `INSERT INTO platform.booking_fulfillment_conflict (hotel_id, booking_ref, category_id, room_id, overdue_stay_id, planned_checkin_at, planned_checkout_at, cleaning_buffer_minutes) VALUES ($1, $2, $3, $4, $5, now(), now() + interval '1 day', 30)`,
         [h.hotelId, bookingRef, h.categoryId, roomA, overdue.stayId],
       ),
     ).rejects.toMatchObject({ code: '23505' });
@@ -1304,6 +1304,83 @@ describe('the overdue conflict (STAY-DEC-013)', () => {
         [thirdRef],
       ),
     ).rejects.toMatchObject({ code: '42501' });
+  });
+});
+
+describe('a booking commitment is an interval, not a start instant (STAY-DEC-008, -013)', () => {
+  let h: StayHotel;
+
+  beforeAll(async () => {
+    h = await env.hotel('Interval Hotel', 'P25');
+    await openShift(h);
+    env.travel(0);
+  });
+
+  afterAll(() => {
+    env.bookings.clear();
+    env.travel(0);
+  });
+
+  const commitment = (
+    bookingRef: string,
+    roomId: string,
+    startsInMinutes: number,
+    endsInMinutes: number,
+  ): void => {
+    env.bookings.add({
+      bookingRef,
+      categoryId: h.categoryId,
+      assignedRoomId: roomId,
+      plannedCheckInAt: new Date(env.now().getTime() + startsInMinutes * 60_000),
+      plannedCheckoutAt: new Date(env.now().getTime() + endsInMinutes * 60_000),
+      cleaningBufferMinutes: 30,
+    });
+  };
+
+  it('refuses a walk-in while a commitment that has already started still holds the room', async () => {
+    const roomId = await h.cleanRoom();
+    // Started half an hour ago, still awaited: the room is spoken for now, not
+    // only later. A start-instant reading would not see this booking at all.
+    commitment('55555555-5555-4555-8555-555555555555', roomId, -30, 6 * 60);
+    const quote = await env.checkIns.quote(
+      { hotelId: h.hotelId, roomId, stayType: 'HOURLY', halfHourUnits: 1 },
+      h.reception,
+      request(h.reception),
+    );
+    expect(quote.blockers).toContain('NEXT_BOOKING_CONFLICT');
+    const refusal = await refused(checkIn(h, roomId, { halfHourUnits: 1 }));
+    expect(refusal.message).toContain('NEXT_BOOKING_CONFLICT');
+    expect(
+      await countRows(
+        env.admin,
+        `SELECT count(*)::text AS n FROM platform.stay WHERE room_id = $1`,
+        [roomId],
+      ),
+    ).toBe(0);
+    env.bookings.clear();
+  });
+
+  it('allows the stay whose end plus buffer falls before the next commitment, and refuses it a minute the other side', async () => {
+    // One half-hour unit plus the category's 30-minute buffer: ready again 60
+    // minutes from now, so a commitment starting at 61 minutes is adjacent and
+    // not an overlap, and one starting at 59 minutes is.
+    const early = await h.cleanRoom();
+    commitment('66666666-6666-4666-8666-666666666666', early, 59, 8 * 60);
+    const overlapped = await refused(checkIn(h, early, { halfHourUnits: 1 }));
+    expect(overlapped.message).toContain('NEXT_BOOKING_CONFLICT');
+    env.bookings.clear();
+
+    const roomId = await h.cleanRoom();
+    commitment('77777777-7777-4777-8777-777777777777', roomId, 61, 8 * 60);
+    const stay = await checkIn(h, roomId, { halfHourUnits: 1 });
+    expect(stay.roomId).toBe(roomId);
+    expect(stay.state).toBe('ACTIVE');
+    // A longer stay under the same commitment would run into it.
+    const longer = await h.cleanRoom();
+    commitment('88888888-8888-4888-8888-888888888888', longer, 61, 8 * 60);
+    const tooLong = await refused(checkIn(h, longer, { halfHourUnits: 2 }));
+    expect(tooLong.message).toContain('NEXT_BOOKING_CONFLICT');
+    env.bookings.clear();
   });
 });
 
