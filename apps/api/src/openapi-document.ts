@@ -15,6 +15,11 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .addTag('catalog', 'Hotel stay configuration, room categories, rooms and minibar entities')
     .addTag('catalog-lifecycle', 'ACTIVE → RETIRING → INACTIVE lifecycle of catalog entities')
     .addTag('tariffs', 'Server-resolved effective rates and confirmed rate snapshots')
+    .addTag('minibar-inventory', 'Products, prices, costs, receipts, corrections and the ledger')
+    .addTag('minibar-templates', 'Template versions: draft, publish, default, archive')
+    .addTag('minibar-configuration', 'Room minibar configuration, pending changes and overrides')
+    .addTag('minibar-tasks', 'Cleaner reconciliation and rollback tasks')
+    .addTag('minibar-rollout', 'Multi-room Rollout batches')
     .build();
 
   return SwaggerModule.createDocument(app, config);

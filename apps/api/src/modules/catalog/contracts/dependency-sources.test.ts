@@ -64,7 +64,7 @@ describe('the dependency registry', () => {
     );
     // Template: room assignment (stay and reconciliation ride on the room configuration).
     expect(idsFor('MINIBAR_TEMPLATE')).toEqual(
-      expect.arrayContaining(['template.room_assignment', 'room.minibar_configuration']),
+      expect.arrayContaining(['template.room_assignment', 'template.pending_target']),
     );
   });
 });

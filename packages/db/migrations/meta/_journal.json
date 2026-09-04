@@ -57,6 +57,13 @@
       "when": 1757030400000,
       "tag": "0007_hotel_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1757030400001,
+      "tag": "0008_minibar_inventory",
+      "breakpoints": true
     }
   ]
 }

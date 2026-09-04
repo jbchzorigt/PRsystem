@@ -667,6 +667,17 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
                                WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))`,
       values: [hotelId, `fixture-room-${String(n)}`],
     }),
+    // Phase 07 fixtures configure, stock and change the first room; the DELETE
+    // probe addresses the free ones.
+    probeWhere: `room_id NOT IN (SELECT room_id FROM platform.room_minibar_configuration)
+                 AND room_id NOT IN (SELECT room_id FROM platform.room_minibar_stock)
+                 AND room_id NOT IN (SELECT room_id FROM platform.inventory_movement
+                                      WHERE room_id IS NOT NULL)
+                 AND room_id NOT IN (SELECT room_id FROM platform.room_configuration_change)
+                 AND room_id NOT IN (SELECT room_id FROM platform.rollout_batch_room)
+                 AND room_id NOT IN (SELECT room_id FROM platform.minibar_shortage_override)
+                 AND room_id NOT IN (SELECT room_id FROM platform.stay_rate_snapshot
+                                      WHERE room_id IS NOT NULL)`,
     updateColumn: 'floor_label',
     updateSet: `floor_label = 'acl-probe', revision = revision + 1`,
   },
@@ -674,9 +685,17 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     name: 'platform.minibar_product',
     grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
     insert: (hotelId, n) => ({
-      sql: `INSERT INTO platform.minibar_product (hotel_id, name) VALUES ($1, $2)`,
+      sql: `INSERT INTO platform.minibar_product (hotel_id, name, category, unit, selling_price_mnt,
+                                                  purchase_cost_mnt)
+            VALUES ($1, $2, 'Ус', 'ш', 3000, 1000)`,
       values: [hotelId, `fixture-product-${String(n)}`],
     }),
+    // Phase 07 fixtures hold stock, a ledger and version items against the
+    // first product; the DELETE probe addresses the free ones.
+    probeWhere: `product_id NOT IN (SELECT product_id FROM platform.minibar_warehouse_stock)
+                 AND product_id NOT IN (SELECT product_id FROM platform.room_minibar_stock)
+                 AND product_id NOT IN (SELECT product_id FROM platform.inventory_movement)
+                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_template_version_item)`,
     updateColumn: 'name',
     updateSet: `name = 'acl-probe', revision = revision + 1`,
   },
@@ -687,6 +706,7 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
       sql: `INSERT INTO platform.minibar_template (hotel_id, name) VALUES ($1, $2)`,
       values: [hotelId, `fixture-template-${String(n)}`],
     }),
+    probeWhere: `template_id NOT IN (SELECT template_id FROM platform.minibar_template_version)`,
     updateColumn: 'name',
     updateSet: `name = 'acl-probe', revision = revision + 1`,
   },
@@ -714,6 +734,214 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
                     30)`,
       values: [hotelId],
     }),
+  },
+
+  // ------------------------------------------------------------- Phase 07
+  // Every fixture below binds to the first product, template or room of the
+  // tenant, so the Phase 06 parents' DELETE probes skip those through their
+  // `probeWhere`. The stock tables are written only by the ledger trigger, so
+  // their rows are seeded on the administrative connection and no runtime may
+  // insert, update or delete them.
+  {
+    name: 'platform.minibar_warehouse_stock',
+    grants: { api: ['SELECT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.minibar_warehouse_stock (product_id, hotel_id, quantity, avg_cost_mnt)
+            VALUES (coalesce((SELECT product_id FROM platform.minibar_product
+                               WHERE hotel_id = $1
+                                 AND product_id NOT IN (SELECT product_id
+                                                          FROM platform.minibar_warehouse_stock)
+                               ORDER BY product_id LIMIT 1), ${ABSENT_UUID}),
+                    $1, 5, 1000)`,
+      values: [hotelId],
+    }),
+    insertableByRuntime: false,
+    rowsPerTenant: 1,
+    updateColumn: 'quantity',
+  },
+  {
+    name: 'platform.room_minibar_stock',
+    grants: { api: ['SELECT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.room_minibar_stock (room_id, product_id, hotel_id, quantity)
+            VALUES (coalesce((SELECT room_id FROM platform.room
+                               WHERE hotel_id = $1 ORDER BY room_number LIMIT 1), ${ABSENT_UUID}),
+                    coalesce((SELECT product_id FROM platform.minibar_product
+                               WHERE hotel_id = $1
+                                 AND product_id NOT IN (SELECT product_id FROM platform.room_minibar_stock)
+                               ORDER BY product_id LIMIT 1), ${ABSENT_UUID}),
+                    $1, 2)`,
+      values: [hotelId],
+    }),
+    insertableByRuntime: false,
+    rowsPerTenant: 1,
+    updateColumn: 'quantity',
+  },
+  {
+    name: 'platform.inventory_movement',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.inventory_movement
+              (hotel_id, product_id, movement_type, location, quantity, unit_cost_mnt)
+            VALUES ($1,
+                    coalesce((SELECT product_id FROM platform.minibar_product
+                               WHERE hotel_id = $1 ORDER BY product_id LIMIT 1), ${ABSENT_UUID}),
+                    'PURCHASE', 'WAREHOUSE', 1, 1000)`,
+      values: [hotelId],
+    }),
+    updateColumn: 'reason',
+  },
+  {
+    name: 'platform.minibar_template_version',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.minibar_template_version (hotel_id, template_id, version_no)
+            VALUES ($1,
+                    coalesce((SELECT template_id FROM platform.minibar_template
+                               WHERE hotel_id = $1 ORDER BY template_id LIMIT 1), ${ABSENT_UUID}),
+                    $2)`,
+      values: [hotelId, n],
+    }),
+    // Drafts, so their items stay writable; the first version is referenced by
+    // the item, configuration, change and batch fixtures.
+    probeWhere: `version_id NOT IN (SELECT version_id FROM platform.minibar_template_version_item)
+                 AND version_id NOT IN (SELECT current_version_id FROM platform.room_minibar_configuration
+                                         WHERE current_version_id IS NOT NULL)
+                 AND version_id NOT IN (SELECT target_version_id FROM platform.room_configuration_change
+                                         WHERE target_version_id IS NOT NULL)
+                 AND version_id NOT IN (SELECT target_version_id FROM platform.rollout_batch)`,
+    updateColumn: 'revision',
+    updateSet: `revision = revision + 1`,
+  },
+  {
+    name: 'platform.minibar_template_version_item',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.minibar_template_version_item
+              (hotel_id, version_id, product_id, target_quantity)
+            VALUES ($1,
+                    coalesce((SELECT version_id FROM platform.minibar_template_version
+                               WHERE hotel_id = $1 AND state = 'DRAFT'
+                               ORDER BY version_no LIMIT 1), ${ABSENT_UUID}),
+                    coalesce((SELECT p.product_id FROM platform.minibar_product p
+                               WHERE p.hotel_id = $1
+                                 AND p.product_id NOT IN (
+                                   SELECT i.product_id FROM platform.minibar_template_version_item i
+                                    WHERE i.version_id = (SELECT version_id
+                                                            FROM platform.minibar_template_version
+                                                           WHERE hotel_id = $1 AND state = 'DRAFT'
+                                                           ORDER BY version_no LIMIT 1))
+                               ORDER BY p.product_id LIMIT 1), ${ABSENT_UUID}),
+                    2)`,
+      values: [hotelId],
+    }),
+    // Two products per tenant, one row each; the runtime INSERT probe would
+    // need a third product, so one seeded row leaves it one to take.
+    rowsPerTenant: 1,
+    updateColumn: 'target_quantity',
+    updateSet: `target_quantity = target_quantity + 1`,
+  },
+  {
+    name: 'platform.room_minibar_configuration',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.room_minibar_configuration (room_id, hotel_id)
+            VALUES (coalesce((SELECT room_id FROM platform.room
+                               WHERE hotel_id = $1
+                                 AND room_id NOT IN (SELECT room_id FROM platform.room_minibar_configuration)
+                               ORDER BY room_number LIMIT 1), ${ABSENT_UUID}),
+                    $1)`,
+      values: [hotelId],
+    }),
+    rowsPerTenant: 1,
+    updateColumn: 'updated_at',
+    updateSet: `updated_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.room_configuration_change',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.room_configuration_change
+              (hotel_id, room_id, kind, state, terminal_at)
+            VALUES ($1,
+                    coalesce((SELECT room_id FROM platform.room
+                               WHERE hotel_id = $1 ORDER BY room_number LIMIT 1), ${ABSENT_UUID}),
+                    'ON_TO_OFF', 'CANCELLED', now())`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `revision = revision + 1`,
+  },
+  {
+    name: 'platform.minibar_reconciliation_task',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.minibar_reconciliation_task
+              (hotel_id, change_id, room_id, kind, state, bounds)
+            VALUES ($1,
+                    coalesce((SELECT change_id FROM platform.room_configuration_change
+                               WHERE hotel_id = $1 ORDER BY requested_at LIMIT 1), ${ABSENT_UUID}),
+                    coalesce((SELECT room_id FROM platform.room
+                               WHERE hotel_id = $1 ORDER BY room_number LIMIT 1), ${ABSENT_UUID}),
+                    'RECONCILE', 'CANCELLED', '[]'::jsonb)`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `revision = revision + 1`,
+  },
+  {
+    name: 'platform.rollout_batch',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.rollout_batch (hotel_id, template_id, target_version_id)
+            VALUES ($1,
+                    coalesce((SELECT template_id FROM platform.minibar_template_version
+                               WHERE hotel_id = $1 ORDER BY version_no LIMIT 1), ${ABSENT_UUID}),
+                    coalesce((SELECT version_id FROM platform.minibar_template_version
+                               WHERE hotel_id = $1 ORDER BY version_no LIMIT 1), ${ABSENT_UUID}))`,
+      values: [hotelId],
+    }),
+    updateColumn: 'created_at',
+  },
+  {
+    name: 'platform.rollout_batch_room',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.rollout_batch_room (batch_id, room_id, hotel_id, result, reason_code)
+            VALUES (coalesce((SELECT batch_id FROM platform.rollout_batch
+                               WHERE hotel_id = $1 ORDER BY created_at LIMIT 1), ${ABSENT_UUID}),
+                    coalesce((SELECT room_id FROM platform.room
+                               WHERE hotel_id = $1
+                                 AND room_id NOT IN (SELECT room_id FROM platform.rollout_batch_room)
+                               ORDER BY room_number LIMIT 1), ${ABSENT_UUID}),
+                    $1, 'SKIPPED', 'FIXTURE')`,
+      values: [hotelId],
+    }),
+    rowsPerTenant: 1,
+    updateColumn: 'reason_code',
+  },
+  {
+    name: 'platform.minibar_shortage_override',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.minibar_shortage_override (hotel_id, room_id, snapshot, reason)
+            VALUES ($1,
+                    coalesce((SELECT room_id FROM platform.room
+                               WHERE hotel_id = $1 ORDER BY room_number LIMIT 1), ${ABSENT_UUID}),
+                    '{}'::jsonb, 'fixture')`,
+      values: [hotelId],
+    }),
+    updateColumn: 'reason',
+  },
+  {
+    name: 'platform.minibar_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.minibar_event (hotel_id, entity_type, entity_id, event_type)
+            VALUES ($1, 'PRODUCT', gen_random_uuid(), 'FIXTURE')`,
+      values: [hotelId],
+    }),
+    updateColumn: 'reason',
   },
 ];
 

@@ -190,6 +190,11 @@ export class CatalogRepository extends ScopedRepository {
     super(uow);
   }
 
+  /** The transaction, for a probe that runs beside the repository rather than through it. */
+  get unitOfWork(): UnitOfWork {
+    return this.uow;
+  }
+
   // ------------------------------------------------------- configuration
 
   async configuration(): Promise<StayConfigurationRow | undefined> {
@@ -644,55 +649,6 @@ export class CatalogRepository extends ScopedRepository {
       retirementReason: (row['retirement_reason'] ?? null) as string | null,
       revision: Number(row['revision']),
     };
-  }
-
-  // ------------------------------------------------------ dependency probes
-
-  /** Whether the relation a future consumer will own exists in this database. */
-  async relationExists(relation: string): Promise<boolean> {
-    const result = await this.uow.query<{ present: boolean }>(
-      `SELECT to_regclass($1) IS NOT NULL AS present`,
-      [relation],
-    );
-    return result.rows[0]?.present === true;
-  }
-
-  /**
-   * Counts the references a dependency source holds.
-   *
-   * The relation, column and predicate come from the registry — a module
-   * constant, never from a request — and the tenant and the entity are bound
-   * parameters.
-   *
-   * The statement runs inside a savepoint. A relation that exists but does not
-   * carry the column the registry names — an owning phase that shipped a
-   * different shape without updating the entry — raises here, and without the
-   * savepoint that error would abort the whole transaction. With it, the probe
-   * reports `unavailable` and the caller decides: a lifecycle command fails
-   * closed on that answer and a view shows it. Neither turns it into zero.
-   */
-  async countReferences(input: {
-    relation: string;
-    column: string;
-    predicate?: string;
-    entityId: string;
-  }): Promise<number | 'unavailable'> {
-    const predicate = input.predicate === undefined ? '' : ` AND (${input.predicate})`;
-    await this.uow.query('SAVEPOINT catalog_probe');
-    try {
-      const result = await this.uow.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM ${input.relation}
-          WHERE hotel_id = $1 AND ${input.column} = $2${predicate}`,
-        [this.hotelId, input.entityId],
-      );
-      await this.uow.query('RELEASE SAVEPOINT catalog_probe');
-      const n = result.rows[0]?.n;
-      if (n === undefined) return 'unavailable';
-      return Number(n);
-    } catch {
-      await this.uow.query('ROLLBACK TO SAVEPOINT catalog_probe');
-      return 'unavailable';
-    }
   }
 
   // ------------------------------------------------------------- snapshots

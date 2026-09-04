@@ -84,6 +84,7 @@ export async function createApp(
         },
       },
       catalog: { config: { databaseUrl: config.DATABASE_URL } },
+      minibar: { config: { databaseUrl: config.DATABASE_URL } },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

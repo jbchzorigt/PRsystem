@@ -2,8 +2,8 @@
 
 `0000_baseline.sql` … `0006_onboarding_remediation3.sql` exactly as they stood
 when **Phase 05 was accepted**, at commit
-`35314ba210f609269863f0b528bbe827e6a5d3ce`. Phase 06's migration is the only
-thing that may be applied on top of them.
+`35314ba210f609269863f0b528bbe827e6a5d3ce`. The migrations of the phases not yet
+accepted — Phase 06's and Phase 07's — are the only things applied on top of them.
 
 The upgrade half of `GATE-MIGR` applies **this** artefact and then head, so what
 is proved is the deployment step a running cluster would actually take: an
@@ -23,8 +23,8 @@ sha256(0005_onboarding_remediation2.sql)  = 00b3aac3e305ff806c5589266a653ddd324f
 sha256(0006_onboarding_remediation3.sql)  = 4aeba55fd1915863e8dc282550a6d3a7b46bf2c8c9996065e372e1843e9c74f5
 ```
 
-`0007_hotel_catalog.sql` is deliberately **not** here. It belongs to the phase
-under construction and is the one thing the upgrade applies.
+`0007_hotel_catalog.sql` and `0008_minibar_inventory.sql` are deliberately **not**
+here. They belong to the phases not yet accepted and are what the upgrade applies.
 
 The Phase 03 and Phase 04 artefacts next door are kept as well, and all three
 upgrade paths are exercised: 0 → 2 → 8, 0 → 3 → 8 and 0 → 7 → 8. A phase that

@@ -3242,19 +3242,23 @@ export const minibarProduct = platform
         .notNull()
         .default(sql`now()`),
       deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      category: text('category'),
       hotelId: uuid('hotel_id').notNull(),
       name: text('name').notNull(),
       productId: uuid('product_id')
         .primaryKey()
         .default(sql`gen_random_uuid()`),
+      purchaseCostMnt: bigint('purchase_cost_mnt', { mode: 'bigint' }),
       retirementReason: text('retirement_reason'),
       retirementRequestedAt: timestamp('retirement_requested_at', { withTimezone: true }),
       revision: integer('revision')
         .notNull()
         .default(sql`0`),
+      sellingPriceMnt: bigint('selling_price_mnt', { mode: 'bigint' }),
       state: text('state')
         .notNull()
         .default(sql`'ACTIVE'::text`),
+      unit: text('unit'),
     },
     (table) => [
       check(
@@ -3269,6 +3273,22 @@ export const minibarProduct = platform
       check(
         'minibar_product_retiring_has_request',
         sql`((state <> 'RETIRING'::text) OR (retirement_requested_at IS NOT NULL))`,
+      ),
+      check(
+        'minibar_product_category_bounded',
+        sql`((category IS NULL) OR ((length(category) >= 1) AND (length(category) <= 60)))`,
+      ),
+      check(
+        'minibar_product_purchase_cost_non_negative',
+        sql`((purchase_cost_mnt IS NULL) OR (purchase_cost_mnt >= 0))`,
+      ),
+      check(
+        'minibar_product_selling_price_non_negative',
+        sql`((selling_price_mnt IS NULL) OR (selling_price_mnt >= 0))`,
+      ),
+      check(
+        'minibar_product_unit_bounded',
+        sql`((unit IS NULL) OR ((length(unit) >= 1) AND (length(unit) <= 20)))`,
       ),
       check('minibar_product_revision_non_negative', sql`(revision >= 0)`),
       check(
@@ -3297,6 +3317,7 @@ export const minibarTemplate = platform
         .notNull()
         .default(sql`now()`),
       deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      description: text('description'),
       hotelId: uuid('hotel_id').notNull(),
       name: text('name').notNull(),
       retirementReason: text('retirement_reason'),
@@ -3319,6 +3340,10 @@ export const minibarTemplate = platform
       check(
         'minibar_template_inactive_has_time',
         sql`((state <> 'INACTIVE'::text) OR (deactivated_at IS NOT NULL))`,
+      ),
+      check(
+        'minibar_template_description_bounded',
+        sql`((description IS NULL) OR ((length(description) >= 1) AND (length(description) <= 500)))`,
       ),
       check('minibar_template_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 120))`),
       check(
@@ -3533,6 +3558,789 @@ export const stayRateSnapshot = platform
  */
 export const DECLARED_ENUMS = [] as const;
 
+// ---------------------------------------------------------------------
+// Phase 07 — minibar inventory and templates.
+// ---------------------------------------------------------------------
+
+/**
+ * The warehouse balance and average cost of one product. Written only by the
+ * ledger trigger; no runtime holds a write grant (`INV-DEC-002`, doc 22 §2).
+ */
+export const minibarWarehouseStock = platform
+  .table(
+    'minibar_warehouse_stock',
+    {
+      avgCostMnt: bigint('avg_cost_mnt', { mode: 'bigint' }),
+      hotelId: uuid('hotel_id').notNull(),
+      productId: uuid('product_id').primaryKey().notNull(),
+      quantity: integer('quantity')
+        .notNull()
+        .default(sql`0`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      check(
+        'minibar_warehouse_stock_cost_non_negative',
+        sql`((avg_cost_mnt IS NULL) OR (avg_cost_mnt >= 0))`,
+      ),
+      foreignKey({
+        name: 'minibar_warehouse_stock_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('minibar_warehouse_stock_non_negative', sql`(quantity >= 0)`),
+      foreignKey({
+        name: 'minibar_warehouse_stock_product_fkey',
+        columns: [table.hotelId, table.productId],
+        foreignColumns: [minibarProduct.hotelId, minibarProduct.productId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * What one room physically holds of one product. Written only by the ledger
+ * trigger (`INV-DEC-002`, doc 22 §2).
+ */
+export const roomMinibarStock = platform
+  .table(
+    'room_minibar_stock',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      productId: uuid('product_id').notNull(),
+      quantity: integer('quantity')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'room_minibar_stock_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('room_minibar_stock_non_negative', sql`(quantity >= 0)`),
+      primaryKey({ name: 'room_minibar_stock_pkey', columns: [table.roomId, table.productId] }),
+      foreignKey({
+        name: 'room_minibar_stock_product_fkey',
+        columns: [table.hotelId, table.productId],
+        foreignColumns: [minibarProduct.hotelId, minibarProduct.productId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'room_minibar_stock_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      index('room_minibar_stock_product_idx').on(table.hotelId, table.productId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The immutable stock ledger (`INV-DEC-003`, doc 22 §4). Every balance is derived
+ * from it by trigger; nothing edits or deletes a row.
+ */
+export const inventoryMovement = platform
+  .table(
+    'inventory_movement',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      configurationChangeId: uuid('configuration_change_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      location: text('location').notNull(),
+      movementId: uuid('movement_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      movementType: text('movement_type').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      originalMovementId: uuid('original_movement_id'),
+      productId: uuid('product_id').notNull(),
+      quantity: integer('quantity').notNull(),
+      reason: text('reason'),
+      roomId: uuid('room_id'),
+      stayId: uuid('stay_id'),
+      taskId: uuid('task_id'),
+      unitCostMnt: bigint('unit_cost_mnt', { mode: 'bigint' }),
+    },
+    (table) => [
+      check(
+        'inventory_movement_correction_has_reason',
+        sql`((movement_type <> ALL (ARRAY['WASTE'::text, 'ADJUST_PLUS'::text, 'ADJUST_MINUS'::text])) OR (reason IS NOT NULL))`,
+      ),
+      check(
+        'inventory_movement_cost_non_negative',
+        sql`((unit_cost_mnt IS NULL) OR (unit_cost_mnt >= 0))`,
+      ),
+      foreignKey({
+        name: 'inventory_movement_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'inventory_movement_location_known',
+        sql`(location = ANY (ARRAY['WAREHOUSE'::text, 'ROOM'::text, 'TRANSFER'::text]))`,
+      ),
+      check(
+        'inventory_movement_location_shape',
+        sql`(((movement_type = ANY (ARRAY['TRANSFER_TO_ROOM'::text, 'RETURN_TO_WAREHOUSE'::text])) AND (location = 'TRANSFER'::text) AND (room_id IS NOT NULL)) OR ((movement_type = ANY (ARRAY['OPENING'::text, 'PURCHASE'::text])) AND (location = 'WAREHOUSE'::text) AND (room_id IS NULL)) OR ((movement_type = 'GUEST_CONSUMPTION'::text) AND (location = 'ROOM'::text) AND (room_id IS NOT NULL)) OR ((movement_type = ANY (ARRAY['WASTE'::text, 'ADJUST_PLUS'::text, 'ADJUST_MINUS'::text])) AND (((location = 'WAREHOUSE'::text) AND (room_id IS NULL)) OR ((location = 'ROOM'::text) AND (room_id IS NOT NULL)))))`,
+      ),
+      foreignKey({
+        name: 'inventory_movement_original_fkey',
+        columns: [table.originalMovementId],
+        foreignColumns: [table.movementId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'inventory_movement_product_fkey',
+        columns: [table.hotelId, table.productId],
+        foreignColumns: [minibarProduct.hotelId, minibarProduct.productId],
+      }).onDelete('restrict'),
+      check('inventory_movement_quantity_positive', sql`(quantity > 0)`),
+      check(
+        'inventory_movement_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check(
+        'inventory_movement_receipt_has_cost',
+        sql`((movement_type <> ALL (ARRAY['OPENING'::text, 'PURCHASE'::text, 'ADJUST_PLUS'::text])) OR (unit_cost_mnt IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'inventory_movement_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'inventory_movement_type_known',
+        sql`(movement_type = ANY (ARRAY['OPENING'::text, 'PURCHASE'::text, 'TRANSFER_TO_ROOM'::text, 'RETURN_TO_WAREHOUSE'::text, 'GUEST_CONSUMPTION'::text, 'WASTE'::text, 'ADJUST_PLUS'::text, 'ADJUST_MINUS'::text]))`,
+      ),
+      index('inventory_movement_change_idx').on(table.hotelId, table.configurationChangeId),
+      index('inventory_movement_product_idx').on(table.hotelId, table.productId, table.occurredAt),
+      index('inventory_movement_room_idx').on(table.hotelId, table.roomId, table.occurredAt),
+      index('inventory_movement_stay_idx').on(table.hotelId, table.stayId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * One version of a template: `DRAFT → PUBLISHED → ARCHIVED`, at most one Default
+ * per template (`RML-DEC-015`…`017`, doc 26 §24).
+ */
+export const minibarTemplateVersion = platform
+  .table(
+    'minibar_template_version',
+    {
+      archivedAt: timestamp('archived_at', { withTimezone: true }),
+      clonedFromVersionId: uuid('cloned_from_version_id'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      isDefault: boolean('is_default')
+        .notNull()
+        .default(sql`false`),
+      publishedAt: timestamp('published_at', { withTimezone: true }),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'DRAFT'::text`),
+      templateId: uuid('template_id').notNull(),
+      versionId: uuid('version_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      versionNo: integer('version_no').notNull(),
+    },
+    (table) => [
+      check(
+        'minibar_template_version_archived_has_time',
+        sql`((state = 'ARCHIVED'::text) = (archived_at IS NOT NULL))`,
+      ),
+      unique('minibar_template_version_binding_uq').on(
+        table.hotelId,
+        table.templateId,
+        table.versionId,
+      ),
+      foreignKey({
+        name: 'minibar_template_version_clone_fkey',
+        columns: [table.clonedFromVersionId],
+        foreignColumns: [table.versionId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_template_version_default_is_published',
+        sql`((NOT is_default) OR (state = 'PUBLISHED'::text))`,
+      ),
+      foreignKey({
+        name: 'minibar_template_version_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('minibar_template_version_hotel_scope_uq').on(table.hotelId, table.versionId),
+      check('minibar_template_version_number_positive', sql`(version_no >= 1)`),
+      unique('minibar_template_version_number_uq').on(table.templateId, table.versionNo),
+      check(
+        'minibar_template_version_published_has_time',
+        sql`((state = 'DRAFT'::text) = (published_at IS NULL))`,
+      ),
+      check('minibar_template_version_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'minibar_template_version_state_known',
+        sql`(state = ANY (ARRAY['DRAFT'::text, 'PUBLISHED'::text, 'ARCHIVED'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_template_version_template_fkey',
+        columns: [table.hotelId, table.templateId],
+        foreignColumns: [minibarTemplate.hotelId, minibarTemplate.templateId],
+      }).onDelete('restrict'),
+      uniqueIndex('minibar_template_version_default_uq')
+        .on(table.hotelId, table.templateId)
+        .where(sql`is_default IS TRUE`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The product list and target quantity of one version, writable only while the
+ * version is a draft (`RML-DEC-016`).
+ */
+export const minibarTemplateVersionItem = platform
+  .table(
+    'minibar_template_version_item',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      itemId: uuid('item_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      productId: uuid('product_id').notNull(),
+      targetQuantity: integer('target_quantity').notNull(),
+      versionId: uuid('version_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'minibar_template_version_item_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'minibar_template_version_item_product_fkey',
+        columns: [table.hotelId, table.productId],
+        foreignColumns: [minibarProduct.hotelId, minibarProduct.productId],
+      }).onDelete('restrict'),
+      unique('minibar_template_version_item_product_uq').on(table.versionId, table.productId),
+      check('minibar_template_version_item_target_positive', sql`(target_quantity >= 1)`),
+      foreignKey({
+        name: 'minibar_template_version_item_version_fkey',
+        columns: [table.hotelId, table.versionId],
+        foreignColumns: [minibarTemplateVersion.hotelId, minibarTemplateVersion.versionId],
+      }).onDelete('restrict'),
+      index('minibar_template_version_item_product_idx').on(table.hotelId, table.productId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The Manager's audited exception for the next stay of a short minibar
+ * (`INV-DEC-006`, doc 22 §8).
+ */
+export const minibarShortageOverride = platform
+  .table(
+    'minibar_shortage_override',
+    {
+      consumedAt: timestamp('consumed_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdBy: uuid('created_by'),
+      hotelId: uuid('hotel_id').notNull(),
+      overrideId: uuid('override_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      reason: text('reason').notNull(),
+      roomId: uuid('room_id').notNull(),
+      snapshot: jsonb('snapshot').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'minibar_shortage_override_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('minibar_shortage_override_hotel_scope_uq').on(table.hotelId, table.overrideId),
+      check(
+        'minibar_shortage_override_reason_bounded',
+        sql`((length(reason) >= 1) AND (length(reason) <= 300))`,
+      ),
+      foreignKey({
+        name: 'minibar_shortage_override_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_shortage_override_snapshot_has_no_denied_key',
+        sql`(NOT platform.contains_denied_key(snapshot))`,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The one current minibar configuration of a room (`RML-DEC-007`, `INV-DEC-007`,
+ * doc 26 §14).
+ */
+export const roomMinibarConfiguration = platform
+  .table(
+    'room_minibar_configuration',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      currentVersionId: uuid('current_version_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      minibarStatus: text('minibar_status')
+        .notNull()
+        .default(sql`'NOT_APPLICABLE'::text`),
+      mode: text('mode')
+        .notNull()
+        .default(sql`'OFF'::text`),
+      overrideId: uuid('override_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').primaryKey().notNull(),
+      templateId: uuid('template_id'),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'room_minibar_configuration_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'room_minibar_configuration_mode_known',
+        sql`(mode = ANY (ARRAY['ON'::text, 'OFF'::text]))`,
+      ),
+      check(
+        'room_minibar_configuration_mode_shape',
+        sql`(((mode = 'ON'::text) AND (template_id IS NOT NULL) AND (current_version_id IS NOT NULL) AND (minibar_status <> 'NOT_APPLICABLE'::text)) OR ((mode = 'OFF'::text) AND (template_id IS NULL) AND (current_version_id IS NULL) AND (minibar_status = 'NOT_APPLICABLE'::text) AND (override_id IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'room_minibar_configuration_override_fkey',
+        columns: [table.hotelId, table.overrideId],
+        foreignColumns: [minibarShortageOverride.hotelId, minibarShortageOverride.overrideId],
+      }).onDelete('restrict'),
+      check('room_minibar_configuration_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'room_minibar_configuration_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'room_minibar_configuration_status_known',
+        sql`(minibar_status = ANY (ARRAY['FULL'::text, 'SHORT'::text, 'NOT_APPLICABLE'::text, 'UNKNOWN'::text]))`,
+      ),
+      foreignKey({
+        name: 'room_minibar_configuration_template_fkey',
+        columns: [table.hotelId, table.templateId],
+        foreignColumns: [minibarTemplate.hotelId, minibarTemplate.templateId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'room_minibar_configuration_version_fkey',
+        columns: [table.hotelId, table.templateId, table.currentVersionId],
+        foreignColumns: [
+          minibarTemplateVersion.hotelId,
+          minibarTemplateVersion.templateId,
+          minibarTemplateVersion.versionId,
+        ],
+      }).onDelete('restrict'),
+      index('room_minibar_configuration_version_idx').on(table.hotelId, table.currentVersionId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The at-most-one pending change of a room, pinned to an exact target
+ * (`RML-DEC-007`…`014`, `RML-DEC-022`…`028`).
+ */
+export const roomConfigurationChange = platform
+  .table(
+    'room_configuration_change',
+    {
+      batchId: uuid('batch_id'),
+      blockerDetail: jsonb('blocker_detail')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      changeId: uuid('change_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      movementStarted: boolean('movement_started')
+        .notNull()
+        .default(sql`false`),
+      reason: text('reason'),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedBy: uuid('requested_by'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      state: text('state').notNull(),
+      targetTemplateId: uuid('target_template_id'),
+      targetVersionId: uuid('target_version_id'),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+    },
+    (table) => [
+      check(
+        'room_configuration_change_detail_has_no_denied_key',
+        sql`(NOT platform.contains_denied_key(blocker_detail))`,
+      ),
+      foreignKey({
+        name: 'room_configuration_change_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('room_configuration_change_hotel_scope_uq').on(table.hotelId, table.changeId),
+      check(
+        'room_configuration_change_kind_known',
+        sql`(kind = ANY (ARRAY['ON_TO_OFF'::text, 'OFF_TO_ON'::text, 'TEMPLATE_SWITCH'::text, 'VERSION_ROLLOUT'::text]))`,
+      ),
+      check(
+        'room_configuration_change_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check('room_configuration_change_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'room_configuration_change_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'room_configuration_change_state_known',
+        sql`(state = ANY (ARRAY['SCHEDULED_AFTER_STAY'::text, 'READY_FOR_RECONCILIATION'::text, 'IN_PROGRESS'::text, 'BLOCKED_STOCK'::text, 'BLOCKED_VARIANCE'::text, 'APPLIED'::text, 'CANCELLED'::text, 'ROLLBACK_REQUIRED'::text, 'ROLLED_BACK'::text]))`,
+      ),
+      foreignKey({
+        name: 'room_configuration_change_target_fkey',
+        columns: [table.hotelId, table.targetTemplateId, table.targetVersionId],
+        foreignColumns: [
+          minibarTemplateVersion.hotelId,
+          minibarTemplateVersion.templateId,
+          minibarTemplateVersion.versionId,
+        ],
+      }).onDelete('restrict'),
+      check(
+        'room_configuration_change_target_shape',
+        sql`(((kind = 'ON_TO_OFF'::text) AND (target_template_id IS NULL) AND (target_version_id IS NULL)) OR ((kind <> 'ON_TO_OFF'::text) AND (target_template_id IS NOT NULL) AND (target_version_id IS NOT NULL)))`,
+      ),
+      check(
+        'room_configuration_change_terminal_has_time',
+        sql`((state = ANY (ARRAY['APPLIED'::text, 'CANCELLED'::text, 'ROLLED_BACK'::text])) = (terminal_at IS NOT NULL))`,
+      ),
+      index('room_configuration_change_batch_idx').on(table.hotelId, table.batchId),
+      uniqueIndex('room_configuration_change_one_pending_uq')
+        .on(table.hotelId, table.roomId)
+        .where(sql`state <> ALL (ARRAY['APPLIED'::text, 'CANCELLED'::text, 'ROLLED_BACK'::text])`),
+      index('room_configuration_change_target_idx').on(table.hotelId, table.targetVersionId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The server-bounded Cleaner task of one configuration change (`RML-DEC-013`,
+ * doc 04 §5.3).
+ */
+export const minibarReconciliationTask = platform
+  .table(
+    'minibar_reconciliation_task',
+    {
+      assignedAccountId: uuid('assigned_account_id'),
+      bounds: jsonb('bounds').notNull(),
+      changeId: uuid('change_id').notNull(),
+      claimedAt: timestamp('claimed_at', { withTimezone: true }),
+      completedAt: timestamp('completed_at', { withTimezone: true }),
+      counted: jsonb('counted'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+      taskId: uuid('task_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check(
+        'minibar_reconciliation_task_bounds_has_no_denied_key',
+        sql`(NOT platform.contains_denied_key(bounds))`,
+      ),
+      foreignKey({
+        name: 'minibar_reconciliation_task_change_fkey',
+        columns: [table.hotelId, table.changeId],
+        foreignColumns: [roomConfigurationChange.hotelId, roomConfigurationChange.changeId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_reconciliation_task_claim_shape',
+        sql`(((state = 'OPEN'::text) AND (assigned_account_id IS NULL)) OR ((state = ANY (ARRAY['CLAIMED'::text, 'COMPLETED'::text])) AND (assigned_account_id IS NOT NULL)) OR (state = 'CANCELLED'::text))`,
+      ),
+      check(
+        'minibar_reconciliation_task_counted_has_no_denied_key',
+        sql`((counted IS NULL) OR (NOT platform.contains_denied_key(counted)))`,
+      ),
+      foreignKey({
+        name: 'minibar_reconciliation_task_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_reconciliation_task_kind_known',
+        sql`(kind = ANY (ARRAY['RECONCILE'::text, 'ROLLBACK'::text]))`,
+      ),
+      check('minibar_reconciliation_task_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'minibar_reconciliation_task_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_reconciliation_task_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'CLAIMED'::text, 'COMPLETED'::text, 'CANCELLED'::text]))`,
+      ),
+      index('minibar_reconciliation_task_assignee_idx').on(
+        table.hotelId,
+        table.assignedAccountId,
+        table.state,
+      ),
+      uniqueIndex('minibar_reconciliation_task_one_open_uq')
+        .on(table.changeId)
+        .where(sql`state = ANY (ARRAY['OPEN'::text, 'CLAIMED'::text])`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A multi-room Rollout parent and its exact target; its state is derived from
+ * the children on read (`RML-DEC-025`…`028`, doc 26 §36).
+ */
+export const rolloutBatch = platform
+  .table(
+    'rollout_batch',
+    {
+      batchId: uuid('batch_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdBy: uuid('created_by'),
+      hotelId: uuid('hotel_id').notNull(),
+      retryOfBatchId: uuid('retry_of_batch_id'),
+      targetVersionId: uuid('target_version_id').notNull(),
+      templateId: uuid('template_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'rollout_batch_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('rollout_batch_hotel_scope_uq').on(table.hotelId, table.batchId),
+      foreignKey({
+        name: 'rollout_batch_retry_fkey',
+        columns: [table.retryOfBatchId],
+        foreignColumns: [table.batchId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'rollout_batch_target_fkey',
+        columns: [table.hotelId, table.templateId, table.targetVersionId],
+        foreignColumns: [
+          minibarTemplateVersion.hotelId,
+          minibarTemplateVersion.templateId,
+          minibarTemplateVersion.versionId,
+        ],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * One selected room of a batch and its accepted or skipped result (`RML-DEC-026`).
+ */
+export const rolloutBatchRoom = platform
+  .table(
+    'rollout_batch_room',
+    {
+      batchId: uuid('batch_id').notNull(),
+      changeId: uuid('change_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      reasonCode: text('reason_code'),
+      result: text('result').notNull(),
+      roomId: uuid('room_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'rollout_batch_room_batch_fkey',
+        columns: [table.hotelId, table.batchId],
+        foreignColumns: [rolloutBatch.hotelId, rolloutBatch.batchId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'rollout_batch_room_change_fkey',
+        columns: [table.hotelId, table.changeId],
+        foreignColumns: [roomConfigurationChange.hotelId, roomConfigurationChange.changeId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'rollout_batch_room_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      primaryKey({ name: 'rollout_batch_room_pkey', columns: [table.batchId, table.roomId] }),
+      check(
+        'rollout_batch_room_result_known',
+        sql`(result = ANY (ARRAY['ACCEPTED'::text, 'SKIPPED'::text]))`,
+      ),
+      check(
+        'rollout_batch_room_result_shape',
+        sql`((result = 'ACCEPTED'::text) = (change_id IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'rollout_batch_room_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The append-only history of version, configuration, task and batch transitions
+ * (doc 22 §11, doc 26 §21).
+ */
+export const minibarEvent = platform
+  .table(
+    'minibar_event',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      entityId: uuid('entity_id').notNull(),
+      entityType: text('entity_type').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      eventType: text('event_type').notNull(),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      payload: jsonb('payload')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      reason: text('reason'),
+      toState: text('to_state'),
+    },
+    (table) => [
+      check(
+        'minibar_event_entity_type_known',
+        sql`(entity_type = ANY (ARRAY['PRODUCT'::text, 'TEMPLATE_VERSION'::text, 'ROOM_CONFIGURATION'::text, 'CONFIGURATION_CHANGE'::text, 'RECONCILIATION_TASK'::text, 'ROLLOUT_BATCH'::text, 'SHORTAGE_OVERRIDE'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_event_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_event_payload_has_no_denied_key',
+        sql`(NOT platform.contains_denied_key(payload))`,
+      ),
+      check(
+        'minibar_event_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check(
+        'minibar_event_type_bounded',
+        sql`((length(event_type) >= 1) AND (length(event_type) <= 60))`,
+      ),
+      index('minibar_event_entity_idx').on(
+        table.hotelId,
+        table.entityType,
+        table.entityId,
+        table.occurredAt,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -3590,4 +4398,17 @@ export const DECLARED_TABLES = [
   minibarTemplate,
   catalogEvent,
   stayRateSnapshot,
+  // Phase 07.
+  minibarWarehouseStock,
+  roomMinibarStock,
+  inventoryMovement,
+  minibarTemplateVersion,
+  minibarTemplateVersionItem,
+  minibarShortageOverride,
+  roomMinibarConfiguration,
+  roomConfigurationChange,
+  minibarReconciliationTask,
+  rolloutBatch,
+  rolloutBatchRoom,
+  minibarEvent,
 ] as const;

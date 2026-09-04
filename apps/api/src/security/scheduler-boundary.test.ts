@@ -355,6 +355,7 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
             },
           },
           catalog: { config: { databaseUrl: apiUrl } },
+          minibar: { config: { databaseUrl: apiUrl } },
         }),
       ],
     }).compile();

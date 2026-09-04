@@ -20,7 +20,12 @@ const PARTITION_FUNCTIONS = [
   'partition_horizon',
   'check_partition_horizon',
 ];
-const MAINTENANCE_FUNCTIONS = ['maintenance_expire_idempotency_keys'];
+const MAINTENANCE_FUNCTIONS = [
+  'maintenance_expire_idempotency_keys',
+  // Phase 07: the inventory ledger triggers, the only writers of the stock tables.
+  'inventory_movement_apply',
+  'inventory_movement_cost',
+];
 
 beforeAll(async () => {
   env = await provisionKernelDatabase('sec_ownership');

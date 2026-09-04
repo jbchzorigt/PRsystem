@@ -94,12 +94,25 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
   // ------------------------------------------------------------- Phase 07
   {
     id: 'room.minibar_configuration',
-    entityKinds: ['ROOM', 'MINIBAR_TEMPLATE'],
+    entityKinds: ['ROOM'],
     kind: 'operational',
     owningPhase: '07',
     relation: 'platform.room_minibar_configuration',
     column: 'room_id',
-    detail: 'the room still carries a minibar configuration or a pending change',
+    // doc 26 §4: a minibar-enabled room reconciles its stock and configuration
+    // before it can be inactive; a room whose minibar is off has nothing left.
+    predicate: "mode = 'ON'",
+    detail: 'the room still carries a minibar configuration',
+  },
+  {
+    id: 'room.pending_configuration_change',
+    entityKinds: ['ROOM'],
+    kind: 'operational',
+    owningPhase: '07',
+    relation: 'platform.room_configuration_change',
+    column: 'room_id',
+    predicate: "state <> ALL (ARRAY['APPLIED', 'CANCELLED', 'ROLLED_BACK'])",
+    detail: 'a configuration change of this room has not reached a terminal state',
   },
   {
     id: 'template.room_assignment',
@@ -111,13 +124,43 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
     detail: 'rooms are still configured with this template',
   },
   {
+    id: 'template.pending_target',
+    entityKinds: ['MINIBAR_TEMPLATE'],
+    kind: 'operational',
+    owningPhase: '07',
+    relation: 'platform.room_configuration_change',
+    column: 'target_template_id',
+    predicate: "state <> ALL (ARRAY['APPLIED', 'CANCELLED', 'ROLLED_BACK'])",
+    detail: 'a pending configuration change targets this template',
+  },
+  {
     id: 'product.template_version_item',
     entityKinds: ['MINIBAR_PRODUCT'],
     kind: 'operational',
     owningPhase: '07',
     relation: 'platform.minibar_template_version_item',
     column: 'product_id',
+    // doc 26 §6: a product may not leave an *active* configuration — a version
+    // some room is on, or one a pending change is pinned to. A listing in a
+    // draft or an archived version, or in a published version no room uses,
+    // is history and is the next entry's business.
+    predicate: `version_id IN (
+      SELECT current_version_id FROM platform.room_minibar_configuration
+       WHERE current_version_id IS NOT NULL
+      UNION
+      SELECT target_version_id FROM platform.room_configuration_change
+       WHERE target_version_id IS NOT NULL
+         AND state <> ALL (ARRAY['APPLIED', 'CANCELLED', 'ROLLED_BACK']))`,
     detail: 'the product is still listed by a template version in active use',
+  },
+  {
+    id: 'product.template_version_history',
+    entityKinds: ['MINIBAR_PRODUCT'],
+    kind: 'historical',
+    owningPhase: '07',
+    relation: 'platform.minibar_template_version_item',
+    column: 'product_id',
+    detail: 'the product is listed by a template version',
   },
   {
     id: 'template.version',
@@ -135,6 +178,7 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
     owningPhase: '07',
     relation: 'platform.room_minibar_stock',
     column: 'product_id',
+    predicate: 'quantity > 0',
     detail: 'stock of this product is still in a room',
   },
   {
@@ -144,6 +188,7 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
     owningPhase: '07',
     relation: 'platform.room_minibar_stock',
     column: 'room_id',
+    predicate: 'quantity > 0',
     detail: 'the room still holds minibar stock',
   },
   {

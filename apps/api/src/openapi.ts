@@ -61,6 +61,7 @@ async function generate(): Promise<void> {
       // The catalog has no port of its own; a pool that is never connected is
       // all it needs to describe its routes.
       catalog: { pool: new Pool({ max: 1 }) },
+      minibar: { pool: new Pool({ max: 1 }) },
     }),
     new FastifyAdapter(),
     { logger: false },

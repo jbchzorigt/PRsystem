@@ -10,6 +10,8 @@ import type { OnboardingModuleOptions } from './modules/onboarding/onboarding.mo
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import type { CatalogModuleOptions } from './modules/catalog/catalog.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
+import type { MinibarModuleOptions } from './modules/minibar/minibar.module';
+import { MinibarModule } from './modules/minibar/minibar.module';
 
 export interface AppModuleOptions {
   /**
@@ -41,6 +43,8 @@ export interface AppModuleOptions {
    * gate in the process.
    */
   readonly catalog: CatalogModuleOptions;
+  /** The Phase 07 minibar. It takes the catalog's lifecycle contract from the catalog module. */
+  readonly minibar: MinibarModuleOptions;
   /**
    * A pool the application should close on shutdown.
    *
@@ -71,6 +75,9 @@ export class AppModule {
     // module by its metadata — so the same object yields one module instance,
     // one pool and one `SessionService`, never a parallel session model.
     const iam = IamModule.forRoot(options.iam);
+    // The catalog is constructed once too: the minibar module imports the same
+    // object, so the lifecycle contract it resolves is the catalog's instance.
+    const catalog = CatalogModule.forRoot({ ...options.catalog, iam });
     return {
       module: AppModule,
       providers: [
@@ -84,7 +91,8 @@ export class AppModule {
         MaintenanceModule.forRoot(options.scheduler),
         iam,
         OnboardingModule.forRoot({ ...options.onboarding, iam }),
-        CatalogModule.forRoot({ ...options.catalog, iam }),
+        catalog,
+        MinibarModule.forRoot({ ...options.minibar, iam, catalog }),
       ],
     };
   }

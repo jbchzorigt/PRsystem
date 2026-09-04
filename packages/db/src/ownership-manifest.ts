@@ -107,6 +107,14 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.pending_ebarimt_issuances(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   // Phase 05 remediation 2: receipt delivery is its own job.
   'platform.pending_ebarimt_deliveries(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+
+  // Phase 07. The inventory ledger's two triggers: the only path by which a
+  // warehouse or room balance changes, on tables no runtime may write. They
+  // belong to the same narrow definer owner for the same reason the
+  // provisioning wrapper does — it can connect as nothing and holds nothing
+  // beyond what its bodies need.
+  'platform.inventory_movement_apply()': KERNEL_OWNERS.maintenanceFn,
+  'platform.inventory_movement_cost()': KERNEL_OWNERS.maintenanceFn,
 };
 
 /**
