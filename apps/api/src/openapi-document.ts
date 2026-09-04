@@ -25,6 +25,13 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .addTag('stay', 'Room board, quote, check-in, stay view and actual checkout')
     .addTag('stay-corrections', 'Active-stay actual-time correction requests and decisions')
     .addTag('fulfillment-conflicts', 'Overdue conflicts of confirmed bookings and their remedies')
+    .addTag('stay-checkout', 'Starting and calling off a checkout')
+    .addTag(
+      'stay-minibar-reports',
+      'The minibar usage report, its versions, disputes, payment lock and adjustments',
+    )
+    .addTag('stay-minibar-refills', 'Active-stay minibar refill requests and Cleaner tasks')
+    .addTag('stay-cleaning-tasks', "The Cleaner's cleaning queue and routine refill")
     .build();
 
   return SwaggerModule.createDocument(app, config);

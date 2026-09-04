@@ -669,8 +669,8 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
                                WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))`,
       values: [hotelId, `fixture-room-${String(n)}`],
     }),
-    // Phase 07 fixtures configure, stock and change the first room; the DELETE
-    // probe addresses the free ones.
+    // Phase 07, 08 and 09 fixtures configure, stock, occupy and clean rooms of
+    // their own; the DELETE probe addresses the free ones.
     probeWhere: `room_id NOT IN (SELECT room_id FROM platform.room_minibar_configuration)
                  AND room_id NOT IN (SELECT room_id FROM platform.room_minibar_stock)
                  AND room_id NOT IN (SELECT room_id FROM platform.inventory_movement
@@ -683,7 +683,10 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
                  AND room_id NOT IN (SELECT room_id FROM platform.booking_fulfillment_conflict)
                  AND room_id NOT IN (SELECT room_id FROM platform.minibar_shortage_override)
                  AND room_id NOT IN (SELECT room_id FROM platform.stay_rate_snapshot
-                                      WHERE room_id IS NOT NULL)`,
+                                      WHERE room_id IS NOT NULL)
+                 AND room_id NOT IN (SELECT room_id FROM platform.cleaning_task)
+                 AND room_id NOT IN (SELECT room_id FROM platform.minibar_usage_report)
+                 AND room_id NOT IN (SELECT room_id FROM platform.minibar_refill_task)`,
     updateColumn: 'floor_label',
     updateSet: `floor_label = 'acl-probe', revision = revision + 1`,
   },
@@ -696,13 +699,19 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
             VALUES ($1, $2, 'Ус', 'ш', 3000, 1000)`,
       values: [hotelId, `fixture-product-${String(n)}`],
     }),
-    // Phase 07 fixtures hold stock, a ledger and version items against the
-    // first product; the DELETE probe addresses the free ones.
+    // Phase 07, 08 and 09 fixtures hold stock, a ledger, version items, price
+    // books, report lines and tasks against products of their own; the DELETE
+    // probe addresses the free ones.
     probeWhere: `product_id NOT IN (SELECT product_id FROM platform.stay_minibar_price)
                  AND product_id NOT IN (SELECT product_id FROM platform.minibar_warehouse_stock)
                  AND product_id NOT IN (SELECT product_id FROM platform.room_minibar_stock)
                  AND product_id NOT IN (SELECT product_id FROM platform.inventory_movement)
-                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_template_version_item)`,
+                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_template_version_item)
+                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_report_dispute)
+                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_usage_report_line)
+                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_refill_task)
+                 AND product_id NOT IN (SELECT product_id FROM platform.minibar_report_adjustment
+                                         WHERE product_id IS NOT NULL)`,
     updateColumn: 'name',
     updateSet: `name = 'acl-probe', revision = revision + 1`,
   },
@@ -1201,6 +1210,495 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
       values: [hotelId],
     }),
     updateColumn: 'reason',
+  },
+
+  // Phase 09. Every one of these rows hangs off a stay, its price book or a
+  // report version, and each of the uniqueness rules — one open cleaning task
+  // per room, one live report per stay, one held payment lock per report, one
+  // open refill task per room and product — means the fixture creates the whole
+  // chain it needs in the same statement rather than sharing another fixture's.
+  {
+    name: 'platform.cleaning_task',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id)
+            INSERT INTO platform.cleaning_task (hotel_id, room_id)
+            SELECT $1, r.room_id FROM r`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'IN_PROGRESS', claimed_by_account_id = gen_random_uuid(),
+                claimed_at = now(), revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.minibar_usage_report',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id)
+            INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id)
+            SELECT $1, s.stay_id, s.room_id FROM s`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'IN_INSPECTION', claimed_by_account_id = gen_random_uuid(),
+                claimed_at = now(), revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.minibar_usage_report_version',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            rep AS (
+              INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id, state)
+              SELECT $1, s.stay_id, s.room_id, 'IN_INSPECTION' FROM s
+              RETURNING report_id)
+            INSERT INTO platform.minibar_usage_report_version
+              (hotel_id, report_id, version_no, kind, no_usage, submitted_by_account_id,
+               submitted_role, cutoff_at)
+            SELECT $1, rep.report_id, 1, 'NORMAL', true, gen_random_uuid(), 'CLEANER', now()
+              FROM rep`,
+      values: [hotelId],
+    }),
+    updateColumn: 'total_mnt',
+  },
+
+  {
+    name: 'platform.minibar_usage_report_line',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            msnap AS (
+              INSERT INTO platform.stay_minibar_snapshot (stay_id, hotel_id, room_id, template_id, version_id)
+              SELECT s.stay_id, $1, s.room_id,
+                     coalesce((SELECT template_id FROM platform.minibar_template_version
+                                WHERE hotel_id = $1 ORDER BY created_at LIMIT 1), ${ABSENT_UUID}),
+                     coalesce((SELECT version_id FROM platform.minibar_template_version
+                                WHERE hotel_id = $1 ORDER BY created_at LIMIT 1), ${ABSENT_UUID})
+                FROM s
+              RETURNING stay_id, room_id),
+            prod AS (
+              INSERT INTO platform.minibar_product
+                (hotel_id, name, category, unit, selling_price_mnt, purchase_cost_mnt)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12), 'Ус', 'ш', 5000, 1000)
+              RETURNING product_id),
+            price AS (
+              INSERT INTO platform.stay_minibar_price
+                (stay_id, product_id, hotel_id, product_name, selling_price_mnt, target_quantity,
+                 opening_quantity)
+              SELECT msnap.stay_id, prod.product_id, $1, 'Fixture', 5000, 2, 2
+                FROM msnap, prod
+              RETURNING stay_id, product_id),
+            rep AS (
+              INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id, state)
+              SELECT $1, s.stay_id, s.room_id, 'IN_INSPECTION' FROM s
+              RETURNING report_id),
+            ver AS (
+              INSERT INTO platform.minibar_usage_report_version
+                (hotel_id, report_id, version_no, kind, no_usage, submitted_by_account_id,
+                 submitted_role, cutoff_at, total_mnt)
+              SELECT $1, rep.report_id, 1, 'NORMAL', false, gen_random_uuid(), 'CLEANER', now(), 5000
+                FROM rep
+              RETURNING version_id, report_id)
+            INSERT INTO platform.minibar_usage_report_line
+              (hotel_id, version_id, stay_id, product_id, product_name, opening_quantity,
+               refill_quantity, non_guest_out_quantity, counted_quantity, billable_quantity,
+               unit_price_mnt, line_total_mnt)
+            SELECT $1, ver.version_id, price.stay_id, price.product_id, 'Fixture', 2, 0, 0, 1, 1,
+                   5000, 5000
+              FROM ver, price`,
+      values: [hotelId],
+    }),
+    updateColumn: 'counted_quantity',
+  },
+
+  {
+    name: 'platform.minibar_usage_report_movement',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            rep AS (
+              INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id, state)
+              SELECT $1, s.stay_id, s.room_id, 'IN_INSPECTION' FROM s
+              RETURNING report_id),
+            ver AS (
+              INSERT INTO platform.minibar_usage_report_version
+                (hotel_id, report_id, version_no, kind, no_usage, submitted_by_account_id,
+                 submitted_role, cutoff_at, total_mnt)
+              SELECT $1, rep.report_id, 1, 'NORMAL', false, gen_random_uuid(), 'CLEANER', now(), 5000
+                FROM rep
+              RETURNING version_id, report_id),
+            prod AS (
+              INSERT INTO platform.minibar_product
+                (hotel_id, name, category, unit, selling_price_mnt, purchase_cost_mnt)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12), 'Ус', 'ш', 5000, 1000)
+              RETURNING product_id),
+            mv AS (
+              INSERT INTO platform.inventory_movement
+                (hotel_id, product_id, movement_type, location, quantity, unit_cost_mnt)
+              SELECT $1, prod.product_id, 'OPENING', 'WAREHOUSE', 5, 1000 FROM prod
+              RETURNING movement_id)
+            INSERT INTO platform.minibar_usage_report_movement (version_id, movement_id, hotel_id, role)
+            SELECT ver.version_id, mv.movement_id, $1, 'REFILL' FROM ver, mv`,
+      values: [hotelId],
+    }),
+    updateColumn: 'role',
+  },
+
+  {
+    name: 'platform.minibar_report_dispute',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            rep AS (
+              INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id, state)
+              SELECT $1, s.stay_id, s.room_id, 'IN_INSPECTION' FROM s
+              RETURNING report_id),
+            ver AS (
+              INSERT INTO platform.minibar_usage_report_version
+                (hotel_id, report_id, version_no, kind, no_usage, submitted_by_account_id,
+                 submitted_role, cutoff_at, total_mnt)
+              SELECT $1, rep.report_id, 1, 'NORMAL', false, gen_random_uuid(), 'CLEANER', now(), 5000
+                FROM rep
+              RETURNING version_id, report_id),
+            prod AS (
+              INSERT INTO platform.minibar_product
+                (hotel_id, name, category, unit, selling_price_mnt, purchase_cost_mnt)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12), 'Ус', 'ш', 5000, 1000)
+              RETURNING product_id)
+            INSERT INTO platform.minibar_report_dispute
+              (hotel_id, report_id, version_id, product_id, disputed_quantity, note,
+               noted_by_account_id)
+            SELECT $1, ver.report_id, ver.version_id, prod.product_id, 1, 'fixture',
+                   gen_random_uuid()
+              FROM ver, prod`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'UPHELD', resolved_at = now(), resolved_by_account_id = gen_random_uuid(),
+                resolution_reason = 'fixture', revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.minibar_payment_lock',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            rep AS (
+              INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id, state)
+              SELECT $1, s.stay_id, s.room_id, 'IN_INSPECTION' FROM s
+              RETURNING report_id),
+            ver AS (
+              INSERT INTO platform.minibar_usage_report_version
+                (hotel_id, report_id, version_no, kind, no_usage, submitted_by_account_id,
+                 submitted_role, cutoff_at, total_mnt)
+              SELECT $1, rep.report_id, 1, 'NORMAL', false, gen_random_uuid(), 'CLEANER', now(), 5000
+                FROM rep
+              RETURNING version_id, report_id)
+            INSERT INTO platform.minibar_payment_lock
+              (hotel_id, report_id, version_id, attempt_ref, amount_mnt, locked_by_account_id)
+            SELECT $1, ver.report_id, ver.version_id,
+                   'p09-' || substr(gen_random_uuid()::text, 1, 12), 5000, gen_random_uuid()
+              FROM ver`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'RELEASED', provider_status = 'FAILED_NO_FUNDS', resolved_at = now(),
+                resolved_by_account_id = gen_random_uuid(), revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.minibar_report_adjustment',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            rep AS (
+              INSERT INTO platform.minibar_usage_report (hotel_id, stay_id, room_id, state)
+              SELECT $1, s.stay_id, s.room_id, 'IN_INSPECTION' FROM s
+              RETURNING report_id),
+            ver AS (
+              INSERT INTO platform.minibar_usage_report_version
+                (hotel_id, report_id, version_no, kind, no_usage, submitted_by_account_id,
+                 submitted_role, cutoff_at, total_mnt)
+              SELECT $1, rep.report_id, 1, 'NORMAL', false, gen_random_uuid(), 'CLEANER', now(), 5000
+                FROM rep
+              RETURNING version_id, report_id),
+            lk AS (
+              INSERT INTO platform.minibar_payment_lock
+                (hotel_id, report_id, version_id, attempt_ref, amount_mnt, locked_by_account_id)
+              SELECT $1, ver.report_id, ver.version_id,
+                     'p09-' || substr(gen_random_uuid()::text, 1, 12), 5000, gen_random_uuid()
+                FROM ver
+              RETURNING lock_id, report_id, version_id)
+            INSERT INTO platform.minibar_report_adjustment
+              (hotel_id, report_id, original_version_id, lock_id, kind, amount_mnt, reason,
+               actor_account_id)
+            SELECT $1, lk.report_id, lk.version_id, lk.lock_id, 'OVERCHARGE_REVERSAL', 5000,
+                   'fixture', gen_random_uuid()
+              FROM lk`,
+      values: [hotelId],
+    }),
+    updateColumn: 'reason',
+  },
+
+  {
+    name: 'platform.minibar_refill_task',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            msnap AS (
+              INSERT INTO platform.stay_minibar_snapshot (stay_id, hotel_id, room_id, template_id, version_id)
+              SELECT s.stay_id, $1, s.room_id,
+                     coalesce((SELECT template_id FROM platform.minibar_template_version
+                                WHERE hotel_id = $1 ORDER BY created_at LIMIT 1), ${ABSENT_UUID}),
+                     coalesce((SELECT version_id FROM platform.minibar_template_version
+                                WHERE hotel_id = $1 ORDER BY created_at LIMIT 1), ${ABSENT_UUID})
+                FROM s
+              RETURNING stay_id, room_id),
+            prod AS (
+              INSERT INTO platform.minibar_product
+                (hotel_id, name, category, unit, selling_price_mnt, purchase_cost_mnt)
+              VALUES ($1, 'p09-' || substr(gen_random_uuid()::text, 1, 12), 'Ус', 'ш', 5000, 1000)
+              RETURNING product_id),
+            price AS (
+              INSERT INTO platform.stay_minibar_price
+                (stay_id, product_id, hotel_id, product_name, selling_price_mnt, target_quantity,
+                 opening_quantity)
+              SELECT msnap.stay_id, prod.product_id, $1, 'Fixture', 5000, 2, 2
+                FROM msnap, prod
+              RETURNING stay_id, product_id)
+            INSERT INTO platform.minibar_refill_task
+              (hotel_id, room_id, stay_id, product_id, requested_quantity,
+               requested_by_account_id)
+            SELECT $1, msnap.room_id, price.stay_id, price.product_id, 1, gen_random_uuid()
+              FROM price, msnap`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'IN_PROGRESS', cleaner_account_id = gen_random_uuid(), claimed_at = now(),
+                revision = revision + 1`,
   },
 ];
 

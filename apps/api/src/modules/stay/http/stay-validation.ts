@@ -153,3 +153,61 @@ export function requireCleaningTarget(value: unknown): 'CLEAN' | 'CLEANING' {
 }
 
 export { requireUuid };
+
+/** doc 04 §5.2: what the Cleaner counted, per product of the price book. */
+export function requireCountedLines(
+  value: unknown,
+  field: string,
+): readonly { readonly productId: string; readonly quantity: number }[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return fail(field, 'must be an array');
+  if (value.length > 200) return fail(field, 'must not exceed 200 lines');
+  return value.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return fail(`${field}[${String(index)}]`, 'must be an object');
+    }
+    const line = entry as Record<string, unknown>;
+    const quantity = line['quantity'];
+    if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 0) {
+      return fail(`${field}[${String(index)}].quantity`, 'must be a whole number of units');
+    }
+    return {
+      productId: requireUuid(line['productId'], `${field}[${String(index)}].productId`),
+      quantity,
+    };
+  });
+}
+
+/** doc 21 §7: the decision on a disputed line. */
+export function requireDisputeDecision(value: unknown): 'UPHELD' | 'WAIVED' {
+  if (value === 'UPHELD' || value === 'WAIVED') return value;
+  return fail('decision', 'must be UPHELD or WAIVED');
+}
+
+/** `CHK-DEC-005`: the kinds of correction a settled charge admits. */
+export function requireAdjustmentKind(
+  value: unknown,
+): 'OVERCHARGE_REVERSAL' | 'UNDERCHARGE_RECEIVABLE' | 'DISPUTE_WAIVER' {
+  if (
+    value === 'OVERCHARGE_REVERSAL' ||
+    value === 'UNDERCHARGE_RECEIVABLE' ||
+    value === 'DISPUTE_WAIVER'
+  ) {
+    return value;
+  }
+  return fail('kind', 'must be OVERCHARGE_REVERSAL, UNDERCHARGE_RECEIVABLE or DISPUTE_WAIVER');
+}
+
+/** An amount in whole MNT, never a float (CLAUDE.md §5). */
+export function optionalAmountMnt(value: unknown, field: string): bigint | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value < 1)
+      return fail(field, 'must be a whole positive amount');
+    return BigInt(value);
+  }
+  if (typeof value !== 'string' || !/^[1-9][0-9]{0,17}$/u.test(value)) {
+    return fail(field, 'must be a whole positive amount in MNT');
+  }
+  return BigInt(value);
+}

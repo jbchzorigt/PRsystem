@@ -33,6 +33,7 @@ import { authorizeCommand } from '../../iam/services/authorization.service';
 const PRODUCT_MANAGE = 'hotel.minibar.product_manage';
 const COST_STOCK_MANAGE = 'hotel.minibar.cost_stock_manage';
 const WASTE_ADJUSTMENT = 'hotel.minibar.waste_adjustment';
+const NON_GUEST_STOCK_OUT = 'hotel.minibar.non_guest_stock_out';
 
 export interface CreateProductInput {
   readonly hotelId: string;
@@ -80,7 +81,12 @@ export interface CorrectionInput {
   readonly unitCostMnt?: bigint;
   /** A configuration change this correction resolves a variance of. */
   readonly configurationChangeId?: string;
-  /** A stay this non-guest stock-out belongs to (Phase 08 supplies it). */
+  /**
+   * A stay this non-guest stock-out belongs to (doc 22 §6.2). Naming one makes
+   * the command a stay-scoped movement and requires the Manager's
+   * `non_guest_stock_out` action beside the waste one; the checkout's report
+   * subtracts what it takes out of the room from the guest's billable quantity.
+   */
   readonly stayId?: string;
 }
 
@@ -377,6 +383,12 @@ export class ProductService extends MinibarServiceBase {
         const configurations = new ConfigurationRepository(uow);
         const product = await inventory.lockProduct(input.productId);
         await authorize();
+        // doc 18 §3 and doc 22 §6.2: a correction that belongs to an active
+        // stay is a non-guest stock-out, and that is its own named action —
+        // the waste permission alone does not reach the guest's bill.
+        if (input.stayId !== undefined) {
+          await this.authorizeAlso(uow, gate, input.hotelId, NON_GUEST_STOCK_OUT);
+        }
         if (product === undefined) throw new ApiError('NOT_FOUND', 'not found');
 
         let change = undefined;
@@ -386,6 +398,11 @@ export class ProductService extends MinibarServiceBase {
           if (input.roomId === undefined || change.roomId !== input.roomId) {
             throw new ApiError('VALIDATION_FAILED', "the correction names the change's own room");
           }
+        }
+
+        // doc 22 §6.2: a return leaves a room, so it names one.
+        if (input.type === 'RETURN_TO_WAREHOUSE' && input.roomId === undefined) {
+          throw new ApiError('VALIDATION_FAILED', 'a return to the warehouse names the room');
         }
 
         let unitCost: bigint | undefined;

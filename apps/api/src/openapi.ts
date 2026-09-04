@@ -17,6 +17,7 @@ import { NoProvisioningSignal } from './modules/onboarding/contracts/provisionin
 import { UnavailableSubscriptionState } from './modules/iam/contracts/subscription-state.port';
 import { UnavailableStaffNotification } from './modules/iam/contracts/staff-notification.port';
 import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
+import { UnprovisionedPaymentAttempts } from './modules/stay/contracts/payment-attempts';
 import { UnavailableRestaurantDirectory } from './modules/iam/contracts/restaurant-directory.port';
 import { buildOpenApiDocument } from './openapi-document';
 
@@ -67,6 +68,7 @@ async function generate(): Promise<void> {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),
         xyp: new UnavailableXypIdentity(),
+        payments: new UnprovisionedPaymentAttempts(),
       },
     }),
     new FastifyAdapter(),

@@ -11,6 +11,7 @@ import { CorrectionRepository } from '../repositories/correction.repository';
 import { HousekeepingRepository } from '../repositories/housekeeping.repository';
 import type { StayRow } from '../repositories/stay.repository';
 import { StayRepository } from '../repositories/stay.repository';
+import { CleaningTaskService } from './cleaning-task.service';
 import { HousekeepingService } from './housekeeping.service';
 import type { CommandActor, RequestContext, StayDependencies } from './stay-context';
 import { StayServiceBase, claim, serverNow } from './stay-context';
@@ -93,10 +94,12 @@ export interface RoomCard {
 
 export class StayService extends StayServiceBase {
   private readonly housekeeping: HousekeepingService;
+  private readonly cleaningTasks: CleaningTaskService;
 
   constructor(deps: StayDependencies) {
     super(deps);
     this.housekeeping = new HousekeepingService(deps);
+    this.cleaningTasks = new CleaningTaskService(deps);
   }
 
   async view(
@@ -270,6 +273,14 @@ export class StayService extends StayServiceBase {
         // doc 02 §3.2: the room needs cleaning; the minibar and the catalog learn
         // the stay ended, in this transaction.
         await this.housekeeping.markNeedsCleaning(uow, stay.roomId, stay.stayId, now);
+        // doc 04 §5.2 (11): the room's cleaning work becomes a task a Cleaner
+        // can claim, in this same transaction.
+        const cleaningTaskId = await this.cleaningTasks.openForCheckout(
+          uow,
+          stay.roomId,
+          stay.stayId,
+          now,
+        );
         await this.deps.minibar.advanceScheduled(uow, stay.roomId, 'stay.checked_out');
         await this.deps.lifecycle.finalizeIfClear(uow, 'ROOM', stay.roomId, {
           source: 'stay.checkout_record',
@@ -281,7 +292,11 @@ export class StayService extends StayServiceBase {
           outcome: 'allowed',
           targetType: 'stay',
           targetRef: stay.stayId,
-          payload: { roomId: stay.roomId, actualCheckoutAt: now.toISOString() },
+          payload: {
+            roomId: stay.roomId,
+            actualCheckoutAt: now.toISOString(),
+            cleaningTaskId,
+          },
         });
         await appendOutboxEvent(uow, {
           aggregateType: 'stay',

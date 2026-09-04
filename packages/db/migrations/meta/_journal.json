@@ -71,6 +71,13 @@
       "when": 1757116800001,
       "tag": "0009_stay_reception",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1757203200001,
+      "tag": "0010_cleaner_checkout",
+      "breakpoints": true
     }
   ]
 }

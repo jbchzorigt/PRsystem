@@ -314,6 +314,110 @@ export class ConfigurationService extends MinibarServiceBase {
     });
   }
 
+  // ---------------------------------------------- the checkout's contract
+
+  /**
+   * What a room physically holds, per product (doc 22 §8). The checkout's
+   * report reads it to know what the Cleaner is counting against; the stay
+   * module never touches the stock tables itself.
+   */
+  async roomHoldings(uow: UnitOfWork, roomId: string): Promise<ReadonlyMap<string, number>> {
+    const inventory = new InventoryRepository(uow);
+    return new Map(
+      (await inventory.roomStock(roomId)).map((line) => [line.productId, line.quantity]),
+    );
+  }
+
+  /**
+   * doc 04 §5.1: the Cleaner's confirmation of an active-stay refill is one
+   * atomic warehouse → room transfer, linked to the stay, the room, the product
+   * and the task. The request that asked for it moved nothing.
+   */
+  async transferToRoom(
+    uow: UnitOfWork,
+    input: {
+      roomId: string;
+      productId: string;
+      quantity: number;
+      /** Absent for the routine refill between stays, which belongs to no stay. */
+      stayId?: string;
+      taskId?: string;
+      actorAccountId: string;
+    },
+  ): Promise<string> {
+    const inventory = new InventoryRepository(uow);
+    const movement = await inventory.appendMovement({
+      productId: input.productId,
+      movementType: 'TRANSFER_TO_ROOM',
+      location: 'TRANSFER',
+      roomId: input.roomId,
+      quantity: input.quantity,
+      ...(input.stayId === undefined ? {} : { stayId: input.stayId }),
+      ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+      actorAccountId: input.actorAccountId,
+    });
+    return movement.movementId;
+  }
+
+  /**
+   * doc 04 §8: the guest's consumption leaves the room's stock when the report
+   * that priced it settles. It is the one movement type the ledger calls a
+   * sale, and it carries the stay it belongs to.
+   */
+  async postGuestConsumption(
+    uow: UnitOfWork,
+    input: {
+      roomId: string;
+      productId: string;
+      quantity: number;
+      stayId: string;
+      versionId: string;
+      actorAccountId: string;
+    },
+  ): Promise<string> {
+    const inventory = new InventoryRepository(uow);
+    const movement = await inventory.appendMovement({
+      productId: input.productId,
+      movementType: 'GUEST_CONSUMPTION',
+      location: 'ROOM',
+      roomId: input.roomId,
+      quantity: input.quantity,
+      stayId: input.stayId,
+      taskId: input.versionId,
+      actorAccountId: input.actorAccountId,
+    });
+    return movement.movementId;
+  }
+
+  /**
+   * doc 22 §6.2: what left a room during a stay without a guest consuming it —
+   * a return to the warehouse, waste, or a negative count adjustment. The
+   * report subtracts these from what the guest could have taken.
+   */
+  async nonGuestStockOut(
+    uow: UnitOfWork,
+    stayId: string,
+  ): Promise<
+    readonly {
+      readonly movementId: string;
+      readonly productId: string;
+      readonly quantity: number;
+    }[]
+  > {
+    const result = await uow.query<Record<string, unknown>>(
+      `SELECT movement_id, product_id, quantity FROM platform.inventory_movement
+        WHERE hotel_id = $1 AND stay_id = $2
+          AND movement_type IN ('RETURN_TO_WAREHOUSE', 'WASTE', 'ADJUST_MINUS')
+        ORDER BY occurred_at`,
+      [uow.context.hotelId, stayId],
+    );
+    return result.rows.map((row) => ({
+      movementId: row['movement_id'] as string,
+      productId: row['product_id'] as string,
+      quantity: Number(row['quantity']),
+    }));
+  }
+
   // -------------------------------------------------------------- requests
 
   /**

@@ -22,8 +22,17 @@ export type MovementType = (typeof MOVEMENT_TYPES)[number];
 export const LOCATIONS = ['WAREHOUSE', 'ROOM', 'TRANSFER'] as const;
 export type Location = (typeof LOCATIONS)[number];
 
-/** The correction kinds a Manager records with a reason (doc 22 §4). */
-export const CORRECTION_TYPES = ['WASTE', 'ADJUST_PLUS', 'ADJUST_MINUS'] as const;
+/**
+ * The correction kinds a Manager records with a reason (doc 22 §4), and the
+ * room-to-warehouse return doc 22 §6.2 counts as a non-guest stock-out beside
+ * them. A return always names the room it leaves.
+ */
+export const CORRECTION_TYPES = [
+  'WASTE',
+  'ADJUST_PLUS',
+  'ADJUST_MINUS',
+  'RETURN_TO_WAREHOUSE',
+] as const;
 export type CorrectionType = (typeof CORRECTION_TYPES)[number];
 
 export function isCorrectionType(value: string): value is CorrectionType {

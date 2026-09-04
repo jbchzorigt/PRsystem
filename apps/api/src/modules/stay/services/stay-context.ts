@@ -15,6 +15,7 @@ import type { LifecycleResolutionPort } from '../../catalog/contracts/lifecycle-
 import type { TariffService } from '../../catalog/services/tariff.service';
 import type { ConfigurationService } from '../../minibar/services/configuration.service';
 import type { ConfirmedBookingsPort } from '../contracts/confirmed-bookings';
+import type { PaymentAttemptsPort } from '../contracts/payment-attempts';
 
 /**
  * The one transaction shape the stay module runs in — the catalog's and the
@@ -38,6 +39,12 @@ export interface StayDependencies {
   readonly keys: KeyManagementPort;
   readonly xyp: XypIdentityPort;
   readonly bookings: ConfirmedBookingsPort;
+  /**
+   * What the provider says about a payment attempt, from the module that will
+   * own payments (Phase 10). Only its answer may release a locked report
+   * version (`CHK-DEC-004`).
+   */
+  readonly payments: PaymentAttemptsPort;
   /**
    * The server's now for a command. Absent in production, where every command
    * reads the transaction's own server time; a test supplies one to move the

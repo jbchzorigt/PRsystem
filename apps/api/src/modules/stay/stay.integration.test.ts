@@ -1020,6 +1020,43 @@ describe('checkout, the readiness anchor and the lifecycle hand-off (STAY-DEC-00
       h.reception,
       request(h.reception),
     );
+    // doc 04 §4: the Cleaner's task outlives the retirement request and holds
+    // it open until the room is actually cleaned (Phase 09).
+    const waiting = await env.minibar.catalog.lifecycle.view(
+      { hotelId: h.hotelId, kind: 'ROOM', entityId: roomId },
+      h.manager,
+      request(h.manager),
+    );
+    expect(waiting.state).toBe('RETIRING');
+    expect(waiting.blockers.map((b) => b.sourceId)).toContain('room.cleaning_task');
+    const queue = await env.cleaningTasks.queue(
+      { hotelId: h.hotelId },
+      h.cleaner,
+      request(h.cleaner),
+    );
+    const task = queue.find((candidate) => candidate.roomId === roomId);
+    if (task === undefined) throw new Error('no cleaning task');
+    const claimed = await env.cleaningTasks.claimTask(
+      {
+        hotelId: h.hotelId,
+        taskId: task.taskId,
+        idempotencyKey: key('ct'),
+        expectedRevision: task.revision,
+      },
+      h.cleaner,
+      request(h.cleaner),
+    );
+    await env.cleaningTasks.complete(
+      {
+        hotelId: h.hotelId,
+        taskId: task.taskId,
+        idempotencyKey: key('ct'),
+        expectedRevision: claimed.revision,
+        refilled: [],
+      },
+      h.cleaner,
+      request(h.cleaner),
+    );
     const finished = await env.minibar.catalog.lifecycle.view(
       { hotelId: h.hotelId, kind: 'ROOM', entityId: roomId },
       h.manager,

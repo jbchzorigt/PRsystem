@@ -10,22 +10,41 @@ import { TariffService } from '../catalog/services/tariff.service';
 import { ConfigurationService } from '../minibar/services/configuration.service';
 import type { ConfirmedBookingsPort } from './contracts/confirmed-bookings';
 import { UnprovisionedConfirmedBookings } from './contracts/confirmed-bookings';
+import type { PaymentAttemptsPort } from './contracts/payment-attempts';
+import { UnprovisionedPaymentAttempts } from './contracts/payment-attempts';
+import { CheckoutController } from './http/checkout.controller';
+import { CleaningTaskController } from './http/cleaning-task.controller';
 import { ConflictController } from './http/conflict.controller';
 import { CorrectionController } from './http/correction.controller';
 import { HousekeepingController } from './http/housekeeping.controller';
+import { RefillController } from './http/refill.controller';
+import { ReportController } from './http/report.controller';
 import { ShiftController } from './http/shift.controller';
 import { StayController } from './http/stay.controller';
 import { CheckInService } from './services/check-in.service';
+import { CheckoutService } from './services/checkout.service';
+import { CleaningTaskService } from './services/cleaning-task.service';
 import { ConflictService } from './services/conflict.service';
 import { CorrectionService } from './services/correction.service';
+import { DisputeService } from './services/dispute.service';
 import { HousekeepingService } from './services/housekeeping.service';
+import { PaymentLockService } from './services/payment-lock.service';
+import { RefillService } from './services/refill.service';
+import { MinibarReportService } from './services/report.service';
 import { ShiftService } from './services/shift.service';
 import type { StayDependencies } from './services/stay-context';
 import { StayService } from './services/stay.service';
-import { CONFIRMED_BOOKINGS, STAY_CLOCK, STAY_POOL, XYP_IDENTITY } from './stay.tokens';
+import {
+  CONFIRMED_BOOKINGS,
+  PAYMENT_ATTEMPTS,
+  STAY_CLOCK,
+  STAY_POOL,
+  XYP_IDENTITY,
+} from './stay.tokens';
 
 /**
- * Availability, guest identity, reception, and stay (Phase 08).
+ * Availability, guest identity, reception, and stay (Phase 08), and the
+ * Cleaner and checkout coordination built over them (Phase 09).
  *
  * In-process dependencies are the earlier phases' contracts, resolved from
  * the modules that own them: the subscription-state port (IAM), the tariff
@@ -55,6 +74,7 @@ export interface StayModuleOptions {
   readonly keys?: KeyManagementPort;
   readonly xyp?: XypIdentityPort;
   readonly bookings?: ConfirmedBookingsPort;
+  readonly payments?: PaymentAttemptsPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
@@ -95,6 +115,7 @@ export class StayModule {
       });
     const xyp = options.xyp ?? selectXypIdentity(requiredConfig(options.config).appEnv);
     const bookings = options.bookings ?? new UnprovisionedConfirmedBookings();
+    const payments = options.payments ?? new UnprovisionedPaymentAttempts();
     const clock = options.clock;
     const deps = (
       subscription: SubscriptionStatePort,
@@ -110,6 +131,7 @@ export class StayModule {
       keys,
       xyp,
       bookings,
+      payments,
       ...(clock === undefined ? {} : { clock }),
     });
     const inject = [SUBSCRIPTION_STATE, TariffService, LifecycleService, ConfigurationService];
@@ -138,11 +160,16 @@ export class StayModule {
         StayController,
         CorrectionController,
         ConflictController,
+        CheckoutController,
+        ReportController,
+        RefillController,
+        CleaningTaskController,
       ],
       providers: [
         { provide: STAY_POOL, useValue: pool },
         { provide: XYP_IDENTITY, useValue: xyp },
         { provide: CONFIRMED_BOOKINGS, useValue: bookings },
+        { provide: PAYMENT_ATTEMPTS, useValue: payments },
         { provide: STAY_CLOCK, useValue: clock ?? null },
         { provide: StayLifecycle, useValue: new StayLifecycle(pool, ownsPool) },
         { provide: ShiftService, useFactory: service((d) => new ShiftService(d)), inject },
@@ -159,6 +186,24 @@ export class StayModule {
           inject,
         },
         { provide: ConflictService, useFactory: service((d) => new ConflictService(d)), inject },
+        { provide: CheckoutService, useFactory: service((d) => new CheckoutService(d)), inject },
+        {
+          provide: MinibarReportService,
+          useFactory: service((d) => new MinibarReportService(d)),
+          inject,
+        },
+        { provide: DisputeService, useFactory: service((d) => new DisputeService(d)), inject },
+        {
+          provide: PaymentLockService,
+          useFactory: service((d) => new PaymentLockService(d)),
+          inject,
+        },
+        { provide: RefillService, useFactory: service((d) => new RefillService(d)), inject },
+        {
+          provide: CleaningTaskService,
+          useFactory: service((d) => new CleaningTaskService(d)),
+          inject,
+        },
       ],
       exports: [
         ShiftService,
@@ -167,9 +212,16 @@ export class StayModule {
         StayService,
         CorrectionService,
         ConflictService,
+        CheckoutService,
+        MinibarReportService,
+        DisputeService,
+        PaymentLockService,
+        RefillService,
+        CleaningTaskService,
         STAY_POOL,
         XYP_IDENTITY,
         CONFIRMED_BOOKINGS,
+        PAYMENT_ATTEMPTS,
       ],
     };
   }

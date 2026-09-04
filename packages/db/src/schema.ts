@@ -5153,6 +5153,733 @@ export const stayEvent = platform
   )
   .enableRLS();
 
+// ---------------------------------------------------------------------
+// Phase 09 — Cleaner and checkout coordination.
+// ---------------------------------------------------------------------
+
+/**
+ * The Cleaner's unit of cleaning work over a room whose checkout is done
+ * (doc 04 §3, §8). The cleaning axis itself stays on `room_cleaning_state`.
+ */
+export const cleaningTask = platform
+  .table(
+    'cleaning_task',
+    {
+      claimedAt: timestamp('claimed_at', { withTimezone: true }),
+      claimedByAccountId: uuid('claimed_by_account_id'),
+      completedAt: timestamp('completed_at', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind')
+        .notNull()
+        .default(sql`'CHECKOUT_CLEANING'::text`),
+      openedAt: timestamp('opened_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reason: text('reason'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id'),
+      taskId: uuid('task_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check(
+        'cleaning_task_cancel_shape',
+        sql`((state <> 'CANCELLED'::text) OR (reason IS NOT NULL))`,
+      ),
+      check(
+        'cleaning_task_claim_shape',
+        sql`(((state = 'PENDING'::text) = (claimed_by_account_id IS NULL)) AND ((claimed_by_account_id IS NULL) = (claimed_at IS NULL)))`,
+      ),
+      check(
+        'cleaning_task_completion_shape',
+        sql`((state = 'COMPLETED'::text) = (completed_at IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'cleaning_task_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('cleaning_task_kind_known', sql`(kind = 'CHECKOUT_CLEANING'::text)`),
+      check(
+        'cleaning_task_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check('cleaning_task_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'cleaning_task_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'cleaning_task_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'IN_PROGRESS'::text, 'COMPLETED'::text, 'CANCELLED'::text]))`,
+      ),
+      foreignKey({
+        name: 'cleaning_task_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      uniqueIndex('cleaning_task_one_open_uq')
+        .on(table.hotelId, table.roomId)
+        .where(sql`state = ANY (ARRAY['PENDING'::text, 'IN_PROGRESS'::text])`),
+      index('cleaning_task_room_idx').on(table.hotelId, table.roomId, table.state),
+      index('cleaning_task_stay_idx').on(table.hotelId, table.stayId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The minibar usage report a minibar-enabled checkout cannot close without
+ * (`CHK-DEC-001`). It points at the version that is current; the versions are
+ * the history.
+ */
+export const minibarUsageReport = platform
+  .table(
+    'minibar_usage_report',
+    {
+      claimedAt: timestamp('claimed_at', { withTimezone: true }),
+      claimedByAccountId: uuid('claimed_by_account_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      openedAt: timestamp('opened_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reason: text('reason'),
+      reportId: uuid('report_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'minibar_usage_report_cancel_shape',
+        sql`((state <> 'CANCELLED'::text) OR (reason IS NOT NULL))`,
+      ),
+      check(
+        'minibar_usage_report_claim_shape',
+        sql`((claimed_by_account_id IS NULL) = (claimed_at IS NULL))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_usage_report_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check('minibar_usage_report_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'minibar_usage_report_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_usage_report_settled_shape',
+        sql`((state = 'SETTLED'::text) = (settled_at IS NOT NULL))`,
+      ),
+      check(
+        'minibar_usage_report_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'IN_INSPECTION'::text, 'SUBMITTED'::text, 'RETURNED'::text, 'LOCKED'::text, 'SETTLED'::text, 'CANCELLED'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      uniqueIndex('minibar_usage_report_one_live_uq')
+        .on(table.hotelId, table.stayId)
+        .where(sql`state <> ALL (ARRAY['SETTLED'::text, 'CANCELLED'::text])`),
+      index('minibar_usage_report_room_idx').on(table.hotelId, table.roomId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * One immutable version of a usage report - the Cleaner's normal one or a
+ * Manager's exception one, with the reason it was needed (`CHK-DEC-002`,
+ * `-003`).
+ */
+export const minibarUsageReportVersion = platform
+  .table(
+    'minibar_usage_report_version',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      cutoffAt: timestamp('cutoff_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      noUsage: boolean('no_usage')
+        .notNull()
+        .default(sql`false`),
+      reason: text('reason'),
+      reportId: uuid('report_id').notNull(),
+      submittedByAccountId: uuid('submitted_by_account_id').notNull(),
+      submittedRole: text('submitted_role').notNull(),
+      totalMnt: bigint('total_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      versionId: uuid('version_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      versionNo: integer('version_no').notNull(),
+    },
+    (table) => [
+      check(
+        'minibar_usage_report_version_exception_shape',
+        sql`((kind <> 'EXCEPTION'::text) OR ((submitted_role = ANY (ARRAY['MANAGER'::text, 'MANAGER_PLUS'::text])) AND (reason IS NOT NULL)))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_version_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_usage_report_version_kind_known',
+        sql`(kind = ANY (ARRAY['NORMAL'::text, 'EXCEPTION'::text]))`,
+      ),
+      check('minibar_usage_report_version_no_positive', sql`(version_no >= 1)`),
+      unique('minibar_usage_report_version_no_uq').on(table.reportId, table.versionNo),
+      check(
+        'minibar_usage_report_version_no_usage_shape',
+        sql`((NOT no_usage) OR (total_mnt = 0))`,
+      ),
+      check(
+        'minibar_usage_report_version_normal_shape',
+        sql`((kind <> 'NORMAL'::text) OR (submitted_role = 'CLEANER'::text))`,
+      ),
+      check(
+        'minibar_usage_report_version_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_version_report_fkey',
+        columns: [table.reportId],
+        foreignColumns: [minibarUsageReport.reportId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_usage_report_version_role_known',
+        sql`(submitted_role = ANY (ARRAY['CLEANER'::text, 'MANAGER'::text, 'MANAGER_PLUS'::text]))`,
+      ),
+      check('minibar_usage_report_version_total_non_negative', sql`(total_mnt >= 0)`),
+      index('minibar_usage_report_version_report_idx').on(
+        table.hotelId,
+        table.reportId,
+        table.versionNo,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A priced line of a version: the documented billable-quantity formula and the
+ * stay's own snapshot price, both held by the database (doc 22 §8,
+ * `PRICE-DEC-005`, `-006`, `-007`).
+ */
+export const minibarUsageReportLine = platform
+  .table(
+    'minibar_usage_report_line',
+    {
+      billableQuantity: integer('billable_quantity').notNull(),
+      countedQuantity: integer('counted_quantity').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      lineId: uuid('line_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      lineTotalMnt: bigint('line_total_mnt', { mode: 'bigint' }).notNull(),
+      nonGuestOutQuantity: integer('non_guest_out_quantity')
+        .notNull()
+        .default(sql`0`),
+      openingQuantity: integer('opening_quantity').notNull(),
+      productId: uuid('product_id').notNull(),
+      productName: text('product_name').notNull(),
+      refillQuantity: integer('refill_quantity')
+        .notNull()
+        .default(sql`0`),
+      stayId: uuid('stay_id').notNull(),
+      unitPriceMnt: bigint('unit_price_mnt', { mode: 'bigint' }).notNull(),
+      versionId: uuid('version_id').notNull(),
+    },
+    (table) => [
+      check(
+        'minibar_usage_report_line_billable_formula',
+        sql`(billable_quantity = GREATEST(0, (((opening_quantity + refill_quantity) - non_guest_out_quantity) - counted_quantity)))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_line_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_usage_report_line_name_bounded',
+        sql`((length(product_name) >= 1) AND (length(product_name) <= 120))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_line_price_book_fkey',
+        columns: [table.stayId, table.productId],
+        foreignColumns: [stayMinibarPrice.stayId, stayMinibarPrice.productId],
+      }).onDelete('restrict'),
+      check('minibar_usage_report_line_price_non_negative', sql`(unit_price_mnt >= 0)`),
+      unique('minibar_usage_report_line_product_uq').on(table.versionId, table.productId),
+      check(
+        'minibar_usage_report_line_quantities_non_negative',
+        sql`((opening_quantity >= 0) AND (refill_quantity >= 0) AND (non_guest_out_quantity >= 0) AND (counted_quantity >= 0) AND (billable_quantity >= 0))`,
+      ),
+      check(
+        'minibar_usage_report_line_total_formula',
+        sql`(line_total_mnt = (unit_price_mnt * billable_quantity))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_line_version_fkey',
+        columns: [table.versionId],
+        foreignColumns: [minibarUsageReportVersion.versionId],
+      }).onDelete('restrict'),
+      index('minibar_usage_report_line_version_idx').on(table.hotelId, table.versionId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The refill and non-guest movements a version counted, so its arithmetic can
+ * be read back from the ledger (doc 22 §8).
+ */
+export const minibarUsageReportMovement = platform
+  .table(
+    'minibar_usage_report_movement',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      movementId: uuid('movement_id').notNull(),
+      role: text('role').notNull(),
+      versionId: uuid('version_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'minibar_usage_report_movement_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'minibar_usage_report_movement_movement_fkey',
+        columns: [table.movementId],
+        foreignColumns: [inventoryMovement.movementId],
+      }).onDelete('restrict'),
+      primaryKey({
+        name: 'minibar_usage_report_movement_pkey',
+        columns: [table.versionId, table.movementId],
+      }),
+      check(
+        'minibar_usage_report_movement_role_known',
+        sql`(role = ANY (ARRAY['REFILL'::text, 'NON_GUEST_OUT'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_usage_report_movement_version_fkey',
+        columns: [table.versionId],
+        foreignColumns: [minibarUsageReportVersion.versionId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A guest's disputed line: Reception notes it, a Manager upholds or waives it,
+ * and the settlement waits for that decision (`CHK-DEC-006`).
+ */
+export const minibarReportDispute = platform
+  .table(
+    'minibar_report_dispute',
+    {
+      disputeId: uuid('dispute_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      disputedQuantity: integer('disputed_quantity').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      note: text('note').notNull(),
+      notedAt: timestamp('noted_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      notedByAccountId: uuid('noted_by_account_id').notNull(),
+      productId: uuid('product_id').notNull(),
+      reportId: uuid('report_id').notNull(),
+      resolutionReason: text('resolution_reason'),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+      resolvedByAccountId: uuid('resolved_by_account_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+      versionId: uuid('version_id').notNull(),
+      waivedAmountMnt: bigint('waived_amount_mnt', { mode: 'bigint' }),
+    },
+    (table) => [
+      foreignKey({
+        name: 'minibar_report_dispute_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_report_dispute_note_bounded',
+        sql`((length(note) >= 1) AND (length(note) <= 300))`,
+      ),
+      foreignKey({
+        name: 'minibar_report_dispute_product_fkey',
+        columns: [table.hotelId, table.productId],
+        foreignColumns: [minibarProduct.hotelId, minibarProduct.productId],
+      }).onDelete('restrict'),
+      check('minibar_report_dispute_quantity_positive', sql`(disputed_quantity > 0)`),
+      check(
+        'minibar_report_dispute_reason_bounded',
+        sql`((resolution_reason IS NULL) OR ((length(resolution_reason) >= 1) AND (length(resolution_reason) <= 300)))`,
+      ),
+      foreignKey({
+        name: 'minibar_report_dispute_report_fkey',
+        columns: [table.reportId],
+        foreignColumns: [minibarUsageReport.reportId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_report_dispute_resolution_shape',
+        sql`(((state = 'OPEN'::text) = (resolved_at IS NULL)) AND ((resolved_at IS NULL) = (resolved_by_account_id IS NULL)) AND ((resolved_at IS NULL) = (resolution_reason IS NULL)))`,
+      ),
+      check('minibar_report_dispute_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'minibar_report_dispute_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'UPHELD'::text, 'WAIVED'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_report_dispute_version_fkey',
+        columns: [table.versionId],
+        foreignColumns: [minibarUsageReportVersion.versionId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_report_dispute_waiver_non_negative',
+        sql`((waived_amount_mnt IS NULL) OR (waived_amount_mnt >= 0))`,
+      ),
+      check(
+        'minibar_report_dispute_waiver_shape',
+        sql`((state = 'WAIVED'::text) = (waived_amount_mnt IS NOT NULL))`,
+      ),
+      index('minibar_report_dispute_report_idx').on(table.hotelId, table.reportId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The lock a payment attempt puts on the exact version it charges. One version
+ * backs one successful charge, and a pending or unknown provider status keeps
+ * the hold (`CHK-DEC-004`).
+ */
+export const minibarPaymentLock = platform
+  .table(
+    'minibar_payment_lock',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      attemptRef: text('attempt_ref').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      lockId: uuid('lock_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      lockedAt: timestamp('locked_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      lockedByAccountId: uuid('locked_by_account_id').notNull(),
+      providerStatus: text('provider_status'),
+      reportId: uuid('report_id').notNull(),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+      resolvedByAccountId: uuid('resolved_by_account_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'HELD'::text`),
+      versionId: uuid('version_id').notNull(),
+    },
+    (table) => [
+      check('minibar_payment_lock_amount_non_negative', sql`(amount_mnt >= 0)`),
+      check(
+        'minibar_payment_lock_attempt_bounded',
+        sql`((length(attempt_ref) >= 1) AND (length(attempt_ref) <= 120))`,
+      ),
+      unique('minibar_payment_lock_attempt_uq').on(table.hotelId, table.attemptRef),
+      foreignKey({
+        name: 'minibar_payment_lock_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_payment_lock_provider_status_known',
+        sql`((provider_status IS NULL) OR (provider_status = ANY (ARRAY['PENDING'::text, 'UNKNOWN'::text, 'FAILED_NO_FUNDS'::text, 'SUCCEEDED'::text])))`,
+      ),
+      check(
+        'minibar_payment_lock_release_shape',
+        sql`((state <> 'RELEASED'::text) OR (provider_status = 'FAILED_NO_FUNDS'::text))`,
+      ),
+      foreignKey({
+        name: 'minibar_payment_lock_report_fkey',
+        columns: [table.reportId],
+        foreignColumns: [minibarUsageReport.reportId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_payment_lock_resolution_shape',
+        sql`(((state = 'HELD'::text) = (resolved_at IS NULL)) AND ((resolved_at IS NULL) = (resolved_by_account_id IS NULL)))`,
+      ),
+      check('minibar_payment_lock_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'minibar_payment_lock_settle_shape',
+        sql`((state <> 'SETTLED'::text) OR (provider_status = 'SUCCEEDED'::text))`,
+      ),
+      check(
+        'minibar_payment_lock_state_known',
+        sql`(state = ANY (ARRAY['HELD'::text, 'RELEASED'::text, 'SETTLED'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_payment_lock_version_fkey',
+        columns: [table.versionId],
+        foreignColumns: [minibarUsageReportVersion.versionId],
+      }).onDelete('restrict'),
+      uniqueIndex('minibar_payment_lock_one_held_uq')
+        .on(table.reportId)
+        .where(sql`state = 'HELD'::text`),
+      uniqueIndex('minibar_payment_lock_one_settled_uq')
+        .on(table.versionId)
+        .where(sql`state = 'SETTLED'::text`),
+      index('minibar_payment_lock_report_idx').on(table.hotelId, table.reportId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The only way to correct a settled charge: an append-only reversal, receivable
+ * or waiver priced from the original snapshot (`CHK-DEC-005`, `PRICE-DEC-004`).
+ */
+export const minibarReportAdjustment = platform
+  .table(
+    'minibar_report_adjustment',
+    {
+      actorAccountId: uuid('actor_account_id').notNull(),
+      adjustmentId: uuid('adjustment_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      lockId: uuid('lock_id').notNull(),
+      originalVersionId: uuid('original_version_id').notNull(),
+      productId: uuid('product_id'),
+      quantity: integer('quantity'),
+      reason: text('reason').notNull(),
+      reportId: uuid('report_id').notNull(),
+      unitPriceMnt: bigint('unit_price_mnt', { mode: 'bigint' }),
+    },
+    (table) => [
+      check('minibar_report_adjustment_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'minibar_report_adjustment_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_report_adjustment_kind_known',
+        sql`(kind = ANY (ARRAY['OVERCHARGE_REVERSAL'::text, 'UNDERCHARGE_RECEIVABLE'::text, 'DISPUTE_WAIVER'::text]))`,
+      ),
+      check(
+        'minibar_report_adjustment_line_shape',
+        sql`(((product_id IS NULL) = (quantity IS NULL)) AND ((product_id IS NULL) = (unit_price_mnt IS NULL)))`,
+      ),
+      check(
+        'minibar_report_adjustment_line_total',
+        sql`((product_id IS NULL) OR (amount_mnt = (unit_price_mnt * quantity)))`,
+      ),
+      foreignKey({
+        name: 'minibar_report_adjustment_lock_fkey',
+        columns: [table.lockId],
+        foreignColumns: [minibarPaymentLock.lockId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_report_adjustment_quantity_positive',
+        sql`((quantity IS NULL) OR (quantity > 0))`,
+      ),
+      check(
+        'minibar_report_adjustment_reason_bounded',
+        sql`((length(reason) >= 1) AND (length(reason) <= 300))`,
+      ),
+      foreignKey({
+        name: 'minibar_report_adjustment_report_fkey',
+        columns: [table.reportId],
+        foreignColumns: [minibarUsageReport.reportId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'minibar_report_adjustment_version_fkey',
+        columns: [table.originalVersionId],
+        foreignColumns: [minibarUsageReportVersion.versionId],
+      }).onDelete('restrict'),
+      index('minibar_report_adjustment_report_idx').on(
+        table.hotelId,
+        table.reportId,
+        table.createdAt,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The active-stay refill: a request that is not a movement, and the Cleaner's
+ * confirmation that is (doc 04 §5.1, `PRICE-DEC-005`).
+ */
+export const minibarRefillTask = platform
+  .table(
+    'minibar_refill_task',
+    {
+      claimedAt: timestamp('claimed_at', { withTimezone: true }),
+      cleanerAccountId: uuid('cleaner_account_id'),
+      completedAt: timestamp('completed_at', { withTimezone: true }),
+      confirmedQuantity: integer('confirmed_quantity'),
+      hotelId: uuid('hotel_id').notNull(),
+      movementId: uuid('movement_id'),
+      productId: uuid('product_id').notNull(),
+      reason: text('reason'),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      requestedQuantity: integer('requested_quantity').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id').notNull(),
+      taskId: uuid('task_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check(
+        'minibar_refill_task_claim_shape',
+        sql`((cleaner_account_id IS NULL) = (claimed_at IS NULL))`,
+      ),
+      check(
+        'minibar_refill_task_completion_shape',
+        sql`((state = 'COMPLETED'::text) = ((confirmed_quantity IS NOT NULL) AND (movement_id IS NOT NULL) AND (completed_at IS NOT NULL)))`,
+      ),
+      check(
+        'minibar_refill_task_confirmed_bounded',
+        sql`((confirmed_quantity IS NULL) OR ((confirmed_quantity > 0) AND (confirmed_quantity <= requested_quantity)))`,
+      ),
+      foreignKey({
+        name: 'minibar_refill_task_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'minibar_refill_task_movement_fkey',
+        columns: [table.movementId],
+        foreignColumns: [inventoryMovement.movementId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'minibar_refill_task_price_book_fkey',
+        columns: [table.stayId, table.productId],
+        foreignColumns: [stayMinibarPrice.stayId, stayMinibarPrice.productId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_refill_task_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check('minibar_refill_task_requested_positive', sql`(requested_quantity > 0)`),
+      check('minibar_refill_task_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'minibar_refill_task_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_refill_task_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'IN_PROGRESS'::text, 'COMPLETED'::text, 'CANCELLED'::text, 'IMPOSSIBLE'::text]))`,
+      ),
+      foreignKey({
+        name: 'minibar_refill_task_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check(
+        'minibar_refill_task_terminal_reason',
+        sql`((state <> ALL (ARRAY['CANCELLED'::text, 'IMPOSSIBLE'::text])) OR (reason IS NOT NULL))`,
+      ),
+      uniqueIndex('minibar_refill_task_one_open_uq')
+        .on(table.hotelId, table.roomId, table.productId)
+        .where(sql`state = ANY (ARRAY['PENDING'::text, 'IN_PROGRESS'::text])`),
+      index('minibar_refill_task_product_idx').on(table.hotelId, table.productId, table.state),
+      index('minibar_refill_task_room_idx').on(table.hotelId, table.roomId, table.state),
+      index('minibar_refill_task_stay_idx').on(table.hotelId, table.stayId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -5234,4 +5961,14 @@ export const DECLARED_TABLES = [
   stayTimeCorrection,
   bookingFulfillmentConflict,
   stayEvent,
+  // Phase 09.
+  cleaningTask,
+  minibarUsageReport,
+  minibarUsageReportVersion,
+  minibarUsageReportLine,
+  minibarUsageReportMovement,
+  minibarReportDispute,
+  minibarPaymentLock,
+  minibarReportAdjustment,
+  minibarRefillTask,
 ] as const;

@@ -8,9 +8,16 @@ import { provisionIamDatabase } from '../../iam/test-support/iam-harness';
 import type { MinibarHarness, MinibarHotel } from '../../minibar/test-support/minibar-harness';
 import { attachMinibarHarness, key, request } from '../../minibar/test-support/minibar-harness';
 import { SimulatedConfirmedBookings } from '../contracts/confirmed-bookings';
+import { SimulatedPaymentAttempts } from '../contracts/payment-attempts';
 import type { GuestIdentityInput } from '../domain/identity';
 import { CheckInService } from '../services/check-in.service';
+import { CheckoutService } from '../services/checkout.service';
+import { CleaningTaskService } from '../services/cleaning-task.service';
 import { ConflictService } from '../services/conflict.service';
+import { DisputeService } from '../services/dispute.service';
+import { PaymentLockService } from '../services/payment-lock.service';
+import { RefillService } from '../services/refill.service';
+import { MinibarReportService } from '../services/report.service';
 import { CorrectionService } from '../services/correction.service';
 import { HousekeepingService } from '../services/housekeeping.service';
 import { ShiftService } from '../services/shift.service';
@@ -40,12 +47,19 @@ export interface StayHarness {
   readonly deps: StayDependencies;
   readonly xyp: SimulatedXypIdentity;
   readonly bookings: SimulatedConfirmedBookings;
+  readonly payments: SimulatedPaymentAttempts;
   readonly shifts: ShiftService;
   readonly housekeeping: HousekeepingService;
   readonly checkIns: CheckInService;
   readonly stays: StayService;
   readonly corrections: CorrectionService;
   readonly conflicts: ConflictService;
+  readonly checkouts: CheckoutService;
+  readonly reports: MinibarReportService;
+  readonly disputes: DisputeService;
+  readonly paymentLocks: PaymentLockService;
+  readonly refills: RefillService;
+  readonly cleaningTasks: CleaningTaskService;
   /** Moves the server's now for every command by this many minutes (0 resets). */
   travel(minutes: number): void;
   now(): Date;
@@ -72,6 +86,7 @@ export function attachStayHarness(db: TestDatabase, suite: string): StayHarness 
   const minibar = attachMinibarHarness(db, suite);
   const xyp = new SimulatedXypIdentity();
   const bookings = new SimulatedConfirmedBookings();
+  const payments = new SimulatedPaymentAttempts();
   let offsetMs = 0;
   const clock = (): Date => new Date(Date.now() + offsetMs);
   const deps: StayDependencies = {
@@ -83,6 +98,7 @@ export function attachStayHarness(db: TestDatabase, suite: string): StayHarness 
     keys: new LocalKeyManagement({ appEnv: 'test', seed: `synthetic-${suite}` }),
     xyp,
     bookings,
+    payments,
     clock,
   };
   let hotelSequence = 0;
@@ -95,12 +111,19 @@ export function attachStayHarness(db: TestDatabase, suite: string): StayHarness 
     deps,
     xyp,
     bookings,
+    payments,
     shifts: new ShiftService(deps),
     housekeeping: new HousekeepingService(deps),
     checkIns: new CheckInService(deps),
     stays: new StayService(deps),
     corrections: new CorrectionService(deps),
     conflicts: new ConflictService(deps),
+    checkouts: new CheckoutService(deps),
+    reports: new MinibarReportService(deps),
+    disputes: new DisputeService(deps),
+    paymentLocks: new PaymentLockService(deps),
+    refills: new RefillService(deps),
+    cleaningTasks: new CleaningTaskService(deps),
     travel(minutes) {
       offsetMs = minutes * 60_000;
     },

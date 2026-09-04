@@ -388,3 +388,136 @@ describe('everyone else', () => {
     void hotelB;
   });
 });
+
+describe('the checkout, the report and the Cleaner’s queue (Phase 09, doc 18 §3)', () => {
+  let stayFree: string;
+  let stayFreeRevision: number;
+
+  it('Reception starts the checkout of a minibar-disabled room and no report is opened', async () => {
+    const reception = await signIn(receptionA);
+    const cleaner = await signIn(cleanerA);
+    // The room must be clean at the arrival: the Cleaner marks it.
+    const cleaning = await call('GET', `/hotels/${hotelA}/rooms/${roomFree}/cleaning`, cleaner);
+    expect(cleaning.status).toBe(200);
+    const marked = await call('POST', `/hotels/${hotelA}/rooms/${roomFree}/cleaning`, cleaner, {
+      toState: 'CLEAN',
+      expectedRevision: cleaning.body['revision'] as number,
+    });
+    expect(marked.status).toBe(200);
+    const checkIn = await call('POST', `/hotels/${hotelA}/stays`, reception, {
+      roomId: roomFree,
+      stayType: 'HOURLY',
+      halfHourUnits: 2,
+      guest,
+    });
+    expect(checkIn.status).toBe(201);
+    stayFree = checkIn.body['stayId'] as string;
+    stayFreeRevision = checkIn.body['revision'] as number;
+
+    const admin = await signIn(adminA);
+    expect(
+      (
+        await call('POST', `/hotels/${hotelA}/stays/${stayFree}/checkout/start`, admin, {
+          expectedRevision: stayFreeRevision,
+        })
+      ).status,
+    ).toBe(404);
+    const started = await call(
+      'POST',
+      `/hotels/${hotelA}/stays/${stayFree}/checkout/start`,
+      reception,
+      { expectedRevision: stayFreeRevision },
+    );
+    expect(started.status).toBe(200);
+    // `CHK-DEC-001`: a room with no minibar waits for no report.
+    expect(started.body).toMatchObject({ state: 'CHECKOUT_IN_PROGRESS', reportId: null });
+    stayFreeRevision = started.body['revision'] as number;
+  });
+
+  it('the Cleaner holds the queue and the versions; Reception holds the return and the payment', async () => {
+    const reception = await signIn(receptionA);
+    const cleaner = await signIn(cleanerA);
+    const admin = await signIn(adminA);
+    // The Cleaner's own lists.
+    expect((await call('GET', `/hotels/${hotelA}/cleaning-tasks`, cleaner)).status).toBe(200);
+    expect((await call('GET', `/hotels/${hotelA}/minibar-refills`, cleaner)).status).toBe(200);
+    // Reception may see what it must act on; a report's prices are not the Cleaner's.
+    expect((await call('GET', `/hotels/${hotelA}/minibar-reports`, reception)).status).toBe(200);
+    const unknownReport = '00000000-0000-4000-8000-0000000000c9';
+    expect(
+      (await call('GET', `/hotels/${hotelA}/minibar-reports/${unknownReport}`, cleaner)).status,
+    ).toBe(404);
+    // A Hotel Admin without the operational roles holds none of it.
+    expect((await call('GET', `/hotels/${hotelA}/cleaning-tasks`, admin)).status).toBe(404);
+    expect(
+      (
+        await call('POST', `/hotels/${hotelA}/minibar-refills`, admin, {
+          stayId: stayFree,
+          productId: '00000000-0000-4000-8000-0000000000ca',
+          quantity: 1,
+        })
+      ).status,
+    ).toBe(404);
+    // The Cleaner asks for no refill and starts no checkout.
+    expect(
+      (
+        await call('POST', `/hotels/${hotelA}/minibar-refills`, cleaner, {
+          stayId: stayFree,
+          productId: '00000000-0000-4000-8000-0000000000ca',
+          quantity: 1,
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call('POST', `/hotels/${hotelA}/stays/${stayFree}/checkout/cancel`, cleaner, {
+          expectedRevision: stayFreeRevision,
+          reason: 'Буцаах',
+        })
+      ).status,
+    ).toBe(404);
+  });
+
+  it('the actual checkout leaves a task only its Cleaner completes, and the room becomes clean', async () => {
+    const reception = await signIn(receptionA);
+    const cleaner = await signIn(cleanerA);
+    const done = await call('POST', `/hotels/${hotelA}/stays/${stayFree}/checkout`, reception, {
+      expectedRevision: stayFreeRevision,
+    });
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject({ state: 'COMPLETED' });
+    const queue = await call('GET', `/hotels/${hotelA}/cleaning-tasks`, cleaner);
+    expect(queue.status).toBe(200);
+    const tasks = queue.body['tasks'] as { taskId: string; roomId: string; revision: number }[];
+    const task = tasks.find((candidate) => candidate.roomId === roomFree);
+    expect(task).toBeDefined();
+    // Reception neither claims nor completes it.
+    expect(
+      (
+        await call(
+          'POST',
+          `/hotels/${hotelA}/cleaning-tasks/${task?.taskId as string}/claim`,
+          reception,
+          { expectedRevision: task?.revision as number },
+        )
+      ).status,
+    ).toBe(404);
+    const claimed = await call(
+      'POST',
+      `/hotels/${hotelA}/cleaning-tasks/${task?.taskId as string}/claim`,
+      cleaner,
+      { expectedRevision: task?.revision as number },
+    );
+    expect(claimed.status).toBe(200);
+    const completed = await call(
+      'POST',
+      `/hotels/${hotelA}/cleaning-tasks/${task?.taskId as string}/complete`,
+      cleaner,
+      { expectedRevision: claimed.body['revision'] as number, refilled: [] },
+    );
+    expect(completed.status).toBe(200);
+    expect(completed.body).toMatchObject({ state: 'COMPLETED' });
+    const cleaning = await call('GET', `/hotels/${hotelA}/rooms/${roomFree}/cleaning`, cleaner);
+    expect(cleaning.body).toMatchObject({ state: 'CLEAN' });
+  });
+});
