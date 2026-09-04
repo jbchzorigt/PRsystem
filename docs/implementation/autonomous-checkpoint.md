@@ -1,6 +1,6 @@
-# Autonomous checkpoint — Phase 06 complete, Phase 07 authorized and not started
+# Autonomous checkpoint — Phase 07 complete, Phase 08 authorized and not started
 
-**Written:** 2026-09-03, at the close of Phase 06 under the standing progression authorization.
+**Written:** 2026-09-04, at the close of Phase 07 under the standing progression authorization.
 **Status of this document:** a handoff. It records what is true in the checkout, not what was
 intended. Nothing below claims a gate that was not run.
 
@@ -13,21 +13,17 @@ intended. Nothing below claims a gate that was not run.
 | Path | `/Users/zorigtgantumur/Documents/Work/prsystem/.claude/worktrees/prsystem-phases-06-23-d506eb` |
 | Branch | `claude/prsystem-phases-06-23-d506eb` |
 | Base | fast-forwarded from `claude/mvp-implementation` at `818bd12db6fdc557bb6908b773ed359465c6ce71` (Phase 05 acceptance) |
-| Phase 06 implementation commits | `a44fd58e59966ad293278cd3aace5f629141ea98`, `dcca709ded1be4bf33c25b4d1ca37b4da647dbd7` |
-| Phase 06 record commit | the commit that carries this checkpoint (see `git log -1`) |
+| Phase 06 commits | `a44fd58e59966ad293278cd3aace5f629141ea98`, `dcca709ded1be4bf33c25b4d1ca37b4da647dbd7`, then its record commit |
+| Phase 07 implementation commits | `1d2c764fab47adb49f9e2e6dd8346fca3a28e5ff`, `0b408205cd337aec26c70c7607a8e68b3aedbac2` |
+| Phase 07 record commit | the commit that carries this checkpoint (see `git log -1`) |
 
-**Where the work lives, and why.** The session that completed Phase 06 was launched inside this git
-worktree, whose branch had been created from the initial documentation commit and held no code. The
-main checkout at `/Users/zorigtgantumur/Documents/Work/prsystem` held `claude/mvp-implementation` at
-`818bd12` with the *uncommitted* Phase 06 draft described by the previous checkpoint, and another
-Claude session still had that checkout as its working directory. To avoid concurrent writes, this
-worktree's branch was fast-forwarded to `818bd12` (no unique commits were discarded), the draft was
-copied in byte-for-byte (the copied status and the copied module were verified identical), and the
-phase was completed and committed **here**. The main checkout was never modified: it still holds the
-now-superseded uncommitted draft and the untracked Phase 03 checkpoint (`phase-03-eighth-repair-checkpoint.md`,
-md5 `fc0fd508dcae2510fbc3dc1f3fcf8fa5`). Reconciling the two checkouts — fast-forwarding
-`claude/mvp-implementation` to this branch and discarding the stale draft — is the customer's call and
-was not performed. No push, merge, rebase, reset, stash, clean or deploy has been performed anywhere.
+**Where the work lives, and why.** Unchanged from the Phase 06 checkpoint: the work is on this
+worktree's branch. The main checkout at `/Users/zorigtgantumur/Documents/Work/prsystem` still holds
+`claude/mvp-implementation` at `818bd12` with the superseded uncommitted Phase 06 draft and the
+untracked Phase 03 checkpoint; it was not modified. This worktree also carries an untracked copy of
+`docs/implementation/phase-03-eighth-repair-checkpoint.md`, preserved as untracked. Reconciling the
+two checkouts is the customer's call and was not performed. No push, merge, rebase, reset, stash,
+clean or deploy has been performed anywhere.
 
 ## 2. Governed state
 
@@ -39,31 +35,35 @@ Declared in [`tools/programme-state.mjs`](../../tools/programme-state.mjs):
 | 04 — IAM, tenancy, RBAC, staff lifecycle | `DONE` | `ACCEPTED` at `e5fcf19…` |
 | 05 — Hotel onboarding and subscription | `DONE` | `ACCEPTED` at `35314ba…` |
 | 06 — Hotel, room, category, and tariffs | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
-| 07 — Minibar inventory and templates | `NOT STARTED` | — (authorized to begin) |
+| 07 — Minibar inventory and templates | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| 08 — Availability, guest identity, reception, and stay | `NOT STARTED` | — (authorized to begin) |
 
-**Standing progression authorization (2026-09-03).** The customer authorized Phases 06–23 to be
-implemented sequentially, each continuing once its blocking gates pass. It is implementation
-authorization only: no phase it covers is accepted by it, no gate is weakened, nothing is pushed,
-merged or deployed. Declared as `PROGRESSION_AUTHORIZATION`; completed phases are listed in
-`PROGRESSED_PHASES`; governance check 17 holds each one's manifest, governed entry and record to one
-another. `currentPhaseState` stays `NOT STARTED` for the current phase until the commit completing it
-lands, exactly as before.
+The standing progression authorization of 2026-09-03 is unchanged: implementation authorization for
+Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phase 07 is the
+second entry in `PROGRESSED_PHASES`; governance check 17 holds its manifest, its governed entry and
+its record to one another.
 
-## 3. What Phase 06 delivered
+## 3. What Phase 07 delivered
 
-See the [Phase 06 record](phase-status.md#phase-06-record) for the full account. In short: migration
-`0007_hotel_catalog`; the catalog module under `apps/api/src/modules/catalog/` (configuration,
-categories, rooms, minibar entities, server-authoritative tariffs, the transaction-bound rate
-snapshot, the `ACTIVE → RETIRING → INACTIVE` lifecycle with fail-closed dependency evidence, three
-HTTP controllers, module wiring); seven test suites (25 unit, 30 integration and dependency, 16 HTTP
-and concurrency); traceability rows for the 11 owned decisions (63 of 279 `COVERED`); assumptions
-`A-P06-1`…`A-P06-9`; the governance changes for the standing authorization and check 17.
+See the [Phase 07 record](phase-status.md#phase-07-record). In short: migration
+`0008_minibar_inventory` (twelve tenant tables, the ledger and its two `SECURITY DEFINER` triggers
+owned by `prsystem_maintenance_fn`, the version and change guard triggers, the one-Default and
+one-pending partial unique indexes); the minibar module under `apps/api/src/modules/minibar/`
+(products, receipts and corrections on an append-only ledger with the integer weighted average;
+template versions `DRAFT → PUBLISHED → ARCHIVED` with Default and archive blockers; room
+configuration with one pending change, bounded reconciliation and rollback tasks, variance and
+stock blocks, resolution and the audited shortage override, atomic apply with lifecycle hand-off;
+multi-room Rollout with read-only preview, partial-success confirm, derived state, cancel remaining
+and linked retry; five controllers, 26 paths); five test suites (26 unit, 23 integration, 6 HTTP,
+4 concurrency); the catalog's `dependency-probe`, `lifecycle-resolution` and `room-reads`
+contracts; traceability rows for the 36 owned decisions (99 of 279 `COVERED`); assumptions
+`A-P07-1`…`A-P07-11`; the governance changes for the Phase 07 manifest.
 
 ## 4. Working tree at this checkpoint
 
-Everything is committed except the pre-existing untracked
-`docs/implementation/phase-03-eighth-repair-checkpoint.md`, which is preserved as untracked. Build
-artefacts (`dist/`, `openapi.json`, `.turbo/`) are ignored.
+Everything is committed except the untracked
+`docs/implementation/phase-03-eighth-repair-checkpoint.md`. Build artefacts (`dist/`,
+`openapi.json`, `.turbo/`) are ignored.
 
 ## 5. Tests — what was actually run, and where
 
@@ -71,36 +71,42 @@ artefacts (`dist/`, `openapi.json`, `.turbo/`) are ignored.
 
 | Command | Result |
 | --- | --- |
-| catalog domain + contracts unit suites | 25 passed |
-| `catalog.dependency` + `catalog.integration` | 30 passed |
-| `catalog.authorization.http` + `catalog.concurrency`, ×3 after `dcca709` | 16 passed each run |
-| `@prsystem/db` `test:unit` / `test:migrations` / `test:security` / `test:integration` / `test:concurrency` / `test:regression` | 88 / 148 / 824 / 41 / 16 / 51 |
-| `pnpm run lint`, `typecheck`, `test:unit` (1,354 across 11 projects), `build`, `openapi`, `format:check` | exit 0 |
-| `node tools/validate-governance.mjs` | 17 of 17 on the final tree |
-| `node tools/validate-governance.fixtures.mjs` | 150 of 150 on the final tree |
+| minibar domain unit suites | 26 passed |
+| `minibar.integration` | 23 passed |
+| `minibar.authorization.http` + `minibar.concurrency` | 10 passed |
+| the seven catalog suites, after the registry and probe changes | 71 passed |
+| `@prsystem/db` `test:unit` / `test:migrations` / `test:security` / `test:integration` / `test:concurrency` / `test:regression` | 88 / 148 / 1,045 / 41 / 16 / 51 |
+| api `test:unit` (130), `turbo run lint typecheck` forced (45 tasks), `openapi` (26 minibar paths), `prettier --check .` | exit 0 |
+| `validate-governance` 17/17, `validate-regression-coverage` 724/724, `validate-pool-error-fixture` 12/12, `scan-secrets` 0 findings, `validate-workspace` 15/15 | on the implementation tree |
+| `node tools/validate-governance.mjs` / `validate-governance.fixtures.mjs` on the final tree | 17 of 17 / 163 of 163 |
 
-**The governed battery** ran in a clean detached checkout of `dcca709` with a fresh install, a fresh
+**The governed battery** ran in a clean detached checkout of `0b40820` with a fresh install, a fresh
 `TURBO_CACHE_DIR` and `TURBO_FORCE=true` (no cached task replay), after a preparatory
-`pnpm run build`. All 28 executions exited 0 (2026-09-03 10:04–10:14 UTC): unit 1,354; migrations
-148; integration 306; concurrency 42 ×3; regression 51; GATE-SEC 19 of 19 ×3; e2e 15. Exit codes
-and durations are in [`phase-06-battery-log.md`](phase-06-battery-log.md), results in
-[`phase-06-evidence.json`](phase-06-evidence.json), restated in the Phase 06 record. The two
+`pnpm run build`. All 28 gate executions exited 0 (2026-09-04 01:33–01:48 UTC for the runner; the two dependency audits passed only on re-execution in the same tree, the last at 02:47 UTC, after 12 registry timeouts or 503s, each attempt in the log): unit 1,380; migrations 148; integration 335; concurrency 46 ×3; regression 51; GATE-SEC 19 of 19 ×3; e2e 15. Exit codes and durations are in
+[`phase-07-battery-log.md`](phase-07-battery-log.md), results in
+[`phase-07-evidence.json`](phase-07-evidence.json), restated in the Phase 07 record. The two
 governance rows there are from the final tree, which is the only tree that carries the record.
 
-**Historical evidence (unchanged, not re-measured):** the Phase 03/04/05 batteries and the Phase 05
-CI ledger are frozen records of earlier trees.
+**Historical evidence (unchanged, not re-measured):** the Phase 03/04/05/06 batteries and the
+Phase 05 CI ledger are frozen records of earlier trees.
 
 ## 6. Integration obligations now open on later phases
 
-- Phases 08 and 13 call `TariffService.captureRateSnapshot(uow, …)` inside their confirmation
-  transactions (subject `WALK_IN_STAY` / `ONLINE_BOOKING`).
-- Phases 07, 08, 09 and 13 create the relations and columns the dependency registry names
-  (`apps/api/src/modules/catalog/contracts/dependency-sources.ts`) with a `hotel_id` column and the
-  stated predicate, or update the entry in the same change; `catalog.dependency.test.ts` enforces it.
+- Phase 08: `platform.stay` (`room_id`, the active-stay predicate) and
+  `platform.stay_minibar_snapshot` (`version_id`); `ConfigurationService.checkInBlockers` before a
+  check-in; `advanceScheduled` in the transaction that ends a stay;
+  `TariffService.captureRateSnapshot` in the confirmation transaction (from Phase 06).
+- Phase 09: `platform.minibar_usage_report` and `platform.minibar_refill_task` (`room_id`, and
+  `product_id` for the catalog registry) with the named predicates; `GUEST_CONSUMPTION` posted
+  through `InventoryRepository.appendMovement` with the stay id.
+- Phase 10: `platform.stay_folio` (`room_id`, the open-checkout predicate); the deposit amount on
+  the category and the hotel configuration (`A-P06-2`).
+- Phase 13: `platform.booking` columns the catalog registry names; `captureRateSnapshot` for
+  `ONLINE_BOOKING`.
 - Every phase that resolves a lifecycle blocker calls `LifecycleService.finalizeIfClear` in the
-  transaction that resolves it.
-- Phase 10 adds the deposit amount to the category and the hotel configuration (`A-P06-2`).
-- Phase 07 extends `minibar_product` and `minibar_template` with price, cost, stock and versions.
+  transaction that resolves it; both registries (`catalog/contracts/dependency-sources.ts`,
+  `minibar/contracts/safe-point-sources.ts`) are held to the live schema by tests, so a relation
+  created in another shape fails the owning phase's gates.
 
 ## 7. Processes, containers and services
 
@@ -122,18 +128,22 @@ CI ledger are frozen records of earlier trees.
 - Unchanged and still open: `EXT-03`, `EXT-04`, `EXT-11` (BLOCKED, conformance-gated simulators),
   `INT-OTP-01`, `INT-MAIL-01`, the Phase 19 offline verification surface, 17 P1 configuration items,
   `DSR-01`, and selecting `GATE-SEC` as a required GitHub status check.
-- Phase 06 introduced no external provider and opened no EXT gate. No customer decision is pending
-  on its scope. Its acceptance is the customer's to give.
-- The main-checkout reconciliation of §1 is the one decision this checkpoint asks of the customer.
+- Phase 07 introduced no external provider and opened no EXT gate. No customer decision is pending
+  on its scope. `A-P07-1` notes that doc 18 has no row for reading a product's ledger; the read is
+  gated by `hotel.minibar.cost_stock_manage` until the customer adds one. Its acceptance, like
+  Phase 06's, is the customer's to give.
+- The main-checkout reconciliation of §1 remains the one decision this checkpoint asks of the
+  customer.
 
 ## 9. Exact next action
 
-Phase 07 — Minibar inventory and templates — is the current phase and is authorized to begin under
-the standing authorization. Before editing: reread `CLAUDE.md`, this checkpoint,
-`phase-status.md` (current position, ledger, the Phase 06 record), `build-plan.md` §"Phase 07",
-`docs/22-minibar-stock-inventory.md`, `docs/26-room-minibar-lifecycle.md` §§14–38,
-`docs/07-manager-room-minibar.md` §§4–7, `docs/25-minibar-selling-price-snapshot.md` where it
-binds Phase 07, and `docs/18-action-level-permission-matrix.md` §3; list the 36 owned DEC IDs from
-`requirements-traceability.md` (`RML-DEC-007`…`028`, `INV-DEC-001`…`008` and the Phase 07 `RC-DEC`
-rows). Then verify `git status` matches §4 and begin with the schema: extend the two minibar entity
-tables Phase 06 created rather than modelling them again.
+Phase 08 — Availability, guest identity, reception, and stay — is the current phase and is
+authorized to begin under the standing authorization. Before editing: reread `CLAUDE.md`, this
+checkpoint, `phase-status.md` (current position, ledger, the Phase 06 and 07 records),
+`build-plan.md` §"Phase 08", and the requirement files that phase assigns; list its 19 owned DEC
+IDs from `requirements-traceability.md` §2 ("Phase load") and the family tables. Then verify
+`git status` matches §4 and begin with the schema, creating the relations both registries predict
+(`platform.stay` with `room_id`, `category_id` and the active-stay predicate;
+`platform.stay_minibar_snapshot` with `version_id`) in the shape the registries name or updating
+the entries in the same change, and calling `captureRateSnapshot`, `checkInBlockers` and
+`advanceScheduled` where §6 says.

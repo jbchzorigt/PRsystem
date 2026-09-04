@@ -88,6 +88,7 @@ export function runGovernanceChecks({
   manifestPath,
   phase05ManifestPath,
   phase06ManifestPath,
+  phase07ManifestPath,
 }) {
   const ROOT = root;
   const RUNBOOK_PATH = runbookPath;
@@ -97,9 +98,13 @@ export function runGovernanceChecks({
   const IMPL = join(DOCS, 'implementation');
   const PHASE05_MANIFEST_PATH = phase05ManifestPath ?? join(IMPL, 'phase-05-evidence.json');
   const PHASE06_MANIFEST_PATH = phase06ManifestPath ?? join(IMPL, 'phase-06-evidence.json');
+  const PHASE07_MANIFEST_PATH = phase07ManifestPath ?? join(IMPL, 'phase-07-evidence.json');
   // The manifests of the phases completed under the standing authorization,
   // each overridable by the fixture harness the way the Phase 05 one is.
-  const PROGRESSED_MANIFEST_PATHS = new Map([['06', PHASE06_MANIFEST_PATH]]);
+  const PROGRESSED_MANIFEST_PATHS = new Map([
+    ['06', PHASE06_MANIFEST_PATH],
+    ['07', PHASE07_MANIFEST_PATH],
+  ]);
 
   const PHASE_MIN = 1;
   const PHASE_MAX = 23;

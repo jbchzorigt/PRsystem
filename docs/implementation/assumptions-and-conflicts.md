@@ -351,6 +351,68 @@ recorded so a reviewer can see where a judgement was made.
   refused that configuration; the command types, the validation and the schema have no field for it
   and a payload carrying one is not read.
 
+### 3.11 Phase 07 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P07-1 — the ledger read is gated by `hotel.minibar.cost_stock_manage`.** doc 18 §3 names the
+  stock and cost actions but has no row for reading a product's movement ledger. The ledger shows
+  purchase costs and the average in force, which is the data that action protects, so the read
+  requires it; Reception and the Cleaner cannot read a ledger. A dedicated `.read` row is the
+  customer's to add.
+- **A-P07-2 — no refill task in Phase 07.** doc 22 §6.3 raises a refill against an *active stay*,
+  and doc 26 §22 completes it at the stay's safe point; there is no stay before Phase 08. The
+  relation the registries name for it — `platform.minibar_refill_task` — is Phase 09's, recorded as
+  such in both registries, and reports `not_yet_provisioned` until then. Guest consumption is a
+  movement type the ledger accepts today and Phase 09 posts.
+- **A-P07-3 — the safe-point relations are predictions.** A room is at a safe point when no active
+  stay, no open checkout, no open minibar report and no open refill task references it (doc 26 §14,
+  §23). Those live in `platform.stay` (08), `platform.stay_folio` (10),
+  `platform.minibar_usage_report` (09) and `platform.minibar_refill_task` (09). Until each exists the
+  probe answers `not_yet_provisioned` and a change is `READY_FOR_RECONCILIATION` at once — evidence
+  that nothing can occupy the room, not an assumption. Each owning phase uses the named column and
+  predicate or updates the entry in the same change; `minibar.integration.test.ts` refuses a
+  relation that exists without its column. `SCHEDULED_AFTER_STAY` and `advanceScheduled` exist now
+  so Phase 08's checkout calls them rather than inventing the transition.
+- **A-P07-4 — a balance is written only by the ledger.** doc 22 §3 says the balance is derived from
+  the ledger. `minibar_warehouse_stock` and `room_minibar_stock` are updated by one `AFTER INSERT`
+  trigger on `inventory_movement`, owned by `prsystem_maintenance_fn`; no runtime role holds `INSERT`
+  or `UPDATE` on either. A minus movement is costed at the average in force by a `BEFORE INSERT`
+  trigger of the same owner, and the weighted average is integer arithmetic rounded half up once.
+  A negative balance is a check constraint, refused inside the transaction that would cause it.
+- **A-P07-5 — a product without a selling price cannot be published.** doc 25 fixes the selling
+  price into the stay snapshot at check-in; a published version binding a product with no price
+  would make that capture impossible. `PRODUCT_UNPRICED` is therefore among the publish refusals of
+  doc 26 §18, beside the rules the document lists. A purchase cost is not required to publish.
+- **A-P07-6 — the Cleaner's count precedes every transfer, and an omitted product is a count of
+  zero.** doc 26 §17.2 blocks a change on a variance between the counted and the recorded room
+  stock. The completion command carries the count and the transfers together; a variance is recorded
+  as `BLOCKED_VARIANCE` and nothing is posted, so the Manager's correction (a waste or adjustment
+  linked to the change) is made against the same holdings the Cleaner counted. A rollback task
+  reverses exact postings and carries no count.
+- **A-P07-7 — the Manager's resolution re-opens the Cleaner's task.** After a correction or a
+  receipt, `resolve` re-evaluates the room against the pinned target: nothing outstanding applies;
+  excess to return, or a shortage the warehouse can now supply, returns the change to `IN_PROGRESS`
+  with the task's bounds recomputed from what the room holds now; a shortage the warehouse cannot
+  supply is refused as `STOCK_SHORT` unless applied under an audited override (doc 22 §8). Excess is
+  never overridden.
+- **A-P07-8 — the initial ON setup is an `OFF_TO_ON` change.** doc 26 §15 makes ON → OFF, OFF → ON
+  and A → B the three reconciliation shapes; a room that has never had a minibar is `OFF` with no
+  template, so its first setup is the same bounded refill as any later OFF → ON rather than a fourth
+  path with no task.
+- **A-P07-9 — excess after a partial completion is a variance block, and a partial posting shrinks
+  the bounds.** A completion that moved less than the target leaves the change `BLOCKED_STOCK` or
+  `BLOCKED_VARIANCE` with what was moved recorded, and the task's remaining bounds are reduced by
+  the posted quantities, so a second completion under a fresh key cannot move the same quantity
+  again (doc 22 §11).
+- **A-P07-10 — a batch's state is derived, never stored.** doc 26 §35 lists the five batch states;
+  they are computed from the children on every read (`deriveBatchState`), so no job and no second
+  write can leave a batch saying something its children do not.
+- **A-P07-11 — a POST that creates nothing answers `200`.** Publish, Set default, archive, delete,
+  claim, complete, cancel, rollback, resolve, cancel remaining and preview answer `200` with the
+  resulting view, as the Phase 04 and 05 command routes do; creations answer `201`.
+
 ---
 
 ## 4. P1 configuration register

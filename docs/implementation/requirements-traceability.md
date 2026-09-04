@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.19 (Phase 06 — the 11 hotel, room, category and tariff decisions move to `COVERED`
-with code and test references; 63 of 279 `COVERED`)
+**Version:** 1.20 (Phase 07 — the 36 minibar inventory, template version, room configuration and
+Rollout decisions move to `COVERED` with code and test references; 99 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -214,14 +214,14 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-008 | Cleaning status authority by package | 09 | PENDING | — | — |
 | RC-DEC-009 | Shift close authority | 11 | PENDING | — | — |
 | RC-DEC-010 | Cleaner dashboard and minibar report | 09 | PENDING | — | — |
-| RC-DEC-011 | Cleaner and minibar restricted to 25 000/30 000₮ | 07 | PENDING | — | — |
+| RC-DEC-011 | Cleaner and minibar restricted to 25 000/30 000₮ | 07 | COVERED | `apps/api/src/modules/minibar/services/minibar-context.ts`, `apps/api/src/modules/minibar/http/task.controller.ts`, `apps/api/src/modules/minibar/http/product.controller.ts` | `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-012 | Hourly versus nightly stay model | 08 | PENDING | — | — |
 | RC-DEC-013 | No automatic overdue fee | 08 | PENDING | — | — |
 | RC-DEC-014 | Cleaning buffer between bookings | 08 | PENDING | — | — |
 | RC-DEC-015 | Separate room state axes and badges | 08 | PENDING | — | — |
 | RC-DEC-016 | Cleaner minibar refill from warehouse | 09 | PENDING | — | — |
 | RC-DEC-017 | Room readiness conditions | 08 | PENDING | — | — |
-| RC-DEC-018 | Minibar optional per room, template required when ON | 07 | PENDING | — | — |
+| RC-DEC-018 | Minibar optional per room, template required when ON | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-019 | Restaurant registration and access | 15 | PENDING | — | — |
 | RC-DEC-020 | Food order confirmed only on QPay success | 15 | PENDING | — | — |
 | RC-DEC-021 | Restaurant's own QPay merchant | 15 | PENDING | — | — |
@@ -239,14 +239,14 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-033 | One primary guest per stay | 08 | PENDING | — | — |
 | RC-DEC-034 | Primary guest Police match boundary | 18 | PENDING | — | — |
 | RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | PENDING | — | — |
-| RC-DEC-036 | Minibar stock, cost and shortage override | 07 | PENDING | — | — |
+| RC-DEC-036 | Minibar stock, cost and shortage override | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-037 | Hotel Admin financial reporting | 17 | PENDING | — | — |
 | RC-DEC-038 | Cash drawer and physical cash ledger | 11 | PENDING | — | — |
 | RC-DEC-039 | Minibar selling price snapshot | 09 | PENDING | — | — |
 | RC-DEC-040 | Room and minibar entity lifecycle | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/http/lifecycle.controller.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts` |
-| RC-DEC-041 | Room minibar configuration change | 07 | PENDING | — | — |
-| RC-DEC-042 | Explicit exact-version Rollout | 07 | PENDING | — | — |
-| RC-DEC-043 | Multi-room Rollout batch | 07 | PENDING | — | — |
+| RC-DEC-041 | Room minibar configuration change | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts`, `apps/api/src/modules/minibar/http/configuration.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
+| RC-DEC-042 | Explicit exact-version Rollout | 07 | COVERED | `apps/api/src/modules/minibar/domain/versions.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/domain/versions.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts` |
+| RC-DEC-043 | Multi-room Rollout batch | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/rollout.service.ts`, `apps/api/src/modules/minibar/http/rollout.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-044 | Mongolian, foreign and no-document primary guest identity | 08 | PENDING | — | — |
 
 ## 4. SHIFT-DEC — Reception shift handover (doc 03, 7)
@@ -502,16 +502,16 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 20. INV-DEC — Minibar inventory (doc 22, 8)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| INV-DEC-001 | Manager quantity is warehouse stock | 07 | PENDING |
-| INV-DEC-002 | Warehouse and room balances separate | 07 | PENDING |
-| INV-DEC-003 | Immutable inventory ledger | 07 | PENDING |
-| INV-DEC-004 | Purchase cost and weighted average | 07 | PENDING |
-| INV-DEC-005 | Negative stock prohibition | 07 | PENDING |
-| INV-DEC-006 | Controlled shortage override | 07 | PENDING |
-| INV-DEC-007 | Minibar optional per room | 07 | PENDING |
-| INV-DEC-008 | Inventory action permissions | 07 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| INV-DEC-001 | Manager quantity is warehouse stock | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| INV-DEC-002 | Warehouse and room balances separate | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/domain/inventory.ts`, `apps/api/src/modules/minibar/repositories/inventory.repository.ts` | `apps/api/src/modules/minibar/domain/inventory.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| INV-DEC-003 | Immutable inventory ledger | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/repositories/inventory.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts`, `packages/db/src/security/sec-ownership.test.ts` |
+| INV-DEC-004 | Purchase cost and weighted average | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/domain/inventory.ts`, `apps/api/src/modules/minibar/services/product.service.ts` | `apps/api/src/modules/minibar/domain/inventory.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| INV-DEC-005 | Negative stock prohibition | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts` |
+| INV-DEC-006 | Controlled shortage override | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/http/configuration.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
+| INV-DEC-007 | Minibar optional per room | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| INV-DEC-008 | Inventory action permissions | 07 | COVERED | `apps/api/src/modules/minibar/services/minibar-context.ts`, `apps/api/src/modules/minibar/http/product.controller.ts`, `apps/api/src/modules/minibar/http/task.controller.ts` | `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 
 ## 21. FIN-DEC — Financial reporting (doc 23, 10)
 
@@ -566,28 +566,28 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RML-DEC-004 | Historical snapshot protection | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/tariff.service.ts`, `apps/api/src/modules/catalog/repositories/catalog.repository.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
 | RML-DEC-005 | Hard-delete limits | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts` |
 | RML-DEC-006 | Reactivation, permission and audit | 06 | COVERED | `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/http/lifecycle.controller.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts` |
-| RML-DEC-007 | Current configuration and one pending change | 07 | PENDING | — | — |
-| RML-DEC-008 | Active stay safe point | 07 | PENDING | — | — |
-| RML-DEC-009 | ON to OFF reconciliation | 07 | PENDING | — | — |
-| RML-DEC-010 | OFF to ON and shortage | 07 | PENDING | — | — |
-| RML-DEC-011 | Template A to B delta reconciliation | 07 | PENDING | — | — |
-| RML-DEC-012 | Future booking and effective configuration | 07 | PENDING | — | — |
-| RML-DEC-013 | Action permission and task boundary | 07 | PENDING | — | — |
-| RML-DEC-014 | Cancel, rollback, atomic apply and audit | 07 | PENDING | — | — |
-| RML-DEC-015 | Entity, version and room configuration separate | 07 | PENDING | — | — |
-| RML-DEC-016 | Draft, immutable Published and Archived history | 07 | PENDING | — | — |
-| RML-DEC-017 | Multiple Published, Default and exact binding | 07 | PENDING | — | — |
-| RML-DEC-018 | Publish validation | 07 | PENDING | — | — |
-| RML-DEC-019 | First and subsequent Default | 07 | PENDING | — | — |
-| RML-DEC-020 | Publish and Default isolation, entitlement, Rollout separation | 07 | PENDING | — | — |
-| RML-DEC-021 | Version Archive blockers, history and permission | 07 | PENDING | — | — |
-| RML-DEC-022 | Rollout target and eligible room | 07 | PENDING | — | — |
-| RML-DEC-023 | Pending, blocker and safe-point task trigger | 07 | PENDING | — | — |
-| RML-DEC-024 | Rollout isolation, apply, permission and batch boundary | 07 | PENDING | — | — |
-| RML-DEC-025 | Batch parent, exact target and read-only preview | 07 | PENDING | — | — |
-| RML-DEC-026 | Partial success, independent child and derived progress | 07 | PENDING | — | — |
-| RML-DEC-027 | Cancel remaining, rollback and linked retry | 07 | PENDING | — | — |
-| RML-DEC-028 | Target and Archive, concurrency, permission and audit | 07 | PENDING | — | — |
+| RML-DEC-007 | Current configuration and one pending change | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts` |
+| RML-DEC-008 | Active stay safe point | 07 | COVERED | `apps/api/src/modules/minibar/contracts/safe-point-sources.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-009 | ON to OFF reconciliation | 07 | COVERED | `apps/api/src/modules/minibar/domain/inventory.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/domain/inventory.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-010 | OFF to ON and shortage | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `packages/db/migrations/0008_minibar_inventory.sql` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-011 | Template A to B delta reconciliation | 07 | COVERED | `apps/api/src/modules/minibar/domain/inventory.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/domain/inventory.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-012 | Future booking and effective configuration | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/contracts/safe-point-sources.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-013 | Action permission and task boundary | 07 | COVERED | `apps/api/src/modules/minibar/services/minibar-context.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/http/task.controller.ts` | `apps/api/src/modules/minibar/minibar.authorization.http.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts` |
+| RML-DEC-014 | Cancel, rollback, atomic apply and audit | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/catalog/contracts/lifecycle-resolution.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-015 | Entity, version and room configuration separate | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/repositories/version.repository.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `packages/db/src/migrate.test.ts` |
+| RML-DEC-016 | Draft, immutable Published and Archived history | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/domain/versions.ts`, `apps/api/src/modules/minibar/services/version.service.ts` | `apps/api/src/modules/minibar/domain/versions.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-017 | Multiple Published, Default and exact binding | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/version.service.ts`, `apps/api/src/modules/minibar/repositories/version.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-018 | Publish validation | 07 | COVERED | `apps/api/src/modules/minibar/domain/versions.ts`, `apps/api/src/modules/minibar/services/version.service.ts` | `apps/api/src/modules/minibar/domain/versions.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-019 | First and subsequent Default | 07 | COVERED | `apps/api/src/modules/minibar/services/version.service.ts`, `packages/db/migrations/0008_minibar_inventory.sql` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-020 | Publish and Default isolation, entitlement, Rollout separation | 07 | COVERED | `apps/api/src/modules/minibar/services/version.service.ts`, `apps/api/src/modules/minibar/services/minibar-context.ts`, `apps/api/src/modules/minibar/http/template.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
+| RML-DEC-021 | Version Archive blockers, history and permission | 07 | COVERED | `apps/api/src/modules/minibar/services/version.service.ts`, `apps/api/src/modules/minibar/repositories/version.repository.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.dependency.test.ts` |
+| RML-DEC-022 | Rollout target and eligible room | 07 | COVERED | `apps/api/src/modules/minibar/domain/versions.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/domain/versions.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-023 | Pending, blocker and safe-point task trigger | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/contracts/safe-point-sources.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-024 | Rollout isolation, apply, permission and batch boundary | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/http/configuration.controller.ts`, `apps/api/src/modules/catalog/contracts/lifecycle-resolution.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
+| RML-DEC-025 | Batch parent, exact target and read-only preview | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/rollout.service.ts`, `apps/api/src/modules/minibar/http/rollout.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-026 | Partial success, independent child and derived progress | 07 | COVERED | `apps/api/src/modules/minibar/domain/versions.ts`, `apps/api/src/modules/minibar/services/rollout.service.ts` | `apps/api/src/modules/minibar/domain/versions.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-027 | Cancel remaining, rollback and linked retry | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/rollout.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| RML-DEC-028 | Target and Archive, concurrency, permission and audit | 07 | COVERED | `apps/api/src/modules/minibar/services/version.service.ts`, `apps/api/src/modules/minibar/services/rollout.service.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 
 ---
 

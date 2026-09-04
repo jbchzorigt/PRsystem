@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 07 — Minibar inventory and templates |
+| Current phase | 08 — Availability, guest identity, reception, and stay |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -25,6 +25,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 05 accepted at | `35314ba210f609269863f0b528bbe827e6a5d3ce` |
 | Phase 06 state | `DONE` |
 | Phase 06 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 07 state | `DONE` |
+| Phase 07 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -44,7 +46,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 04 | IAM, tenancy, RBAC, and staff lifecycle | `DONE` | `0002_iam_rbac_staff`, corrected in place by remediations 1–4 | the Phase 04 battery — counts in [Phase 04 remediation 4](#phase-04-remediation-4) | accepted at the commit named in [Phase 04 acceptance](#phase-04-acceptance); the work itself is in the Phase 04 record and the four remediations |
 | 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2`, `0006_onboarding_remediation3` | the Phase 05 battery — counts in [Phase 05 remediation 3](#phase-05-remediation-3) | accepted at the commit named in [Phase 05 acceptance](#phase-05-acceptance); the work itself is in the Phase 05 record and remediations 1 to 3 |
 | 06 | Hotel, room, category, and tariffs | `DONE` | `0007_hotel_catalog` | the Phase 06 battery — counts in [Phase 06 record](#phase-06-record) | implemented at `a44fd58` and `dcca709`; the record and its evidence are the commit after them |
-| 07 | Minibar inventory and templates | `NOT STARTED` | — | — | — |
+| 07 | Minibar inventory and templates | `DONE` | `0008_minibar_inventory` | the Phase 07 battery — counts in [Phase 07 record](#phase-07-record) | implemented at `1d2c764` and `0b40820`; the record and its evidence are the commit after them |
 | 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
 | 09 | Cleaner and checkout coordination | `NOT STARTED` | — | — | — |
 | 10 | Folio, deposit, payment, and correction | `NOT STARTED` | — | — | — |
@@ -3234,7 +3236,7 @@ requires a further explicit authorization.
 Hotel, room, category, and tariffs. Authorized under the
 [standing progression authorization](#standing-progression-authorization), implemented and gated on
 top of the accepted Phase 05 commit `35314ba`. Phase 06 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`;
-Phase 07 is the current phase, authorized to begin, and has **not** started.
+Phase 07 followed it under the same authorization and has its own record below.
 
 **Decisions closed:** the 11 this phase owns — `RML-DEC-001`…`006`, `STAY-DEC-002`, `STAY-DEC-004`,
 `STAY-DEC-005`, `STAY-DEC-006` and `RC-DEC-040`. With Phase 04's 26 and Phase 05's 26, 63 of the 279
@@ -3487,5 +3489,256 @@ what the two governance rows report. Every command exited 0.
 The per-command exit codes, durations and execution environment are recorded in
 [phase-06-battery-log.md](phase-06-battery-log.md).
 
-Phase 06 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 07 is authorized to begin under the
+Phase 06 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; its acceptance is the customer's to give.
+
+---
+
+## Phase 07 record
+
+Minibar inventory and templates. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 06 tree. Phase 07 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 08 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the 36 this phase owns — `INV-DEC-001`…`008`, `RML-DEC-007`…`028`,
+`RC-DEC-011`, `RC-DEC-018`, `RC-DEC-036`, `RC-DEC-041`, `RC-DEC-042` and `RC-DEC-043`. With the 63
+already closed, 99 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+**Products, cost and the ledger.** The two minibar entity tables Phase 06 created are extended, not
+remodelled: a product gains a category, a unit, a selling price and a purchase cost (integer MNT,
+non-negative), a template gains a description. The Manager's quantity at creation is the warehouse
+opening balance, posted as one `OPENING` movement; a receipt posts a `PURCHASE` at its stated cost;
+waste and adjustments post a minus or plus movement with a mandatory reason, optionally against a
+room and a configuration change. `platform.inventory_movement` is the append-only ledger — no role
+holds `UPDATE` or `DELETE`, a trigger refuses both — and the two balances,
+`minibar_warehouse_stock` and `room_minibar_stock`, are written by nothing but its `AFTER INSERT`
+trigger, owned by `prsystem_maintenance_fn` like the Phase 03 maintenance functions. The hotel-level
+weighted average cost is recomputed on every receipt in integer arithmetic rounded half up once
+(doc 22 §5's worked example is a unit test and an integration test), and a `BEFORE INSERT` trigger
+of the same owner costs every minus movement at the average in force, so a later receipt never
+re-costs a posted waste. A negative balance is a check constraint; the service reports it as
+`INSUFFICIENT_STOCK` and the transaction that would have caused it leaves nothing behind. A
+selling-price edit is audited old → new and touches no stock.
+
+**Template versions.** `minibar_template_version` carries `DRAFT → PUBLISHED → ARCHIVED`, enforced
+by a guard trigger as well as the service; a published version's items are immutable in the
+database (a draft-only trigger on the item table). Publish validation names every failing rule at
+once — the parent template must be `ACTIVE`, at least one item, every product active, of this hotel,
+unique, with a positive integer target, and priced. The first published version of a template
+becomes its Default; a later publish does not move it; `Set default` is one compare-and-set under a
+partial unique index that admits exactly one Default per template. Archive is refused while the
+version is the Default, while a room is bound to it, while a change targets it, or (once Phase 08
+exists) while a stay snapshot references it; a never-published draft may be deleted, nothing else
+may. Publish and Set default write the version and its audit and nothing else: no room pointer, no
+change, no task, no movement, no blocker — the integration test counts every one of those tables
+before and after.
+
+**Room configuration and reconciliation.** `room_minibar_configuration` is the current binding —
+`ON` with a template and an exact version, or `OFF` with neither, a shape the database checks — and
+`room_configuration_change` is the at-most-one pending change, held by a partial unique index over
+the non-terminal states. `ON → OFF`, `OFF → ON`, a template switch and an exact-version Rollout are
+the four kinds; a request pins its target, checks eligibility, and probes the room's safe point
+against the registered later-phase relations (stay, checkout, minibar report, refill task) the same
+way the catalog probes its dependencies: a relation that does not exist yet is evidence that
+nothing can occupy the room, and the change is `READY_FOR_RECONCILIATION` with a bounded task. The
+task's bounds are computed server-side from the delta between what the room holds and the pinned
+target — returns for excess and removed products, refills for short and added ones — and the
+Cleaner's completion is refused whole if any transfer exceeds a bound. The count comes first: a
+variance between the Cleaner's count and the ledger blocks the change as `BLOCKED_VARIANCE` before
+anything moves; the Manager's reasoned correction against the change clears it. Transfers post as
+ledger movements linked to the task and the change; a shortage the warehouse cannot cover leaves
+the change `BLOCKED_STOCK` with the remaining bounds shrunk by what moved. The Manager resolves a
+blocked change by re-evaluation — apply, re-open the Cleaner's task with recomputed bounds, or
+refuse `STOCK_SHORT` — or applies a shortage under an audited override, after which the room is
+`ON` and `SHORT` and Phase 08's check-in blocker is clear. Apply is atomic: the configuration
+switches, the change is `APPLIED`, the task completes, and the catalog is told which lifecycle
+blockers may have cleared (the room, the previous template, the dropped products) through the
+`LifecycleResolutionPort`, so a retiring room whose minibar is turned off completes its retirement
+in the same transaction with the system recorded as the finalizer. A change with no posted movement
+is cancelled directly; one with a posted movement is never cancelled — the database refuses it —
+but rolled back through a bounded `ROLLBACK` task that reverses exactly what was posted.
+
+**Multi-room Rollout.** A batch pins the template and the exact target version; preview classifies
+every room (`READY_NOW`, `SCHEDULE_AFTER_STAY`, `INELIGIBLE` with the reason) and writes nothing;
+confirm creates the batch, one child change per accepted room and a `SKIPPED` row with its reason
+for each refused one, all under the caller's one idempotency key; the batch's state is derived from
+its children on every read and never stored; `Cancel remaining` cancels the children that have not
+moved; a retry names its source batch and re-checks eligibility, so a room the first batch applied
+is `ALREADY_ON_TARGET`.
+
+**Authorization.** Every route authenticates with `SessionGuard` and authorizes nothing at the edge;
+each command resolves the live membership and scope grant before it binds the hotel and evaluates
+the named action inside the transaction, with the package a hard gate above it. doc 18 §3 row by
+row: the Manager holds products, cost and stock, waste, drafts, publish, archive, configuration
+targets and changes, resolution, overrides and both Rollouts; the Cleaner holds
+`config_reconciliation_execute` and works only a task assigned to it, inside the bounds the server
+wrote; Reception reads the configuration and the batch as `.read` and writes nothing; the Hotel
+Admin without the Manager role is refused every write and reads the configuration; a 20,000₮ hotel
+is refused every minibar action with the same opaque `NOT_FOUND` as a missing role; a foreign hotel,
+an unknown hotel and an unauthenticated caller are `NOT_FOUND`, `NOT_FOUND` and `401`.
+
+### What Phase 07 deliberately did not build
+
+- **No refill task and no guest-consumption route.** Both need an active stay (doc 22 §6.3, doc 26
+  §22); `GUEST_CONSUMPTION` is a movement type the ledger accepts and Phase 09 posts, and
+  `platform.minibar_refill_task` is Phase 09's relation in both registries (`A-P07-2`).
+- **No stay snapshot.** The selling-price snapshot at check-in (doc 25) is Phase 08's; the archive
+  blocker for it is registered and answers `not_yet_provisioned`.
+- **No scheduled-change completion.** `SCHEDULED_AFTER_STAY` and `advanceScheduled` exist for
+  Phase 08's checkout to call; nothing in Phase 07 can occupy a room, so nothing here schedules.
+- **No stored batch state, no job.** The five batch states are derived on read.
+
+### Changed file groups
+
+- **Database:** `0008_minibar_inventory.sql` and the journal; `schema.ts`, `schema-snapshot.ts`,
+  `classification.ts`, `ownership-manifest.ts`; `migrate.test.ts` (9 migrations, the Phase 05 →
+  Phase 07 upgrade path), the two Phase 03 regression suites (migration counts), `tenant-rows.ts`,
+  `sec-ownership.test.ts` (the two ledger functions), the frozen Phase 05 README.
+- **API:** `apps/api/src/modules/minibar/` — domain (`inventory.ts`, `versions.ts`), contracts
+  (`safe-point-sources.ts`), three repositories, services (`minibar-context.ts`, `product.service.ts`,
+  `version.service.ts`, `configuration.service.ts`, `rollout.service.ts`), HTTP (validation and five
+  controllers), `minibar.module.ts`, `minibar.tokens.ts`, the test harness and five test suites;
+  the catalog's `dependency-probe.ts`, `lifecycle-resolution.ts` and `room-reads.ts` contracts and
+  its registry (`dependency-sources.ts`, the Phase 07 relations and the refill task's owner);
+  `app.module.ts`, `bootstrap.ts`, `openapi.ts`, `openapi-document.ts`, the scheduler boundary
+  test's construction site, and the package scripts.
+- **Governance:** `tools/programme-state.mjs` (Phase 07 in `PROGRESSED_PHASES`, the current phase),
+  `tools/governance-checks.mjs` and `tools/validate-governance.mjs` (the Phase 07 manifest path),
+  the drift fixtures, this document, traceability, assumptions, the manifest, the battery log and
+  the checkpoint.
+
+### Migrations
+
+`0008_minibar_inventory.sql`, forward-only, on top of `0007`. `0000`–`0007` are untouched; `0000`–
+`0006` are checksum-pinned by the frozen Phase 05 set. `GATE-MIGR` runs the fresh install, the
+upgrade of an accepted Phase 05 database by exactly `0007` and `0008`, a repeat that applies nothing,
+fresh/upgrade schema equality, and the comparator on the upgraded database.
+
+Twelve tables, all `TENANT_RLS`, forced, owned by `prsystem_migrate`: `minibar_warehouse_stock`,
+`room_minibar_stock`, `inventory_movement`, `minibar_template_version`,
+`minibar_template_version_item`, `room_minibar_configuration`, `room_configuration_change`,
+`minibar_reconciliation_task`, `rollout_batch`, `rollout_batch_room`, `minibar_shortage_override`,
+`minibar_event`; two columns and the price and cost pair added to the Phase 06 entity tables. The
+API holds `DELETE` on the version and item tables only (a never-published draft); the two balance
+tables and the ledger accept no `UPDATE` or `DELETE` from any role; the two ledger functions are
+`SECURITY DEFINER`, owned by `prsystem_maintenance_fn`, executable by the API alone. The ownership
+manifest names both, and `GATE-SEC` holds the maintenance owner to exactly what the manifest names.
+
+### DEC coverage
+
+All 36 owned decisions move `PENDING → COVERED` with code and test references in
+[requirements-traceability.md](requirements-traceability.md) §§3, 20 and 24.
+
+### Integration duties recorded for later phases
+
+- **Phase 08** creates `platform.stay` with `room_id` and the predicate the safe-point registry
+  names, creates `platform.stay_minibar_snapshot` with `version_id`, calls
+  `ConfigurationService.checkInBlockers(uow, roomId)` before confirming a check-in, and calls
+  `advanceScheduled(uow, roomId, trigger)` in the transaction that ends a stay, so a
+  `SCHEDULED_AFTER_STAY` change becomes `READY_FOR_RECONCILIATION` with its task.
+- **Phase 09** creates `platform.minibar_usage_report` and `platform.minibar_refill_task` with
+  `room_id` (and `product_id` for the catalog registry) and the named predicates, and posts
+  `GUEST_CONSUMPTION` through `InventoryRepository.appendMovement` with the stay id.
+- **Phase 10** creates `platform.stay_folio` with `room_id` and the open-checkout predicate.
+- **Every phase that resolves a blocker** keeps calling `LifecycleService.finalizeIfClear` in the
+  transaction that resolves it; Phase 07 does so for the room, the previous template and the
+  dropped products on apply.
+
+### Test gates
+
+Every command ran during implementation on the disposable Compose project `prsystem-p06`, through
+the restricted `prsystem_api` login; the governed battery below ran afterwards in a clean checkout
+of `0b40820`. Development-time results, all exit 0:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/minibar/domain` | 26 passed, 2 files |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/minibar/minibar.integration.test.ts` | 23 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/minibar/minibar.authorization.http.test.ts src/modules/minibar/minibar.concurrency.test.ts` | 10 passed, 2 files |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/catalog` | 71 passed, 7 files (the registry and the probe changed) |
+| `pnpm --filter @prsystem/db run test:migrations` | 148 passed |
+| `pnpm --filter @prsystem/db run test:security` | 1,045 passed |
+| `pnpm --filter @prsystem/db run test:integration` / `test:concurrency` / `test:regression` / `test:unit` | 41 / 16 / 51 / 88 passed |
+| `pnpm run test:unit` (api), `turbo run lint typecheck` (forced, 45 tasks), `pnpm run openapi`, `pnpm exec prettier --check .` | exit 0; 130 api unit tests; 26 minibar paths in the document |
+| `node tools/validate-governance.mjs`, `validate-regression-coverage.mjs`, `validate-pool-error-fixture.mjs`, `scan-secrets.mjs`, `validate-workspace.mjs` | 17/17, 724/724, 12/12, 0 findings, 15/15 on the implementation tree |
+
+### Security and concurrency evidence
+
+- **Balances only from the ledger.** The integration test recomputes every balance from the
+  movement rows and compares; a direct `UPDATE` of a balance table is refused for every runtime
+  role by grant, and the ACL matrix holds every new table × login × verb to its exact SQLSTATE.
+- **Append-only.** `UPDATE` and `DELETE` on `inventory_movement` and `minibar_event` are refused by
+  trigger for the superuser and by grant for every role; a published version's items are refused a
+  change by trigger.
+- **State machines in the database.** An illegal version edge, an illegal change edge, a
+  cancellation after a posted movement, a change identity or pinned target rewritten, and a
+  revision that does not move are each refused by trigger, whoever issues the statement; a second
+  pending change for a room and a second Default for a template are refused by index.
+- **Fail closed on evidence.** A safe-point relation that exists without its column refuses the
+  change with `DEPENDENCY_UNAVAILABLE`; the registry-versus-schema tests hold both registries to
+  the live schema.
+- **Races on real PostgreSQL.** Two Cleaners completing against three units with two rooms wanting
+  two each: one transfer posts, one is `INSUFFICIENT_STOCK`, the warehouse holds one, the ledger
+  holds one transfer. The same completion sent three times at once under one key: one movement, the
+  replay returns the stored answer, and a fresh key for the same transfer is refused by the bound
+  the first posting consumed. Three confirms of one batch under one key: one batch, one child per
+  room. Two Rollouts requested for one room at once: one pending change, one `CONFLICT`, and the
+  index refuses a second pending row even when the service is bypassed.
+
+### Remaining blockers
+
+Unchanged from Phase 06: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators;
+`INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items; `DSR-01`; the
+`GATE-SEC` required-check selection. Phase 07 introduces no external provider and opens no EXT gate.
+No customer decision is pending on its scope; `A-P07-1` (a ledger-read permission row) is recorded
+for the customer's attention, not blocking.
+
+### Evidence
+
+<!-- phase-07-evidence:begin -->
+
+Measured at implementation commit 0b408205cd337aec26c70c7607a8e68b3aedbac2, the tree of the
+implementation commit and its registry fix, in a clean detached checkout of that commit with a fresh install, a fresh
+Turborepo cache directory and forced task execution — no task was replayed from any cache — on the
+disposable Compose project `prsystem-p06`. The record itself — the manifest and this table — is the
+commit after it; the governance validator and its fixtures were run again on that final tree and are
+what the two governance rows report. Every command exited 0; the two dependency audits did so only
+after earlier attempts had timed out against the npm registry or been answered 503 before any audit
+ran, each attempt recorded in the battery log.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 150 of 150 drift fixtures caught at the measured commit; 163 of 163 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 509 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,380 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 07, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 335: db 41, outbox 5, api 287, worker 2 |
+| `pnpm run test:concurrency` | PASS | 46 each run: db 16, api 30 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities — executed 2 times in the same tree; the first attempt was refused by the npm registry audit endpoint before any audit ran (timeout or 503, each in the battery log); this is the last |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 — executed 12 times in the same tree; the first 11 attempts were refused by the npm registry audit endpoint before any audit ran (timeout or 503, each in the battery log); this is the last |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-07-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-07-battery-log.md](phase-07-battery-log.md).
+
+Phase 07 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 08 is authorized to begin under the
 standing progression authorization and has **not** started.
