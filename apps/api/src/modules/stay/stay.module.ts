@@ -14,6 +14,8 @@ import type { PaymentAttemptsPort } from './contracts/payment-attempts';
 import { UnprovisionedPaymentAttempts } from './contracts/payment-attempts';
 import type { DepositsPort } from './contracts/deposits';
 import { UnprovisionedDeposits } from './contracts/deposits';
+import type { CashLedgerPort } from './contracts/cash-ledger';
+import { UnprovisionedCashLedger } from './contracts/cash-ledger';
 import { CheckoutController } from './http/checkout.controller';
 import { CleaningTaskController } from './http/cleaning-task.controller';
 import { ConflictController } from './http/conflict.controller';
@@ -79,6 +81,7 @@ export interface StayModuleOptions {
   readonly bookings?: ConfirmedBookingsPort;
   readonly payments?: PaymentAttemptsPort;
   readonly deposits?: DepositsPort;
+  readonly cash?: CashLedgerPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
@@ -121,6 +124,7 @@ export class StayModule {
     const bookings = options.bookings ?? new UnprovisionedConfirmedBookings();
     const payments = options.payments ?? new UnprovisionedPaymentAttempts();
     const deposits = options.deposits ?? new UnprovisionedDeposits();
+    const cash = options.cash ?? new UnprovisionedCashLedger();
     const clock = options.clock;
     const deps = (
       subscription: SubscriptionStatePort,
@@ -138,6 +142,7 @@ export class StayModule {
       bookings,
       payments,
       deposits,
+      cash,
       ...(clock === undefined ? {} : { clock }),
     });
     const inject = [SUBSCRIPTION_STATE, TariffService, LifecycleService, ConfigurationService];

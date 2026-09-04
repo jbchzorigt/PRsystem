@@ -23,6 +23,7 @@ import { MinibarReportService } from '../services/report.service';
 import { CorrectionService } from '../services/correction.service';
 import { HousekeepingService } from '../services/housekeeping.service';
 import { ShiftService } from '../services/shift.service';
+import { LedgerCashLedger } from '../../finance/contracts/cash-ledger';
 import type { StayDependencies } from '../services/stay-context';
 import { StayService } from '../services/stay.service';
 
@@ -114,6 +115,7 @@ export function attachStayHarness(
     bookings,
     payments,
     deposits,
+    cash: new LedgerCashLedger(),
     clock,
   };
   let hotelSequence = 0;

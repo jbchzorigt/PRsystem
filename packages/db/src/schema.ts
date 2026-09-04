@@ -2795,23 +2795,32 @@ export const ebarimtIssuance = platform
   )
   .enableRLS();
 
+/**
+ * A hotel's physical cash locations: the drawers a Reception works from and the
+ * optional safe (doc 24 §2). Provisioned with the hotel; Phase 11 adds the
+ * float a drawer is expected to hold.
+ */
 export const cashLocation = platform
   .table(
     'cash_location',
     {
       cashLocationId: uuid('cash_location_id')
         .primaryKey()
+        .notNull()
         .default(sql`gen_random_uuid()`),
       code: text('code').notNull(),
+      configuredFloatMnt: bigint('configured_float_mnt', { mode: 'bigint' }),
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id'),
       hotelId: uuid('hotel_id').notNull(),
       isDefaultDrawer: boolean('is_default_drawer')
         .notNull()
         .default(sql`false`),
       kind: text('kind').notNull(),
       name: text('name').notNull(),
+      physicalLocation: text('physical_location'),
       revision: integer('revision')
         .notNull()
         .default(sql`0`),
@@ -2820,6 +2829,7 @@ export const cashLocation = platform
         .default(sql`'ACTIVE'::text`),
     },
     (table) => [
+      unique('cash_location_code_uq').on(table.hotelId, table.code),
       check(
         'cash_location_default_is_a_drawer',
         sql`((NOT is_default_drawer) OR (kind = 'DRAWER'::text))`,
@@ -2828,24 +2838,34 @@ export const cashLocation = platform
         'cash_location_default_is_active',
         sql`((NOT is_default_drawer) OR (state = 'ACTIVE'::text))`,
       ),
-      check('cash_location_kind_known', sql`(kind = ANY (ARRAY['DRAWER'::text, 'SAFE'::text]))`),
-      check('cash_location_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 100))`),
-      check('cash_location_revision_non_negative', sql`(revision >= 0)`),
       check(
-        'cash_location_state_known',
-        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+        'cash_location_float_shape',
+        sql`((configured_float_mnt IS NULL) OR ((kind = 'DRAWER'::text) AND (configured_float_mnt >= 0)))`,
       ),
-      unique('cash_location_code_uq').on(table.hotelId, table.code),
-      unique('cash_location_name_uq').on(table.hotelId, table.name),
-      unique('cash_location_scope_uq').on(table.hotelId, table.cashLocationId),
       foreignKey({
         name: 'cash_location_hotel_fkey',
         columns: [table.hotelId],
         foreignColumns: [hotel.hotelId],
       }).onDelete('restrict'),
+      check('cash_location_kind_known', sql`(kind = ANY (ARRAY['DRAWER'::text, 'SAFE'::text]))`),
+      check('cash_location_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 100))`),
+      unique('cash_location_name_uq').on(table.hotelId, table.name),
+      check(
+        'cash_location_physical_bounded',
+        sql`((physical_location IS NULL) OR ((length(physical_location) >= 1) AND (length(physical_location) <= 200)))`,
+      ),
+      check('cash_location_revision_non_negative', sql`(revision >= 0)`),
+      unique('cash_location_scope_uq').on(table.hotelId, table.cashLocationId),
+      check(
+        'cash_location_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
       uniqueIndex('cash_location_default_drawer_uq')
         .on(table.hotelId)
         .where(sql`is_default_drawer IS TRUE`),
+      uniqueIndex('cash_location_one_safe_uq')
+        .on(table.hotelId)
+        .where(sql`kind = 'SAFE'::text`),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
@@ -4347,26 +4367,43 @@ export const minibarEvent = platform
 // ---------------------------------------------------------------------
 
 /**
- * The operational Reception shift a check-in is confirmed in (doc 05 §19.1).
- * Minimal here; Phase 11 adds the cash count, handover and review.
+ * The Reception shift: the bound a check-in needs (Phase 08) and the unit of
+ * cash accountability over one drawer (Phase 11). Its operational state and
+ * its financial review are separate axes (`SHIFT-DEC-001`).
  */
 export const receptionShift = platform
   .table(
     'reception_shift',
     {
+      closeReason: text('close_reason'),
       closedAt: timestamp('closed_at', { withTimezone: true }),
       closedByAccountId: uuid('closed_by_account_id'),
+      countedCashMnt: bigint('counted_cash_mnt', { mode: 'bigint' }),
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .default(sql`now()`),
+      expectedCashMnt: bigint('expected_cash_mnt', { mode: 'bigint' }),
+      handedToAccountId: uuid('handed_to_account_id'),
       hotelId: uuid('hotel_id').notNull(),
+      incomingCountedMnt: bigint('incoming_counted_mnt', { mode: 'bigint' }),
+      locationId: uuid('location_id'),
       openedAt: timestamp('opened_at', { withTimezone: true })
         .notNull()
         .default(sql`now()`),
       openedByAccountId: uuid('opened_by_account_id').notNull(),
+      openingBalanceMnt: bigint('opening_balance_mnt', { mode: 'bigint' }),
+      reviewReason: text('review_reason'),
+      reviewState: text('review_state')
+        .notNull()
+        .default(sql`'NOT_REQUIRED'::text`),
+      reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+      reviewedByAccountId: uuid('reviewed_by_account_id'),
       revision: integer('revision')
         .notNull()
         .default(sql`0`),
+      selfReviewed: boolean('self_reviewed')
+        .notNull()
+        .default(sql`false`),
       shiftId: uuid('shift_id')
         .primaryKey()
         .notNull()
@@ -4374,6 +4411,7 @@ export const receptionShift = platform
       state: text('state')
         .notNull()
         .default(sql`'OPEN'::text`),
+      varianceMnt: bigint('variance_mnt', { mode: 'bigint' }),
     },
     (table) => [
       check(
@@ -4382,7 +4420,11 @@ export const receptionShift = platform
       ),
       check(
         'reception_shift_closed_shape',
-        sql`((state = 'CLOSED'::text) = ((closed_at IS NOT NULL) AND (closed_by_account_id IS NOT NULL)))`,
+        sql`((state = ANY (ARRAY['SELF_CLOSED'::text, 'CLOSED'::text])) = ((closed_at IS NOT NULL) AND (closed_by_account_id IS NOT NULL)))`,
+      ),
+      check(
+        'reception_shift_counted_non_negative',
+        sql`(((counted_cash_mnt IS NULL) OR (counted_cash_mnt >= 0)) AND ((incoming_counted_mnt IS NULL) OR (incoming_counted_mnt >= 0)))`,
       ),
       foreignKey({
         name: 'reception_shift_hotel_fkey',
@@ -4390,13 +4432,42 @@ export const receptionShift = platform
         foreignColumns: [hotel.hotelId],
       }).onDelete('restrict'),
       unique('reception_shift_hotel_scope_uq').on(table.hotelId, table.shiftId),
+      foreignKey({
+        name: 'reception_shift_location_fkey',
+        columns: [table.hotelId, table.locationId],
+        foreignColumns: [cashLocation.hotelId, cashLocation.cashLocationId],
+      }).onDelete('restrict'),
+      check(
+        'reception_shift_opening_non_negative',
+        sql`((opening_balance_mnt IS NULL) OR (opening_balance_mnt >= 0))`,
+      ),
+      check(
+        'reception_shift_reason_bounded',
+        sql`(((review_reason IS NULL) OR ((length(review_reason) >= 1) AND (length(review_reason) <= 300))) AND ((close_reason IS NULL) OR ((length(close_reason) >= 1) AND (length(close_reason) <= 300))))`,
+      ),
+      check(
+        'reception_shift_review_shape',
+        sql`((reviewed_at IS NULL) = (reviewed_by_account_id IS NULL))`,
+      ),
+      check(
+        'reception_shift_review_state_known',
+        sql`(review_state = ANY (ARRAY['NOT_REQUIRED'::text, 'PENDING_MANAGER'::text, 'PENDING_HOTEL_ADMIN'::text, 'DISPUTED'::text, 'RESOLVED'::text]))`,
+      ),
       check(
         'reception_shift_state_known',
-        sql`(state = ANY (ARRAY['OPEN'::text, 'CLOSED'::text]))`,
+        sql`(state = ANY (ARRAY['OPEN'::text, 'CLOSING'::text, 'HANDED_OVER'::text, 'RECOUNT_REQUIRED'::text, 'CASH_ACCEPTED'::text, 'SELF_CLOSED'::text, 'CLOSED'::text]))`,
       ),
-      uniqueIndex('reception_shift_one_open_uq')
-        .on(table.hotelId)
-        .where(sql`state = 'OPEN'::text`),
+      check(
+        'reception_shift_variance_shape',
+        sql`(((counted_cash_mnt IS NULL) AND (expected_cash_mnt IS NULL) AND (variance_mnt IS NULL)) OR ((counted_cash_mnt IS NOT NULL) AND (expected_cash_mnt IS NOT NULL) AND (variance_mnt = (counted_cash_mnt - expected_cash_mnt))))`,
+      ),
+      uniqueIndex('reception_shift_one_active_per_account_uq')
+        .on(table.hotelId, table.openedByAccountId)
+        .where(sql`state <> ALL (ARRAY['SELF_CLOSED'::text, 'CLOSED'::text])`),
+      uniqueIndex('reception_shift_one_active_per_drawer_uq')
+        .on(table.hotelId, table.locationId)
+        .where(sql`state <> ALL (ARRAY['SELF_CLOSED'::text, 'CLOSED'::text])`),
+      index('reception_shift_review_idx').on(table.hotelId, table.reviewState, table.openedAt),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
@@ -6682,6 +6753,439 @@ export const hotelFinanceEvent = platform
   )
   .enableRLS();
 
+// ---------------------------------------------------------------------
+// Phase 11 — shift, cash drawer, expense, and hotel finance.
+// ---------------------------------------------------------------------
+
+/**
+ * The typed immutable cash ledger. Every drawer movement names the shift it
+ * belongs to; a mistake is a reversal plus a corrected movement
+ * (`CASH-DEC-004`).
+ */
+export const cashMovement = platform
+  .table(
+    'cash_movement',
+    {
+      actorAccountId: uuid('actor_account_id').notNull(),
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      direction: text('direction').notNull(),
+      effectiveAt: timestamp('effective_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      expenseId: uuid('expense_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      locationId: uuid('location_id').notNull(),
+      movementId: uuid('movement_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      movementType: text('movement_type').notNull(),
+      originalMovementId: uuid('original_movement_id'),
+      paymentTransactionId: uuid('payment_transaction_id'),
+      reason: text('reason'),
+      reference: text('reference'),
+      requestId: uuid('request_id'),
+      shiftId: uuid('shift_id'),
+      transferId: uuid('transfer_id'),
+    },
+    (table) => [
+      check('cash_movement_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'cash_movement_correction_shape',
+        sql`((movement_type <> ALL (ARRAY['CASH_CORRECTION_IN'::text, 'CASH_CORRECTION_OUT'::text])) OR ((reason IS NOT NULL) AND (original_movement_id IS NOT NULL)))`,
+      ),
+      check(
+        'cash_movement_direction_known',
+        sql`(direction = ANY (ARRAY['IN'::text, 'OUT'::text]))`,
+      ),
+      check(
+        'cash_movement_direction_shape',
+        sql`((direction = 'IN'::text) = (movement_type = ANY (ARRAY['INITIAL_FLOAT'::text, 'SERVICE_CASH_PAYMENT'::text, 'DEPOSIT_CASH_RECEIPT'::text, 'CASH_TOP_UP'::text, 'DRAWER_TRANSFER_IN'::text, 'SAFE_TRANSFER_IN'::text, 'CASH_CORRECTION_IN'::text])))`,
+      ),
+      foreignKey({
+        name: 'cash_movement_expense_fkey',
+        columns: [table.expenseId],
+        foreignColumns: [expense.expenseId],
+      }).onDelete('restrict'),
+      check(
+        'cash_movement_expense_shape',
+        sql`((movement_type = 'PAID_CASH_EXPENSE'::text) = (expense_id IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'cash_movement_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'cash_movement_location_fkey',
+        columns: [table.hotelId, table.locationId],
+        foreignColumns: [cashLocation.hotelId, cashLocation.cashLocationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'cash_movement_original_fkey',
+        columns: [table.originalMovementId],
+        foreignColumns: [table.movementId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'cash_movement_payment_fkey',
+        columns: [table.paymentTransactionId],
+        foreignColumns: [paymentTransaction.transactionId],
+      }).onDelete('restrict'),
+      check(
+        'cash_movement_reason_bounded',
+        sql`(((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))) AND ((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 120))))`,
+      ),
+      foreignKey({
+        name: 'cash_movement_request_fkey',
+        columns: [table.requestId],
+        foreignColumns: [cashRequest.requestId],
+      }).onDelete('restrict'),
+      check(
+        'cash_movement_request_shape',
+        sql`((movement_type <> ALL (ARRAY['BANK_DEPOSIT_OUT'::text, 'OWNER_OTHER_WITHDRAWAL'::text])) OR (request_id IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'cash_movement_shift_fkey',
+        columns: [table.hotelId, table.shiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      check(
+        'cash_movement_top_up_shape',
+        sql`((movement_type <> 'CASH_TOP_UP'::text) OR (reason IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'cash_movement_transfer_fkey',
+        columns: [table.transferId],
+        foreignColumns: [cashTransfer.transferId],
+      }).onDelete('restrict'),
+      check(
+        'cash_movement_transfer_shape',
+        sql`((movement_type <> ALL (ARRAY['DRAWER_TRANSFER_IN'::text, 'DRAWER_TRANSFER_OUT'::text, 'SAFE_TRANSFER_IN'::text, 'SAFE_TRANSFER_OUT'::text])) OR (transfer_id IS NOT NULL))`,
+      ),
+      check(
+        'cash_movement_type_known',
+        sql`(movement_type = ANY (ARRAY['INITIAL_FLOAT'::text, 'SERVICE_CASH_PAYMENT'::text, 'DEPOSIT_CASH_RECEIPT'::text, 'SERVICE_CASH_REFUND'::text, 'DEPOSIT_CASH_REFUND'::text, 'PAID_CASH_EXPENSE'::text, 'CASH_TOP_UP'::text, 'DRAWER_TRANSFER_IN'::text, 'DRAWER_TRANSFER_OUT'::text, 'SAFE_TRANSFER_IN'::text, 'SAFE_TRANSFER_OUT'::text, 'BANK_DEPOSIT_OUT'::text, 'OWNER_OTHER_WITHDRAWAL'::text, 'CASH_CORRECTION_IN'::text, 'CASH_CORRECTION_OUT'::text]))`,
+      ),
+      index('cash_movement_location_idx').on(table.hotelId, table.locationId, table.effectiveAt),
+      uniqueIndex('cash_movement_one_initial_float_uq')
+        .on(table.locationId)
+        .where(sql`movement_type = 'INITIAL_FLOAT'::text`),
+      index('cash_movement_shift_idx').on(table.hotelId, table.shiftId, table.effectiveAt),
+      index('cash_movement_transfer_idx').on(table.hotelId, table.transferId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A transfer between two locations, its drawers and shifts pinned when it is
+ * raised and completed only by the recipient's own count (`CASH-DEC-006`).
+ */
+export const cashTransfer = platform
+  .table(
+    'cash_transfer',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      cancelReason: text('cancel_reason'),
+      cancelRecountMnt: bigint('cancel_recount_mnt', { mode: 'bigint' }),
+      cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+      cancelledByAccountId: uuid('cancelled_by_account_id'),
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+      confirmedByAccountId: uuid('confirmed_by_account_id'),
+      confirmedCountedMnt: bigint('confirmed_counted_mnt', { mode: 'bigint' }),
+      destinationLocationId: uuid('destination_location_id').notNull(),
+      destinationShiftId: uuid('destination_shift_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      initiatedAt: timestamp('initiated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      initiatedByAccountId: uuid('initiated_by_account_id').notNull(),
+      kind: text('kind').notNull(),
+      reason: text('reason'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      sourceLocationId: uuid('source_location_id').notNull(),
+      sourceShiftId: uuid('source_shift_id'),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      transferId: uuid('transfer_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check('cash_transfer_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'cash_transfer_cancellation_shape',
+        sql`((state = 'CANCELLED'::text) = ((cancelled_at IS NOT NULL) AND (cancelled_by_account_id IS NOT NULL) AND (cancel_reason IS NOT NULL)))`,
+      ),
+      check(
+        'cash_transfer_confirmation_shape',
+        sql`((state = 'COMPLETED'::text) = ((confirmed_at IS NOT NULL) AND (confirmed_by_account_id IS NOT NULL)))`,
+      ),
+      check(
+        'cash_transfer_counted_non_negative',
+        sql`(((confirmed_counted_mnt IS NULL) OR (confirmed_counted_mnt >= 0)) AND ((cancel_recount_mnt IS NULL) OR (cancel_recount_mnt >= 0)))`,
+      ),
+      foreignKey({
+        name: 'cash_transfer_destination_fkey',
+        columns: [table.hotelId, table.destinationLocationId],
+        foreignColumns: [cashLocation.hotelId, cashLocation.cashLocationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'cash_transfer_destination_shift_fkey',
+        columns: [table.hotelId, table.destinationShiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'cash_transfer_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'cash_transfer_kind_known',
+        sql`(kind = ANY (ARRAY['DRAWER_TO_DRAWER'::text, 'DRAWER_SAFE'::text]))`,
+      ),
+      check('cash_transfer_locations_differ', sql`(source_location_id <> destination_location_id)`),
+      check(
+        'cash_transfer_reason_bounded',
+        sql`(((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))) AND ((cancel_reason IS NULL) OR ((length(cancel_reason) >= 1) AND (length(cancel_reason) <= 300))))`,
+      ),
+      check('cash_transfer_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'cash_transfer_shift_shape',
+        sql`((kind <> 'DRAWER_TO_DRAWER'::text) OR ((source_shift_id IS NOT NULL) AND (destination_shift_id IS NOT NULL)))`,
+      ),
+      foreignKey({
+        name: 'cash_transfer_source_fkey',
+        columns: [table.hotelId, table.sourceLocationId],
+        foreignColumns: [cashLocation.hotelId, cashLocation.cashLocationId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'cash_transfer_source_shift_fkey',
+        columns: [table.hotelId, table.sourceShiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      check(
+        'cash_transfer_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text, 'CANCELLED'::text]))`,
+      ),
+      index('cash_transfer_destination_idx').on(
+        table.hotelId,
+        table.destinationShiftId,
+        table.state,
+      ),
+      index('cash_transfer_source_idx').on(table.hotelId, table.sourceShiftId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A bank deposit or an owner withdrawal: money leaving the hotel's cash that is
+ * not an expense, and needs a Hotel Admin's approval (`CASH-DEC-007`).
+ */
+export const cashRequest = platform
+  .table(
+    'cash_request',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionReason: text('decision_reason'),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      locationId: uuid('location_id').notNull(),
+      movementId: uuid('movement_id'),
+      reason: text('reason').notNull(),
+      recipient: text('recipient'),
+      reference: text('reference'),
+      requestId: uuid('request_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      selfApproved: boolean('self_approved')
+        .notNull()
+        .default(sql`false`),
+      shiftId: uuid('shift_id'),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check('cash_request_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'cash_request_bank_shape',
+        sql`((kind <> 'BANK_DEPOSIT'::text) OR (reference IS NOT NULL))`,
+      ),
+      check(
+        'cash_request_decision_shape',
+        sql`(((state = 'PENDING'::text) = (decided_at IS NULL)) AND ((decided_at IS NULL) = (decided_by_account_id IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'cash_request_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'cash_request_kind_known',
+        sql`(kind = ANY (ARRAY['BANK_DEPOSIT'::text, 'OWNER_WITHDRAWAL'::text]))`,
+      ),
+      foreignKey({
+        name: 'cash_request_location_fkey',
+        columns: [table.hotelId, table.locationId],
+        foreignColumns: [cashLocation.hotelId, cashLocation.cashLocationId],
+      }).onDelete('restrict'),
+      check(
+        'cash_request_movement_shape',
+        sql`((movement_id IS NULL) OR (state = 'APPROVED'::text))`,
+      ),
+      check('cash_request_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'cash_request_shift_fkey',
+        columns: [table.hotelId, table.shiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      check(
+        'cash_request_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text]))`,
+      ),
+      check(
+        'cash_request_text_bounded',
+        sql`(((length(reason) >= 1) AND (length(reason) <= 300)) AND ((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 120))) AND ((recipient IS NULL) OR ((length(recipient) >= 1) AND (length(recipient) <= 200))) AND ((decision_reason IS NULL) OR ((length(decision_reason) >= 1) AND (length(decision_reason) <= 300))))`,
+      ),
+      check(
+        'cash_request_withdrawal_shape',
+        sql`((kind <> 'OWNER_WITHDRAWAL'::text) OR (recipient IS NOT NULL))`,
+      ),
+      index('cash_request_state_idx').on(table.hotelId, table.state, table.requestedAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The expense lifecycle. An approval moves no money; only a cash execution
+ * writes a drawer movement (`FIN-DEC-005`, `CASH-DEC-005`).
+ */
+export const expense = platform
+  .table(
+    'expense',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      category: text('category').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionReason: text('decision_reason'),
+      description: text('description').notNull(),
+      expenseId: uuid('expense_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      locationId: uuid('location_id'),
+      method: text('method').notNull(),
+      movementId: uuid('movement_id'),
+      paidAt: timestamp('paid_at', { withTimezone: true }),
+      paidByAccountId: uuid('paid_by_account_id'),
+      providerReference: text('provider_reference'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      selfApproved: boolean('self_approved')
+        .notNull()
+        .default(sql`false`),
+      shiftId: uuid('shift_id'),
+      state: text('state')
+        .notNull()
+        .default(sql`'DRAFT'::text`),
+      submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    },
+    (table) => [
+      check('expense_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'expense_cash_payment_shape',
+        sql`((state <> 'PAID'::text) OR (method <> 'CASH'::text) OR ((movement_id IS NOT NULL) AND (shift_id IS NOT NULL) AND (location_id IS NOT NULL)))`,
+      ),
+      check(
+        'expense_decision_shape',
+        sql`(((state = ANY (ARRAY['APPROVED'::text, 'PAID'::text, 'REJECTED'::text])) = (decided_at IS NOT NULL)) AND ((decided_at IS NULL) = (decided_by_account_id IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'expense_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'expense_location_fkey',
+        columns: [table.hotelId, table.locationId],
+        foreignColumns: [cashLocation.hotelId, cashLocation.cashLocationId],
+      }).onDelete('restrict'),
+      check(
+        'expense_method_known',
+        sql`(method = ANY (ARRAY['CASH'::text, 'CARD_POS'::text, 'BANK_QPAY'::text]))`,
+      ),
+      check(
+        'expense_non_cash_payment_shape',
+        sql`((method = 'CASH'::text) OR ((movement_id IS NULL) AND (shift_id IS NULL)))`,
+      ),
+      check(
+        'expense_non_cash_reference_shape',
+        sql`((state <> 'PAID'::text) OR (method = 'CASH'::text) OR (provider_reference IS NOT NULL))`,
+      ),
+      check(
+        'expense_paid_shape',
+        sql`((state = 'PAID'::text) = ((paid_at IS NOT NULL) AND (paid_by_account_id IS NOT NULL)))`,
+      ),
+      check('expense_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'expense_shift_fkey',
+        columns: [table.hotelId, table.shiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      check(
+        'expense_state_known',
+        sql`(state = ANY (ARRAY['DRAFT'::text, 'SUBMITTED'::text, 'APPROVED'::text, 'PAID'::text, 'REJECTED'::text]))`,
+      ),
+      check('expense_submitted_shape', sql`((state = 'DRAFT'::text) = (submitted_at IS NULL))`),
+      check(
+        'expense_text_bounded',
+        sql`(((length(category) >= 1) AND (length(category) <= 80)) AND ((length(description) >= 1) AND (length(description) <= 300)) AND ((decision_reason IS NULL) OR ((length(decision_reason) >= 1) AND (length(decision_reason) <= 300))) AND ((provider_reference IS NULL) OR ((length(provider_reference) >= 1) AND (length(provider_reference) <= 120))))`,
+      ),
+      index('expense_state_idx').on(table.hotelId, table.state, table.createdAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -6784,4 +7288,9 @@ export const DECLARED_TABLES = [
   financialCorrection,
   depositReconciliationCase,
   hotelFinanceEvent,
+  // Phase 11.
+  cashMovement,
+  cashTransfer,
+  cashRequest,
+  expense,
 ] as const;

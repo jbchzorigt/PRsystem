@@ -29,7 +29,7 @@ beforeAll(async () => {
   env = await createStayHarness('checkout_integration');
   h = await env.hotel('Checkout Hotel', 'P25');
   await env.shifts.open(
-    { hotelId: h.hotelId, idempotencyKey: key('sh') },
+    { hotelId: h.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
     h.reception,
     request(h.reception),
   );

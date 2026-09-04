@@ -85,6 +85,13 @@
       "when": 1757289600001,
       "tag": "0011_folio_deposit_payment",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1757376000001,
+      "tag": "0012_shift_cash_expense",
+      "breakpoints": true
     }
   ]
 }

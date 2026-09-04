@@ -227,7 +227,9 @@ describe('Reception, Cleaner and Manager, each their own rows', () => {
     expect((await call('GET', `/hotels/${hotelA}/shifts/current`, reception)).body).toEqual({
       shift: null,
     });
-    const shift = await call('POST', `/hotels/${hotelA}/shifts`, reception, {});
+    const shift = await call('POST', `/hotels/${hotelA}/shifts`, reception, {
+      openingCountedMnt: 0,
+    });
     expect(shift.status).toBe(201);
     shiftOpenedAt = shift.body['openedAt'] as string;
     const quote = await call('POST', `/hotels/${hotelA}/stays/quote`, reception, {
@@ -353,7 +355,7 @@ describe('everyone else', () => {
     const token = await signIn(adminA);
     const before = await rowsOf(hotelA);
     for (const [method, path, body] of [
-      ['POST', `/hotels/${hotelA}/shifts`, {}],
+      ['POST', `/hotels/${hotelA}/shifts`, { openingCountedMnt: 0 }],
       [
         'POST',
         `/hotels/${hotelA}/rooms/${roomFree}/cleaning`,
@@ -386,7 +388,9 @@ describe('everyone else', () => {
 
   it('the Cleaner cannot check in or open a shift; Reception cannot set the cleaning state', async () => {
     const cleaner = await signIn(cleanerA);
-    expect((await call('POST', `/hotels/${hotelA}/shifts`, cleaner, {})).status).toBe(404);
+    expect(
+      (await call('POST', `/hotels/${hotelA}/shifts`, cleaner, { openingCountedMnt: 0 })).status,
+    ).toBe(404);
     expect(
       (
         await call('POST', `/hotels/${hotelA}/stays`, cleaner, {
@@ -416,7 +420,9 @@ describe('everyone else', () => {
     const before = await rowsOf(hotelA);
     expect((await call('GET', `/hotels/${hotelA}/rooms/board`, foreign)).status).toBe(404);
     expect((await call('GET', `/hotels/${hotelA}/stays/${stayA}`, foreign)).status).toBe(404);
-    expect((await call('POST', `/hotels/${hotelA}/shifts`, foreign, {})).status).toBe(404);
+    expect(
+      (await call('POST', `/hotels/${hotelA}/shifts`, foreign, { openingCountedMnt: 0 })).status,
+    ).toBe(404);
     expect(
       (await call('GET', `/hotels/00000000-0000-4000-8000-000000000000/rooms/board`, foreign))
         .status,

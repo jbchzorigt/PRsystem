@@ -175,6 +175,15 @@ export function attachIamHarness(
          VALUES ($1, $2, $2, 12, now(), now() + interval '365 days')`,
         [hotelId, packageCode],
       );
+      // The default drawer Phase 05's activation provisions with every hotel
+      // (doc 24 §2.1). Same reason as the subscription row above: a hotel that
+      // skipped activation would otherwise be one no Reception can open a shift
+      // over, which is a fixture gap rather than the behaviour under test.
+      await admin.query(
+        `INSERT INTO platform.cash_location (hotel_id, kind, name, code, is_default_drawer)
+         VALUES ($1, 'DRAWER', 'Үндсэн касс', 'MAIN', true)`,
+        [hotelId],
+      );
       return hotelId;
     },
 

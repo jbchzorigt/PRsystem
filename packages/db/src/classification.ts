@@ -583,6 +583,30 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: "carries hotel_id; the hotel's own loss when a deposit could not cover a late refund (DEP-DEC-010)",
   },
   {
+    schema: 'platform',
+    table: 'cash_movement',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the typed immutable cash ledger of a hotel (CASH-DEC-004)',
+  },
+  {
+    schema: 'platform',
+    table: 'cash_transfer',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a transfer between two cash locations and the counts that resolve it (CASH-DEC-006)',
+  },
+  {
+    schema: 'platform',
+    table: 'cash_request',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; a bank deposit or owner withdrawal awaiting a Hotel Admin's approval (CASH-DEC-007)",
+  },
+  {
+    schema: 'platform',
+    table: 'expense',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the expense lifecycle whose approval is not a cash outflow (FIN-DEC-005)',
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

@@ -9,6 +9,8 @@ import type { CommandActor } from '../../iam/services/iam-context';
 import type { StayHarness, StayHotel } from '../../stay/test-support/stay-harness';
 import { createStayHarness, key, request } from '../../stay/test-support/stay-harness';
 import { BillingDeposits } from '../contracts/stay-deposits';
+import { LedgerCashPostings } from '../../finance/contracts/billing-cash';
+import { RepositoryShiftLookup } from '../../stay/contracts/shift-lookup';
 import type { BillingDependencies } from '../services/billing-context';
 import { DepositService } from '../services/deposit.service';
 import { FinancialCorrectionService } from '../services/correction.service';
@@ -53,6 +55,7 @@ export async function createBillingHarness(suite: string): Promise<BillingHarnes
     stays: stay.stays,
     reports: stay.reports,
     gateways,
+    cash: new LedgerCashPostings(new RepositoryShiftLookup()),
     clock: stay.now,
   };
   const deposits2 = new DepositService(deps);

@@ -220,6 +220,7 @@ export class FolioService extends BillingServiceBase {
           accountId: gate.principal.accountId,
           at: now,
         });
+        await this.mirrorCash(uow, transaction, gate.principal.accountId);
         const updated = await billing.updateFolio({
           folioId: folio.folioId,
           expectedRevision: folio.revision,

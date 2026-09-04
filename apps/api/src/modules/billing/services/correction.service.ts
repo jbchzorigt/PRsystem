@@ -193,6 +193,7 @@ export class FinancialCorrectionService extends BillingServiceBase {
           accountId: gate.principal.accountId,
           at: now,
         });
+        await this.mirrorCash(uow, reversal, gate.principal.accountId);
         let corrected;
         if (row.correctedAmountMnt !== null) {
           const channel = row.correctedChannel ?? original.channel;
@@ -225,6 +226,7 @@ export class FinancialCorrectionService extends BillingServiceBase {
             accountId: gate.principal.accountId,
             at: now,
           });
+          await this.mirrorCash(uow, corrected, gate.principal.accountId);
         }
         // The balance follows the ledger: a corrected deposit receipt moves the
         // aggregate's totals, a corrected folio payment moves the folio's.

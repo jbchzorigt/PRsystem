@@ -565,13 +565,23 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.cash_location',
-    grants: { api: ['SELECT'], worker: [], police: [] },
+    // Phase 11: a Hotel Admin adds a drawer or the hotel's one safe and sets
+    // the float a drawer is expected to hold (doc 24 §2.1).
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
     insert: (hotelId, n) => ({
       sql: `INSERT INTO platform.cash_location (hotel_id, kind, name, code)
             VALUES ($1, 'DRAWER', $2, $3)`,
       values: [hotelId, `Fixture drawer ${String(n)}`, `FIX${String(n)}`],
     }),
-    insertableByRuntime: false,
+    // The provisioned default drawer and the ones other fixtures use are left
+    // alone; the probe addresses the free ones.
+    probeWhere: `NOT is_default_drawer
+                 AND cash_location_id NOT IN (SELECT location_id FROM platform.cash_movement)
+                 AND cash_location_id NOT IN (SELECT location_id FROM platform.cash_request)
+                 AND cash_location_id NOT IN (SELECT source_location_id FROM platform.cash_transfer)
+                 AND cash_location_id NOT IN (SELECT destination_location_id FROM platform.cash_transfer)`,
+    updateColumn: 'revision',
+    updateSet: `physical_location = 'acl-probe', revision = revision + 1`,
   },
   {
     name: 'platform.hotel_admin_activation',
@@ -2141,6 +2151,87 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
       values: [hotelId],
     }),
     updateColumn: 'note',
+  },
+
+  // Phase 11. The ledger, the transfers, the approvals and the expenses all
+  // hang off a cash location, so each fixture creates the location it needs.
+  {
+    name: 'platform.cash_movement',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH l AS (
+              INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+              VALUES ($1, 'DRAWER', 'p11-' || substr(gen_random_uuid()::text, 1, 12),
+                      'P11' || substr(gen_random_uuid()::text, 1, 8))
+              RETURNING cash_location_id)
+            INSERT INTO platform.cash_movement
+              (hotel_id, location_id, movement_type, direction, amount_mnt, reason,
+               actor_account_id)
+            SELECT $1, l.cash_location_id, 'CASH_TOP_UP', 'IN', 50000, 'fixture',
+                   gen_random_uuid()
+              FROM l`,
+      values: [hotelId],
+    }),
+    updateColumn: 'reason',
+  },
+  {
+    name: 'platform.cash_transfer',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+              VALUES ($1, 'DRAWER', 'p11a-' || substr(gen_random_uuid()::text, 1, 12),
+                      'P11A' || substr(gen_random_uuid()::text, 1, 8))
+              RETURNING cash_location_id),
+            b AS (
+              INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+              VALUES ($1, 'DRAWER', 'p11b-' || substr(gen_random_uuid()::text, 1, 12),
+                      'P11B' || substr(gen_random_uuid()::text, 1, 8))
+              RETURNING cash_location_id)
+            INSERT INTO platform.cash_transfer
+              (hotel_id, kind, source_location_id, destination_location_id, amount_mnt,
+               initiated_by_account_id)
+            SELECT $1, 'DRAWER_SAFE', a.cash_location_id, b.cash_location_id, 20000,
+                   gen_random_uuid()
+              FROM a, b`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'CANCELLED', cancelled_by_account_id = gen_random_uuid(),
+                cancelled_at = now(), cancel_reason = 'fixture', revision = revision + 1`,
+  },
+  {
+    name: 'platform.cash_request',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH l AS (
+              INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+              VALUES ($1, 'DRAWER', 'p11r-' || substr(gen_random_uuid()::text, 1, 12),
+                      'P11R' || substr(gen_random_uuid()::text, 1, 8))
+              RETURNING cash_location_id)
+            INSERT INTO platform.cash_request
+              (hotel_id, kind, location_id, amount_mnt, reference, reason,
+               requested_by_account_id)
+            SELECT $1, 'BANK_DEPOSIT', l.cash_location_id, 100000, 'REF-1', 'fixture',
+                   gen_random_uuid()
+              FROM l`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'REJECTED', decided_by_account_id = gen_random_uuid(),
+                decided_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.expense',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.expense
+              (hotel_id, category, description, amount_mnt, method, created_by_account_id)
+            VALUES ($1, 'Fixture', 'fixture', 25000, 'CARD_POS', gen_random_uuid())`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'SUBMITTED', submitted_at = now(), revision = revision + 1`,
   },
 ];
 

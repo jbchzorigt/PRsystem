@@ -11,6 +11,8 @@ import type {
 } from '../../iam/services/iam-context';
 import { gateHotelScope, recordAuthorizationDenial } from '../../iam/services/iam-context';
 import { AuthorizationDenied, authorizeCommand } from '../../iam/services/authorization.service';
+import type { CashPostingsPort } from '../contracts/cash-postings';
+import type { TransactionRow } from '../repositories/billing.repository';
 import type { StayService } from '../../stay/services/stay.service';
 import type { MinibarReportService } from '../../stay/services/report.service';
 
@@ -41,6 +43,12 @@ export interface BillingDependencies {
    * (`RC-DEC-006`).
    */
   readonly gateways: PaymentGateways;
+  /**
+   * The drawer side of a cash transaction, from the module that owns the cash
+   * ledger (Phase 11). Every cash-channel movement this module writes is
+   * mirrored through it in the same transaction (doc 24 §4).
+   */
+  readonly cash: CashPostingsPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
@@ -135,6 +143,32 @@ const NO_SUBSCRIPTION: SubscriptionStatePort = {
 
 export abstract class BillingServiceBase {
   protected constructor(protected readonly deps: BillingDependencies) {}
+
+  /**
+   * doc 24 §4: cash that reaches a folio reaches a drawer, in this same
+   * transaction. A non-cash channel moves no drawer and mirrors nothing
+   * (`CASH-DEC-005`).
+   */
+  protected async mirrorCash(
+    uow: UnitOfWork,
+    transaction: TransactionRow,
+    accountId: string,
+  ): Promise<void> {
+    if (transaction.channel !== 'CASH') return;
+    // A late refund the hotel covers from the deposit moved no drawer: the
+    // provider paid the guest, and the deposit absorbed it (doc 20 §7).
+    if (transaction.kind === 'LATE_REFUND_COVERED') return;
+    await this.deps.cash.record(uow, {
+      transactionId: transaction.transactionId,
+      kind: transaction.kind,
+      direction: transaction.direction,
+      amountMnt: transaction.amountMnt,
+      shiftId: transaction.shiftId,
+      accountId,
+      at: transaction.occurredAt,
+      ...(transaction.reason === null ? {} : { reason: transaction.reason }),
+    });
+  }
 
   /** `RC-DEC-006`: the channel names the provider that must confirm it. */
   protected gatewayFor(channel: 'CASH' | 'QPAY' | 'CARD_GATEWAY' | 'MANUAL_POS') {

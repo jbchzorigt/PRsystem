@@ -26,7 +26,7 @@ beforeAll(async () => {
   env = await createBillingHarness('billing_integration');
   h = await env.hotel('Billing Hotel', 'P25');
   await env.shifts.open(
-    { hotelId: h.hotelId, idempotencyKey: key('sh') },
+    { hotelId: h.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
     h.reception,
     request(h.reception),
   );
@@ -136,7 +136,7 @@ describe('the one bill of a stay (RC-DEC-001, DEP-DEC-001, -008)', () => {
   it('refuses a walk-in check-in in a hotel with no configured deposit (DEP-DEC-001)', async () => {
     const other = await env.hotel('No Deposit Hotel', 'P25');
     await env.shifts.open(
-      { hotelId: other.hotelId, idempotencyKey: key('sh') },
+      { hotelId: other.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
       other.reception,
       request(other.reception),
     );

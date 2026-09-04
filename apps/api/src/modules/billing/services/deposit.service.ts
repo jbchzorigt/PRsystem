@@ -210,6 +210,7 @@ export class DepositService extends BillingServiceBase {
           }
           throw error;
         }
+        await this.mirrorCash(uow, transaction, gate.principal.accountId);
         const updated = await billing.updateDeposit({
           stayId: input.stayId,
           expectedRevision: deposit.revision,

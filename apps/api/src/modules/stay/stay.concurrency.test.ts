@@ -20,7 +20,7 @@ beforeAll(async () => {
   env = await createStayHarness('stay_concurrency');
   hotel = await env.hotel('Race Stay', 'P25');
   await env.shifts.open(
-    { hotelId: hotel.hotelId, idempotencyKey: key('sh') },
+    { hotelId: hotel.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
     hotel.reception,
     request(hotel.reception),
   );

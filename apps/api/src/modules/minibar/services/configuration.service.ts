@@ -4,7 +4,7 @@ import { appendOutboxEvent, completeIdempotencyKey, recordPlatformAudit } from '
 import type { BlockerFact } from '../../catalog/domain/lifecycle';
 import { probeSources } from '../../catalog/contracts/dependency-probe';
 import type { RoomState } from '../../catalog/contracts/room-reads';
-import { readRoom, shareRoom } from '../../catalog/contracts/room-reads';
+import { lockRoom, readRoom, shareRoom } from '../../catalog/contracts/room-reads';
 import { SAFE_POINT_SOURCES } from '../contracts/safe-point-sources';
 import type { StockLine, TargetLine, TaskBound } from '../domain/inventory';
 import { countVariances, reconciliationBounds, statusAgainstTarget } from '../domain/inventory';
@@ -801,7 +801,12 @@ export class ConfigurationService extends MinibarServiceBase {
                 change.targetTemplateId,
                 change.targetVersionId,
               );
-        const room = await shareRoom(uow, change.roomId);
+        // The room is locked outright, not shared: this command finalizes the
+        // room's retirement further down, and upgrading a share to an exclusive
+        // lock there deadlocks against a check-in that shares the same room and
+        // waits for this configuration (doc 26 §2; one order everywhere — the
+        // room first, then its configuration).
+        const room = await lockRoom(uow, change.roomId);
         const configuration = await configurations.ensureConfiguration(change.roomId);
         const locked = await configurations.lockChange(input.changeId);
         await authorize();
@@ -1142,7 +1147,12 @@ export class ConfigurationService extends MinibarServiceBase {
                 change0.targetVersionId,
               )
             : undefined;
-        const room = await shareRoom(uow, peek.roomId);
+        // The room is locked outright, not shared: this command finalizes the
+        // room's retirement further down, and upgrading a share to an exclusive
+        // lock there deadlocks against a check-in that shares the same room and
+        // waits for this configuration (doc 26 §2; one order everywhere — the
+        // room first, then its configuration).
+        const room = await lockRoom(uow, peek.roomId);
         const configuration = await configurations.ensureConfiguration(peek.roomId);
         const change = await configurations.lockChange(peek.changeId);
         const task = await configurations.lockTask(input.taskId);

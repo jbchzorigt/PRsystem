@@ -216,11 +216,6 @@ describe('pre-tenant isolation', () => {
            VALUES ($1, 'P20', 'P20', 1, now(), now() + interval '30 days')`,
         ],
         [
-          'cash_location',
-          `INSERT INTO platform.cash_location (hotel_id, kind, name, code)
-           VALUES ($1, 'DRAWER', 'probe', 'PROBE')`,
-        ],
-        [
           'hotel_profile',
           `INSERT INTO platform.hotel_profile
              (hotel_id, public_name, public_phone, district, khoroo, address_line,
@@ -239,6 +234,46 @@ describe('pre-tenant isolation', () => {
         await query(`SELECT set_config('app.realm', 'hotel', true)`);
         await query(`SELECT set_config('app.actor_ref', 'probe', true)`);
       }
+    });
+  });
+
+  it('the drawer a Hotel Admin may add is still tenant-bound and never a second default', async () => {
+    // doc 24 §2.1 puts drawer and safe creation in the Hotel Admin's hands, so
+    // from Phase 11 the runtime does hold `INSERT` on `platform.cash_location` —
+    // the one provisioning table where it does. What `ONB-DEC-001` protects is
+    // unchanged and is proved here instead of by the absent grant: the insert
+    // is confined to the caller's own tenant, and the default drawer stays the
+    // one activation created.
+    const hotelId = await env.iam.createHotel('Cash Location Probe', 'P25');
+    const other = await env.iam.createHotel('Another Hotel', 'P25');
+    await asRuntime({ hotelId }, async (query) => {
+      const ok = await query(
+        `INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+         VALUES ($1, 'DRAWER', 'Reception 2', 'DRW-2')`,
+        [hotelId],
+      );
+      expect(ok.rowCount).toBe(1);
+
+      const foreign = await query(
+        `INSERT INTO platform.cash_location (hotel_id, kind, name, code)
+         VALUES ($1, 'DRAWER', 'theirs', 'DRW-X')`,
+        [other],
+      ).then(
+        () => undefined,
+        (e: unknown) => e as { code?: string },
+      );
+      expect(foreign?.code).toBe('42501');
+    });
+    await asRuntime({ hotelId }, async (query) => {
+      const second = await query(
+        `INSERT INTO platform.cash_location (hotel_id, kind, name, code, is_default_drawer)
+         VALUES ($1, 'DRAWER', 'a second default', 'DRW-D', true)`,
+        [hotelId],
+      ).then(
+        () => undefined,
+        (e: unknown) => e as { code?: string },
+      );
+      expect(second?.code).toBe('23505');
     });
   });
 });

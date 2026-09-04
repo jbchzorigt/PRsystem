@@ -44,7 +44,7 @@ async function refused(work: Promise<unknown>): Promise<ApiError> {
 
 async function openShift(h: StayHotel = hotel): Promise<string> {
   const shift = await env.shifts.open(
-    { hotelId: h.hotelId, idempotencyKey: key('sh') },
+    { hotelId: h.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
     h.reception,
     request(h.reception),
   );
@@ -80,7 +80,7 @@ describe('the Reception shift (doc 05 §19.1)', () => {
     const shiftId = await openShift();
     const again = await refused(
       env.shifts.open(
-        { hotelId: hotel.hotelId, idempotencyKey: key('sh') },
+        { hotelId: hotel.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
         hotel.reception,
         request(hotel.reception),
       ),
@@ -89,18 +89,27 @@ describe('the Reception shift (doc 05 §19.1)', () => {
     // A Manager without the Reception role cannot open one.
     const manager = await refused(
       env.shifts.open(
-        { hotelId: hotel.hotelId, idempotencyKey: key('sh') },
+        { hotelId: hotel.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
         hotel.manager,
         request(hotel.manager),
       ),
     );
     expect(manager.code).toBe('NOT_FOUND');
-    const closed = await env.shifts.close(
-      { hotelId: hotel.hotelId, shiftId, idempotencyKey: key('sh'), expectedRevision: 0 },
+    // doc 03 §6 / `SHIFT-DEC-003`: with nobody to hand to, the Reception closes
+    // its own shift on its own count; an empty drawer counted empty needs no review.
+    const closed = await env.shifts.selfClose(
+      {
+        hotelId: hotel.hotelId,
+        shiftId,
+        idempotencyKey: key('sh'),
+        expectedRevision: 0,
+        countedCashMnt: 0n,
+      },
       hotel.reception,
       request(hotel.reception),
     );
-    expect(closed.state).toBe('CLOSED');
+    expect(closed.state).toBe('SELF_CLOSED');
+    expect(closed.reviewState).toBe('NOT_REQUIRED');
     expect(
       await countRows(
         env.admin,

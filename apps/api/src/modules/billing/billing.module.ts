@@ -34,12 +34,17 @@ export interface BillingModuleConfig {
   readonly databaseUrl: string;
 }
 
+import type { CashPostingsPort } from './contracts/cash-postings';
+import { UnprovisionedCashPostings } from './contracts/cash-postings';
+
 export interface BillingModuleOptions {
   readonly config?: BillingModuleConfig;
   readonly iam?: DynamicModule;
   readonly stay?: DynamicModule;
   readonly pool?: Pool;
   readonly gateways: PaymentGateways;
+  /** The drawer side of a cash transaction (Phase 11); unprovisioned by default. */
+  readonly cash?: CashPostingsPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
@@ -70,6 +75,7 @@ export class BillingModule {
       });
     const ownsPool = options.pool === undefined;
     const clock = options.clock;
+    const cash = options.cash ?? new UnprovisionedCashPostings();
     const deps = (
       subscription: SubscriptionStatePort,
       stays: StayService,
@@ -80,6 +86,7 @@ export class BillingModule {
       stays,
       reports,
       gateways: options.gateways,
+      cash,
       ...(clock === undefined ? {} : { clock }),
     });
     const inject = [SUBSCRIPTION_STATE, StayService, MinibarReportService];

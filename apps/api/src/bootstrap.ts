@@ -102,6 +102,10 @@ export async function createApp(
         // recorded (CLAUDE.md §9).
         gateways: selectPaymentGateways(config.APP_ENV),
       },
+      // doc 24: the cash the hotel physically holds. It has no external
+      // provider — cash is counted, not confirmed — so it needs only the
+      // database and the stay module's shift contract.
+      finance: { config: { databaseUrl: config.DATABASE_URL } },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

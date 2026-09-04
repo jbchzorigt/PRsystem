@@ -25,7 +25,7 @@ beforeAll(async () => {
   env = await createStayHarness('checkout_concurrency');
   h = await env.hotel('Race Checkout', 'P25');
   await env.shifts.open(
-    { hotelId: h.hotelId, idempotencyKey: key('sh') },
+    { hotelId: h.hotelId, idempotencyKey: key('sh'), openingCountedMnt: 0n },
     h.reception,
     request(h.reception),
   );

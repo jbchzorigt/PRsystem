@@ -1934,60 +1934,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     },
     {
       schema: 'platform',
-      table: 'cash_location',
-      column: 'cash_location_id',
-      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'code',
-      shape: 'text | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'created_at',
-      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'hotel_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'is_default_drawer',
-      shape: 'boolean | NOT NULL | default false | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'kind',
-      shape: 'text | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'name',
-      shape: 'text | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'revision',
-      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      column: 'state',
-      shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
-    },
-    {
-      schema: 'platform',
       table: 'ebarimt_issuance',
       column: 'attempts',
       shape: 'integer | NOT NULL | default 0 | no identity | not generated',
@@ -4811,60 +4757,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'reception_shift',
-      column: 'closed_at',
-      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'closed_by_account_id',
-      shape: 'uuid | NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'created_at',
-      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'hotel_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'opened_at',
-      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'opened_by_account_id',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'revision',
-      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'shift_id',
-      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      column: 'state',
-      shape: "text | NOT NULL | default 'OPEN'::text | no identity | not generated",
-    },
-    {
-      schema: 'platform',
       table: 'room_cleaning_event',
       column: 'actor_account_id',
       shape: 'uuid | NULL | no default | no identity | not generated',
@@ -7141,6 +7033,668 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       column: 'stay_id',
       shape: 'uuid | NOT NULL | no default | no identity | not generated',
     },
+
+    // Phase 11 — shift, cash drawer, expense, and hotel finance.
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'cash_location_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'code',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'configured_float_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'created_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'is_default_drawer',
+      shape: 'boolean | NOT NULL | default false | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'kind',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'name',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'physical_location',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      column: 'state',
+      shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'actor_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'amount_mnt',
+      shape: 'bigint | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'direction',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'effective_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'expense_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'location_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'movement_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'movement_type',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'original_movement_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'payment_transaction_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'reference',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'request_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'shift_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      column: 'transfer_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'amount_mnt',
+      shape: 'bigint | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'decided_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'decided_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'decision_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'kind',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'location_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'movement_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'reason',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'recipient',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'reference',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'request_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'requested_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'requested_by_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'self_approved',
+      shape: 'boolean | NOT NULL | default false | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'shift_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      column: 'state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'amount_mnt',
+      shape: 'bigint | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'cancel_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'cancel_recount_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'cancelled_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'cancelled_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'confirmed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'confirmed_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'confirmed_counted_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'destination_location_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'destination_shift_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'initiated_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'initiated_by_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'kind',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'source_location_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'source_shift_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      column: 'transfer_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'amount_mnt',
+      shape: 'bigint | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'category',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'created_by_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'decided_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'decided_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'decision_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'description',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'expense_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'location_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'method',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'movement_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'paid_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'paid_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'provider_reference',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'self_approved',
+      shape: 'boolean | NOT NULL | default false | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'shift_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'state',
+      shape: "text | NOT NULL | default 'DRAFT'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      column: 'submitted_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'close_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'closed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'closed_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'counted_cash_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'expected_cash_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'handed_to_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'incoming_counted_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'location_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'opened_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'opened_by_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'opening_balance_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'review_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'review_state',
+      shape: "text | NOT NULL | default 'NOT_REQUIRED'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'reviewed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'reviewed_by_account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'self_reviewed',
+      shape: 'boolean | NOT NULL | default false | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'shift_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'state',
+      shape: "text | NOT NULL | default 'OPEN'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      column: 'variance_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
   ],
   constraints: [
     {
@@ -8568,83 +9122,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'c',
       definition:
         "CHECK ((state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text, 'SENT'::text, 'DEAD_LETTER'::text])))",
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_code_uq',
-      kind: 'u',
-      definition: 'UNIQUE (hotel_id, code)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_default_is_a_drawer',
-      kind: 'c',
-      definition: "CHECK (((NOT is_default_drawer) OR (kind = 'DRAWER'::text)))",
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_default_is_active',
-      kind: 'c',
-      definition: "CHECK (((NOT is_default_drawer) OR (state = 'ACTIVE'::text)))",
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_hotel_fkey',
-      kind: 'f',
-      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_kind_known',
-      kind: 'c',
-      definition: "CHECK ((kind = ANY (ARRAY['DRAWER'::text, 'SAFE'::text])))",
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_name_bounded',
-      kind: 'c',
-      definition: 'CHECK (((length(name) >= 1) AND (length(name) <= 100)))',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_name_uq',
-      kind: 'u',
-      definition: 'UNIQUE (hotel_id, name)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_pkey',
-      kind: 'p',
-      definition: 'PRIMARY KEY (cash_location_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_revision_non_negative',
-      kind: 'c',
-      definition: 'CHECK ((revision >= 0))',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_scope_uq',
-      kind: 'u',
-      definition: 'UNIQUE (hotel_id, cash_location_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_state_known',
-      kind: 'c',
-      definition: "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text])))",
     },
     {
       schema: 'platform',
@@ -11468,49 +11945,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_closed_after_opened',
-      kind: 'c',
-      definition: 'CHECK (((closed_at IS NULL) OR (closed_at >= opened_at)))',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_closed_shape',
-      kind: 'c',
-      definition:
-        "CHECK (((state = 'CLOSED'::text) = ((closed_at IS NOT NULL) AND (closed_by_account_id IS NOT NULL))))",
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_hotel_fkey',
-      kind: 'f',
-      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_hotel_scope_uq',
-      kind: 'u',
-      definition: 'UNIQUE (hotel_id, shift_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_pkey',
-      kind: 'p',
-      definition: 'PRIMARY KEY (shift_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_state_known',
-      kind: 'c',
-      definition: "CHECK ((state = ANY (ARRAY['OPEN'::text, 'CLOSED'::text])))",
-    },
-    {
-      schema: 'platform',
       table: 'room_cleaning_event',
       name: 'room_cleaning_event_from_state_known',
       kind: 'c',
@@ -13856,6 +14290,679 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         "CHECK ((state = ANY (ARRAY['PENDING'::text, 'FAILED'::text, 'SUCCEEDED'::text, 'RELEASED'::text, 'RECONCILING'::text, 'RECONCILED'::text])))",
     },
+
+    // Phase 11 — shift, cash drawer, expense, and hotel finance.
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_code_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, code)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_default_is_a_drawer',
+      kind: 'c',
+      definition: "CHECK (((NOT is_default_drawer) OR (kind = 'DRAWER'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_default_is_active',
+      kind: 'c',
+      definition: "CHECK (((NOT is_default_drawer) OR (state = 'ACTIVE'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_float_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((configured_float_mnt IS NULL) OR ((kind = 'DRAWER'::text) AND (configured_float_mnt >= 0))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_kind_known',
+      kind: 'c',
+      definition: "CHECK ((kind = ANY (ARRAY['DRAWER'::text, 'SAFE'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_name_bounded',
+      kind: 'c',
+      definition: 'CHECK (((length(name) >= 1) AND (length(name) <= 100)))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_name_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, name)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_physical_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((physical_location IS NULL) OR ((length(physical_location) >= 1) AND (length(physical_location) <= 200))))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (cash_location_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_scope_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, cash_location_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_state_known',
+      kind: 'c',
+      definition: "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_amount_positive',
+      kind: 'c',
+      definition: 'CHECK ((amount_mnt > 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_correction_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((movement_type <> ALL (ARRAY['CASH_CORRECTION_IN'::text, 'CASH_CORRECTION_OUT'::text])) OR ((reason IS NOT NULL) AND (original_movement_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_direction_known',
+      kind: 'c',
+      definition: "CHECK ((direction = ANY (ARRAY['IN'::text, 'OUT'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_direction_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((direction = 'IN'::text) = (movement_type = ANY (ARRAY['INITIAL_FLOAT'::text, 'SERVICE_CASH_PAYMENT'::text, 'DEPOSIT_CASH_RECEIPT'::text, 'CASH_TOP_UP'::text, 'DRAWER_TRANSFER_IN'::text, 'SAFE_TRANSFER_IN'::text, 'CASH_CORRECTION_IN'::text]))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_expense_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (expense_id) REFERENCES platform.expense(expense_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_expense_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((movement_type = 'PAID_CASH_EXPENSE'::text) = (expense_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_location_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, location_id) REFERENCES platform.cash_location(hotel_id, cash_location_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_original_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (original_movement_id) REFERENCES platform.cash_movement(movement_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_payment_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (payment_transaction_id) REFERENCES platform.payment_transaction(transaction_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (movement_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_reason_bounded',
+      kind: 'c',
+      definition:
+        'CHECK ((((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))) AND ((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 120)))))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_request_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (request_id) REFERENCES platform.cash_request(request_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_request_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((movement_type <> ALL (ARRAY['BANK_DEPOSIT_OUT'::text, 'OWNER_OTHER_WITHDRAWAL'::text])) OR (request_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_shift_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, shift_id) REFERENCES platform.reception_shift(hotel_id, shift_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_top_up_shape',
+      kind: 'c',
+      definition: "CHECK (((movement_type <> 'CASH_TOP_UP'::text) OR (reason IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_transfer_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (transfer_id) REFERENCES platform.cash_transfer(transfer_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_transfer_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((movement_type <> ALL (ARRAY['DRAWER_TRANSFER_IN'::text, 'DRAWER_TRANSFER_OUT'::text, 'SAFE_TRANSFER_IN'::text, 'SAFE_TRANSFER_OUT'::text])) OR (transfer_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_type_known',
+      kind: 'c',
+      definition:
+        "CHECK ((movement_type = ANY (ARRAY['INITIAL_FLOAT'::text, 'SERVICE_CASH_PAYMENT'::text, 'DEPOSIT_CASH_RECEIPT'::text, 'SERVICE_CASH_REFUND'::text, 'DEPOSIT_CASH_REFUND'::text, 'PAID_CASH_EXPENSE'::text, 'CASH_TOP_UP'::text, 'DRAWER_TRANSFER_IN'::text, 'DRAWER_TRANSFER_OUT'::text, 'SAFE_TRANSFER_IN'::text, 'SAFE_TRANSFER_OUT'::text, 'BANK_DEPOSIT_OUT'::text, 'OWNER_OTHER_WITHDRAWAL'::text, 'CASH_CORRECTION_IN'::text, 'CASH_CORRECTION_OUT'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_amount_positive',
+      kind: 'c',
+      definition: 'CHECK ((amount_mnt > 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_bank_shape',
+      kind: 'c',
+      definition: "CHECK (((kind <> 'BANK_DEPOSIT'::text) OR (reference IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_decision_shape',
+      kind: 'c',
+      definition:
+        "CHECK ((((state = 'PENDING'::text) = (decided_at IS NULL)) AND ((decided_at IS NULL) = (decided_by_account_id IS NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_kind_known',
+      kind: 'c',
+      definition: "CHECK ((kind = ANY (ARRAY['BANK_DEPOSIT'::text, 'OWNER_WITHDRAWAL'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_location_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, location_id) REFERENCES platform.cash_location(hotel_id, cash_location_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_movement_shape',
+      kind: 'c',
+      definition: "CHECK (((movement_id IS NULL) OR (state = 'APPROVED'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (request_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_shift_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, shift_id) REFERENCES platform.reception_shift(hotel_id, shift_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_text_bounded',
+      kind: 'c',
+      definition:
+        'CHECK ((((length(reason) >= 1) AND (length(reason) <= 300)) AND ((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 120))) AND ((recipient IS NULL) OR ((length(recipient) >= 1) AND (length(recipient) <= 200))) AND ((decision_reason IS NULL) OR ((length(decision_reason) >= 1) AND (length(decision_reason) <= 300)))))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_withdrawal_shape',
+      kind: 'c',
+      definition: "CHECK (((kind <> 'OWNER_WITHDRAWAL'::text) OR (recipient IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_amount_positive',
+      kind: 'c',
+      definition: 'CHECK ((amount_mnt > 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_cancellation_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state = 'CANCELLED'::text) = ((cancelled_at IS NOT NULL) AND (cancelled_by_account_id IS NOT NULL) AND (cancel_reason IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_confirmation_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state = 'COMPLETED'::text) = ((confirmed_at IS NOT NULL) AND (confirmed_by_account_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_counted_non_negative',
+      kind: 'c',
+      definition:
+        'CHECK ((((confirmed_counted_mnt IS NULL) OR (confirmed_counted_mnt >= 0)) AND ((cancel_recount_mnt IS NULL) OR (cancel_recount_mnt >= 0))))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_destination_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, destination_location_id) REFERENCES platform.cash_location(hotel_id, cash_location_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_destination_shift_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, destination_shift_id) REFERENCES platform.reception_shift(hotel_id, shift_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_kind_known',
+      kind: 'c',
+      definition: "CHECK ((kind = ANY (ARRAY['DRAWER_TO_DRAWER'::text, 'DRAWER_SAFE'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_locations_differ',
+      kind: 'c',
+      definition: 'CHECK ((source_location_id <> destination_location_id))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (transfer_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_reason_bounded',
+      kind: 'c',
+      definition:
+        'CHECK ((((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))) AND ((cancel_reason IS NULL) OR ((length(cancel_reason) >= 1) AND (length(cancel_reason) <= 300)))))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_shift_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((kind <> 'DRAWER_TO_DRAWER'::text) OR ((source_shift_id IS NOT NULL) AND (destination_shift_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_source_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, source_location_id) REFERENCES platform.cash_location(hotel_id, cash_location_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_source_shift_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, source_shift_id) REFERENCES platform.reception_shift(hotel_id, shift_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text, 'CANCELLED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_amount_positive',
+      kind: 'c',
+      definition: 'CHECK ((amount_mnt > 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_cash_payment_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state <> 'PAID'::text) OR (method <> 'CASH'::text) OR ((movement_id IS NOT NULL) AND (shift_id IS NOT NULL) AND (location_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_decision_shape',
+      kind: 'c',
+      definition:
+        "CHECK ((((state = ANY (ARRAY['APPROVED'::text, 'PAID'::text, 'REJECTED'::text])) = (decided_at IS NOT NULL)) AND ((decided_at IS NULL) = (decided_by_account_id IS NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_location_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, location_id) REFERENCES platform.cash_location(hotel_id, cash_location_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_method_known',
+      kind: 'c',
+      definition:
+        "CHECK ((method = ANY (ARRAY['CASH'::text, 'CARD_POS'::text, 'BANK_QPAY'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_non_cash_payment_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((method = 'CASH'::text) OR ((movement_id IS NULL) AND (shift_id IS NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_non_cash_reference_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state <> 'PAID'::text) OR (method = 'CASH'::text) OR (provider_reference IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_paid_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state = 'PAID'::text) = ((paid_at IS NOT NULL) AND (paid_by_account_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (expense_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_shift_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, shift_id) REFERENCES platform.reception_shift(hotel_id, shift_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['DRAFT'::text, 'SUBMITTED'::text, 'APPROVED'::text, 'PAID'::text, 'REJECTED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_submitted_shape',
+      kind: 'c',
+      definition: "CHECK (((state = 'DRAFT'::text) = (submitted_at IS NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_text_bounded',
+      kind: 'c',
+      definition:
+        'CHECK ((((length(category) >= 1) AND (length(category) <= 80)) AND ((length(description) >= 1) AND (length(description) <= 300)) AND ((decision_reason IS NULL) OR ((length(decision_reason) >= 1) AND (length(decision_reason) <= 300))) AND ((provider_reference IS NULL) OR ((length(provider_reference) >= 1) AND (length(provider_reference) <= 120)))))',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_closed_after_opened',
+      kind: 'c',
+      definition: 'CHECK (((closed_at IS NULL) OR (closed_at >= opened_at)))',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_closed_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state = ANY (ARRAY['SELF_CLOSED'::text, 'CLOSED'::text])) = ((closed_at IS NOT NULL) AND (closed_by_account_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_counted_non_negative',
+      kind: 'c',
+      definition:
+        'CHECK ((((counted_cash_mnt IS NULL) OR (counted_cash_mnt >= 0)) AND ((incoming_counted_mnt IS NULL) OR (incoming_counted_mnt >= 0))))',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_hotel_scope_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, shift_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_location_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, location_id) REFERENCES platform.cash_location(hotel_id, cash_location_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_opening_non_negative',
+      kind: 'c',
+      definition: 'CHECK (((opening_balance_mnt IS NULL) OR (opening_balance_mnt >= 0)))',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (shift_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_reason_bounded',
+      kind: 'c',
+      definition:
+        'CHECK ((((review_reason IS NULL) OR ((length(review_reason) >= 1) AND (length(review_reason) <= 300))) AND ((close_reason IS NULL) OR ((length(close_reason) >= 1) AND (length(close_reason) <= 300)))))',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_review_shape',
+      kind: 'c',
+      definition: 'CHECK (((reviewed_at IS NULL) = (reviewed_by_account_id IS NULL)))',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_review_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((review_state = ANY (ARRAY['NOT_REQUIRED'::text, 'PENDING_MANAGER'::text, 'PENDING_HOTEL_ADMIN'::text, 'DISPUTED'::text, 'RESOLVED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['OPEN'::text, 'CLOSING'::text, 'HANDED_OVER'::text, 'RECOUNT_REQUIRED'::text, 'CASH_ACCEPTED'::text, 'SELF_CLOSED'::text, 'CLOSED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_variance_shape',
+      kind: 'c',
+      definition:
+        'CHECK ((((counted_cash_mnt IS NULL) AND (expected_cash_mnt IS NULL) AND (variance_mnt IS NULL)) OR ((counted_cash_mnt IS NOT NULL) AND (expected_cash_mnt IS NOT NULL) AND (variance_mnt = (counted_cash_mnt - expected_cash_mnt)))))',
+    },
   ],
   indexes: [
     {
@@ -14373,41 +15480,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'activation_delivery_queue_idx',
       definition:
         "CREATE INDEX activation_delivery_queue_idx ON platform.activation_delivery USING btree (available_at, delivery_id) WHERE (state = ANY (ARRAY['PENDING'::text, 'CLAIMED'::text]))",
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_code_uq',
-      definition:
-        'CREATE UNIQUE INDEX cash_location_code_uq ON platform.cash_location USING btree (hotel_id, code)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_default_drawer_uq',
-      definition:
-        'CREATE UNIQUE INDEX cash_location_default_drawer_uq ON platform.cash_location USING btree (hotel_id) WHERE (is_default_drawer IS TRUE)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_name_uq',
-      definition:
-        'CREATE UNIQUE INDEX cash_location_name_uq ON platform.cash_location USING btree (hotel_id, name)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_pkey',
-      definition:
-        'CREATE UNIQUE INDEX cash_location_pkey ON platform.cash_location USING btree (cash_location_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
-      name: 'cash_location_scope_uq',
-      definition:
-        'CREATE UNIQUE INDEX cash_location_scope_uq ON platform.cash_location USING btree (hotel_id, cash_location_id)',
     },
     {
       schema: 'platform',
@@ -15120,27 +16192,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_hotel_scope_uq',
-      definition:
-        'CREATE UNIQUE INDEX reception_shift_hotel_scope_uq ON platform.reception_shift USING btree (hotel_id, shift_id)',
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_one_open_uq',
-      definition:
-        "CREATE UNIQUE INDEX reception_shift_one_open_uq ON platform.reception_shift USING btree (hotel_id) WHERE (state = 'OPEN'::text)",
-    },
-    {
-      schema: 'platform',
-      table: 'reception_shift',
-      name: 'reception_shift_pkey',
-      definition:
-        'CREATE UNIQUE INDEX reception_shift_pkey ON platform.reception_shift USING btree (shift_id)',
-    },
-    {
-      schema: 'platform',
       table: 'room_cleaning_event',
       name: 'room_cleaning_event_pkey',
       definition:
@@ -15702,6 +16753,168 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'CREATE INDEX refund_request_stay_idx ON platform.refund_request USING btree (hotel_id, stay_id, state)',
     },
+
+    // Phase 11 — shift, cash drawer, expense, and hotel finance.
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_code_uq',
+      definition:
+        'CREATE UNIQUE INDEX cash_location_code_uq ON platform.cash_location USING btree (hotel_id, code)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_default_drawer_uq',
+      definition:
+        'CREATE UNIQUE INDEX cash_location_default_drawer_uq ON platform.cash_location USING btree (hotel_id) WHERE (is_default_drawer IS TRUE)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_name_uq',
+      definition:
+        'CREATE UNIQUE INDEX cash_location_name_uq ON platform.cash_location USING btree (hotel_id, name)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_one_safe_uq',
+      definition:
+        "CREATE UNIQUE INDEX cash_location_one_safe_uq ON platform.cash_location USING btree (hotel_id) WHERE (kind = 'SAFE'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_pkey',
+      definition:
+        'CREATE UNIQUE INDEX cash_location_pkey ON platform.cash_location USING btree (cash_location_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'cash_location_scope_uq',
+      definition:
+        'CREATE UNIQUE INDEX cash_location_scope_uq ON platform.cash_location USING btree (hotel_id, cash_location_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_location_idx',
+      definition:
+        'CREATE INDEX cash_movement_location_idx ON platform.cash_movement USING btree (hotel_id, location_id, effective_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_one_initial_float_uq',
+      definition:
+        "CREATE UNIQUE INDEX cash_movement_one_initial_float_uq ON platform.cash_movement USING btree (location_id) WHERE (movement_type = 'INITIAL_FLOAT'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_pkey',
+      definition:
+        'CREATE UNIQUE INDEX cash_movement_pkey ON platform.cash_movement USING btree (movement_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_shift_idx',
+      definition:
+        'CREATE INDEX cash_movement_shift_idx ON platform.cash_movement USING btree (hotel_id, shift_id, effective_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'cash_movement_transfer_idx',
+      definition:
+        'CREATE INDEX cash_movement_transfer_idx ON platform.cash_movement USING btree (hotel_id, transfer_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_pkey',
+      definition:
+        'CREATE UNIQUE INDEX cash_request_pkey ON platform.cash_request USING btree (request_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'cash_request_state_idx',
+      definition:
+        'CREATE INDEX cash_request_state_idx ON platform.cash_request USING btree (hotel_id, state, requested_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_destination_idx',
+      definition:
+        'CREATE INDEX cash_transfer_destination_idx ON platform.cash_transfer USING btree (hotel_id, destination_shift_id, state)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_pkey',
+      definition:
+        'CREATE UNIQUE INDEX cash_transfer_pkey ON platform.cash_transfer USING btree (transfer_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'cash_transfer_source_idx',
+      definition:
+        'CREATE INDEX cash_transfer_source_idx ON platform.cash_transfer USING btree (hotel_id, source_shift_id, state)',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_pkey',
+      definition: 'CREATE UNIQUE INDEX expense_pkey ON platform.expense USING btree (expense_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'expense_state_idx',
+      definition:
+        'CREATE INDEX expense_state_idx ON platform.expense USING btree (hotel_id, state, created_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_hotel_scope_uq',
+      definition:
+        'CREATE UNIQUE INDEX reception_shift_hotel_scope_uq ON platform.reception_shift USING btree (hotel_id, shift_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_one_active_per_account_uq',
+      definition:
+        "CREATE UNIQUE INDEX reception_shift_one_active_per_account_uq ON platform.reception_shift USING btree (hotel_id, opened_by_account_id) WHERE (state <> ALL (ARRAY['SELF_CLOSED'::text, 'CLOSED'::text]))",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_one_active_per_drawer_uq',
+      definition:
+        "CREATE UNIQUE INDEX reception_shift_one_active_per_drawer_uq ON platform.reception_shift USING btree (hotel_id, location_id) WHERE (state <> ALL (ARRAY['SELF_CLOSED'::text, 'CLOSED'::text]))",
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_pkey',
+      definition:
+        'CREATE UNIQUE INDEX reception_shift_pkey ON platform.reception_shift USING btree (shift_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
+      name: 'reception_shift_review_idx',
+      definition:
+        'CREATE INDEX reception_shift_review_idx ON platform.reception_shift USING btree (hotel_id, review_state, opened_at)',
+    },
   ],
   identitySequences: [
     {
@@ -15829,12 +17042,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'activation_delivery',
-      enabled: true,
-      forced: true,
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
       enabled: true,
       forced: true,
     },
@@ -16006,12 +17213,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'reception_shift',
-      enabled: true,
-      forced: true,
-    },
-    {
-      schema: 'platform',
       table: 'room_cleaning_event',
       enabled: true,
       forced: true,
@@ -16179,6 +17380,44 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'refund_request',
+      enabled: true,
+      forced: true,
+    },
+
+    // Phase 11 — shift, cash drawer, expense, and hotel finance.
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
       enabled: true,
       forced: true,
     },
@@ -16392,16 +17631,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'activation_delivery',
-      name: 'tenant_isolation',
-      as: 'PERMISSIVE',
-      command: 'ALL',
-      to: ['public'],
-      using: '(hotel_id = platform.current_hotel_id())',
-      withCheck: '(hotel_id = platform.current_hotel_id())',
-    },
-    {
-      schema: 'platform',
-      table: 'cash_location',
       name: 'tenant_isolation',
       as: 'PERMISSIVE',
       command: 'ALL',
@@ -16926,16 +18155,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     // Phase 08 — availability, guest identity, reception, and stay.
     {
       schema: 'platform',
-      table: 'reception_shift',
-      name: 'tenant_isolation',
-      as: 'PERMISSIVE',
-      command: 'ALL',
-      to: ['public'],
-      using: '(hotel_id = platform.current_hotel_id())',
-      withCheck: '(hotel_id = platform.current_hotel_id())',
-    },
-    {
-      schema: 'platform',
       table: 'room_cleaning_event',
       name: 'tenant_isolation',
       as: 'PERMISSIVE',
@@ -17211,6 +18430,68 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'refund_request',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+
+    // Phase 11 — shift, cash drawer, expense, and hotel finance.
+    {
+      schema: 'platform',
+      table: 'cash_location',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_movement',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_request',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'cash_transfer',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'expense',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'reception_shift',
       name: 'tenant_isolation',
       as: 'PERMISSIVE',
       command: 'ALL',

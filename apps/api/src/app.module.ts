@@ -16,7 +16,12 @@ import type { StayModuleOptions } from './modules/stay/stay.module';
 import { StayModule } from './modules/stay/stay.module';
 import type { BillingModuleOptions } from './modules/billing/billing.module';
 import { BillingModule } from './modules/billing/billing.module';
+import type { FinanceModuleOptions } from './modules/finance/finance.module';
+import { FinanceModule } from './modules/finance/finance.module';
 import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
+import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
+import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
+import { RepositoryShiftLookup } from './modules/stay/contracts/shift-lookup';
 
 export interface AppModuleOptions {
   /**
@@ -63,6 +68,12 @@ export interface AppModuleOptions {
    */
   readonly billing: BillingModuleOptions;
   /**
+   * The Phase 11 shift cash, drawer ledger and hotel expenses. It reads which
+   * shift is accountable for a drawer through the stay module's contract, and
+   * the billing module mirrors its cash payments into this module's ledger.
+   */
+  readonly finance: FinanceModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -107,6 +118,7 @@ export class AppModule {
       catalog,
       minibar,
       deposits: options.stay.deposits ?? new BillingDeposits(),
+      cash: options.stay.cash ?? new LedgerCashLedger(),
     });
     return {
       module: AppModule,
@@ -124,7 +136,13 @@ export class AppModule {
         catalog,
         minibar,
         stay,
-        BillingModule.forRoot({ ...options.billing, iam, stay }),
+        BillingModule.forRoot({
+          cash: new LedgerCashPostings(new RepositoryShiftLookup()),
+          ...options.billing,
+          iam,
+          stay,
+        }),
+        FinanceModule.forRoot({ ...options.finance, iam, stay }),
       ],
     };
   }

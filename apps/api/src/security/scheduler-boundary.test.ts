@@ -361,6 +361,7 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
             config: { databaseUrl: apiUrl },
             gateways: selectPaymentGateways('ci'),
           },
+          finance: { config: { databaseUrl: apiUrl } },
           stay: {
             config: {
               databaseUrl: apiUrl,

@@ -320,6 +320,7 @@ export class RefundService extends BillingServiceBase {
           accountId: gate.principal.accountId,
           at: now,
         });
+        await this.mirrorCash(uow, transaction, gate.principal.accountId);
         const succeeded = await refunds.updateRefund({
           requestId: row.requestId,
           expectedRevision: row.revision,

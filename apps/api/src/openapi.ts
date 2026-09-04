@@ -69,6 +69,7 @@ async function generate(): Promise<void> {
         pool: new Pool({ max: 1 }),
         gateways: new PaymentGatewayRegistry(new Map()),
       },
+      finance: { pool: new Pool({ max: 1 }) },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),

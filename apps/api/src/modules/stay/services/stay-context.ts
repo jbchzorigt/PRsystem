@@ -17,6 +17,7 @@ import type { ConfigurationService } from '../../minibar/services/configuration.
 import type { ConfirmedBookingsPort } from '../contracts/confirmed-bookings';
 import type { PaymentAttemptsPort } from '../contracts/payment-attempts';
 import type { DepositsPort } from '../contracts/deposits';
+import type { CashLedgerPort } from '../contracts/cash-ledger';
 
 /**
  * The one transaction shape the stay module runs in — the catalog's and the
@@ -52,6 +53,12 @@ export interface StayDependencies {
    * (`DEP-DEC-001`).
    */
   readonly deposits: DepositsPort;
+  /**
+   * The cash ledger behind the drawer a shift is opened over, from the module
+   * that owns it (Phase 11): which drawer, the shift's expected cash, and
+   * whether a transfer still blocks its close (`CASH-DEC-001`, `-006`).
+   */
+  readonly cash: CashLedgerPort;
   /**
    * The server's now for a command. Absent in production, where every command
    * reads the transaction's own server time; a test supplies one to move the
