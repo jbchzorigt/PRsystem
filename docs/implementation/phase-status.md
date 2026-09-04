@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 10 — Folio, deposit, payment, and correction |
+| Current phase | 11 — Shift, cash drawer, expense, and hotel finance |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -31,6 +31,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 08 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 09 state | `DONE` |
 | Phase 09 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 10 state | `DONE` |
+| Phase 10 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -53,7 +55,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 07 | Minibar inventory and templates | `DONE` | `0008_minibar_inventory` | the Phase 07 battery — counts in [Phase 07 record](#phase-07-record) | implemented at `1d2c764` and `0b40820`; the record and its evidence are the commit after them |
 | 08 | Availability, guest identity, reception, and stay | `DONE` | `0009_stay_reception` | the Phase 08 battery — counts in [Phase 08 record](#phase-08-record) | implemented at `621e17d`, corrected at `5b3603a` (the interval commitment); the record and its evidence are the commit after it |
 | 09 | Cleaner and checkout coordination | `DONE` | `0010_cleaner_checkout` | the Phase 09 battery — counts in [Phase 09 record](#phase-09-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 10 | Folio, deposit, payment, and correction | `NOT STARTED` | — | — | — |
+| 10 | Folio, deposit, payment, and correction | `DONE` | `0011_folio_deposit_payment` | the Phase 10 battery — counts in [Phase 10 record](#phase-10-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 11 | Shift, cash drawer, expense, and hotel finance | `NOT STARTED` | — | — | — |
 | 12 | Public discovery and Guest authentication | `NOT STARTED` | — | — | — |
 | 13 | Online booking and inventory hold | `NOT STARTED` | — | — | — |
@@ -4217,5 +4219,153 @@ and its fixtures were run again on that final tree and are what the two governan
 The per-command exit codes, durations and execution environment are recorded in
 [phase-09-battery-log.md](phase-09-battery-log.md).
 
-Phase 09 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 10 is authorized to begin under the
+Phase 09 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 10 followed it under the same
+authorization; its own record is below.
+
+---
+
+## Phase 10 record
+
+Folio, deposit, payment, and correction. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 09 tree. Phase 10 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 11 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the 15 this phase owns — `DEP-DEC-001`…`-010`, `RC-DEC-001`, `-002`, `-003`,
+`-004` and `-006`. With the 136 already closed, 151 of the 279 canonical decisions are now
+`COVERED`.
+
+### Scope completed
+
+- **Migration `0011_folio_deposit_payment`** — ten tenant tables. `deposit_config` is the hotel
+  default and its category overrides, versioned so a confirmed stay's snapshot is never re-resolved.
+  `stay_folio` is the one bill per stay, with `folio_line` append-only and unique on the thing that
+  produced it. `deposit_aggregate` holds the balance invariant
+  `received − reversed − allocated − reserved − refunded >= 0` as a CHECK, and the requirement it
+  was confirmed under as write-once columns. `payment_transaction` is the immutable ledger, unique
+  per provider reference. `deposit_allocation` records what the deposit covered, one per line.
+  `refund_request` carries doc 20 §7's state machine; `financial_correction` allows one non-terminal
+  request per movement; `deposit_reconciliation_case` is unique per released refund; and
+  `hotel_finance_event` is where a shortfall lands instead of a negative balance.
+- **The deposit at the check-in** — `DepositsPort`, the contract Phase 08's check-in already called
+  in shape, is implemented here: the confirmation opens the folio and the aggregate with the
+  configured amount and its version, and a hotel with no configured deposit cannot confirm a walk-in
+  (`DEP-DEC-001`, `-008`).
+- **The bill** (`services/folio.service.ts`) — the room charge from the stay's own snapshot and the
+  minibar charge from the report that settled, both idempotent; a payment confirmed against the
+  provider for QPay and card, with its approval code for a manual POS movement and its shift for
+  cash; the deposit applied to a line without writing any payment at all; and the bill closed only
+  when nothing is left to pay.
+- **The refund** (`services/refund.service.ts`) — reserved when raised, retried while it fails,
+  paid out only on a provider success, released only on evidence that no money moved, and — when a
+  released one is later paid — frozen into exactly one reconciliation case.
+- **The correction** (`services/correction.service.ts`) — a reversal plus a corrected record in one
+  transaction, priced and referenced by its own channel's rules, with one non-terminal request per
+  movement.
+- **The reconciliation** (`services/reconciliation.service.ts`) — a Platform Operation action in its
+  own realm, run inside the hotel's tenant scope, ending in `PROVIDER_STATUS_CORRECTED_NOT_SUCCESS`
+  with no movement or `PROVIDER_SUCCESS_POSTED` with the covered refund and the shortfall.
+- **HTTP** — two controllers and 17 paths: the folio, the deposit and its configuration, the refund
+  and its decisions, the correction, and Platform Operation's reconciliation queue.
+- **Tests** — `domain/money.test.ts` (10), `billing.integration.test.ts` (8),
+  `billing.concurrency.test.ts` (3), and the Phase 10 block of `stay.authorization.http.test.ts` (3).
+
+### Integration obligations now open on later phases
+
+- **Phase 11** aggregates the cash movements this phase records into the drawer, the count and the
+  handover of doc 24, keeping the shift a cash movement names.
+- **Phase 14** adds the provider callback that detects a late refund success unprompted; the
+  contract it calls — freeze and open one case — is already here (`A-P10-7`).
+- **Phase 17** reads the folio, the ledger and the finance events for the hotel's financial
+  reporting.
+
+### Test gates
+
+Every command ran during implementation on the disposable Compose project `prsystem-p06`, through
+the restricted `prsystem_api` login; the governed battery below ran afterwards in a clean checkout
+of the implementation commit. Development-time results, all exit 0:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/billing/domain/money.test.ts` | 10 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/billing/billing.integration.test.ts` | 8 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/billing/billing.concurrency.test.ts` | 3 passed |
+| `pnpm --filter @prsystem/api run test:integration` / `test:concurrency` (every module) | 343 / 40 passed |
+| `pnpm --filter @prsystem/db run test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,584 / 88 / 41 / 16 / 51 |
+| `pnpm --filter @prsystem/api run test:unit` | 173 passed |
+| `turbo run lint typecheck` (forced), `pnpm run openapi`, `pnpm exec prettier --check .` | exit 0; 17 folio, deposit, refund, correction and reconciliation paths |
+
+### Security and concurrency evidence
+
+- **The balance cannot go negative.** The invariant is a CHECK as well as a service rule: an
+  `UPDATE` that would overdraw the aggregate is refused `23514` for the superuser, and the
+  integration suite asserts exactly that.
+- **A reservation is not a promise the hotel can spend.** With a refund reserved, an allocation of
+  the same money is refused `ALLOCATION_ABOVE_AVAILABLE`; the reservation survives a failed provider
+  call and is released only by a Manager on evidence.
+- **A deduction is not a payment.** An allocation writes no `payment_transaction`, so no cash inflow
+  is created; the integration suite counts the ledger to prove it.
+- **Append-only where money is.** `UPDATE` and `DELETE` of a ledger row, a folio line, an allocation
+  and a finance event are refused by trigger for the superuser; a settled folio, a resolved case and
+  a decided correction are terminal.
+- **Refusals follow authorization.** A Cleaner cannot see a bill, a Hotel Admin without Reception
+  cannot take a deposit, Reception cannot configure one or decide its own alternate-channel
+  exception, and no hotel role at all reaches the reconciliation queue — every one of them is
+  `NOT_FOUND` over HTTP.
+- **Races on real PostgreSQL.** An allocation racing a refund reservation on one aggregate: the row
+  lock serializes them, the invariant holds and the totals agree with the rows. Three allocations of
+  one line: exactly one. A correction approved twice at once: one reversal, one corrected record,
+  one balance effect.
+
+### Remaining blockers
+
+Unchanged: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators; `EXT-01` BLOCKED
+for its contract; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1
+items; `DSR-01`; and selecting `GATE-SEC` as a required GitHub status check. Phase 10 uses the
+payment gateway port that `EXT-03` and `EXT-04` govern: outside local, CI and test the adapters are
+the disabled ones, so an unconfirmed QPay or card movement is refused rather than recorded.
+
+### Evidence
+
+<!-- phase-10-evidence:begin -->
+
+Measured at implementation commit 1ac4656cfd47be97785a4a990604b73b0c4ff872, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the disposable Compose project `prsystem-p06`.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 189 of 189 drift fixtures caught at the measured commit; 202 of 202 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 591 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,424 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 10, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 391: db 41, outbox 5, api 343, worker 2 |
+| `pnpm run test:concurrency` | PASS | 56 each run: db 16, api 40 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-10-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-10-battery-log.md](phase-10-battery-log.md).
+
+Phase 10 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 11 is authorized to begin under the
 standing progression authorization and has **not** started.

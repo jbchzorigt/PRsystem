@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.22 (Phase 09 — the 18 Cleaner and checkout coordination decisions move to `COVERED`
-with code and test references; 136 of 279 `COVERED`)
+**Version:** 1.23 (Phase 10 — the 15 folio, deposit, payment and correction decisions move to
+`COVERED` with code and test references; 151 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -204,12 +204,12 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 | ID | Subject | Phase | Status | Code | Tests |
 | --- | --- | --- | --- | --- | --- |
-| RC-DEC-001 | One consolidated bill per stay | 10 | PENDING | — | — |
-| RC-DEC-002 | Deposit amount 50 000–100 000₮, hotel/category configuration | 10 | PENDING | — | — |
-| RC-DEC-003 | Deposit driven by booking source | 10 | PENDING | — | — |
-| RC-DEC-004 | Deposit channels and deduction without extra approval | 10 | PENDING | — | — |
+| RC-DEC-001 | One consolidated bill per stay | 10 | COVERED | `packages/db/migrations/0011_folio_deposit_payment.sql`, `apps/api/src/modules/billing/services/folio.service.ts`, `apps/api/src/modules/billing/domain/money.ts` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/billing/domain/money.test.ts` |
+| RC-DEC-002 | Deposit amount 50 000–100 000₮, hotel/category configuration | 10 | COVERED | `apps/api/src/modules/billing/services/deposit.service.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| RC-DEC-003 | Deposit driven by booking source | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/contracts/stay-deposits.ts`, `apps/api/src/modules/stay/contracts/deposits.ts` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
+| RC-DEC-004 | Deposit channels and deduction without extra approval | 10 | COVERED | `apps/api/src/modules/billing/services/deposit.service.ts`, `apps/api/src/modules/billing/services/folio.service.ts` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 | RC-DEC-005 | Online booking source is the platform's own registry | 13 | PENDING | — | — |
-| RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | PENDING | — | — |
+| RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/services/billing-context.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
 | RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | COVERED | `packages/ports/src/identity-verification.port.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `packages/ports/src/conformance.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | RC-DEC-008 | Cleaning status authority by package | 09 | COVERED | `apps/api/src/modules/stay/services/cleaning-task.service.ts`, `apps/api/src/modules/stay/services/housekeeping.service.ts`, `apps/api/src/modules/stay/domain/readiness.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 | RC-DEC-009 | Shift close authority | 11 | PENDING | — | — |
@@ -476,18 +476,18 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 18. DEP-DEC — Deposit and payment correction (doc 20, 10)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| DEP-DEC-001 | Deposit source and amount | 10 | PENDING |
-| DEP-DEC-002 | Normal deduction without extra approval | 10 | PENDING |
-| DEP-DEC-003 | Original-channel refund | 10 | PENDING |
-| DEP-DEC-004 | Alternate-channel refund exception | 10 | PENDING |
-| DEP-DEC-005 | POS reference capture | 10 | PENDING |
-| DEP-DEC-006 | Immutable financial correction | 10 | PENDING |
-| DEP-DEC-007 | Reserved balance, concurrency and idempotency | 10 | PENDING |
-| DEP-DEC-008 | Deposit permissions and immutable configuration snapshot | 10 | PENDING |
-| DEP-DEC-009 | Refund release and late-success race | 10 | PENDING |
-| DEP-DEC-010 | Late refund reconciliation owner and terminal posting | 10 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| DEP-DEC-001 | Deposit source and amount | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/contracts/stay-deposits.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
+| DEP-DEC-002 | Normal deduction without extra approval | 10 | COVERED | `apps/api/src/modules/billing/services/folio.service.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/billing/billing.concurrency.test.ts` |
+| DEP-DEC-003 | Original-channel refund | 10 | COVERED | `apps/api/src/modules/billing/services/refund.service.ts` | `apps/api/src/modules/billing/billing.integration.test.ts` |
+| DEP-DEC-004 | Alternate-channel refund exception | 10 | COVERED | `apps/api/src/modules/billing/services/refund.service.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| DEP-DEC-005 | POS reference capture | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
+| DEP-DEC-006 | Immutable financial correction | 10 | COVERED | `apps/api/src/modules/billing/services/correction.service.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/billing/billing.concurrency.test.ts` |
+| DEP-DEC-007 | Reserved balance, concurrency and idempotency | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/repositories/billing.repository.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.concurrency.test.ts` |
+| DEP-DEC-008 | Deposit permissions and immutable configuration snapshot | 10 | COVERED | `apps/api/src/modules/billing/services/deposit.service.ts`, `apps/api/src/modules/billing/contracts/stay-deposits.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| DEP-DEC-009 | Refund release and late-success race | 10 | COVERED | `apps/api/src/modules/billing/services/refund.service.ts`, `apps/api/src/modules/billing/domain/money.ts` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/billing/domain/money.test.ts` |
+| DEP-DEC-010 | Late refund reconciliation owner and terminal posting | 10 | COVERED | `apps/api/src/modules/billing/services/reconciliation.service.ts`, `apps/api/src/modules/billing/services/billing-context.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/billing/domain/money.test.ts` |
 
 ## 19. CHK-DEC — Cleaner checkout exception (doc 21, 6)
 

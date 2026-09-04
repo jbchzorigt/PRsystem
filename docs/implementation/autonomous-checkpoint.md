@@ -1,14 +1,13 @@
-# Autonomous checkpoint — Phase 09 complete, Phase 10 authorized and not started
+# Autonomous checkpoint — Phase 10 complete, Phase 11 authorized and not started
 
-**Written:** 2026-09-04, at the close of Phase 09 under the standing progression authorization.
+**Written:** 2026-09-04, at the close of Phase 10 under the standing progression authorization.
 **Status of this document:** a handoff. It records what is true in the checkout, not what was
 intended. Nothing below claims a gate that was not run.
 
-**Phase 09 needed one commit.** The implementation landed at `4063ac5` and the governed battery ran
-against it in full, every execution exiting 0 on its first attempt. Phase 08 before it took two
-commits: its implementation `621e17d` failed the concurrency gate on a booking commitment read as an
-instant rather than an interval, and `5b3603a` corrected it and was re-measured. Implementation
-completion is not customer acceptance and not release approval.
+**Phases 09 and 10 each needed one commit**, and each governed battery passed in full on its first
+attempt. Phase 08 before them took two: its implementation `621e17d` failed the concurrency gate on
+a booking commitment read as an instant rather than an interval, and `5b3603a` corrected it and was
+re-measured. Implementation completion is not customer acceptance and not release approval.
 
 ---
 
@@ -22,8 +21,9 @@ completion is not customer acceptance and not release approval.
 | Phase 06 commits | `a44fd58e59966ad293278cd3aace5f629141ea98`, `dcca709ded1be4bf33c25b4d1ca37b4da647dbd7`, then its record commit |
 | Phase 07 commits | `1d2c764fab47adb49f9e2e6dd8346fca3a28e5ff`, `0b408205cd337aec26c70c7607a8e68b3aedbac2`, record `879b5e1` |
 | Phase 08 commits | implementation `621e17db9d40523c545e35c0d72b2b814508a874`, correction `5b3603ab6bf5b2baa1099f4d239e5a0b397f5ec1` (the measured tree), record `d480bf4` |
-| Phase 09 implementation commit | `4063ac530ee536bb2cda5c27a1cb2526d22a660a` (the measured tree) |
-| Phase 09 record commit | the commit that carries this checkpoint (see `git log -1`) |
+| Phase 09 commits | implementation `4063ac530ee536bb2cda5c27a1cb2526d22a660a` (the measured tree), record `11ca271` |
+| Phase 10 implementation commit | `1ac4656cfd47be97785a4a990604b73b0c4ff872` (the measured tree) |
+| Phase 10 record commit | the commit that carries this checkpoint (see `git log -1`) |
 
 **Where the work lives, and why.** Unchanged from the Phase 06 checkpoint: the work is on this
 worktree's branch. The main checkout at `/Users/zorigtgantumur/Documents/Work/prsystem` still holds
@@ -46,14 +46,15 @@ Declared in [`tools/programme-state.mjs`](../../tools/programme-state.mjs):
 | 07 — Minibar inventory and templates | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | 08 — Availability, guest identity, reception, and stay | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | 09 — Cleaner and checkout coordination | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
-| 10 — Folio, deposit, payment, and correction | `NOT STARTED` | — (authorized to begin) |
+| 10 — Folio, deposit, payment, and correction | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| 11 — Shift, cash drawer, expense, and hotel finance | `NOT STARTED` | — (authorized to begin) |
 
 The standing progression authorization of 2026-09-03 is unchanged: implementation authorization for
-Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phases 06 to 09 are the entries of
+Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phases 06 to 10 are the entries of
 `PROGRESSED_PHASES`; governance check 17 holds each manifest, governed entry and record to one
 another.
 
-## 3. What Phases 08 and 09 delivered
+## 3. What Phases 08, 09 and 10 delivered
 
 See the [Phase 08 record](phase-status.md#phase-08-record). In short: migration
 `0009_stay_reception` (ten tenant tables: the minimal Reception shift, the cleaning axis and its
@@ -81,6 +82,16 @@ named non-guest stock-out action; four controllers and 22 paths; four test suite
 integration, 3 concurrency, 3 HTTP); traceability rows for its 18 decisions (136 of 279 `COVERED`);
 assumptions `A-P09-1`…`A-P09-13`; the governance entries for the Phase 09 manifest.
 
+Phase 10 (see the [Phase 10 record](phase-status.md#phase-10-record)): migration
+`0011_folio_deposit_payment` (ten tenant tables — the deposit configuration, the one folio per stay
+and its append-only lines, the versioned deposit aggregate whose balance invariant is a CHECK, the
+immutable money ledger, the allocation, the refund request and its state machine, the financial
+correction, the late-success reconciliation case and the hotel finance event); the billing module
+with its folio, deposit, refund, correction and reconciliation services; `DepositsPort` implemented
+so a walk-in checks in against a configured deposit; two controllers and 17 paths; four test suites
+(10 unit, 8 integration, 3 concurrency, 3 HTTP); traceability rows for its 15 decisions (151 of 279
+`COVERED`); assumptions `A-P10-1`…`A-P10-13`; the governance entries for the Phase 10 manifest.
+
 ## 4. Working tree at this checkpoint
 
 Everything is committed except the untracked
@@ -93,21 +104,21 @@ Everything is committed except the untracked
 
 | Command | Result |
 | --- | --- |
-| Phase 09 `domain/checkout` unit suite | 10 passed |
-| `checkout.integration` / `checkout.concurrency` | 12 / 3 passed |
-| `stay.integration` + `stay.authorization.http` | 23 + 10 passed |
-| api `test:integration` / `test:concurrency` (every module) | 332 / 37 |
-| `@prsystem/db` `test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,398 / 88 / 41 / 16 / 51 |
-| api `test:unit` (163), `turbo run lint typecheck` forced (45 tasks), `openapi` (22 new paths), `prettier --check .` | exit 0 |
-| `node tools/validate-governance.mjs` / `validate-governance.fixtures.mjs` on the final tree | 17 of 17 / 189 of 189 |
+| Phase 10 `domain/money` unit suite | 10 passed |
+| `billing.integration` / `billing.concurrency` | 8 / 3 passed |
+| `stay.authorization.http` (Phase 08, 09 and 10 blocks) | 13 passed |
+| api `test:integration` / `test:concurrency` (every module) | 343 / 40 |
+| `@prsystem/db` `test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,584 / 88 / 41 / 16 / 51 |
+| api `test:unit` (173), `turbo run lint typecheck` forced (45 tasks), `openapi` (17 new paths), `prettier --check .` | exit 0 |
+| `node tools/validate-governance.mjs` / `validate-governance.fixtures.mjs` on the final tree | 17 of 17 / 202 of 202 |
 
-**The governed battery** ran in a clean detached checkout of the Phase 09 implementation commit
-`4063ac5` with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true` (no cached task
+**The governed battery** ran in a clean detached checkout of the Phase 10 implementation commit
+`1ac4656` with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true` (no cached task
 replay), after a preparatory `pnpm run build`. All 28 executions exited 0, each on its first attempt
-(07:53–08:02 UTC): unit 1,414; migrations 148; integration 380; concurrency 53 ×3; regression 51;
+(08:45–08:56 UTC): unit 1,424; migrations 148; integration 391; concurrency 56 ×3; regression 51;
 GATE-SEC 19 of 19 ×3; e2e 15. Exit codes and durations are in
-[`phase-09-battery-log.md`](phase-09-battery-log.md), results in
-[`phase-09-evidence.json`](phase-09-evidence.json), restated in the Phase 09 record. The two
+[`phase-10-battery-log.md`](phase-10-battery-log.md), results in
+[`phase-10-evidence.json`](phase-10-evidence.json), restated in the Phase 10 record. The two
 governance rows there are from the final tree, which is the only tree that carries the record.
 
 **Historical evidence (unchanged, not re-measured):** the Phase 03/04/05/06/07 batteries and the
@@ -115,18 +126,18 @@ Phase 05 CI ledger are frozen records of earlier trees.
 
 ## 6. Integration obligations now open on later phases
 
-- Phase 10: `platform.stay_folio` (`room_id`, `stay_id`, the unsettled predicate) and
-  `platform.payment_attempt` with an implementation of `PaymentAttemptsPort`; the deposit amount
-  (`A-P06-2`); the stay completes through `StayService.recordActualCheckout` once the folio is
-  settled, beside the minibar report Phase 09 already settles.
-- Phase 11: the cash count, handover and review on `reception_shift`, keeping the open-shift bound.
+- Phase 11: the cash count, handover and financial review of doc 24 over the shift and the cash
+  movements Phase 10 records; the open-shift bound a check-in reads stays as it is.
 - Phase 13: `ConfirmedBookingsPort`, `platform.booking` (`assigned_room_id`, `category_id`),
   `ConflictService.detect`, the assignment application and the refund obligation on
-  `stay.conflict.resolved` / `CANCELLED_HOTEL`; `captureRateSnapshot` for `ONLINE_BOOKING`; and the
-  online side of `stay.minibar_report_settled`.
+  `stay.conflict.resolved` / `CANCELLED_HOTEL`; `captureRateSnapshot` for `ONLINE_BOOKING`; the
+  online side of `stay.minibar_report_settled`; and an online booking's prepayment as a folio
+  payment rather than a deposit.
+- Phase 14: the provider callback that detects a late refund success unprompted — the contract it
+  calls, freeze and open one case, is already in `RefundService`.
 - Phase 17: guest identity corrections as new `stay_guest` revisions; the registry reads the latest
-  effective actual start; the settled report and its adjustments feed the hotel's financial
-  reporting.
+  effective actual start; the folio, the ledger, the settled minibar report and the finance events
+  feed the hotel's financial reporting.
 - Phase 18: `stay.checked_in` (token, never the number) and `stay.actual_time_corrected`.
 - Every phase that resolves a lifecycle blocker keeps calling `LifecycleService.finalizeIfClear`;
   both registries are held to the live schema by tests.
@@ -134,11 +145,11 @@ Phase 05 CI ledger are frozen records of earlier trees.
 ## 7. Processes, containers and services
 
 - **No task-owned process is running.** `git worktree list` shows the main checkout, this worktree
-  and two task-owned detached checkouts the batteries ran in — `scratchpad/battery-wt-08b` at
-  `5b3603a` and `scratchpad/battery-wt-09` at `4063ac5` — both safe to remove with
-  `git worktree remove --force`. The failed first Phase 08 battery's worktree was removed after its
-  account was transcribed; its summary, metadata and failing log are kept in
-  `scratchpad/failed-battery-08/`.
+  and three task-owned detached checkouts the batteries ran in — `scratchpad/battery-wt-08b` at
+  `5b3603a`, `scratchpad/battery-wt-09` at `4063ac5` and `scratchpad/battery-wt-10` at `1ac4656` —
+  all safe to remove with `git worktree remove --force`. The failed first Phase 08 battery's
+  worktree was removed after its account was transcribed; its summary, metadata and failing log are
+  kept in `scratchpad/failed-battery-08/`.
 - **Task-owned containers — disposable, safe to keep or remove:** Compose project `prsystem-p06`
   (Postgres 127.0.0.1:55742, Redis 56679, MinIO 59300/59301, Mailpit 51325/58325) and its volumes.
   Every database test above ran there; scratch databases are named `prsystem_test_*` and dropped by
@@ -158,7 +169,10 @@ Phase 05 CI ledger are frozen records of earlier trees.
 - Phase 08 introduced the EXT-01 port and simulator; the gate itself stays BLOCKED for its
   contract, field list and legal basis. Phase 09 adds no external gate: the payment provider whose
   answer may release a locked report is Phase 10's, and until that module exists the contract
-  answers `UNKNOWN`, which holds the lock. No customer decision is pending on either phase's scope;
+  answers `UNKNOWN`, which holds the lock. Phase 10 uses the payment gateway port `EXT-03` and
+  `EXT-04` govern: outside local, CI and test its adapters are the disabled ones, so an unconfirmed
+  QPay or card movement is refused rather than recorded. No customer decision is pending on these
+  phases' scope;
   `A-P08-1` (the shift's owner, Phase 11's to tighten), `A-P08-11` (self-approval of a
   higher-category remedy) and `A-P09-1` (the checkout start under the existing checkout action) are
   recorded for attention. Their acceptance, like Phases 06 and 07, is the customer's to give.
@@ -167,14 +181,12 @@ Phase 05 CI ledger are frozen records of earlier trees.
 
 ## 9. Exact next action
 
-Phase 10 — Folio, deposit, payment, and correction — is the current phase and is authorized to begin
-under the standing authorization. Before editing: reread `CLAUDE.md`, this checkpoint,
-`phase-status.md` (current position, ledger, the Phase 08 and 09 records), `build-plan.md`
-§"Phase 10", and the requirement files that phase assigns (doc 20, doc 02 §§3.4–3.9, doc 11, doc 24
-§§1–4, doc 18 §3); list its owned DEC IDs from `requirements-traceability.md` §2 ("Phase load") and
-the family tables. Then verify `git status` matches §4 and begin with the schema, creating
-`platform.stay_folio` and `platform.payment_attempt` in the shapes the registries and
-`PaymentAttemptsPort` predict — the folio's `room_id`, `stay_id` and unsettled predicate are already
-named by `CHECKOUT_OBLIGATION_SOURCES` and the minibar safe-point registry — and implementing
-`PaymentAttemptsPort` against the real attempt so a locked minibar report is released, settled or
-held by what the provider actually says.
+Phase 11 — Shift, cash drawer, expense, and hotel finance — is the current phase and is authorized
+to begin under the standing authorization. Before editing: reread `CLAUDE.md`, this checkpoint,
+`phase-status.md` (current position, ledger, the Phase 09 and 10 records), `build-plan.md`
+§"Phase 11", and the requirement files that phase assigns (doc 03, doc 24, doc 23, doc 02 §§3.5–3.6,
+doc 18 §3); list its owned DEC IDs from `requirements-traceability.md` §2 ("Phase load") and the
+family tables. Then verify `git status` matches §4 and begin with the schema, extending
+`platform.reception_shift` with the cash count, the handover and the financial review, and creating
+the cash drawer ledger doc 24 describes over the cash movements Phase 10 already records with their
+shift.

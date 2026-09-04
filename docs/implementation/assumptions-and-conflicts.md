@@ -563,6 +563,68 @@ recorded so a reviewer can see where a judgement was made.
   and a stay cannot carry two live reports; the claim of either is a single conditional statement, so
   two Cleaners racing produce one winner and one `CONFLICT`.
 
+### 3.14 Phase 10 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P10-1 — the folio is opened by the confirmation, through a contract.** doc 02 §3.4 makes the
+  deposit requirement a fact of the check-in, so the check-in is where it is snapshotted. Phase 08's
+  check-in calls `DepositsPort.openForStay`, which Phase 10 implements: it needs nothing from the
+  billing module's own dependencies, so the two modules stay one-way (CLAUDE.md §3). A hotel that
+  has configured no deposit cannot confirm a walk-in at all — the refusal is
+  `DEPOSIT_NOT_CONFIGURED` and no stay row survives it.
+- **A-P10-2 — the ledger records movements, not attempts.** doc 20 §2 refuses to call an unconfirmed
+  QPay or card payment a payment. `payment_transaction` therefore holds only what actually happened,
+  append-only; an attempt still in flight lives on `refund_request` for a refund, and for a payment
+  it does not exist until the provider's own status says `PAID`. A movement's provider reference is
+  unique per hotel and channel, so a duplicate callback or a repeated submit writes nothing new.
+- **A-P10-3 — a reversal names the movement it reverses, not a provider.** The channel shape rules
+  (`DEP-DEC-005`) apply to money that faced a provider; a reversal is an internal entry pointing at
+  the original row, so the reference and approval-code constraints exempt the two reversal kinds and
+  the reference stays where it was recorded.
+- **A-P10-4 — the balance invariant is a CHECK.** `DEP-DEC-007`'s
+  `received − reversed − allocated − reserved − refunded >= 0` is enforced by the database as well as
+  by the service, and the aggregate row is locked `FOR UPDATE` by every money command, so an
+  allocation racing a refund reservation serializes and one of them is refused rather than both
+  succeeding.
+- **A-P10-5 — a reservation exists from the request, not from the provider call.** doc 20 §3.1 keeps
+  a pending, unknown or retryable-failed refund out of the available balance. The amount is reserved
+  when the request is raised; a failed attempt leaves it reserved for the retry, and only an
+  authoritative release frees it.
+- **A-P10-6 — a retry that succeeds settles directly.** doc 20 §7 draws `FAILED → PENDING → SUCCEEDED`;
+  the service retries in one command, so the guard admits `FAILED → SUCCEEDED` as well as
+  `FAILED → PENDING`. The reservation stood throughout either way, which is what the decision
+  protects.
+- **A-P10-7 — the late success is detected by asking, not by a callback.** `DEP-DEC-009` requires a
+  released refund the provider later paid to freeze the aggregate and open one case. The trigger
+  here is an explicit re-query of the provider (`provider-check`), authorized like the release
+  itself; the provider **callback** route that would do this unprompted belongs with the online
+  payment surface of Phase 14, and this contract is what it will call. No client-supplied status is
+  ever believed (CLAUDE.md §7).
+- **A-P10-8 — the reconciliation runs in the hotel's tenant scope under an Operation action.**
+  `DEP-DEC-010` gives the case to a Platform Operation account with
+  `operation.deposit_refund_reconcile` and a recent step-up. The authorization is evaluated in the
+  `operation` realm — no hotel role reaches it — while the transaction runs in the tenant scope of
+  the hotel whose deposit it resolves, because the rows it locks are that hotel's.
+- **A-P10-9 — the corrected record carries its own channel's references.** `DEP-DEC-006` re-records
+  the movement rather than editing it, so the corrected row is held to the same channel rules as an
+  original one; a correction that names a gateway or POS channel states its reference.
+- **A-P10-10 — the deposit is a liability, never revenue.** An allocation writes no
+  `payment_transaction` at all: it moves the aggregate's allocated total and the folio's applied
+  total, so doc 20 §9's "a deduction adds no cash to the drawer" is structural rather than a
+  reporting convention.
+- **A-P10-11 — one line, one allocation.** doc 20 §3 allocates against the bill's lines. A unique
+  index on the folio line keeps a line from being covered twice, which is also what makes three
+  simultaneous allocations of the same line leave exactly one.
+- **A-P10-12 — the folio must be settled before the stay completes.** Phase 08's checkout already
+  probed `stay.open_folio`; now that the relation exists, the actual checkout of a stay whose bill
+  is unpaid is refused `CHECKOUT_OBLIGATION_OPEN`. That is the intended reading of doc 02 §3.3 and
+  it changes the Phase 08 and 09 flows in exactly one place: the bill is settled first.
+- **A-P10-13 — the cash drawer itself is Phase 11's.** doc 20 §9 states the effect of a cash deposit
+  on the expected drawer balance; the drawer, the count and the handover are doc 24's and Phase 11's.
+  Phase 10 records the shift a cash movement belongs to, which is what Phase 11 will aggregate.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain
