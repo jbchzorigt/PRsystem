@@ -181,6 +181,37 @@ export class TariffService extends CatalogServiceBase {
    * price was confirmed, and the database constraint on the snapshot table
    * refuses a room-sourced online price as well (`STAY-DEC-005`).
    */
+  /**
+   * The effective walk-in rate for a room, read-only, in the caller's
+   * transaction: what Phase 08's quote shows before a check-in captures the
+   * snapshot that confirms it (`STAY-DEC-005`).
+   */
+  async resolveForCheckIn(
+    uow: UnitOfWork,
+    input: { readonly stayType: StayType; readonly categoryId: string; readonly roomId: string },
+  ): Promise<{
+    readonly unitPriceMnt: bigint;
+    readonly sourceLevel: SourceLevel;
+    readonly pricingConfigVersion: number;
+    readonly cleaningBufferMinutes: number;
+    readonly fixedCheckoutMinute: number | null;
+  }> {
+    const rate = await this.resolve(new CatalogRepository(uow), {
+      hotelId: uow.context.hotelId,
+      stayType: input.stayType,
+      channel: 'WALK_IN',
+      categoryId: input.categoryId,
+      roomId: input.roomId,
+    });
+    return {
+      unitPriceMnt: BigInt(rate.unitPriceMnt),
+      sourceLevel: rate.sourceLevel,
+      pricingConfigVersion: rate.configVersion,
+      cleaningBufferMinutes: rate.cleaningBufferMinutes,
+      fixedCheckoutMinute: rate.fixedCheckoutMinute,
+    };
+  }
+
   async captureRateSnapshot(uow: UnitOfWork, input: CaptureSnapshotInput): Promise<CaptureOutcome> {
     const catalog = new CatalogRepository(uow);
     const existing = await catalog.snapshotFor(input.subjectType, input.subjectRef);

@@ -20,6 +20,11 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .addTag('minibar-configuration', 'Room minibar configuration, pending changes and overrides')
     .addTag('minibar-tasks', 'Cleaner reconciliation and rollback tasks')
     .addTag('minibar-rollout', 'Multi-room Rollout batches')
+    .addTag('reception-shift', 'The operational Reception shift a check-in is confirmed in')
+    .addTag('housekeeping', 'Room cleaning state and its append-only history')
+    .addTag('stay', 'Room board, quote, check-in, stay view and actual checkout')
+    .addTag('stay-corrections', 'Active-stay actual-time correction requests and decisions')
+    .addTag('fulfillment-conflicts', 'Overdue conflicts of confirmed bookings and their remedies')
     .build();
 
   return SwaggerModule.createDocument(app, config);

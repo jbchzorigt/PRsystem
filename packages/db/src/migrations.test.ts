@@ -85,6 +85,10 @@ describe('migration journal', () => {
       // `catalog_event` and `stay_rate_snapshot` — are compound names the rule
       // does not match, so only the bare one is named here.
       '0007_hotel_catalog.sql': ['room'],
+      // doc 05 §2: the stay is Phase 08's. Its other tables — `reception_shift`,
+      // `room_cleaning_state`, `stay_guest`, `stay_minibar_snapshot`,
+      // `booking_fulfillment_conflict` and the rest — are compound names.
+      '0009_stay_reception.sql': ['stay'],
     };
 
     for (const file of sqlFiles) {

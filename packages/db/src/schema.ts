@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   customType,
+  date,
   foreignKey,
   index,
   integer,
@@ -4341,6 +4342,812 @@ export const minibarEvent = platform
   )
   .enableRLS();
 
+// ---------------------------------------------------------------------
+// Phase 08 — availability, guest identity, reception, and stay.
+// ---------------------------------------------------------------------
+
+/**
+ * The operational Reception shift a check-in is confirmed in (doc 05 §19.1).
+ * Minimal here; Phase 11 adds the cash count, handover and review.
+ */
+export const receptionShift = platform
+  .table(
+    'reception_shift',
+    {
+      closedAt: timestamp('closed_at', { withTimezone: true }),
+      closedByAccountId: uuid('closed_by_account_id'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      openedAt: timestamp('opened_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      openedByAccountId: uuid('opened_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      shiftId: uuid('shift_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+    },
+    (table) => [
+      check(
+        'reception_shift_closed_after_opened',
+        sql`((closed_at IS NULL) OR (closed_at >= opened_at))`,
+      ),
+      check(
+        'reception_shift_closed_shape',
+        sql`((state = 'CLOSED'::text) = ((closed_at IS NOT NULL) AND (closed_by_account_id IS NOT NULL)))`,
+      ),
+      foreignKey({
+        name: 'reception_shift_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('reception_shift_hotel_scope_uq').on(table.hotelId, table.shiftId),
+      check(
+        'reception_shift_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'CLOSED'::text]))`,
+      ),
+      uniqueIndex('reception_shift_one_open_uq')
+        .on(table.hotelId)
+        .where(sql`state = 'OPEN'::text`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The current cleaning axis of a room (doc 06 §4, `STAY-DEC-008`). No row means
+ * the room was never marked clean.
+ */
+export const roomCleaningState = platform
+  .table(
+    'room_cleaning_state',
+    {
+      changedAt: timestamp('changed_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      changedByAccountId: uuid('changed_by_account_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').primaryKey().notNull(),
+      state: text('state').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'room_cleaning_state_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'room_cleaning_state_known',
+        sql`(state = ANY (ARRAY['CLEAN'::text, 'NEEDS_CLEANING'::text, 'CLEANING'::text]))`,
+      ),
+      foreignKey({
+        name: 'room_cleaning_state_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The append-only cleaning history a backdated check-in proves readiness from
+ * (doc 05 §19.2).
+ */
+export const roomCleaningEvent = platform
+  .table(
+    'room_cleaning_event',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      roomId: uuid('room_id').notNull(),
+      stayId: uuid('stay_id'),
+      toState: text('to_state').notNull(),
+    },
+    (table) => [
+      check(
+        'room_cleaning_event_from_state_known',
+        sql`((from_state IS NULL) OR (from_state = ANY (ARRAY['CLEAN'::text, 'NEEDS_CLEANING'::text, 'CLEANING'::text])))`,
+      ),
+      foreignKey({
+        name: 'room_cleaning_event_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'room_cleaning_event_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'room_cleaning_event_to_state_known',
+        sql`(to_state = ANY (ARRAY['CLEAN'::text, 'NEEDS_CLEANING'::text, 'CLEANING'::text]))`,
+      ),
+      index('room_cleaning_event_room_idx').on(table.hotelId, table.roomId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A stay: immutable times and snapshots, forward-only state, one live stay per
+ * room (`STAY-DEC-008`, `-009`, `-011`, `-012`, `-014`).
+ */
+export const stay = platform
+  .table(
+    'stay',
+    {
+      actualCheckInAt: timestamp('actual_check_in_at', { withTimezone: true }).notNull(),
+      actualCheckoutAt: timestamp('actual_checkout_at', { withTimezone: true }),
+      backdateMinutes: integer('backdate_minutes')
+        .notNull()
+        .default(sql`0`),
+      backdateNote: text('backdate_note'),
+      backdateReasonCode: text('backdate_reason_code'),
+      bookingRef: uuid('booking_ref'),
+      categoryId: uuid('category_id').notNull(),
+      checkInRecordedAt: timestamp('check_in_recorded_at', { withTimezone: true }).notNull(),
+      checkedInByAccountId: uuid('checked_in_by_account_id').notNull(),
+      checkoutRecordedByAccountId: uuid('checkout_recorded_by_account_id'),
+      cleaningBufferMinutes: integer('cleaning_buffer_minutes').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      depositRequired: boolean('deposit_required').notNull(),
+      durationMinutes: integer('duration_minutes'),
+      fixedCheckoutMinute: integer('fixed_checkout_minute'),
+      halfHourUnits: integer('half_hour_units'),
+      hotelId: uuid('hotel_id').notNull(),
+      minibarApplicable: boolean('minibar_applicable')
+        .notNull()
+        .default(sql`false`),
+      nightCount: integer('night_count'),
+      plannedCheckoutAt: timestamp('planned_checkout_at', { withTimezone: true }).notNull(),
+      pricingConfigVersion: integer('pricing_config_version').notNull(),
+      rateSnapshotId: uuid('rate_snapshot_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomChargeMnt: bigint('room_charge_mnt', { mode: 'bigint' }).notNull(),
+      roomId: uuid('room_id').notNull(),
+      shiftId: uuid('shift_id').notNull(),
+      source: text('source').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      stayId: uuid('stay_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      stayType: text('stay_type').notNull(),
+      unitRateMnt: bigint('unit_rate_mnt', { mode: 'bigint' }).notNull(),
+    },
+    (table) => [
+      check('stay_actual_not_after_recorded', sql`(actual_check_in_at <= check_in_recorded_at)`),
+      check(
+        'stay_backdate_note_bounded',
+        sql`((backdate_note IS NULL) OR ((length(backdate_note) >= 1) AND (length(backdate_note) <= 500)))`,
+      ),
+      check('stay_backdate_range', sql`((backdate_minutes >= 0) AND (backdate_minutes <= 120))`),
+      check(
+        'stay_backdate_reason',
+        sql`((backdate_minutes > 0) = (backdate_reason_code IS NOT NULL))`,
+      ),
+      check(
+        'stay_backdate_reason_bounded',
+        sql`((backdate_reason_code IS NULL) OR ((length(backdate_reason_code) >= 1) AND (length(backdate_reason_code) <= 60)))`,
+      ),
+      check(
+        'stay_buffer_range',
+        sql`((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440))`,
+      ),
+      foreignKey({
+        name: 'stay_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      check('stay_charge_non_negative', sql`(room_charge_mnt >= 0)`),
+      check(
+        'stay_checkout_after_check_in',
+        sql`((actual_checkout_at IS NULL) OR (actual_checkout_at >= actual_check_in_at))`,
+      ),
+      check(
+        'stay_checkout_recorded_shape',
+        sql`((actual_checkout_at IS NULL) = (checkout_recorded_by_account_id IS NULL))`,
+      ),
+      check(
+        'stay_completed_shape',
+        sql`((state = 'COMPLETED'::text) = (actual_checkout_at IS NOT NULL))`,
+      ),
+      check('stay_deposit_by_source', sql`(deposit_required = (source = 'WALK_IN'::text))`),
+      foreignKey({
+        name: 'stay_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('stay_hotel_scope_uq').on(table.hotelId, table.stayId),
+      check(
+        'stay_hourly_shape',
+        sql`((stay_type <> 'HOURLY'::text) OR ((half_hour_units >= 1) AND (duration_minutes = (half_hour_units * 30)) AND (night_count IS NULL) AND (fixed_checkout_minute IS NULL)))`,
+      ),
+      check(
+        'stay_nightly_shape',
+        sql`((stay_type <> 'NIGHTLY'::text) OR ((night_count >= 1) AND ((fixed_checkout_minute >= 0) AND (fixed_checkout_minute <= 1439)) AND (half_hour_units IS NULL) AND (duration_minutes IS NULL)))`,
+      ),
+      check('stay_planned_after_actual', sql`(planned_checkout_at > actual_check_in_at)`),
+      check('stay_rate_non_negative', sql`(unit_rate_mnt >= 0)`),
+      foreignKey({
+        name: 'stay_rate_snapshot_fkey',
+        columns: [table.rateSnapshotId],
+        foreignColumns: [stayRateSnapshot.snapshotId],
+      }).onDelete('restrict'),
+      unique('stay_rate_snapshot_uq').on(table.rateSnapshotId),
+      foreignKey({
+        name: 'stay_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_shift_fkey',
+        columns: [table.hotelId, table.shiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      check('stay_source_known', sql`(source = ANY (ARRAY['WALK_IN'::text, 'ONLINE'::text]))`),
+      check('stay_source_shape', sql`((source = 'ONLINE'::text) = (booking_ref IS NOT NULL))`),
+      check(
+        'stay_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'CHECKOUT_IN_PROGRESS'::text, 'COMPLETED'::text]))`,
+      ),
+      check('stay_type_known', sql`(stay_type = ANY (ARRAY['HOURLY'::text, 'NIGHTLY'::text]))`),
+      check('stay_version_positive', sql`(pricing_config_version >= 1)`),
+      index('stay_booking_ref_idx')
+        .on(table.hotelId, table.bookingRef)
+        .where(sql`booking_ref IS NOT NULL`),
+      uniqueIndex('stay_one_live_per_room_uq')
+        .on(table.hotelId, table.roomId)
+        .where(sql`state <> 'COMPLETED'::text`),
+      index('stay_room_timeline_idx').on(table.hotelId, table.roomId, table.plannedCheckoutAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The primary guest of a stay, in append-only revisions, with the encrypted
+ * identifier and its keyed lookup token (`RC-DEC-033`, `RC-DEC-044`).
+ */
+export const stayGuest = platform
+  .table(
+    'stay_guest',
+    {
+      ageAtCheckIn: integer('age_at_check_in'),
+      assurance: text('assurance').notNull(),
+      correctionReason: text('correction_reason'),
+      dateOfBirth: date('date_of_birth').notNull(),
+      documentAuthority: text('document_authority'),
+      documentCountry: text('document_country'),
+      documentExpiresOn: date('document_expires_on'),
+      documentType: text('document_type'),
+      familyName: text('family_name').notNull(),
+      givenName: text('given_name').notNull(),
+      guardianName: text('guardian_name'),
+      guardianPhone: text('guardian_phone'),
+      guardianRelationship: text('guardian_relationship'),
+      guestRecordId: uuid('guest_record_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      identifierCiphertext: bytea('identifier_ciphertext'),
+      identifierKeyVersion: text('identifier_key_version'),
+      identifierWrappedDek: bytea('identifier_wrapped_dek'),
+      identityType: text('identity_type').notNull(),
+      isCurrent: boolean('is_current')
+        .notNull()
+        .default(sql`true`),
+      lookupKeyVersion: text('lookup_key_version'),
+      lookupNamespace: text('lookup_namespace'),
+      lookupToken: text('lookup_token'),
+      nationality: text('nationality').notNull(),
+      noDocumentNote: text('no_document_note'),
+      noDocumentReason: text('no_document_reason'),
+      policeMatchEligibility: text('police_match_eligibility').notNull(),
+      provenance: text('provenance').notNull(),
+      recordedAt: timestamp('recorded_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      recordedByAccountId: uuid('recorded_by_account_id'),
+      revisionNo: integer('revision_no')
+        .notNull()
+        .default(sql`1`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'stay_guest_age_range',
+        sql`((age_at_check_in IS NULL) OR ((age_at_check_in >= 0) AND (age_at_check_in <= 130)))`,
+      ),
+      check(
+        'stay_guest_assurance_known',
+        sql`(assurance = ANY (ARRAY['DOCUMENT'::text, 'LOW_ASSURANCE'::text]))`,
+      ),
+      check(
+        'stay_guest_correction_reason_bounded',
+        sql`((correction_reason IS NULL) OR ((length(correction_reason) >= 1) AND (length(correction_reason) <= 300)))`,
+      ),
+      check(
+        'stay_guest_correction_reason_shape',
+        sql`((revision_no = 1) = (correction_reason IS NULL))`,
+      ),
+      check(
+        'stay_guest_document_authority_bounded',
+        sql`((document_authority IS NULL) OR ((length(document_authority) >= 1) AND (length(document_authority) <= 120)))`,
+      ),
+      check(
+        'stay_guest_document_country_shape',
+        sql`((document_country IS NULL) OR (document_country ~ '^[A-Z]{2}$'::text))`,
+      ),
+      check(
+        'stay_guest_document_type_bounded',
+        sql`((document_type IS NULL) OR ((length(document_type) >= 1) AND (length(document_type) <= 60)))`,
+      ),
+      check(
+        'stay_guest_eligibility_by_type',
+        sql`((police_match_eligibility <> 'ELIGIBLE_EXACT_RD'::text) OR (identity_type = 'MN_REG_NO'::text))`,
+      ),
+      check(
+        'stay_guest_eligibility_known',
+        sql`(police_match_eligibility = ANY (ARRAY['ELIGIBLE_EXACT_RD'::text, 'NOT_ELIGIBLE_EXACT_RD'::text]))`,
+      ),
+      check(
+        'stay_guest_guardian_bounded',
+        sql`(((guardian_name IS NULL) OR ((length(guardian_name) >= 1) AND (length(guardian_name) <= 120))) AND ((guardian_phone IS NULL) OR ((length(guardian_phone) >= 4) AND (length(guardian_phone) <= 30))) AND ((guardian_relationship IS NULL) OR ((length(guardian_relationship) >= 1) AND (length(guardian_relationship) <= 60))))`,
+      ),
+      check(
+        'stay_guest_guardian_when_minor',
+        sql`((age_at_check_in IS NULL) OR (age_at_check_in >= 18) OR ((guardian_name IS NOT NULL) AND (guardian_phone IS NOT NULL) AND (guardian_relationship IS NOT NULL)))`,
+      ),
+      foreignKey({
+        name: 'stay_guest_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'stay_guest_identifier_shape',
+        sql`(((identifier_ciphertext IS NULL) = (identifier_wrapped_dek IS NULL)) AND ((identifier_ciphertext IS NULL) = (identifier_key_version IS NULL)) AND ((identifier_ciphertext IS NULL) = (lookup_token IS NULL)) AND ((lookup_token IS NULL) = (lookup_key_version IS NULL)) AND ((lookup_token IS NULL) = (lookup_namespace IS NULL)))`,
+      ),
+      check(
+        'stay_guest_identity_type_known',
+        sql`(identity_type = ANY (ARRAY['MN_REG_NO'::text, 'FOREIGN_PASSPORT'::text, 'OTHER_GOV_ID'::text, 'NO_DOCUMENT'::text]))`,
+      ),
+      check(
+        'stay_guest_names_bounded',
+        sql`(((length(family_name) >= 1) AND (length(family_name) <= 120)) AND ((length(given_name) >= 1) AND (length(given_name) <= 120)))`,
+      ),
+      check('stay_guest_nationality_shape', sql`(nationality ~ '^[A-Z]{2}$'::text)`),
+      check(
+        'stay_guest_no_document_note_bounded',
+        sql`((no_document_note IS NULL) OR ((length(no_document_note) >= 1) AND (length(no_document_note) <= 500)))`,
+      ),
+      check(
+        'stay_guest_no_document_reason_bounded',
+        sql`((no_document_reason IS NULL) OR ((length(no_document_reason) >= 1) AND (length(no_document_reason) <= 300)))`,
+      ),
+      check(
+        'stay_guest_no_document_shape',
+        sql`((identity_type <> 'NO_DOCUMENT'::text) OR ((identifier_ciphertext IS NULL) AND (no_document_reason IS NOT NULL) AND (assurance = 'LOW_ASSURANCE'::text)))`,
+      ),
+      check(
+        'stay_guest_other_id_shape',
+        sql`((identity_type <> 'OTHER_GOV_ID'::text) OR ((identifier_ciphertext IS NOT NULL) AND (document_type IS NOT NULL) AND (document_country IS NOT NULL) AND (document_authority IS NOT NULL) AND (assurance = 'DOCUMENT'::text)))`,
+      ),
+      check(
+        'stay_guest_passport_shape',
+        sql`((identity_type <> 'FOREIGN_PASSPORT'::text) OR ((identifier_ciphertext IS NOT NULL) AND (document_country IS NOT NULL) AND (document_expires_on IS NOT NULL) AND (assurance = 'DOCUMENT'::text)))`,
+      ),
+      check(
+        'stay_guest_provenance_known',
+        sql`(provenance = ANY (ARRAY['XYP_VERIFIED'::text, 'MANUAL'::text]))`,
+      ),
+      check(
+        'stay_guest_reg_no_shape',
+        sql`((identity_type <> 'MN_REG_NO'::text) OR ((identifier_ciphertext IS NOT NULL) AND (document_country = 'MN'::text) AND (assurance = 'DOCUMENT'::text)))`,
+      ),
+      check('stay_guest_revision_positive', sql`(revision_no >= 1)`),
+      unique('stay_guest_revision_uq').on(table.stayId, table.revisionNo),
+      foreignKey({
+        name: 'stay_guest_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check(
+        'stay_guest_xyp_only_for_reg_no',
+        sql`((provenance <> 'XYP_VERIFIED'::text) OR (identity_type = 'MN_REG_NO'::text))`,
+      ),
+      uniqueIndex('stay_guest_current_uq')
+        .on(table.stayId)
+        .where(sql`is_current IS TRUE`),
+      index('stay_guest_lookup_idx')
+        .on(table.hotelId, table.lookupToken)
+        .where(sql`lookup_token IS NOT NULL`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The exact template version a check-in pinned for its price book (`PRICE-DEC-001`).
+ */
+export const stayMinibarSnapshot = platform
+  .table(
+    'stay_minibar_snapshot',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      roomId: uuid('room_id').notNull(),
+      snapshotAt: timestamp('snapshot_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      stayId: uuid('stay_id').primaryKey().notNull(),
+      templateId: uuid('template_id').notNull(),
+      versionId: uuid('version_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'stay_minibar_snapshot_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_minibar_snapshot_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_minibar_snapshot_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_minibar_snapshot_version_fkey',
+        columns: [table.hotelId, table.templateId, table.versionId],
+        foreignColumns: [
+          minibarTemplateVersion.hotelId,
+          minibarTemplateVersion.templateId,
+          minibarTemplateVersion.versionId,
+        ],
+      }).onDelete('restrict'),
+      index('stay_minibar_snapshot_version_idx').on(table.hotelId, table.versionId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The selling prices a stay is charged, captured at check-in (`PRICE-DEC-001`).
+ */
+export const stayMinibarPrice = platform
+  .table(
+    'stay_minibar_price',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      openingQuantity: integer('opening_quantity').notNull(),
+      productCategory: text('product_category'),
+      productId: uuid('product_id').notNull(),
+      productName: text('product_name').notNull(),
+      productUnit: text('product_unit'),
+      sellingPriceMnt: bigint('selling_price_mnt', { mode: 'bigint' }).notNull(),
+      stayId: uuid('stay_id').notNull(),
+      targetQuantity: integer('target_quantity').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'stay_minibar_price_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'stay_minibar_price_name_bounded',
+        sql`((length(product_name) >= 1) AND (length(product_name) <= 120))`,
+      ),
+      check('stay_minibar_price_non_negative', sql`(selling_price_mnt >= 0)`),
+      check('stay_minibar_price_opening_non_negative', sql`(opening_quantity >= 0)`),
+      primaryKey({ name: 'stay_minibar_price_pkey', columns: [table.stayId, table.productId] }),
+      foreignKey({
+        name: 'stay_minibar_price_product_fkey',
+        columns: [table.hotelId, table.productId],
+        foreignColumns: [minibarProduct.hotelId, minibarProduct.productId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'stay_minibar_price_snapshot_fkey',
+        columns: [table.stayId],
+        foreignColumns: [stayMinibarSnapshot.stayId],
+      }).onDelete('restrict'),
+      check('stay_minibar_price_target_positive', sql`(target_quantity >= 1)`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The active-stay actual-time correction: request, fixed bound, decision and the
+ * `self_approved` audit flag (`STAY-DEC-010`).
+ */
+export const stayTimeCorrection = platform
+  .table(
+    'stay_time_correction',
+    {
+      correctedActualCheckInAt: timestamp('corrected_actual_check_in_at', {
+        withTimezone: true,
+      }).notNull(),
+      correctionId: uuid('correction_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionReason: text('decision_reason'),
+      earliestAllowedAt: timestamp('earliest_allowed_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      latestAllowedAt: timestamp('latest_allowed_at', { withTimezone: true }).notNull(),
+      previousEffectiveAt: timestamp('previous_effective_at', { withTimezone: true }).notNull(),
+      reason: text('reason').notNull(),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      selfApproved: boolean('self_approved')
+        .notNull()
+        .default(sql`false`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'stay_time_correction_bound_shape',
+        sql`((earliest_allowed_at <= corrected_actual_check_in_at) AND (corrected_actual_check_in_at <= latest_allowed_at))`,
+      ),
+      check(
+        'stay_time_correction_decision_reason_bounded',
+        sql`((decision_reason IS NULL) OR ((length(decision_reason) >= 1) AND (length(decision_reason) <= 300)))`,
+      ),
+      check(
+        'stay_time_correction_decision_shape',
+        sql`(((state = 'PENDING'::text) = (decided_at IS NULL)) AND ((decided_at IS NULL) = (decided_by_account_id IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'stay_time_correction_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'stay_time_correction_reason_bounded',
+        sql`((length(reason) >= 1) AND (length(reason) <= 300))`,
+      ),
+      check(
+        'stay_time_correction_self_approved_shape',
+        sql`((self_approved IS FALSE) OR ((decided_by_account_id IS NOT NULL) AND (decided_by_account_id = requested_by_account_id)))`,
+      ),
+      check(
+        'stay_time_correction_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text]))`,
+      ),
+      foreignKey({
+        name: 'stay_time_correction_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      uniqueIndex('stay_time_correction_one_pending_uq')
+        .on(table.stayId)
+        .where(sql`state = 'PENDING'::text`),
+      index('stay_time_correction_stay_idx').on(table.hotelId, table.stayId, table.decidedAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The overdue conflict of a confirmed booking and its one terminal remedy
+ * (`STAY-DEC-013`).
+ */
+export const bookingFulfillmentConflict = platform
+  .table(
+    'booking_fulfillment_conflict',
+    {
+      assignedRoomId: uuid('assigned_room_id'),
+      bookingRef: uuid('booking_ref').notNull(),
+      categoryId: uuid('category_id').notNull(),
+      cleaningBufferMinutes: integer('cleaning_buffer_minutes').notNull(),
+      conflictId: uuid('conflict_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      detectedAt: timestamp('detected_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      overdueStayId: uuid('overdue_stay_id').notNull(),
+      plannedCheckinAt: timestamp('planned_checkin_at', { withTimezone: true }).notNull(),
+      reason: text('reason'),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+      resolvedByAccountId: uuid('resolved_by_account_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      selfApproved: boolean('self_approved')
+        .notNull()
+        .default(sql`false`),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'booking_fulfillment_conflict_assigned_room_fkey',
+        columns: [table.hotelId, table.assignedRoomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'booking_fulfillment_conflict_assignment_shape',
+        sql`((state = ANY (ARRAY['RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text])) = (assigned_room_id IS NOT NULL))`,
+      ),
+      check(
+        'booking_fulfillment_conflict_buffer_range',
+        sql`((cleaning_buffer_minutes >= 0) AND (cleaning_buffer_minutes <= 1440))`,
+      ),
+      check(
+        'booking_fulfillment_conflict_cancel_has_reason',
+        sql`((state <> 'CANCELLED_HOTEL'::text) OR (reason IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'booking_fulfillment_conflict_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'booking_fulfillment_conflict_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'booking_fulfillment_conflict_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check(
+        'booking_fulfillment_conflict_resolution_shape',
+        sql`((state = 'OPEN'::text) = (resolved_at IS NULL))`,
+      ),
+      foreignKey({
+        name: 'booking_fulfillment_conflict_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'booking_fulfillment_conflict_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'RESOLVED_READY'::text, 'RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text, 'CANCELLED_HOTEL'::text]))`,
+      ),
+      foreignKey({
+        name: 'booking_fulfillment_conflict_stay_fkey',
+        columns: [table.hotelId, table.overdueStayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      uniqueIndex('booking_fulfillment_conflict_one_open_uq')
+        .on(table.hotelId, table.bookingRef)
+        .where(sql`state = 'OPEN'::text`),
+      index('booking_fulfillment_conflict_room_idx').on(table.hotelId, table.roomId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The append-only stay history (doc 05 §19.3, §20.3).
+ */
+export const stayEvent = platform
+  .table(
+    'stay_event',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      eventType: text('event_type').notNull(),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      payload: jsonb('payload')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      reason: text('reason'),
+      stayId: uuid('stay_id').notNull(),
+      toState: text('to_state'),
+    },
+    (table) => [
+      foreignKey({
+        name: 'stay_event_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'stay_event_payload_has_no_denied_key',
+        sql`(NOT platform.contains_denied_key(payload))`,
+      ),
+      check(
+        'stay_event_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 500)))`,
+      ),
+      foreignKey({
+        name: 'stay_event_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check(
+        'stay_event_type_bounded',
+        sql`((length(event_type) >= 1) AND (length(event_type) <= 60))`,
+      ),
+      index('stay_event_stay_idx').on(table.hotelId, table.stayId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -4411,4 +5218,15 @@ export const DECLARED_TABLES = [
   rolloutBatch,
   rolloutBatchRoom,
   minibarEvent,
+  // Phase 08.
+  receptionShift,
+  roomCleaningState,
+  roomCleaningEvent,
+  stay,
+  stayGuest,
+  stayMinibarSnapshot,
+  stayMinibarPrice,
+  stayTimeCorrection,
+  bookingFulfillmentConflict,
+  stayEvent,
 ] as const;

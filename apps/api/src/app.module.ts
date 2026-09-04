@@ -12,6 +12,8 @@ import type { CatalogModuleOptions } from './modules/catalog/catalog.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import type { MinibarModuleOptions } from './modules/minibar/minibar.module';
 import { MinibarModule } from './modules/minibar/minibar.module';
+import type { StayModuleOptions } from './modules/stay/stay.module';
+import { StayModule } from './modules/stay/stay.module';
 
 export interface AppModuleOptions {
   /**
@@ -46,6 +48,11 @@ export interface AppModuleOptions {
   /** The Phase 07 minibar. It takes the catalog's lifecycle contract from the catalog module. */
   readonly minibar: MinibarModuleOptions;
   /**
+   * The Phase 08 stay. It takes the tariff and lifecycle contracts from the
+   * catalog module and the check-in contracts from the minibar module.
+   */
+  readonly stay: StayModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -78,6 +85,9 @@ export class AppModule {
     // The catalog is constructed once too: the minibar module imports the same
     // object, so the lifecycle contract it resolves is the catalog's instance.
     const catalog = CatalogModule.forRoot({ ...options.catalog, iam });
+    // And the minibar: the stay module imports the same object for its
+    // check-in contracts.
+    const minibar = MinibarModule.forRoot({ ...options.minibar, iam, catalog });
     return {
       module: AppModule,
       providers: [
@@ -92,7 +102,8 @@ export class AppModule {
         iam,
         OnboardingModule.forRoot({ ...options.onboarding, iam }),
         catalog,
-        MinibarModule.forRoot({ ...options.minibar, iam, catalog }),
+        minibar,
+        StayModule.forRoot({ ...options.stay, iam, catalog, minibar }),
       ],
     };
   }

@@ -57,6 +57,19 @@ export type {
   ReceiptStatus,
 } from './ebarimt.port';
 
+// EXT-01.
+export {
+  SimulatedXypIdentity,
+  UnavailableXypIdentity,
+  selectXypIdentity,
+} from './identity-verification.port';
+export type {
+  XypAnswer,
+  XypCitizen,
+  XypIdentityPort,
+  XypLookup,
+} from './identity-verification.port';
+
 // INT-OTP-01.
 export {
   SimulatedPhoneVerification,

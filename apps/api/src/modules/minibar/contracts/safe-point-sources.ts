@@ -25,7 +25,7 @@ export const SAFE_POINT_SOURCES: readonly DependencySource[] = [
     owningPhase: '08',
     relation: 'platform.stay',
     column: 'room_id',
-    predicate: "state = 'ACTIVE'",
+    predicate: "state <> 'COMPLETED'",
     detail: 'a stay is in progress in this room',
   },
   {
@@ -72,6 +72,7 @@ export const VERSION_STAY_SOURCE: DependencySource = {
   owningPhase: '08',
   relation: 'platform.stay_minibar_snapshot',
   column: 'version_id',
-  predicate: "stay_state = 'ACTIVE'",
+  predicate:
+    "EXISTS (SELECT 1 FROM platform.stay s WHERE s.stay_id = platform.stay_minibar_snapshot.stay_id AND s.state <> 'COMPLETED')",
   detail: 'an active stay pinned this version at check-in',
 };

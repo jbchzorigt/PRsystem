@@ -179,6 +179,41 @@ export class ConfigurationRepository extends ScopedRepository {
     return mapConfiguration(result.rows[0]);
   }
 
+  /**
+   * The configuration share-locked for a check-in: an apply, which takes the
+   * row `FOR UPDATE`, waits for the check-in that pinned it, and the check-in
+   * reads a version that cannot switch under it (doc 25 §7.1). `updatedAt` is
+   * when the row last changed, which a backdated check-in compares with the
+   * chosen arrival (doc 05 §19.2).
+   */
+  async shareConfiguration(
+    roomId: string,
+  ): Promise<(ConfigurationRow & { readonly updatedAt: Date }) | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${CONFIG_COLUMNS}, updated_at FROM platform.room_minibar_configuration
+        WHERE hotel_id = $1 AND room_id = $2 FOR SHARE`,
+      [this.hotelId, roomId],
+    );
+    const row = mapConfiguration(result.rows[0]);
+    if (row === undefined) return undefined;
+    return { ...row, updatedAt: result.rows[0]?.['updated_at'] as Date };
+  }
+
+  /** The next stay has opened under the override: the pointer is cleared (doc 22 §8). */
+  async clearOverride(
+    roomId: string,
+    expectedRevision: number,
+  ): Promise<ConfigurationRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `UPDATE platform.room_minibar_configuration
+          SET override_id = NULL, updated_at = now(), revision = revision + 1
+        WHERE hotel_id = $1 AND room_id = $2 AND revision = $3
+        RETURNING ${CONFIG_COLUMNS}`,
+      [this.hotelId, roomId, expectedRevision],
+    );
+    return mapConfiguration(result.rows[0]);
+  }
+
   /** Creates the OFF row a room starts from if it has none, and locks it either way. */
   async ensureConfiguration(roomId: string): Promise<ConfigurationRow> {
     await this.uow.query(

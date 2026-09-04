@@ -85,6 +85,14 @@ export async function createApp(
       },
       catalog: { config: { databaseUrl: config.DATABASE_URL } },
       minibar: { config: { databaseUrl: config.DATABASE_URL } },
+      stay: {
+        config: {
+          databaseUrl: config.DATABASE_URL,
+          appEnv: config.APP_ENV,
+          kmsAdapter: config.KMS_ADAPTER,
+          ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+        },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

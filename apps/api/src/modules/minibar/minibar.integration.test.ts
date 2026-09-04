@@ -653,7 +653,12 @@ describe('room configuration and reconciliation (RML-DEC-007…014, INV-DEC-006,
       request(hotel.manager),
     );
     expect(view.checkInBlockers).toEqual(['CONFIGURATION_CHANGE_PENDING']);
-    expect(view.safePoint.every((f) => f.state === 'not_yet_provisioned')).toBe(true);
+    // Phase 08 provisioned the stay relation: its evidence is now `clear`; the
+    // later phases' relations are still `not_yet_provisioned`.
+    expect(view.safePoint.find((f) => f.sourceId === 'room.active_stay')?.state).toBe('clear');
+    expect(
+      view.safePoint.every((f) => f.state === 'not_yet_provisioned' || f.state === 'clear'),
+    ).toBe(true);
     const task = view.openTask as TaskView;
     expect(task.bounds).toEqual([
       { productId: water.productId, direction: 'TO_ROOM', maxQuantity: 2, targetQuantity: 2 },
@@ -1364,10 +1369,9 @@ describe('multi-room Rollout (RML-DEC-025…028)', () => {
       request(hotel.manager),
     );
     expect(retry.retryOfBatchId).toBe(batch.batchId);
-    expect(retry.rooms.map((r) => [r.result, r.reasonCode])).toEqual([
-      ['SKIPPED', 'ALREADY_ON_TARGET'],
-      ['ACCEPTED', null],
-    ]);
+    const byRoom = new Map(retry.rooms.map((r) => [r.roomId, [r.result, r.reasonCode]]));
+    expect(byRoom.get(onRooms[0] as string)).toEqual(['SKIPPED', 'ALREADY_ON_TARGET']);
+    expect(byRoom.get(onRooms[1] as string)).toEqual(['ACCEPTED', null]);
   });
 
   it('every room in the batch is refused a second pending change while its child is open', async () => {

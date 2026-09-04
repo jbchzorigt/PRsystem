@@ -8,6 +8,7 @@ import {
   PaymentGatewayRegistry,
   UnavailableEBarimt,
   UnavailableKeyManagement,
+  UnavailableXypIdentity,
   UnavailablePaymentGateway,
   UnavailablePhoneVerification,
 } from '@prsystem/ports';
@@ -62,6 +63,11 @@ async function generate(): Promise<void> {
       // all it needs to describe its routes.
       catalog: { pool: new Pool({ max: 1 }) },
       minibar: { pool: new Pool({ max: 1 }) },
+      stay: {
+        pool: new Pool({ max: 1 }),
+        keys: new UnavailableKeyManagement(),
+        xyp: new UnavailableXypIdentity(),
+      },
     }),
     new FastifyAdapter(),
     { logger: false },

@@ -243,13 +243,14 @@ describe('migration runner', () => {
     expect(outcome.appliedBefore).toBe(0);
     // 0000_baseline, 0001_kernel, 0002_iam_rbac_staff, 0003_onboarding_subscription,
     // 0004_onboarding_remediation, 0005_onboarding_remediation2,
-    // 0006_onboarding_remediation3, 0007_hotel_catalog, 0008_minibar_inventory.
-    expect(outcome.appliedAfter).toBe(9);
+    // 0006_onboarding_remediation3, 0007_hotel_catalog, 0008_minibar_inventory,
+    // 0009_stay_reception.
+    expect(outcome.appliedAfter).toBe(10);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
-      expect(freshLedger).toHaveLength(9);
+      expect(freshLedger).toHaveLength(10);
     } finally {
       await pool.end();
     }
@@ -265,7 +266,7 @@ describe('migration runner', () => {
 
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
-    expect(upgradeOutcome.appliedAfter).toBe(9);
+    expect(upgradeOutcome.appliedAfter).toBe(10);
   }, 60000);
 
   it('holds the accepted Phase 03 migrations byte-for-byte, and only those', () => {
@@ -312,7 +313,7 @@ describe('migration runner', () => {
     const toHead = await runMigrations(phase04Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 2,
-      after: 9,
+      after: 10,
     });
   }, 120000);
 
@@ -326,20 +327,21 @@ describe('migration runner', () => {
 
     // `0003_onboarding_subscription` and its forward-only remediations
     // `0004_onboarding_remediation`, `0005_onboarding_remediation2` and
-    // `0006_onboarding_remediation3`, then Phase 06's `0007_hotel_catalog` and
-    // Phase 07's `0008_minibar_inventory`; nothing accepted is rewritten.
+    // `0006_onboarding_remediation3`, then Phase 06's `0007_hotel_catalog`,
+    // Phase 07's `0008_minibar_inventory` and Phase 08's `0009_stay_reception`;
+    // nothing accepted is rewritten.
     const toHead = await runMigrations(phase05Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 3,
-      after: 9,
+      after: 10,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase05Url, ledgerRows);
     const repeat = await runMigrations(phase05Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 9,
-      after: 9,
+      before: 10,
+      after: 10,
     });
     expect(await withPool(phase05Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -354,7 +356,7 @@ describe('migration runner', () => {
     const frozen = readdirSync(FROZEN_PHASE_05)
       .filter((name) => name.endsWith('.sql'))
       .sort();
-    // The Phase 06 and Phase 07 migrations are deliberately absent: they are
+    // The Phase 06, 07 and 08 migrations are deliberately absent: they are
     // what the upgrade below is supposed to apply.
     expect(frozen).toEqual([
       '0000_baseline.sql',
@@ -367,7 +369,7 @@ describe('migration runner', () => {
     ]);
   });
 
-  it('applies exactly the Phase 06 and Phase 07 migrations to an accepted Phase 05 database', async () => {
+  it('applies exactly the Phase 06, 07 and 08 migrations to an accepted Phase 05 database', async () => {
     // The deployment step the running cluster actually takes: the accepted
     // Phase 05 state, then the forward migrations of the unaccepted phases and
     // nothing else. Phase 06 is not accepted, so no frozen Phase 06 set exists
@@ -381,15 +383,15 @@ describe('migration runner', () => {
     const phase06 = await runMigrations(phase06Url);
     expect({ before: phase06.appliedBefore, after: phase06.appliedAfter }).toEqual({
       before: 7,
-      after: 9,
+      after: 10,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase06Url, ledgerRows);
     const repeat = await runMigrations(phase06Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 9,
-      after: 9,
+      before: 10,
+      after: 10,
     });
     expect(await withPool(phase06Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -627,8 +629,8 @@ describe('migration runner', () => {
   it('treats a second application as a safe no-op', async () => {
     const outcome = await runMigrations(freshUrl);
 
-    expect(outcome.appliedBefore).toBe(9);
-    expect(outcome.appliedAfter).toBe(9);
+    expect(outcome.appliedBefore).toBe(10);
+    expect(outcome.appliedAfter).toBe(10);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
@@ -1520,7 +1522,7 @@ describe('the migration runner requires the canonical migration login', () => {
     const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
     await expect(
       runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
-    ).resolves.toMatchObject({ appliedAfter: 9 });
+    ).resolves.toMatchObject({ appliedAfter: 10 });
   }, 180000);
 });
 

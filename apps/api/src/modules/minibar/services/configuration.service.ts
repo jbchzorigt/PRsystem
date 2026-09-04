@@ -88,6 +88,22 @@ export interface TaskView {
   readonly revision: number;
 }
 
+/** What a check-in pins (doc 25 §3): see `ConfigurationService.checkInPin`. */
+export interface CheckInPin {
+  readonly blockers: readonly string[];
+  readonly configuration: (ConfigurationRow & { readonly updatedAt: Date }) | null;
+  readonly items: readonly {
+    readonly productId: string;
+    readonly targetQuantity: number;
+    readonly name: string;
+    readonly category: string | null;
+    readonly unit: string | null;
+    readonly sellingPriceMnt: bigint | null;
+    readonly state: 'ACTIVE' | 'RETIRING' | 'INACTIVE';
+  }[];
+  readonly stock: readonly StockLine[];
+}
+
 export interface ConfigurationView {
   readonly roomId: string;
   readonly mode: 'ON' | 'OFF';
@@ -238,6 +254,64 @@ export class ConfigurationService extends MinibarServiceBase {
       blockers.push('MINIBAR_SHORT_WITHOUT_OVERRIDE');
     }
     return blockers;
+  }
+
+  /**
+   * doc 25 §3, doc 22 §8: what a check-in pins in its own transaction — the
+   * configuration share-locked, its blockers, and for an `ON` room the exact
+   * version's product list with the selling prices in force and what the room
+   * holds. The caller writes the price book from this and nothing else.
+   */
+  async checkInPin(uow: UnitOfWork, roomId: string): Promise<CheckInPin> {
+    const configurations = new ConfigurationRepository(uow);
+    const versions = new VersionRepository(uow);
+    const inventory = new InventoryRepository(uow);
+    const configuration = await configurations.shareConfiguration(roomId);
+    const blockers = await this.checkInBlockers(uow, roomId);
+    if (configuration === undefined || configuration.mode === 'OFF') {
+      return { blockers, configuration: configuration ?? null, items: [], stock: [] };
+    }
+    const items =
+      configuration.currentVersionId === null
+        ? []
+        : await versions.itemsOf(configuration.currentVersionId);
+    const products = await inventory.productsByIds(items.map((item) => item.productId));
+    return {
+      blockers,
+      configuration,
+      items: items.map((item) => {
+        const product = products.get(item.productId);
+        return {
+          productId: item.productId,
+          targetQuantity: item.targetQuantity,
+          name: product?.name ?? '',
+          category: product?.category ?? null,
+          unit: product?.unit ?? null,
+          sellingPriceMnt: product?.sellingPriceMnt ?? null,
+          state: product?.state ?? 'INACTIVE',
+        };
+      }),
+      stock: await inventory.roomStock(roomId),
+    };
+  }
+
+  /**
+   * The Manager's shortage override was for the next stay; that stay has now
+   * opened, so the pointer is cleared in the check-in's transaction and the
+   * override row stays as the audited exception it was (doc 22 §8).
+   */
+  async consumeOverride(uow: UnitOfWork, roomId: string, stayId: string): Promise<void> {
+    const configurations = new ConfigurationRepository(uow);
+    const configuration = await configurations.configuration(roomId);
+    if (configuration === undefined || configuration.overrideId === null) return;
+    const cleared = await configurations.clearOverride(roomId, configuration.revision);
+    if (cleared === undefined) throw new ApiError('CONFLICT', 'the configuration moved; retry');
+    await configurations.appendEvent({
+      entityType: 'SHORTAGE_OVERRIDE',
+      entityId: configuration.overrideId,
+      eventType: 'CONSUMED',
+      payload: { roomId, stayId },
+    });
   }
 
   // -------------------------------------------------------------- requests

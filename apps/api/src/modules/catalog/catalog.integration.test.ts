@@ -1043,10 +1043,12 @@ describe('hard delete (RML-DEC-005) and dependency evidence (RML-DEC-003)', () =
       manager,
       request(manager),
     );
-    // A relation the registry names, provisioned with the wrong shape: the
-    // probe raises, and a raise is not "no rows".
+    // A relation the registry names for a later phase, provisioned with the
+    // wrong shape: the probe raises, and a raise is not "no rows". (Phase 08
+    // created `platform.stay` in the registered shape; the Phase 09 relation
+    // is the one still unprovisioned.)
     await env.admin.query(
-      `CREATE TABLE platform.stay (hotel_id uuid NOT NULL, state text NOT NULL)`,
+      `CREATE TABLE platform.cleaning_task (hotel_id uuid NOT NULL, state text NOT NULL)`,
     );
     try {
       const deactivation = await refused(
@@ -1071,7 +1073,7 @@ describe('hard delete (RML-DEC-005) and dependency evidence (RML-DEC-003)', () =
       expect(view.state).toBe('ACTIVE');
       expect(
         view.dependencies.filter((f) => f.state === 'unavailable').map((f) => f.sourceId),
-      ).toEqual(['room.active_stay', 'room.stay_history']);
+      ).toEqual(['room.cleaning_task']);
       const deletion = await refused(
         env.lifecycle.hardDelete(
           {
@@ -1088,7 +1090,7 @@ describe('hard delete (RML-DEC-005) and dependency evidence (RML-DEC-003)', () =
       expect(deletion.code).toBe('DEPENDENCY_UNAVAILABLE');
       expect(await events('ROOM', room.roomId)).toHaveLength(1);
     } finally {
-      await env.admin.query(`DROP TABLE platform.stay`);
+      await env.admin.query(`DROP TABLE platform.cleaning_task`);
     }
     const now = await env.lifecycle.requestDeactivation(
       {

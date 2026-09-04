@@ -4,14 +4,17 @@ import {
   SimulatedNotification,
   SimulatedPaymentGateway,
   SimulatedPhoneVerification,
+  SimulatedXypIdentity,
   UnavailableEBarimt,
   UnavailableNotification,
   UnavailablePaymentGateway,
   UnavailablePhoneVerification,
+  UnavailableXypIdentity,
   selectEBarimt,
   selectNotification,
   selectPaymentGateways,
   selectPhoneVerification,
+  selectXypIdentity,
 } from './index';
 import type { PortContext, PortResult } from './index';
 
@@ -340,6 +343,46 @@ describe('PhoneVerificationPort simulator', () => {
       gate: 'INT-OTP-01',
     });
     expect(selectPhoneVerification('production')).toBeInstanceOf(UnavailablePhoneVerification);
+  });
+});
+
+describe('XypIdentityPort simulator', () => {
+  it('answers found, not found, unavailable and timeout deterministically, and DISABLED when uncleared', async () => {
+    const port = new SimulatedXypIdentity();
+    expect(port.id).toBe('xyp-identity');
+    port.register('АА00000001', {
+      familyName: 'Синтетик',
+      givenName: 'Зочин',
+      dateOfBirth: '2000-01-01',
+    });
+    const known = { registrationNumber: 'АА00000001', requestRef: 'r-1' };
+    expect(ok(await port.lookupByRegistrationNumber(known, ctx))).toEqual({
+      found: true,
+      citizen: { familyName: 'Синтетик', givenName: 'Зочин', dateOfBirth: '2000-01-01' },
+    });
+    expect(
+      ok(
+        await port.lookupByRegistrationNumber({ ...known, registrationNumber: 'АА00000002' }, ctx),
+      ),
+    ).toEqual({ found: false });
+    port.failNext();
+    expect(err(await port.lookupByRegistrationNumber(known, ctx))).toEqual({
+      kind: 'UNAVAILABLE',
+      retryable: true,
+    });
+    port.timeoutNext();
+    expect(err(await port.lookupByRegistrationNumber(known, ctx))).toEqual({
+      kind: 'TIMEOUT',
+      retryable: true,
+    });
+    expect(port.lookupCount).toBe(4);
+    const disabled = new UnavailableXypIdentity();
+    expect(err(await disabled.lookupByRegistrationNumber(known, ctx))).toEqual({
+      kind: 'DISABLED',
+      gate: 'EXT-01',
+    });
+    expect(selectXypIdentity('production')).toBeInstanceOf(UnavailableXypIdentity);
+    expect(selectXypIdentity('test')).toBeInstanceOf(SimulatedXypIdentity);
   });
 });
 

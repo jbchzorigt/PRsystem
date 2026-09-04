@@ -221,7 +221,9 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
     owningPhase: '08',
     relation: 'platform.stay',
     column: 'room_id',
-    predicate: "state = 'ACTIVE'",
+    // A stay occupies its room until its actual checkout is recorded, through
+    // the checkout in progress (doc 05 §22.2).
+    predicate: "state <> 'COMPLETED'",
     detail: 'a stay is in progress in this room',
   },
   {
@@ -231,7 +233,7 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
     owningPhase: '08',
     relation: 'platform.stay',
     column: 'category_id',
-    predicate: "state = 'ACTIVE'",
+    predicate: "state <> 'COMPLETED'",
     detail: 'a stay in this category is in progress',
   },
   {
