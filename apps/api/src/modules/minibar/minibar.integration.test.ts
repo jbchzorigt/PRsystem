@@ -1412,7 +1412,6 @@ describe('the safe-point registry and the live schema', () => {
     expect(phase07.length).toBeGreaterThanOrEqual(8);
     for (const source of phase07) {
       const [schema, table] = source.relation.split('.');
-      if (source.relation === 'platform.minibar_refill_task') continue; // Phase 09's
       const column = await env.admin.query<{ present: boolean }>(
         `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3) AS present`,
         [schema, table, source.column],

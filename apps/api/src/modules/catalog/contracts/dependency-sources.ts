@@ -204,7 +204,9 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
     id: 'product.refill_task',
     entityKinds: ['MINIBAR_PRODUCT'],
     kind: 'operational',
-    owningPhase: '07',
+    // doc 22 §6.3: a refill is raised against an active stay, so the task
+    // relation is Phase 09's, with the stay it needs (doc 26 §22).
+    owningPhase: '09',
     relation: 'platform.minibar_refill_task',
     column: 'product_id',
     predicate: "state NOT IN ('COMPLETED', 'CANCELLED', 'IMPOSSIBLE')",
