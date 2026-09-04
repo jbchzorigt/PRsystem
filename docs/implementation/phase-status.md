@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 08 — Availability, guest identity, reception, and stay |
+| Current phase | 09 — Cleaner and checkout coordination |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -27,6 +27,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 06 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 07 state | `DONE` |
 | Phase 07 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 08 state | `DONE` |
+| Phase 08 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -47,7 +49,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 05 | Hotel onboarding and subscription | `DONE` | `0003_onboarding_subscription`, `0004_onboarding_remediation`, `0005_onboarding_remediation2`, `0006_onboarding_remediation3` | the Phase 05 battery — counts in [Phase 05 remediation 3](#phase-05-remediation-3) | accepted at the commit named in [Phase 05 acceptance](#phase-05-acceptance); the work itself is in the Phase 05 record and remediations 1 to 3 |
 | 06 | Hotel, room, category, and tariffs | `DONE` | `0007_hotel_catalog` | the Phase 06 battery — counts in [Phase 06 record](#phase-06-record) | implemented at `a44fd58` and `dcca709`; the record and its evidence are the commit after them |
 | 07 | Minibar inventory and templates | `DONE` | `0008_minibar_inventory` | the Phase 07 battery — counts in [Phase 07 record](#phase-07-record) | implemented at `1d2c764` and `0b40820`; the record and its evidence are the commit after them |
-| 08 | Availability, guest identity, reception, and stay | `NOT STARTED` | — | — | — |
+| 08 | Availability, guest identity, reception, and stay | `DONE` | `0009_stay_reception` | the Phase 08 battery — counts in [Phase 08 record](#phase-08-record) | implemented at `621e17d`, corrected at `5b3603a` (the interval commitment); the record and its evidence are the commit after it |
 | 09 | Cleaner and checkout coordination | `NOT STARTED` | — | — | — |
 | 10 | Folio, deposit, payment, and correction | `NOT STARTED` | — | — | — |
 | 11 | Shift, cash drawer, expense, and hotel finance | `NOT STARTED` | — | — | — |
@@ -3497,8 +3499,8 @@ Phase 06 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; its acceptance is the cus
 
 Minibar inventory and templates. Authorized under the
 [standing progression authorization](#standing-progression-authorization), implemented and gated on
-top of the Phase 06 tree. Phase 07 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 08 is the
-current phase, authorized to begin, and has **not** started.
+top of the Phase 06 tree. Phase 07 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 08 followed
+it under the same authorization and has its own record below.
 
 **Decisions closed:** the 36 this phase owns — `INV-DEC-001`…`008`, `RML-DEC-007`…`028`,
 `RC-DEC-011`, `RC-DEC-018`, `RC-DEC-036`, `RC-DEC-041`, `RC-DEC-042` and `RC-DEC-043`. With the 63
@@ -3740,5 +3742,306 @@ ran, each attempt recorded in the battery log.
 The per-command exit codes, durations and execution environment are recorded in
 [phase-07-battery-log.md](phase-07-battery-log.md).
 
-Phase 07 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 08 is authorized to begin under the
+Phase 07 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; its acceptance is the customer's to give.
+
+---
+
+## Phase 08 record
+
+Availability, guest identity, reception, and stay. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 07 tree. Phase 08 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 09 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the 19 this phase owns — `STAY-DEC-001`, `-003`, `-007`…`-014`, `RC-DEC-007`,
+`-012`, `-013`, `-014`, `-015`, `-017`, `-033`, `-044` and `PRICE-DEC-001`. With the 99 already
+closed, 118 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+**The shift, minimally.** doc 05 §19.1 refuses a check-in with no current open shift, so the
+operational Reception shift exists from this phase: opened and closed under
+`hotel.shift.open_close_handover`, one open shift per hotel by index, its opening time the bound a
+backdate is measured against. The cash count, handover and financial review of doc 03 are Phase
+11's and extend the row (`A-P08-1`).
+
+**The cleaning axis and its history.** `Цэвэрлэгээ шаардлагатай → Цэвэрлэж байгаа → Цэвэр` for
+the Cleaner on 25,000₮ / 30,000₮ (`cleaning_status_p2530`), `→ Цэвэр` directly for the Manager of a
+20,000₮ hotel (`cleaning_status_p20`), read-only for Reception, and `→ Цэвэрлэгээ шаардлагатай` by
+the system at checkout. Every transition is an append-only event with the server's time, and that
+history is what a backdated check-in proves readiness from. A room never marked clean is not ready.
+
+**Check-in.** One transaction confirms everything or nothing. The shift and the room are
+share-locked and the minibar configuration is pinned `FOR SHARE`, so an apply and a check-in on the
+same room serialise and the stay pins the version that was current when it saw the room. The
+arrival defaults to the server's time and may be set earlier only within `STAY-DEC-009`'s bound —
+`max(now − 120 min, shift start, hotel-local day start, booking start)` — with a reason, under the
+second named action `check_in_actual_time_select`; `check_in_recorded_at` is the server's time and
+is written once. Readiness is evaluated at the arrival instant: room and category `ACTIVE`, no
+live stay, the previous stay's `actual_checkout_at + snapshotted buffer` passed, `Цэвэр` at that
+instant from the cleaning history, the minibar's own blockers (pending change, no published
+version, retiring product, `Тодорхойгүй`, `Дутуу` without an override), the planned end plus buffer
+fitting before the next confirmed booking, and no assignment or open conflict committing the room.
+A backdate whose readiness the history cannot prove is refused rather than assumed. The tariff is
+captured through the Phase 06 contract as the stay's own snapshot — walk-in `room → category →
+hotel`, config version, cleaning buffer and fixed check-out time included — and the charge is
+`ROUND_HALF_UP(rate × units / 2)` for half-hour units or `rate × N` for nights, whose planned end is
+the fixed check-out time on the hotel-local date of arrival plus `N` calendar days. A walk-in
+requires a deposit, a confirmed online booking does not: a check constraint, not a convention.
+
+**The primary guest.** One per stay (`RC-DEC-033`). Four identity types with the common fields;
+for `MN_REG_NO` the number is normalized and structurally validated (letters, an encoded birth
+date), XYP is asked and its answer, when found, is the record with `XYP_VERIFIED` — otherwise
+`MANUAL`, never presented as verified (`RC-DEC-007`, EXT-01 still blocked). The raw identifier is
+envelope-encrypted with the row as authenticated data and looked up by a keyed token namespaced by
+identity type and country; no read returns either. The age is the server's, from the date of birth
+on the hotel-local arrival date; a guest under 18 needs a guardian recorded; only a valid
+registration number is `ELIGIBLE_EXACT_RD`. The `stay.checked_in` outbox event carries the token,
+the eligibility and the times — never a name or a number — for Phase 18's matching at
+`check_in_recorded_at`.
+
+**The price book.** For a minibar-enabled room the check-in writes `stay_minibar_snapshot` and one
+`stay_minibar_price` line per product of the exact pinned version — name, unit, selling price,
+target and the room's opening quantity, zero included — in the same transaction, or no stay; a
+product with no price refuses the check-in. The rows accept no `UPDATE` or `DELETE` from any role.
+A Manager's shortage override for the next stay is consumed by that check-in: the configuration's
+pointer is cleared and the minibar history says which stay used it. A later price edit, publish,
+Default change or Rollout never touches a captured book, and an active stay's pinned version
+cannot be archived (the Phase 07 registry entry now finds its relation).
+
+**The room board and the stay view.** Every axis of doc 06 §2 derived on read: occupancy from the
+live stay, source, stay type, effective actual start, planned end, time state and overdue minutes
+from the clock, the readiness anchor from the last checkout, cleaning state, minibar status and
+blockers, open conflicts, pending correction. Nothing is stored.
+
+**The actual checkout.** Reception's (`checkout_record`). Refused while a correction is pending
+(doc 05 §20.1) or while a later phase's obligation is open — the folio and the minibar usage
+report, probed from their relations as evidence (`A-P08-10`). It records the immutable
+`actual_checkout_at`, completes the stay, puts the room to `Цэвэрлэгээ шаардлагатай`, tells the
+minibar a scheduled change may proceed, tells the catalog a retiring room may finalize, and closes
+an overdue conflict the checkout resolved in time — one transaction. The planned end, the charge
+and the price book are exactly what they were: no reprice, no refund, no fee (`STAY-DEC-003`,
+`-012`).
+
+**The actual-time correction.** A Reception submits a corrected arrival with a reason; a Manager
+approves or rejects it; one pending per stay by index; a pending request blocks the checkout. The
+window is fixed at request time on the original recorded time, shift and local day and never
+slides. Approval re-validates the previous stay's anchor, the historical `Цэвэр`, the minibar
+configuration and the next booking at the corrected instant, and changes nothing but the
+effective actual start, which is derived from the latest approved row: the stay's own row is
+untouched. A Reception + Manager account approving its own request is `self_approved`. One
+`stay.actual_time_corrected` event; no re-match, no second alert (doc 13 §8.5).
+
+**The planned end, locked in the database.** A trigger refuses any change to
+`planned_checkout_at`, `actual_check_in_at`, `check_in_recorded_at`, the duration, the type, the
+snapshot and the charge, whoever issues the statement, and admits only `ACTIVE →
+CHECKOUT_IN_PROGRESS → COMPLETED`. No route exists for them; `PATCH`, `PUT` and `DELETE` on a stay
+are `404`.
+
+**The overdue conflict.** Detection is a transaction-bound contract (`ConflictService.detect`) with
+an on-demand `refresh`: for every confirmed booking whose cleaning-preparation boundary has been
+reached, if its room's stay has no actual checkout and no other room of the category is eligible,
+one conflict opens — idempotently, by index. It closes by exactly one of four outcomes: the
+checkout leaves the room ready before the booking's start (`RESOLVED_READY`, decided by the
+checkout), a Reception assigns an eligible room of the same category, a Manager or Manager Plus
+approves a higher-category room at no extra charge (`self_approved` when the account is also
+Reception), or a Manager cancels the booking as hotel-caused — refused while an eligible room
+exists. An assignment recorded here commits the target room until the booking module applies it:
+a walk-in that would not fit before the booking is refused, and the room is not eligible for
+another. Nobody is checked out, moved, repriced or charged.
+
+**Confirmed bookings, by contract.** `ConfirmedBookingsPort` is what Phase 13 implements. The
+default answers "none" only while `platform.booking` does not exist — the absence is evidence, as
+the registries treat it — and refuses once it exists with no implementation behind it. An online
+check-in is therefore `BOOKING_NOT_FOUND` until Phase 13 (`A-P08-5`).
+
+**Authorization.** Every route authenticates with `SessionGuard` and authorizes nothing at the
+edge; each command resolves the live membership and scope grant before it binds the hotel and
+evaluates the named action inside the transaction. doc 18 §3 row by row: Reception holds the
+shift, the check-in, the actual-time selection, the correction request and the checkout; the
+Manager decides corrections and the higher-category and cancellation remedies; the Cleaner sets
+the cleaning state on 25,000₮ and nothing else; the Hotel Admin without those roles is refused
+every write and reads the board; a foreign hotel, an unknown hotel and an unauthenticated caller
+are `NOT_FOUND`, `NOT_FOUND` and `401`; a refusal never precedes authorization.
+
+### What Phase 08 deliberately did not build
+
+- **No cash, handover or review on the shift** — doc 03, Phase 11 (`A-P08-1`).
+- **No Cleaner queue, task or dashboard** — doc 04, Phase 09; the cleaning state they will drive
+  exists (`A-P08-2`).
+- **No online check-in, no booking, no scheduler for conflicts** — Phase 13 implements the
+  bookings contract and calls `detect`; the refund obligation of a hotel cancellation is opened
+  from the resolution event (`A-P08-5`, `A-P08-6`).
+- **No guest identity correction command** — the revision model exists; the command lands with
+  the registry (`A-P08-7`).
+- **No guest access code** — the Restaurant's, Phase 15 (`A-P08-13`).
+- **No checkout obligations of its own** — the folio and the minibar report are Phases 10 and 09;
+  the checkout probes for them and refuses once they exist and are open.
+
+### Changed file groups
+
+- **Database:** `0009_stay_reception.sql` and the journal; `schema.ts`, `schema-snapshot.ts`,
+  `classification.ts`; `migrate.test.ts` (10 migrations, the Phase 05 → Phase 08 upgrade path),
+  `migrations.test.ts` (the `stay` table's owning migration), the two Phase 03 regression suites
+  (migration counts), `tenant-rows.ts` (ten fixtures that create their own parents), the frozen
+  Phase 05 README.
+- **Ports:** `identity-verification.port.ts` (EXT-01 simulator and disabled adapter), the index
+  and the conformance suite.
+- **API:** `apps/api/src/modules/stay/` — domain (`timing.ts`, `identity.ts`, `readiness.ts`),
+  contracts (`confirmed-bookings.ts`), four repositories, services (`stay-context.ts`,
+  `shift.service.ts`, `housekeeping.service.ts`, `check-in.service.ts`, `stay.service.ts`,
+  `correction.service.ts`, `conflict.service.ts`, `stay-views.ts`), HTTP (validation and five
+  controllers), `stay.module.ts`, `stay.tokens.ts`, the test harness and six test suites; the
+  catalog's `room-reads.ts` (category state, room list, room lock) and `tariff.service.ts`
+  (`resolveForCheckIn`); the minibar's `configuration.service.ts` (`checkInPin`,
+  `consumeOverride`) and repository (`shareConfiguration`, `clearOverride`); the two registries'
+  predicates; the catalog and minibar integration suites where the stay relation now exists;
+  `app.module.ts`, `bootstrap.ts`, `openapi.ts`, `openapi-document.ts`, the scheduler boundary
+  test's construction site, and the package scripts.
+- **Governance:** `tools/programme-state.mjs` (Phase 08 in `PROGRESSED_PHASES`, the current
+  phase), `tools/governance-checks.mjs` and `tools/validate-governance.mjs` (the Phase 08 manifest
+  path), the drift fixtures, this document, traceability, assumptions, the EXT-01 gate note, the
+  manifest, the battery log and the checkpoint.
+
+### Migrations
+
+`0009_stay_reception.sql`, forward-only, on top of `0008`. `0000`–`0008` are untouched; `0000`–
+`0006` are checksum-pinned by the frozen Phase 05 set. `GATE-MIGR` runs the fresh install, the
+upgrade of an accepted Phase 05 database by exactly `0007`, `0008` and `0009`, a repeat that
+applies nothing, fresh/upgrade schema equality, and the comparator on the upgraded database.
+
+Ten tables, all `TENANT_RLS`, forced, owned by `prsystem_migrate`: `reception_shift`,
+`room_cleaning_state`, `room_cleaning_event`, `stay`, `stay_guest`, `stay_minibar_snapshot`,
+`stay_minibar_price`, `stay_time_correction`, `booking_fulfillment_conflict`, `stay_event`. No
+role holds `DELETE` on any of them; the three history tables and the two price-book tables accept
+no `UPDATE` from any role; the stay's guard, the guest's append-only flip, the correction's and
+the conflict's forward-only edges are triggers. No `SECURITY DEFINER` function is added; the
+ownership manifest is unchanged.
+
+### DEC coverage
+
+All 19 owned decisions move `PENDING → COVERED` with code and test references in
+[requirements-traceability.md](requirements-traceability.md) §§3, 5 and 23.
+
+### Integration duties recorded for later phases
+
+- **Phase 09** creates `platform.cleaning_task` (`room_id`, the open-task predicate),
+  `platform.minibar_usage_report` (`room_id` and `stay_id`, the unsettled predicate) and
+  `platform.minibar_refill_task` (`room_id`, `product_id`); drives `HousekeepingService` from the
+  Cleaner's tasks; and moves a stay `ACTIVE → CHECKOUT_IN_PROGRESS` when the checkout begins.
+- **Phase 10** creates `platform.stay_folio` (`room_id` and `stay_id`, the unsettled predicate),
+  adds the deposit amount (`A-P06-2`), and completes the stay through
+  `StayService.recordActualCheckout` once the folio is settled.
+- **Phase 11** extends `reception_shift` with the cash count, handover states and review, keeping
+  the open-shift bound a check-in reads.
+- **Phase 13** implements `ConfirmedBookingsPort`, creates `platform.booking` (`assigned_room_id`,
+  `category_id`), calls `ConflictService.detect`, applies same- and higher-category assignments and
+  opens the refund obligation on `stay.conflict.resolved` with `CANCELLED_HOTEL`.
+- **Phase 17** records guest identity corrections as new `stay_guest` revisions and reads the
+  registry from the latest effective actual start.
+- **Phase 18** consumes `stay.checked_in` — the keyed token, never the number — and
+  `stay.actual_time_corrected`, which re-runs nothing.
+
+### Test gates
+
+Every command ran during implementation on the disposable Compose project `prsystem-p06`, through
+the restricted `prsystem_api` login; the governed battery below ran afterwards in a clean checkout
+of `5b3603a`, the correction commit. The first battery, on the implementation commit `621e17d`,
+**failed**: its second `test:concurrency` run let a walk-in and an assignment both take a room
+because a booking commitment was read as its start instant. It is not evidence, and none of its
+counts appear here; `5b3603a` closes it by reading a commitment as an interval, and the numbers
+below are from the corrected tree. Development-time results, all exit 0:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/stay/domain` | 23 passed, 3 files |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/stay/stay.integration.test.ts src/modules/stay/stay.authorization.http.test.ts` | 30 passed, 2 files (23 + 7, the last two proving the interval rule on both sides of its boundary) |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/stay/stay.concurrency.test.ts` | 4 passed, three consecutive runs on the correction |
+| `pnpm --filter @prsystem/api run test:integration` / `test:concurrency` (every module) | 317 / 34 passed |
+| `pnpm --filter @prsystem/db run test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,231 / 88 / 41 / 16 / 51 |
+| `pnpm --filter @prsystem/ports run test:unit` | 51 passed |
+| `pnpm run test:unit` (api 153), `turbo run lint typecheck` (forced, 45 tasks), `pnpm run openapi`, `pnpm exec prettier --check .` | exit 0; 30 stay, shift, housekeeping and conflict paths in the document |
+| `node tools/validate-governance.mjs`, `validate-regression-coverage.mjs`, `validate-pool-error-fixture.mjs`, `scan-secrets.mjs`, `validate-workspace.mjs` | 17/17, 724/724, 12/12, 0 findings, 15/15 on the implementation tree |
+
+### Security and concurrency evidence
+
+- **The identifier never leaves the row.** The guest read selects everything but the ciphertext;
+  the stay view, the outbox payload and the audit carry no name beside the token, and the
+  integration test asserts the number appears in none of them and not in the ciphertext.
+- **Write-once times.** `UPDATE` of `planned_checkout_at`, `actual_check_in_at` and
+  `check_in_recorded_at` and `DELETE` of a stay are refused by trigger for the superuser; the
+  price book, the cleaning events and the stay events refuse `UPDATE` and `DELETE`; a decided
+  correction and a resolved conflict are terminal. The ACL matrix holds every new table × login ×
+  verb to its exact SQLSTATE.
+- **Refusals follow authorization.** The Hotel Admin's six refused writes are `NOT_FOUND` with no
+  row and a denial audit each — including the check-in, whose open-shift refusal comes after the
+  pipeline, not before it.
+- **Races on real PostgreSQL.** Three Receptions confirming one room: one stay, one guest, two
+  `ROOM_OCCUPIED`. The same confirmation three times under one key: one stay, the replay returns
+  the stored answer. A check-in racing a reassignment to the same room: exactly one wins — the
+  assignment locks the room `FOR UPDATE`, the check-in's share lock waits, and whichever commits
+  second sees the other. That gate is what caught the interval defect of `621e17d`: with the
+  assigned booking's start already passed, the losing side saw no commitment at all and both
+  succeeded. A commitment is now the interval `[planned_checkin_at, planned_checkout_at)` — stored
+  on the conflict, immutable with the facts it was opened on — and the gate holds over three
+  consecutive runs. A check-in racing a configuration apply: the apply completes, and the
+  stay either saw the pending change and was refused or pinned the applied version; no book ever
+  names the superseded one.
+- **Evidence, not assumption.** A relation of a later phase provisioned in the wrong shape refuses
+  a retirement with `DEPENDENCY_UNAVAILABLE`; the stay relation the registries predicted is now
+  found with its columns; the bookings default refuses if `platform.booking` appears without an
+  implementation.
+
+### Remaining blockers
+
+Unchanged from Phase 07: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators;
+`INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items; `DSR-01`; the
+`GATE-SEC` required-check selection. `EXT-01` (XYP) now has its port and simulator and stays
+BLOCKED for its contract, field list and legal basis. No customer decision is pending on this
+phase's scope; `A-P08-1` (the shift's owner) and `A-P08-11` (self-approval) are recorded for the
+customer's attention, not blocking.
+
+### Evidence
+
+<!-- phase-08-evidence:begin -->
+
+Measured at correction commit 5b3603ab6bf5b2baa1099f4d239e5a0b397f5ec1, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the disposable Compose project `prsystem-p06`.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 163 of 163 drift fixtures caught at the measured commit; 176 of 176 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 545 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,404 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 08, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 365: db 41, outbox 5, api 317, worker 2 |
+| `pnpm run test:concurrency` | PASS | 50 each run: db 16, api 34 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities — executed 2 times in the same tree; the first attempt was refused by the npm registry audit endpoint before any audit ran (a socket timeout or a 503, in the battery log); this is the last |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-08-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-08-battery-log.md](phase-08-battery-log.md).
+
+Phase 08 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 09 is authorized to begin under the
 standing progression authorization and has **not** started.

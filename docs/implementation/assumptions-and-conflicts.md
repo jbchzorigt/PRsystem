@@ -413,6 +413,84 @@ recorded so a reviewer can see where a judgement was made.
   claim, complete, cancel, rollback, resolve, cancel remaining and preview answer `200` with the
   resulting view, as the Phase 04 and 05 command routes do; creations answer `201`.
 
+### 3.12 Phase 08 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P08-1 — the Reception shift exists now, minimally.** doc 05 §19.1 refuses a check-in with no
+  current open shift, and the shift is doc 03's, assigned to Phase 11. `platform.reception_shift`
+  is created here with what the bound needs — who opened it, when, whether it is open, one open
+  shift per hotel — under `hotel.shift.open_close_handover`. The cash count, handover states and
+  financial review of doc 03 (`SHIFT-DEC-001`…`007`) are Phase 11's and extend this row; Phase 11
+  may also tighten "the hotel's open shift" to "the caller's own", which doc 05 does not require.
+- **A-P08-2 — the cleaning axis is built now; its queue is Phase 09's.** Readiness needs the actual
+  cleaning state and its history (`STAY-DEC-008`, `RC-DEC-014`), so `room_cleaning_state` and the
+  append-only `room_cleaning_event` land here with the two doc 18 rows (`cleaning_status_p20` for
+  the Manager of a 20,000₮ hotel, `cleaning_status_p2530` for the Cleaner). The Cleaner's
+  dashboard, tasks and `RC-DEC-008` remain Phase 09's. A room with no cleaning row has never been
+  marked `Цэвэр` and is not ready: the first readiness of every room is an explicit act.
+- **A-P08-3 — historical minibar readiness is proven conservatively.** doc 05 §19.2 requires a
+  backdated check-in to prove readiness at the chosen instant from immutable events. The cleaning
+  proof is exact (the last cleaning event at or before the instant). The minibar proof is
+  "the current status is ready and the configuration row has not changed since the chosen instant"
+  (`updated_at`); a configuration that changed in between refuses the backdate rather than
+  reconstructing a status from the minibar history. `ROOM_OCCUPIED`, the buffer anchor and the
+  lifecycle states are evaluated at the instant from the stay and event tables directly.
+- **A-P08-4 — the backdate is whole minutes, to the nearest minute.** The Reception chooses a
+  minute; the seconds between the form's minute and the server's confirmation are not a backdate,
+  so `backdate_minutes` rounds rather than ceils, and a reason is required exactly when it is
+  positive (`STAY-DEC-009`).
+- **A-P08-5 — an online check-in waits for the booking module.** `source = ONLINE` is modelled
+  (booking reference, no deposit, the booking's planned start as a backdate bound, the booking's
+  own rate snapshot) but a check-in that names a booking is refused `BOOKING_NOT_FOUND` until Phase
+  13 registers a `ConfirmedBookingsPort`. The default implementation answers from the absence of
+  `platform.booking` — evidence, as the registries do — and refuses once the relation exists with
+  no implementation behind it, so nothing ever reads "no bookings" from a table it does not own.
+- **A-P08-6 — overdue conflicts: detection is a contract, an assignment is a commitment, a
+  cancellation is a decision.** `ConflictService.detect` is transaction-bound for the booking
+  module and a future scheduler; `refresh` lets Reception run it on demand. Until Phase 13 applies
+  a same- or higher-category assignment to the booking, the resolved conflict's `assigned_room_id`
+  is the room's commitment as this module knows it: a walk-in that would not fit before the
+  booking's start is refused `ASSIGNED_BOOKING_CONFLICT`, and the room is not eligible for another
+  booking. A commitment is an **interval**, `[planned_checkin_at, planned_checkout_at)`, not the
+  start instant: a booking that has already started and is still awaited holds the room exactly as
+  a later one does, so the conflict row stores the planned checkout beside the planned start (it is
+  immutable with the rest of the facts the conflict was opened on), `ConfirmedBookingsPort`
+  answers with every commitment whose interval has not ended, and eligibility compares intervals
+  for overlap. Reading a commitment as its start alone let a walk-in and an assignment both take a
+  room once the assigned booking's start had passed — a concurrency gate caught it, and the
+  interval reading is what closed it. `CANCELLED_HOTEL` records the decision and emits `stay.conflict.resolved`; the full
+  refund obligation of `BK-DEC-014` / `PAY-DEC-007` is the booking module's to open on that event.
+- **A-P08-7 — guest identity revisions exist; the correction command is the registry's.**
+  `stay_guest` is append-only with a `revision_no` and a current flag the guard admits flipping
+  once, as `RC-DEC-044` requires. The command that records a corrected identity, and the re-run of
+  exact matching on a newly valid registration number, land with the guest registry (Phase 17) and
+  Police matching (Phase 18); Phase 08 writes revision 1.
+- **A-P08-8 — what Police receives at check-in.** doc 13 §8.3 runs exact matching at
+  `check_in_recorded_at`. The `stay.checked_in` outbox event carries the stay, the room, the times,
+  the identity type, the eligibility and the keyed, namespaced lookup token with its key version —
+  never a name, a date of birth or the number — so Phase 18 can match a token to a token.
+- **A-P08-9 — the override is consumed on the configuration, not on its row.** The runtime holds
+  no `UPDATE` on `minibar_shortage_override`, so "consumed by the next stay" is recorded by clearing
+  the configuration's pointer and appending a minibar `CONSUMED` event naming the stay; the
+  override row stays as the audited exception it was (doc 22 §8).
+- **A-P08-10 — checkout obligations are evidence from later phases.** The actual checkout is
+  Reception's (`hotel.stay.checkout_record`) and is refused while an obligation a later phase owns
+  is open: the folio (`platform.stay_folio`, Phase 10) and the minibar usage report
+  (`platform.minibar_usage_report`, Phase 09), probed the way the registries probe — absent is
+  evidence, present-and-open refuses, unreadable refuses. Those phases use the named relation,
+  column and predicate or update the entry in the same change.
+- **A-P08-11 — self-approval of a higher-category remedy.** doc 05 §23.2 audits the case where a
+  Reception + Manager multi-role account decides itself; `self_approved` is set when the deciding
+  account holds the Reception role beside the Manager or Manager Plus role.
+- **A-P08-12 — XYP is a port with a simulator; EXT-01 stays blocked.** `XypIdentityPort` answers
+  found, not found, unavailable, timeout and disabled deterministically; outside local, CI and test
+  the adapter is `DISABLED`, the record is `MANUAL`, and nothing is presented as verified
+  (`RC-DEC-007`). The contract, field list and legal basis of EXT-01 remain open.
+- **A-P08-13 — the guest access code is Phase 15's.** doc 02 §3.1's 4–6 digit one-time code on
+  30,000₮ is the Restaurant's entry point; it is generated with the Restaurant module.
+
 ---
 
 ## 4. P1 configuration register

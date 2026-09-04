@@ -63,6 +63,12 @@ registration numbers only (doc 13 §17).
 
 **Consumed by.** Phase 08 (check-in identity), Phase 18 (Wanted identity).
 
+**Implementation status (Phase 08).** `XypIdentityPort` is implemented in `@prsystem/ports`
+(`identity-verification.port.ts`) with the deterministic simulator and the `DISABLED` adapter; the
+check-in records `XYP_VERIFIED` only on `found` and `MANUAL` otherwise. The gate stays **BLOCKED**:
+no contract, field list, consent basis or network access exists, and the production adapter is
+Phase 20's once they do.
+
 ---
 
 ### EXT-02 — e-Mongolia

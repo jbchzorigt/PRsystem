@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.20 (Phase 07 — the 36 minibar inventory, template version, room configuration and
-Rollout decisions move to `COVERED` with code and test references; 99 of 279 `COVERED`)
+**Version:** 1.21 (Phase 08 — the 19 availability, guest identity, reception and stay decisions
+move to `COVERED` with code and test references; 118 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -210,17 +210,17 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-004 | Deposit channels and deduction without extra approval | 10 | PENDING | — | — |
 | RC-DEC-005 | Online booking source is the platform's own registry | 13 | PENDING | — | — |
 | RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | PENDING | — | — |
-| RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | PENDING | — | — |
+| RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | COVERED | `packages/ports/src/identity-verification.port.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `packages/ports/src/conformance.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | RC-DEC-008 | Cleaning status authority by package | 09 | PENDING | — | — |
 | RC-DEC-009 | Shift close authority | 11 | PENDING | — | — |
 | RC-DEC-010 | Cleaner dashboard and minibar report | 09 | PENDING | — | — |
 | RC-DEC-011 | Cleaner and minibar restricted to 25 000/30 000₮ | 07 | COVERED | `apps/api/src/modules/minibar/services/minibar-context.ts`, `apps/api/src/modules/minibar/http/task.controller.ts`, `apps/api/src/modules/minibar/http/product.controller.ts` | `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
-| RC-DEC-012 | Hourly versus nightly stay model | 08 | PENDING | — | — |
-| RC-DEC-013 | No automatic overdue fee | 08 | PENDING | — | — |
-| RC-DEC-014 | Cleaning buffer between bookings | 08 | PENDING | — | — |
-| RC-DEC-015 | Separate room state axes and badges | 08 | PENDING | — | — |
+| RC-DEC-012 | Hourly versus nightly stay model | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/stay/http/stay.controller.ts` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| RC-DEC-013 | No automatic overdue fee | 08 | COVERED | `apps/api/src/modules/stay/services/stay.service.ts`, `apps/api/src/modules/stay/services/stay-views.ts` | `apps/api/src/modules/stay/stay.integration.test.ts` |
+| RC-DEC-014 | Cleaning buffer between bookings | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/housekeeping.service.ts`, `apps/api/src/modules/stay/services/stay.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `apps/api/src/modules/stay/domain/readiness.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
+| RC-DEC-015 | Separate room state axes and badges | 08 | COVERED | `apps/api/src/modules/stay/services/stay.service.ts`, `apps/api/src/modules/stay/services/stay-views.ts`, `packages/db/migrations/0009_stay_reception.sql` | `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 | RC-DEC-016 | Cleaner minibar refill from warehouse | 09 | PENDING | — | — |
-| RC-DEC-017 | Room readiness conditions | 08 | PENDING | — | — |
+| RC-DEC-017 | Room readiness conditions | 08 | COVERED | `apps/api/src/modules/stay/domain/readiness.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/stay/domain/readiness.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | RC-DEC-018 | Minibar optional per room, template required when ON | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-019 | Restaurant registration and access | 15 | PENDING | — | — |
 | RC-DEC-020 | Food order confirmed only on QPay success | 15 | PENDING | — | — |
@@ -236,7 +236,7 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-030 | Restaurant acceptance 5/10-minute SLA | 15 | PENDING | — | — |
 | RC-DEC-031 | Refund request resolution SLA | 15 | PENDING | — | — |
 | RC-DEC-032 | Guest list and Excel export columns | 17 | PENDING | — | — |
-| RC-DEC-033 | One primary guest per stay | 08 | PENDING | — | — |
+| RC-DEC-033 | One primary guest per stay | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/repositories/stay.repository.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
 | RC-DEC-034 | Primary guest Police match boundary | 18 | PENDING | — | — |
 | RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | PENDING | — | — |
 | RC-DEC-036 | Minibar stock, cost and shortage override | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
@@ -247,7 +247,7 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-041 | Room minibar configuration change | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts`, `apps/api/src/modules/minibar/http/configuration.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-042 | Explicit exact-version Rollout | 07 | COVERED | `apps/api/src/modules/minibar/domain/versions.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/domain/versions.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts` |
 | RC-DEC-043 | Multi-room Rollout batch | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/rollout.service.ts`, `apps/api/src/modules/minibar/http/rollout.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
-| RC-DEC-044 | Mongolian, foreign and no-document primary guest identity | 08 | PENDING | — | — |
+| RC-DEC-044 | Mongolian, foreign and no-document primary guest identity | 08 | COVERED | `apps/api/src/modules/stay/domain/identity.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/http/stay-validation.ts` | `apps/api/src/modules/stay/domain/identity.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 
 ## 4. SHIFT-DEC — Reception shift handover (doc 03, 7)
 
@@ -265,20 +265,20 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 | ID | Subject | Phase | Status | Code | Tests |
 | --- | --- | --- | --- | --- | --- |
-| STAY-DEC-001 | Nightly stay uses the fixed hotel checkout time | 08 | PENDING | — | — |
+| STAY-DEC-001 | Nightly stay uses the fixed hotel checkout time | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/check-in.service.ts` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | STAY-DEC-002 | Hourly base price formula | 06 | COVERED | `apps/api/src/modules/catalog/domain/tariffs.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts` | `apps/api/src/modules/catalog/domain/tariffs.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts` |
-| STAY-DEC-003 | No automatic overdue charge | 08 | PENDING | — | — |
+| STAY-DEC-003 | No automatic overdue charge | 08 | COVERED | `apps/api/src/modules/stay/services/stay.service.ts`, `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/stay-views.ts` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | STAY-DEC-004 | Cleaning duration configuration and actual clean state | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/domain/tariffs.ts`, `apps/api/src/modules/catalog/services/catalog.service.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts` | `apps/api/src/modules/catalog/domain/tariffs.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts` |
 | STAY-DEC-005 | Tariff precedence, snapshot and permission | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/domain/tariffs.ts`, `apps/api/src/modules/catalog/services/tariff.service.ts`, `apps/api/src/modules/catalog/services/catalog.service.ts`, `apps/api/src/modules/catalog/http/tariff.controller.ts` | `apps/api/src/modules/catalog/domain/tariffs.test.ts`, `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
 | STAY-DEC-006 | No configurable hourly minimum, maximum or increment | 06 | COVERED | `apps/api/src/modules/catalog/services/catalog.service.ts`, `apps/api/src/modules/catalog/http/catalog-validation.ts`, `apps/api/src/modules/catalog/http/catalog.controller.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts` |
-| STAY-DEC-007 | Nightly calendar, price and early-arrival rule | 08 | PENDING | — | — |
-| STAY-DEC-008 | Exclusive-end interval with planned and actual readiness | 08 | PENDING | — | — |
-| STAY-DEC-009 | Initial actual check-in and the 120-minute backdate | 08 | PENDING | — | — |
-| STAY-DEC-010 | Active-stay actual-time immutable correction | 08 | PENDING | — | — |
-| STAY-DEC-011 | Planned-checkout direct-overwrite guard | 08 | PENDING | — | — |
-| STAY-DEC-012 | No planned-checkout change in MVP | 08 | PENDING | — | — |
-| STAY-DEC-013 | Overdue conflict blocker and deterministic remedy | 08 | PENDING | — | — |
-| STAY-DEC-014 | Half-hour fractional hourly stay precision | 08 | PENDING | — | — |
+| STAY-DEC-007 | Nightly calendar, price and early-arrival rule | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
+| STAY-DEC-008 | Exclusive-end interval with planned and actual readiness | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/domain/readiness.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/stay/services/stay.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/domain/readiness.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.concurrency.test.ts` |
+| STAY-DEC-009 | Initial actual check-in and the 120-minute backdate | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/stay/repositories/housekeeping.repository.ts`, `packages/db/migrations/0009_stay_reception.sql` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| STAY-DEC-010 | Active-stay actual-time immutable correction | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/services/correction.service.ts`, `apps/api/src/modules/stay/repositories/correction.repository.ts`, `apps/api/src/modules/stay/http/correction.controller.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| STAY-DEC-011 | Planned-checkout direct-overwrite guard | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/repositories/stay.repository.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
+| STAY-DEC-012 | No planned-checkout change in MVP | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/services/stay.service.ts`, `apps/api/src/modules/stay/http/stay.controller.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| STAY-DEC-013 | Overdue conflict blocker and deterministic remedy | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/services/conflict.service.ts`, `apps/api/src/modules/stay/repositories/conflict.repository.ts`, `apps/api/src/modules/stay/http/conflict.controller.ts`, `apps/api/src/modules/stay/contracts/confirmed-bookings.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.concurrency.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
+| STAY-DEC-014 | Half-hour fractional hourly stay precision | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/http/stay-validation.ts` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 
 ## 6. REST-DEC — Restaurant (doc 08, 6)
 
@@ -545,16 +545,16 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 23. PRICE-DEC — Selling price snapshot (doc 25, 8)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| PRICE-DEC-001 | Check-in stay price book | 08 | PENDING |
-| PRICE-DEC-002 | Active-stay price isolation | 09 | PENDING |
-| PRICE-DEC-003 | Normal and exception report pricing | 09 | PENDING |
-| PRICE-DEC-004 | Report version and correction pricing | 09 | PENDING |
-| PRICE-DEC-005 | Zero opening quantity and refill | 09 | PENDING |
-| PRICE-DEC-006 | Products absent from the snapshot | 09 | PENDING |
-| PRICE-DEC-007 | Server-authoritative price | 09 | PENDING |
-| PRICE-DEC-008 | Selling price and cost kept separate | 09 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| PRICE-DEC-001 | Check-in stay price book | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/stay/repositories/stay.repository.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.concurrency.test.ts` |
+| PRICE-DEC-002 | Active-stay price isolation | 09 | PENDING | — | — |
+| PRICE-DEC-003 | Normal and exception report pricing | 09 | PENDING | — | — |
+| PRICE-DEC-004 | Report version and correction pricing | 09 | PENDING | — | — |
+| PRICE-DEC-005 | Zero opening quantity and refill | 09 | PENDING | — | — |
+| PRICE-DEC-006 | Products absent from the snapshot | 09 | PENDING | — | — |
+| PRICE-DEC-007 | Server-authoritative price | 09 | PENDING | — | — |
+| PRICE-DEC-008 | Selling price and cost kept separate | 09 | PENDING | — | — |
 
 ## 24. RML-DEC — Room and minibar lifecycle (doc 26, 28)
 

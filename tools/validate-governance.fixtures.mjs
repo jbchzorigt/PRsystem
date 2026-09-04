@@ -24,12 +24,14 @@ const EVIDENCE_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-03-evidenc
 const PHASE05_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-05-evidence.json');
 const PHASE06_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-06-evidence.json');
 const PHASE07_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-07-evidence.json');
+const PHASE08_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-08-evidence.json');
 const originalRunbook = readFileSync(RUNBOOK, 'utf8');
 const originalPhaseStatus = readFileSync(PHASE_STATUS, 'utf8');
 const originalManifest = readFileSync(EVIDENCE_MANIFEST, 'utf8');
 const originalPhase05Manifest = readFileSync(PHASE05_MANIFEST, 'utf8');
 const originalPhase06Manifest = readFileSync(PHASE06_MANIFEST, 'utf8');
 const originalPhase07Manifest = readFileSync(PHASE07_MANIFEST, 'utf8');
+const originalPhase08Manifest = readFileSync(PHASE08_MANIFEST, 'utf8');
 
 const SOURCES = {
   runbook: { text: originalRunbook, env: 'PRSYSTEM_RUNBOOK', file: 'doc.md' },
@@ -54,6 +56,11 @@ const SOURCES = {
     env: 'PRSYSTEM_PHASE07_MANIFEST',
     file: 'phase-07-evidence.json',
   },
+  'phase08-manifest': {
+    text: originalPhase08Manifest,
+    env: 'PRSYSTEM_PHASE08_MANIFEST',
+    file: 'phase-08-evidence.json',
+  },
 };
 
 /** Applies `change` only inside the Phase 06 evidence region (check 17). */
@@ -77,6 +84,18 @@ function inPhase07Region(text, change) {
   const region = text.slice(begin, end + endMarker.length);
   const changed = change(region);
   if (changed === region) throw new Error('the change did not alter the Phase 07 evidence region');
+  return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
+}
+
+/** Applies `change` only inside the Phase 08 evidence region (check 17). */
+function inPhase08Region(text, change) {
+  const begin = text.indexOf('<!-- phase-08-evidence:begin -->');
+  const endMarker = '<!-- phase-08-evidence:end -->';
+  const end = text.indexOf(endMarker);
+  if (begin < 0 || end < 0) throw new Error('the Phase 08 evidence markers are missing');
+  const region = text.slice(begin, end + endMarker.length);
+  const changed = change(region);
+  if (changed === region) throw new Error('the change did not alter the Phase 08 evidence region');
   return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
 }
 
@@ -303,16 +322,102 @@ const FIXTURES = [
       ),
   },
   {
-    // The ledger cannot advance a phase the governed state has not: Phase 08 is
+    // The authorization of 2026-09-03 is implementation authorization only. A
+    // manifest that wrote ACCEPTED would be declaring a customer decision the
+    // governed state does not record.
+    name: 'phase 08 manifest: an acceptance the governed state does not record',
+    file: 'phase08-manifest',
+    expect: /Phase 08 manifest declares acceptance = "ACCEPTED"/,
+    mutate: (text) =>
+      text.replace('"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"', '"acceptance": "ACCEPTED"'),
+  },
+  {
+    name: 'phase 08 manifest: a non-zero exit recorded',
+    file: 'phase08-manifest',
+    expect: /records a non-zero exit code in the Phase 08 manifest/,
+    mutate: (text) => text.replace('"exits": [0]', '"exits": [1]'),
+  },
+  {
+    // Phase 08 evidence measured on the tree Phase 05 was accepted at would let
+    // that acceptance stand in for a review of Phase 08.
+    name: 'phase 08 manifest: measured at the Phase 05 acceptance commit',
+    file: 'phase08-manifest',
+    expect: /Phase 08 manifest names the Phase 05 acceptance commit as its measured commit/,
+    mutate: (text) =>
+      text.replace(
+        /"measuredAtCommit": "[0-9a-f]{40}"/,
+        '"measuredAtCommit": "35314ba210f609269863f0b528bbe827e6a5d3ce"',
+      ),
+  },
+  {
+    name: 'phase 08 manifest: a required command removed',
+    file: 'phase08-manifest',
+    expect: /Phase 08 manifest omits required battery commands: pnpm run test:security/,
+    mutate: (text) => {
+      const manifest = JSON.parse(text);
+      manifest.battery = manifest.battery.filter(
+        (entry) => entry.command !== 'pnpm run test:security',
+      );
+      return `${JSON.stringify(manifest, null, 2)}\n`;
+    },
+  },
+  {
+    name: 'phase 08 manifest: the concurrency gate run once instead of three times',
+    file: 'phase08-manifest',
+    expect:
+      /pnpm run test:concurrency must be executed 3 time\(s\); the Phase 08 manifest records 1/,
+    mutate: (text) => {
+      const manifest = JSON.parse(text);
+      const entry = manifest.battery.find((e) => e.command === 'pnpm run test:concurrency');
+      entry.executions = 1;
+      entry.exits = [0];
+      return `${JSON.stringify(manifest, null, 2)}\n`;
+    },
+  },
+  {
+    name: 'phase 08 manifest: a key the contract does not declare',
+    file: 'phase08-manifest',
+    expect: /Phase 08 manifest declares keys \[.*remediationNumber/,
+    mutate: (text) => text.replace('"battery":', '"remediationNumber": 1,\n  "battery":'),
+  },
+  {
+    name: 'phase 08 evidence: the region markers removed',
+    file: 'phase-status',
+    expect: /phase-08-evidence: the begin marker text occurs 0 times/,
+    mutate: (text) =>
+      text
+        .replace('<!-- phase-08-evidence:begin -->\n', '')
+        .replace('<!-- phase-08-evidence:end -->\n', ''),
+  },
+  {
+    name: 'phase 08 evidence: a result restated differently from the manifest',
+    file: 'phase-status',
+    expect: /Phase 08 evidence result for pnpm run test:regression is/,
+    mutate: (text) =>
+      inPhase08Region(text, (region) =>
+        region.replace(/(\| `pnpm run test:regression` \| PASS \| )([^|]+)\|/, '$1altered |'),
+      ),
+  },
+  {
+    name: 'phase 08 evidence: the measured commit stated differently from the manifest',
+    file: 'phase-status',
+    expect: /Phase 08 evidence was measured at/,
+    mutate: (text) =>
+      inPhase08Region(text, (region) =>
+        region.replace(
+          /Measured at (implementation|correction) commit [0-9a-f]{40}/,
+          'Measured at $1 commit 0000000000000000000000000000000000000000',
+        ),
+      ),
+  },
+  {
+    // The ledger cannot advance a phase the governed state has not: Phase 09 is
     // the current phase and NOT STARTED until the commit completing it lands.
     name: 'phase status: the current phase advanced by editing the ledger',
     file: 'phase-status',
-    expect: /Phase 08 ledger state cell renders/,
+    expect: /Phase 09 ledger state cell renders/,
     mutate: (text) =>
-      text.replace(
-        /^(\| 08 \| Availability, guest identity, reception, and stay \| )`NOT STARTED`/m,
-        '$1`DONE`',
-      ),
+      text.replace(/^(\| 09 \| Cleaner and checkout coordination \| )`NOT STARTED`/m, '$1`DONE`'),
   },
   {
     name: 'phase status: the Phase 06 acceptance row claims acceptance',
@@ -1178,11 +1283,11 @@ const FIXTURES = [
     // Starting the next phase is an authorization, not an edit.
     name: 'current position: the current phase advanced past the governed one',
     file: 'phase-status',
-    expect: /states Current phase = "09 [^"]*"; the governed value is "08 — Availability/,
+    expect: /states Current phase = "10 [^"]*"; the governed value is "09 — Cleaner/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 08 — Availability, guest identity, reception, and stay |',
         '| Current phase | 09 — Cleaner and checkout coordination |',
+        '| Current phase | 10 — Folio, deposit, payment, and correction |',
       ),
   },
   {
@@ -1204,8 +1309,8 @@ const FIXTURES = [
   {
     name: 'coordinated: the current phase quietly starts in the ledger',
     file: 'phase-status',
-    expect: /Phase 08 ledger state cell renders "`IN PROGRESS`"/,
-    mutate: (text) => text.replace(/^(\| 08 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+    expect: /Phase 09 ledger state cell renders "`IN PROGRESS`"/,
+    mutate: (text) => text.replace(/^(\| 09 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
   },
   {
     name: 'coordinated: one repair removed from the manifest and the history',
@@ -1391,8 +1496,8 @@ const FIXTURES = [
     expect: /raw HTML is not an approved boundary marker: <div>/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 08 — Availability, guest identity, reception, and stay |',
-        '| Current phase | 08 — Availability, guest identity, reception, and stay |\n\n<div>raw</div>\n',
+        '| Current phase | 09 — Cleaner and checkout coordination |',
+        '| Current phase | 09 — Cleaner and checkout coordination |\n\n<div>raw</div>\n',
       ),
   },
   {
@@ -1859,6 +1964,7 @@ for (const fixture of FIXTURES) {
       phase05ManifestPath: PHASE05_MANIFEST,
       phase06ManifestPath: PHASE06_MANIFEST,
       phase07ManifestPath: PHASE07_MANIFEST,
+      phase08ManifestPath: PHASE08_MANIFEST,
     };
     const KEY = {
       runbook: 'runbookPath',
@@ -1867,6 +1973,7 @@ for (const fixture of FIXTURES) {
       'phase05-manifest': 'phase05ManifestPath',
       'phase06-manifest': 'phase06ManifestPath',
       'phase07-manifest': 'phase07ManifestPath',
+      'phase08-manifest': 'phase08ManifestPath',
     };
     for (const name of names) {
       const path = join(dir, SOURCES[name].file);
@@ -1914,6 +2021,7 @@ for (const [name, path, original] of [
   ['the Phase 05 manifest', PHASE05_MANIFEST, originalPhase05Manifest],
   ['the Phase 06 manifest', PHASE06_MANIFEST, originalPhase06Manifest],
   ['the Phase 07 manifest', PHASE07_MANIFEST, originalPhase07Manifest],
+  ['the Phase 08 manifest', PHASE08_MANIFEST, originalPhase08Manifest],
 ]) {
   const unchanged = readFileSync(path, 'utf8') === original;
   results.push({
@@ -1950,6 +2058,10 @@ const decoyPhase07Manifest = originalPhase07Manifest.replace(
   '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
   '"acceptance": "ACCEPTED"',
 );
+const decoyPhase08Manifest = originalPhase08Manifest.replace(
+  '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
+  '"acceptance": "ACCEPTED"',
+);
 for (const [label, contents, original] of [
   ['phase status', decoyPhaseStatus, originalPhaseStatus],
   ['manifest', decoyManifest, originalManifest],
@@ -1957,6 +2069,7 @@ for (const [label, contents, original] of [
   ['phase 05 manifest', decoyPhase05Manifest, originalPhase05Manifest],
   ['phase 06 manifest', decoyPhase06Manifest, originalPhase06Manifest],
   ['phase 07 manifest', decoyPhase07Manifest, originalPhase07Manifest],
+  ['phase 08 manifest', decoyPhase08Manifest, originalPhase08Manifest],
 ]) {
   const changed = contents !== original;
   results.push({
@@ -1972,6 +2085,7 @@ writeFileSync(join(DECOY_DIR, 'runbook.md'), decoyRunbook);
 writeFileSync(join(DECOY_DIR, 'phase-05-evidence.json'), decoyPhase05Manifest);
 writeFileSync(join(DECOY_DIR, 'phase-06-evidence.json'), decoyPhase06Manifest);
 writeFileSync(join(DECOY_DIR, 'phase-07-evidence.json'), decoyPhase07Manifest);
+writeFileSync(join(DECOY_DIR, 'phase-08-evidence.json'), decoyPhase08Manifest);
 
 // And the decoys really would fail, read through the core the CLI uses.
 for (const [label, paths, expected] of [
@@ -1997,6 +2111,11 @@ for (const [label, paths, expected] of [
     { phase07ManifestPath: join(DECOY_DIR, 'phase-07-evidence.json') },
     /Phase 07 manifest declares acceptance = "ACCEPTED"/,
   ],
+  [
+    'phase 08 manifest',
+    { phase08ManifestPath: join(DECOY_DIR, 'phase-08-evidence.json') },
+    /Phase 08 manifest declares acceptance = "ACCEPTED"/,
+  ],
 ]) {
   const outcome = runGovernanceChecks({
     root: ROOT,
@@ -2006,6 +2125,7 @@ for (const [label, paths, expected] of [
     phase05ManifestPath: PHASE05_MANIFEST,
     phase06ManifestPath: PHASE06_MANIFEST,
     phase07ManifestPath: PHASE07_MANIFEST,
+    phase08ManifestPath: PHASE08_MANIFEST,
     ...paths,
   });
   const rejected = outcome.results.some((r) => !r.ok && expected.test(r.detail));
@@ -2024,6 +2144,7 @@ for (const [name, value] of [
   ['PRSYSTEM_PHASE05_MANIFEST', join(DECOY_DIR, 'phase-05-evidence.json')],
   ['PRSYSTEM_PHASE06_MANIFEST', join(DECOY_DIR, 'phase-06-evidence.json')],
   ['PRSYSTEM_PHASE07_MANIFEST', join(DECOY_DIR, 'phase-07-evidence.json')],
+  ['PRSYSTEM_PHASE08_MANIFEST', join(DECOY_DIR, 'phase-08-evidence.json')],
 ]) {
   const run = spawnSync(process.execPath, [join(ROOT, 'tools', 'validate-governance.mjs')], {
     cwd: ROOT,

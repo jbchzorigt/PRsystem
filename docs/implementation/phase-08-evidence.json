@@ -1,0 +1,152 @@
+{
+  "phase": "08 — Availability, guest identity, reception, and stay",
+  "phaseState": "DONE",
+  "acceptance": "AWAITING_CUSTOMER_ACCEPTANCE",
+  "measuredAtCommit": "5b3603ab6bf5b2baa1099f4d239e5a0b397f5ec1",
+  "battery": [
+    {
+      "command": "node tools/validate-governance.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "17 of 17 at the measured commit; 17 of 17 on the final tree"
+    },
+    {
+      "command": "node tools/validate-governance.fixtures.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "163 of 163 drift fixtures caught at the measured commit; 176 of 176 on the final tree"
+    },
+    {
+      "command": "node tools/validate-secret-scan.fixtures.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "72 of 72 correct"
+    },
+    {
+      "command": "node tools/validate-workspace.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "15 of 15"
+    },
+    {
+      "command": "node tools/validate-regression-coverage.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "724 of 724"
+    },
+    {
+      "command": "node tools/validate-regression-coverage.fixtures.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "76 of 76 bypasses caught"
+    },
+    {
+      "command": "node tools/validate-pool-error-fixture.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "12 of 12"
+    },
+    {
+      "command": "node tools/scan-secrets.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "545 indexed files, 0 findings"
+    },
+    {
+      "command": "pnpm run format:check",
+      "executions": 1,
+      "exits": [0],
+      "result": "clean"
+    },
+    {
+      "command": "pnpm run lint",
+      "executions": 1,
+      "exits": [0],
+      "result": "17 of 17 projects"
+    },
+    {
+      "command": "pnpm run typecheck",
+      "executions": 1,
+      "exits": [0],
+      "result": "28 of 28 graphs"
+    },
+    {
+      "command": "pnpm run test:unit",
+      "executions": 1,
+      "exits": [0],
+      "result": "1,404 across 11 projects"
+    },
+    {
+      "command": "pnpm run test:migrations",
+      "executions": 1,
+      "exits": [0],
+      "result": "148: fresh, three upgrade paths including Phase 05 → 08, repeat and schema equality"
+    },
+    {
+      "command": "pnpm run test:integration",
+      "executions": 1,
+      "exits": [0],
+      "result": "365: db 41, outbox 5, api 317, worker 2"
+    },
+    {
+      "command": "pnpm run test:concurrency",
+      "executions": 3,
+      "exits": [0, 0, 0],
+      "result": "50 each run: db 16, api 34"
+    },
+    {
+      "command": "pnpm run test:regression",
+      "executions": 1,
+      "exits": [0],
+      "result": "51, every reproduced Phase 03 defect"
+    },
+    {
+      "command": "pnpm run test:security",
+      "executions": 3,
+      "exits": [0, 0, 0],
+      "result": "19 of 19 sub-gates, each run"
+    },
+    {
+      "command": "pnpm run test:e2e",
+      "executions": 1,
+      "exits": [0],
+      "result": "15 passed"
+    },
+    {
+      "command": "pnpm run audit:prod",
+      "executions": 1,
+      "exits": [0],
+      "result": "no known vulnerabilities — executed 2 times in the same tree; the first attempt was refused by the npm registry audit endpoint before any audit ran (a socket timeout or a 503, in the battery log); this is the last"
+    },
+    {
+      "command": "pnpm run audit:tree",
+      "executions": 1,
+      "exits": [0],
+      "result": "none at high or critical; one moderate, DSR-01"
+    },
+    {
+      "command": "pnpm run build",
+      "executions": 1,
+      "exits": [0],
+      "result": "17 of 17 projects"
+    },
+    {
+      "command": "pnpm run openapi",
+      "executions": 1,
+      "exits": [0],
+      "result": "document generated"
+    },
+    {
+      "command": "pnpm run compose:config",
+      "executions": 1,
+      "exits": [0],
+      "result": "valid"
+    },
+    {
+      "command": "git diff --check",
+      "executions": 1,
+      "exits": [0],
+      "result": "clean"
+    }
+  ]
+}

@@ -89,6 +89,7 @@ export function runGovernanceChecks({
   phase05ManifestPath,
   phase06ManifestPath,
   phase07ManifestPath,
+  phase08ManifestPath,
 }) {
   const ROOT = root;
   const RUNBOOK_PATH = runbookPath;
@@ -99,11 +100,13 @@ export function runGovernanceChecks({
   const PHASE05_MANIFEST_PATH = phase05ManifestPath ?? join(IMPL, 'phase-05-evidence.json');
   const PHASE06_MANIFEST_PATH = phase06ManifestPath ?? join(IMPL, 'phase-06-evidence.json');
   const PHASE07_MANIFEST_PATH = phase07ManifestPath ?? join(IMPL, 'phase-07-evidence.json');
+  const PHASE08_MANIFEST_PATH = phase08ManifestPath ?? join(IMPL, 'phase-08-evidence.json');
   // The manifests of the phases completed under the standing authorization,
   // each overridable by the fixture harness the way the Phase 05 one is.
   const PROGRESSED_MANIFEST_PATHS = new Map([
     ['06', PHASE06_MANIFEST_PATH],
     ['07', PHASE07_MANIFEST_PATH],
+    ['08', PHASE08_MANIFEST_PATH],
   ]);
 
   const PHASE_MIN = 1;
@@ -1891,7 +1894,12 @@ export function runGovernanceChecks({
       .filter((token) => token.type === 'paragraph')
       .map((token) => token.text)
       .join('\n');
-    const stated = [...prose.matchAll(/Measured at implementation commit ([0-9a-f]{40})\b/g)];
+    // "implementation" or "correction": a phase whose implementation commit
+    // failed its battery is measured again at the commit that corrected it,
+    // and the region must name that one.
+    const stated = [
+      ...prose.matchAll(/Measured at (?:implementation|correction) commit ([0-9a-f]{40})\b/g),
+    ];
     assert(
       stated.length === 1,
       `the ${spec.region} region states the measured commit ${String(stated.length)} ` +
