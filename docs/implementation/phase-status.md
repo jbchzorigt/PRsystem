@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 11 — Shift, cash drawer, expense, and hotel finance |
+| Current phase | 12 — Public discovery and Guest authentication |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -33,6 +33,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 09 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 10 state | `DONE` |
 | Phase 10 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 11 state | `DONE` |
+| Phase 11 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -56,7 +58,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 08 | Availability, guest identity, reception, and stay | `DONE` | `0009_stay_reception` | the Phase 08 battery — counts in [Phase 08 record](#phase-08-record) | implemented at `621e17d`, corrected at `5b3603a` (the interval commitment); the record and its evidence are the commit after it |
 | 09 | Cleaner and checkout coordination | `DONE` | `0010_cleaner_checkout` | the Phase 09 battery — counts in [Phase 09 record](#phase-09-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 10 | Folio, deposit, payment, and correction | `DONE` | `0011_folio_deposit_payment` | the Phase 10 battery — counts in [Phase 10 record](#phase-10-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 11 | Shift, cash drawer, expense, and hotel finance | `NOT STARTED` | — | — | — |
+| 11 | Shift, cash drawer, expense, and hotel finance | `DONE` | `0012_shift_cash_expense` | the Phase 11 battery — counts in [Phase 11 record](#phase-11-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 12 | Public discovery and Guest authentication | `NOT STARTED` | — | — | — |
 | 13 | Online booking and inventory hold | `NOT STARTED` | — | — | — |
 | 14 | Online payment, refund, commission, and settlement | `NOT STARTED` | — | — | — |
@@ -4367,5 +4369,177 @@ and its fixtures were run again on that final tree and are what the two governan
 The per-command exit codes, durations and execution environment are recorded in
 [phase-10-battery-log.md](phase-10-battery-log.md).
 
-Phase 10 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 11 is authorized to begin under the
+Phase 10 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`.
+
+---
+
+## Phase 11 record
+
+Shift, cash drawer, expense, and hotel finance. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 10 tree. Phase 11 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 12 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the 20 this phase owns — `SHIFT-DEC-001`…`-007`, `CASH-DEC-001`…`-010`,
+`FIN-DEC-005`, `RC-DEC-009` and `RC-DEC-038`. With the 151 already closed, 171 of the 279 canonical
+decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0012_shift_cash_expense`** — it extends what earlier phases provisioned rather than
+  building beside it. `cash_location` (Phase 05) gains the float a drawer is expected to hold, where
+  it physically is and who added it, with at most one safe per hotel. `reception_shift` (Phase 08)
+  gains the drawer it is accountable for, the write-once opening count, the expected/counted/variance
+  triple, the handover recipient, the incoming count and a `review_state` kept deliberately separate
+  from the operational state (`SHIFT-DEC-001`); its two placeholder states become doc 03 §6.1's
+  seven behind a forward-only guard, and its one-open-shift index becomes one active shift per
+  drawer and one per Reception account (`CASH-DEC-001`). Four tables are new: `cash_movement`, typed
+  and append-only, with the direction bound to the type by CHECK and one `INITIAL_FLOAT` per drawer;
+  `cash_transfer`, whose two locations and two shifts are pinned at initiation; `cash_request` for
+  bank deposits and owner withdrawals; and `expense`, whose payment shape depends on its method.
+- **The shift lifecycle** (`stay/services/shift.service.ts`) — open over a counted drawer, count,
+  hand over, ask for a recount, accept the cash, close, or self-close; plus the Manager's
+  `review` and the Hotel Admin's `adminReview`, two separately permissioned commands because doc 18
+  §3 gives `hotel.shift.financial_review` and `hotel.shift.variance_self_close_review` to different
+  people (`A-P11-3`). The arithmetic of which review a close needs and what a rejection can still do
+  is `stay/domain/shift.ts`, tested on its own.
+- **The cash ledger** (`finance/services/cash.service.ts`, `domain/cash.ts`,
+  `repositories/finance.repository.ts`) — locations and their balances, the top-up, the correction
+  that is a new movement in the shift it is effective in, and the transfer that is two movements or
+  none with the recipient's own count completing it and a cancellation moving nothing. Every outflow
+  re-derives the location's balance and refuses `INSUFFICIENT_CASH`; every drawer movement names the
+  shift accountable for the drawer and refuses `NO_ACTIVE_SHIFT` when there is none.
+- **The requests and the expenses** (`services/request.service.ts`, `services/expense.service.ts`) —
+  a bank deposit or owner withdrawal is a request first and an outflow only when it is approved, in
+  the approval's own transaction; an expense runs `Submitted → Approved → Paid | Rejected` where the
+  approval moves nothing at all, a cash payment writes `PAID_CASH_EXPENSE` against the paying
+  drawer's shift, and a card or bank payment records the provider's reference and moves no drawer
+  (`FIN-DEC-005`, `CASH-DEC-005`).
+- **Three contracts, no shared tables** — the stay module reads its drawer and its expected cash
+  through `CashLedgerPort`; the finance module asks which shift is accountable for a drawer through
+  `ShiftLookupPort`; and the billing module mirrors every cash-channel transaction into the ledger
+  through `CashPostingsPort`, in the transaction that writes the payment, so a guest's cash reaches
+  both the folio and the drawer or neither. Both unprovisioned defaults fail closed once the ledger
+  relation exists.
+- **HTTP** — 22 new paths: nine more on the shift (the count, handover, recount, acceptance,
+  self-close and the two reviews, plus one shift by id), eight on the cash drawer and its ledger,
+  and five on the expenses and cash requests.
+- **Tests** — `finance/domain/cash.test.ts` (7), `stay/domain/shift.test.ts` (3),
+  `finance.integration.test.ts` (8), `finance.concurrency.test.ts` (2) and
+  `finance.authorization.http.test.ts` (3).
+
+### Two defects the gates found, fixed here
+
+- **A lock-order inversion between a check-in and a minibar configuration apply**, pre-existing since
+  Phase 07 and intermittent under the added Phase 11 load. The apply shared the room, locked the
+  configuration and then upgraded the room to an exclusive lock to finalize its retirement, while a
+  check-in locked the room and waited for the configuration; PostgreSQL reported `deadlock detected`
+  in roughly half of the full concurrency runs. Both paths now take the room outright first. The
+  gate has since run cleanly three times (`A-P11-13`).
+- **`ONB-DEC-001`'s grant probe treated `cash_location` as provisioning-only**, which doc 24 §2.1
+  contradicts. The API role now holds `INSERT`/`UPDATE` on that one table, and the security suite
+  proves what the missing grant used to: the insert is confined to the caller's tenant and the
+  default drawer stays the one activation created (`A-P11-12`).
+
+### Integration obligations now open on later phases
+
+- **Phase 15** keeps Restaurant money out of the hotel drawer: doc 24 §1 excludes it, and no
+  movement type here can carry it.
+- **Phase 17** reads the ledger, the shift counts and the expenses for the hotel's financial
+  reporting, and owns `FIN-DEC-009`'s effective-date correction for the reporting side.
+- **Phase 14** adds no cash movement: an online payment faces a provider, not a drawer.
+
+### Test gates
+
+Every command ran during implementation on the disposable Compose project `prsystem-p06`, through
+the restricted `prsystem_api` login; the governed battery below ran afterwards in a clean checkout
+of the implementation commit. Development-time results, all exit 0:
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/finance/domain/cash.test.ts src/modules/stay/domain/shift.test.ts` | 10 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/finance/finance.integration.test.ts` | 8 passed |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/finance/finance.concurrency.test.ts` (×3) | 2 passed each |
+| `pnpm --filter @prsystem/api exec vitest run src/modules/finance/finance.authorization.http.test.ts` | 3 passed |
+| `pnpm --filter @prsystem/api run test:integration` / `test:concurrency` (every module) | 354 / 40 passed |
+| `pnpm --filter @prsystem/api run test:unit` / `test:security` | 183 / 51 passed |
+| `pnpm --filter @prsystem/db run test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,662 / 88 / 41 / 16 / 51 |
+| `turbo run lint typecheck` (forced), `pnpm run openapi`, `pnpm exec prettier --check .` | exit 0; 160 paths, 22 of them new |
+
+### Security and concurrency evidence
+
+- **One drawer, one accountable shift.** Two Receptions opening at once meet
+  `reception_shift_one_active_per_drawer_uq`, not a service check: exactly one succeeds, the other is
+  `SHIFT_ALREADY_OPEN`, and the drawer's one-off float is written once.
+- **A transfer confirmation racing a close.** Either the close sees the transfer still pending and
+  is refused `PENDING_TRANSFER`, or the confirmation committed first and its outflow is inside the
+  expectation the count was measured against. The ledger holds exactly two movements for one
+  transfer either way (`CASH-DEC-006`, `A-P11-6`).
+- **An approval is not an outflow.** An approved expense writes no movement; the integration and
+  HTTP suites count `PAID_CASH_EXPENSE` rows to prove it, and a card payment leaves the drawer
+  balance unchanged with `movementId` null.
+- **A closed shift is not rewritten.** A correction posted after a self-close lands in the *current*
+  shift with the original movement's id; the closed shift's movement count is unchanged, and the
+  original row is refused any `UPDATE` by the append-only trigger — for the superuser, not only the
+  API login. An overwritten `opening_balance_mnt` is refused `42501` the same way.
+- **Refusals follow authorization.** A Manager cannot count or hand over a Reception shift, take the
+  Hotel Admin's variance review, or approve an expense; Reception cannot top up a drawer or add a
+  location; a Cleaner reaches none of it; and a foreign hotel is `NOT_FOUND` with nothing written —
+  every one of them over real HTTP. The ownership checks themselves now run after authorization, so
+  an actor without the action learns nothing about the shift.
+- **Cash cannot be conjured or stranded.** A transfer above the source balance is
+  `INSUFFICIENT_CASH`; a drawer with no shift takes no movement; a location still holding money
+  cannot be made inactive.
+
+### Remaining blockers
+
+Unchanged: `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators; `EXT-01` BLOCKED
+for its contract; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1
+items; `DSR-01`; and selecting `GATE-SEC` as a required GitHub status check. **Phase 11 adds no new
+external gate:** cash is counted, not confirmed, and the card and bank expense methods it records
+reference the payment ports Phase 10 already gated rather than new ones.
+
+### Evidence
+
+<!-- phase-11-evidence:begin -->
+
+Measured at implementation commit 92bceaf8a25f74d82797ae207e61ad86ef6ce3c1, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the disposable Compose project `prsystem-p06`.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 202 of 202 drift fixtures caught at the measured commit; 215 of 215 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 619 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,434 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 11, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 402: db 41, outbox 5, api 354, worker 2 |
+| `pnpm run test:concurrency` | PASS | 58 each run: db 16, api 42 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 — executed 3 times in the same tree; the first 2 attempts were refused by the npm registry audit endpoint before any audit ran (a socket timeout or a 503, in the battery log); this is the last |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-11-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-11-battery-log.md](phase-11-battery-log.md).
+
+Phase 11 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 12 is authorized to begin under the
 standing progression authorization and has **not** started.

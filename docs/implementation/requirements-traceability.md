@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.23 (Phase 10 — the 15 folio, deposit, payment and correction decisions move to
-`COVERED` with code and test references; 151 of 279 `COVERED`)
+**Version:** 1.24 (Phase 11 — the 20 shift, cash drawer, expense and hotel finance decisions move to
+`COVERED` with code and test references; 171 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -212,7 +212,7 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/services/billing-context.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
 | RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | COVERED | `packages/ports/src/identity-verification.port.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `packages/ports/src/conformance.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | RC-DEC-008 | Cleaning status authority by package | 09 | COVERED | `apps/api/src/modules/stay/services/cleaning-task.service.ts`, `apps/api/src/modules/stay/services/housekeeping.service.ts`, `apps/api/src/modules/stay/domain/readiness.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
-| RC-DEC-009 | Shift close authority | 11 | PENDING | — | — |
+| RC-DEC-009 | Shift close authority | 11 | COVERED | `apps/api/src/modules/stay/services/shift.service.ts`, `apps/api/src/modules/stay/domain/shift.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts` |
 | RC-DEC-010 | Cleaner dashboard and minibar report | 09 | COVERED | `packages/db/migrations/0010_cleaner_checkout.sql`, `apps/api/src/modules/stay/services/report.service.ts`, `apps/api/src/modules/stay/services/cleaning-task.service.ts`, `apps/api/src/modules/stay/http/report.controller.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/checkout.concurrency.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 | RC-DEC-011 | Cleaner and minibar restricted to 25 000/30 000₮ | 07 | COVERED | `apps/api/src/modules/minibar/services/minibar-context.ts`, `apps/api/src/modules/minibar/http/task.controller.ts`, `apps/api/src/modules/minibar/http/product.controller.ts` | `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-012 | Hourly versus nightly stay model | 08 | COVERED | `apps/api/src/modules/stay/domain/timing.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/stay/http/stay.controller.ts` | `apps/api/src/modules/stay/domain/timing.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
@@ -241,7 +241,7 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | COVERED | `apps/api/src/modules/stay/services/report.service.ts`, `apps/api/src/modules/stay/services/dispute.service.ts`, `apps/api/src/modules/stay/services/payment-lock.service.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/domain/checkout.test.ts` |
 | RC-DEC-036 | Minibar stock, cost and shortage override | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-037 | Hotel Admin financial reporting | 17 | PENDING | — | — |
-| RC-DEC-038 | Cash drawer and physical cash ledger | 11 | PENDING | — | — |
+| RC-DEC-038 | Cash drawer and physical cash ledger | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/repositories/finance.repository.ts`, `apps/api/src/modules/billing/contracts/cash-postings.ts`, `apps/api/src/modules/finance/contracts/billing-cash.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.concurrency.test.ts` |
 | RC-DEC-039 | Minibar selling price snapshot | 09 | COVERED | `apps/api/src/modules/stay/services/report.service.ts`, `apps/api/src/modules/stay/domain/checkout.ts`, `packages/db/migrations/0010_cleaner_checkout.sql` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/domain/checkout.test.ts` |
 | RC-DEC-040 | Room and minibar entity lifecycle | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/http/lifecycle.controller.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts` |
 | RC-DEC-041 | Room minibar configuration change | 07 | COVERED | `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/minibar/repositories/configuration.repository.ts`, `apps/api/src/modules/minibar/http/configuration.controller.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
@@ -251,15 +251,15 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 4. SHIFT-DEC — Reception shift handover (doc 03, 7)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| SHIFT-DEC-001 | Operational and financial review states separate | 11 | PENDING |
-| SHIFT-DEC-002 | Opening balance from actual counted cash | 11 | PENDING |
-| SHIFT-DEC-003 | Self-close is an operational terminal state | 11 | PENDING |
-| SHIFT-DEC-004 | Hotel Admin self-review fallback | 11 | PENDING |
-| SHIFT-DEC-005 | Rejection never reopens a closed shift | 11 | PENDING |
-| SHIFT-DEC-006 | Immutable opening balance and linked correction | 11 | PENDING |
-| SHIFT-DEC-007 | Shift audit requirements | 11 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| SHIFT-DEC-001 | Operational and financial review states separate | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/stay/repositories/shift.repository.ts`, `apps/api/src/modules/stay/services/shift.service.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts` |
+| SHIFT-DEC-002 | Opening balance from actual counted cash | 11 | COVERED | `apps/api/src/modules/stay/services/shift.service.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts` |
+| SHIFT-DEC-003 | Self-close is an operational terminal state | 11 | COVERED | `apps/api/src/modules/stay/domain/shift.ts`, `apps/api/src/modules/stay/services/shift.service.ts` | `apps/api/src/modules/stay/domain/shift.test.ts`, `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
+| SHIFT-DEC-004 | Hotel Admin self-review fallback | 11 | COVERED | `apps/api/src/modules/stay/domain/shift.ts`, `apps/api/src/modules/stay/services/shift.service.ts`, `apps/api/src/modules/stay/http/shift.controller.ts` | `apps/api/src/modules/stay/domain/shift.test.ts`, `apps/api/src/modules/finance/finance.integration.test.ts` |
+| SHIFT-DEC-005 | Rejection never reopens a closed shift | 11 | COVERED | `apps/api/src/modules/stay/domain/shift.ts`, `apps/api/src/modules/stay/services/shift.service.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/stay/domain/shift.test.ts`, `apps/api/src/modules/finance/finance.integration.test.ts` |
+| SHIFT-DEC-006 | Immutable opening balance and linked correction | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/services/cash.service.ts` | `apps/api/src/modules/finance/finance.integration.test.ts` |
+| SHIFT-DEC-007 | Shift audit requirements | 11 | COVERED | `apps/api/src/modules/stay/services/shift.service.ts`, `apps/api/src/modules/finance/services/cash.service.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts` |
 
 ## 5. STAY-DEC — Room stay and time (doc 05, 14)
 
@@ -515,33 +515,33 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 21. FIN-DEC — Financial reporting (doc 23, 10)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| FIN-DEC-001 | Sales and received money kept separate | 17 | PENDING |
-| FIN-DEC-002 | Deposit and Restaurant exclusion | 17 | PENDING |
-| FIN-DEC-003 | Minibar weighted-average COGS | 17 | PENDING |
-| FIN-DEC-004 | No double deduction of inventory purchase | 17 | PENDING |
-| FIN-DEC-005 | Expense submission, approval and payment execution | 11 | PENDING |
-| FIN-DEC-006 | Seven-day, month and custom ranges | 17 | PENDING |
-| FIN-DEC-007 | Top-five rooms | 17 | PENDING |
-| FIN-DEC-008 | Four financial Excel exports | 17 | PENDING |
-| FIN-DEC-009 | Effective-date correction | 17 | PENDING |
-| FIN-DEC-010 | Full financial access for Hotel Admin only | 17 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| FIN-DEC-001 | Sales and received money kept separate | 17 | PENDING | — | — |
+| FIN-DEC-002 | Deposit and Restaurant exclusion | 17 | PENDING | — | — |
+| FIN-DEC-003 | Minibar weighted-average COGS | 17 | PENDING | — | — |
+| FIN-DEC-004 | No double deduction of inventory purchase | 17 | PENDING | — | — |
+| FIN-DEC-005 | Expense submission, approval and payment execution | 11 | COVERED | `apps/api/src/modules/finance/services/expense.service.ts`, `apps/api/src/modules/finance/domain/cash.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts`, `apps/api/src/modules/finance/domain/cash.test.ts` |
+| FIN-DEC-006 | Seven-day, month and custom ranges | 17 | PENDING | — | — |
+| FIN-DEC-007 | Top-five rooms | 17 | PENDING | — | — |
+| FIN-DEC-008 | Four financial Excel exports | 17 | PENDING | — | — |
+| FIN-DEC-009 | Effective-date correction | 17 | PENDING | — | — |
+| FIN-DEC-010 | Full financial access for Hotel Admin only | 17 | PENDING | — | — |
 
 ## 22. CASH-DEC — Cash drawer ledger (doc 24, 10)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| CASH-DEC-001 | Default and multiple drawers | 11 | PENDING |
-| CASH-DEC-002 | Optional safe | 11 | PENDING |
-| CASH-DEC-003 | Actual initial opening balance | 11 | PENDING |
-| CASH-DEC-004 | Typed immutable ledger | 11 | PENDING |
-| CASH-DEC-005 | Paid expense execution | 11 | PENDING |
-| CASH-DEC-006 | Drawer and safe transfers | 11 | PENDING |
-| CASH-DEC-007 | Bank deposit and owner withdrawal | 11 | PENDING |
-| CASH-DEC-008 | Cash top-up | 11 | PENDING |
-| CASH-DEC-009 | Effective-date correction | 11 | PENDING |
-| CASH-DEC-010 | Cash permissions and reporting | 11 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| CASH-DEC-001 | Default and multiple drawers | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/stay/contracts/cash-ledger.ts`, `apps/api/src/modules/finance/contracts/cash-ledger.ts` | `apps/api/src/modules/finance/finance.concurrency.test.ts`, `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/onboarding/onboarding.security.test.ts` |
+| CASH-DEC-002 | Optional safe | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/services/cash.service.ts`, `apps/api/src/modules/finance/services/ledger.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts` |
+| CASH-DEC-003 | Actual initial opening balance | 11 | COVERED | `apps/api/src/modules/finance/contracts/cash-ledger.ts`, `apps/api/src/modules/stay/services/shift.service.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.concurrency.test.ts` |
+| CASH-DEC-004 | Typed immutable ledger | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/repositories/finance.repository.ts`, `apps/api/src/modules/finance/domain/cash.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/domain/cash.test.ts` |
+| CASH-DEC-005 | Paid expense execution | 11 | COVERED | `apps/api/src/modules/finance/services/expense.service.ts`, `apps/api/src/modules/finance/domain/cash.ts`, `apps/api/src/modules/finance/http/expense.controller.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts`, `apps/api/src/modules/finance/domain/cash.test.ts` |
+| CASH-DEC-006 | Drawer and safe transfers | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/services/cash.service.ts`, `apps/api/src/modules/finance/contracts/cash-ledger.ts` | `apps/api/src/modules/finance/finance.concurrency.test.ts`, `apps/api/src/modules/finance/finance.integration.test.ts` |
+| CASH-DEC-007 | Bank deposit and owner withdrawal | 11 | COVERED | `apps/api/src/modules/finance/services/request.service.ts`, `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/http/expense.controller.ts` | `apps/api/src/modules/finance/finance.integration.test.ts` |
+| CASH-DEC-008 | Cash top-up | 11 | COVERED | `apps/api/src/modules/finance/services/cash.service.ts`, `apps/api/src/modules/finance/http/cash.controller.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts` |
+| CASH-DEC-009 | Effective-date correction | 11 | COVERED | `apps/api/src/modules/finance/services/cash.service.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/finance/finance.integration.test.ts` |
+| CASH-DEC-010 | Cash permissions and reporting | 11 | COVERED | `apps/api/src/modules/finance/services/cash.service.ts`, `apps/api/src/modules/finance/services/expense.service.ts`, `apps/api/src/modules/finance/services/request.service.ts` | `apps/api/src/modules/finance/finance.authorization.http.test.ts`, `apps/api/src/modules/finance/finance.integration.test.ts` |
 
 ## 23. PRICE-DEC — Selling price snapshot (doc 25, 8)
 

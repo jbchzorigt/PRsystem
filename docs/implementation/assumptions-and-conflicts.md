@@ -625,6 +625,83 @@ recorded so a reviewer can see where a judgement was made.
   on the expected drawer balance; the drawer, the count and the handover are doc 24's and Phase 11's.
   Phase 10 records the shift a cash movement belongs to, which is what Phase 11 will aggregate.
 
+### 3.15 Phase 11 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P11-1 — a shift opens over a drawer, on a count.** doc 24 §§2.2, 3 make the drawer the unit of
+  accountability and the first actual count its `INITIAL_FLOAT`, so `ShiftService.open` now requires
+  the amount counted and resolves the drawer through `CashLedgerPort` — the named one, or the
+  hotel's default. A hotel with no active drawer cannot open a shift (`NO_CASH_DRAWER`). Phase 05's
+  activation provisions the default drawer with every hotel, so this holds for every activated
+  hotel; the Phase 08 test harnesses seed the same row, because a hotel that skipped activation
+  would otherwise be a fixture gap rather than the behaviour under test.
+- **A-P11-2 — the drawer's float is seeded after the shift row exists.** The one-off `INITIAL_FLOAT`
+  is written once per drawer, from the opening count of its first shift, *after* the shift insert.
+  Two Receptions racing therefore collide on the shift's own partial unique index and report
+  `SHIFT_ALREADY_OPEN`, rather than one of them losing on the movement index with a message about a
+  float. An opening count of zero writes no movement: a drawer that starts empty starts at zero.
+- **A-P11-3 — the financial review is two commands, not one.** doc 18 §3 gives
+  `hotel.shift.financial_review` to the Manager and `hotel.shift.variance_self_close_review` to the
+  Hotel Admin alone. A single "any-of" gate would let a Manager take the Hotel Admin's variance
+  review, so the service exposes `review` (Manager, only while `PENDING_MANAGER`, refused to an
+  account that worked the shift) and `adminReview` (Hotel Admin, for the self-close variance, the
+  dispute and `SHIFT-DEC-004`'s self-review fallback, recorded as `self_reviewed`).
+- **A-P11-4 — a rejection after the close is always a dispute.** `SHIFT-DEC-005` forbids reopening a
+  closed shift. Since a review state exists only from the close onwards, every rejection a reviewer
+  can reach is post-close and resolves to `DISPUTED`; the pre-close disagreement is the incoming
+  Reception's `requestRecount`, which is a different command with a different actor.
+- **A-P11-5 — Phase 08's direct close is now doc 03's self-close.** The Phase 08 shift closed
+  straight from `OPEN` to `CLOSED` because the cash lifecycle did not exist yet. That path is now
+  `selfClose` (`SHIFT-DEC-003`), and the Phase 08 expectation moved from `CLOSED` to `SELF_CLOSED`.
+  `A-P08-1` — the shift's owner, left for this phase to tighten — is now answered for the count, the
+  handover and the acceptance: each is bound to the opening account or the named recipient.
+- **A-P11-6 — the ledger is read before the pending transfers, in that order.** A close asks
+  `CashLedgerPort.summarizeShift` for both the outstanding transfers and the shift's movements. The
+  transfers are read first: a confirmation committing between the two reads is then either still
+  pending when the first read runs — and the close is refused — or already committed, so its
+  movements are inside the second read. The reverse order would let a confirmation escape both
+  (`CASH-DEC-006`).
+- **A-P11-7 — a guest's cash reaches the drawer in the payment's own transaction.** doc 24 §4 puts
+  cash payments, deposit receipts and their refunds in the drawer ledger, but the billing module
+  owns the payment and not the drawer. Every cash-channel transaction it writes is mirrored through
+  `CashPostingsPort` in the same transaction, so cash reaches both the folio and the drawer or
+  neither. A `LATE_REFUND_COVERED` entry is deliberately not mirrored: the provider paid the guest
+  and the deposit absorbed it, so no drawer moved.
+- **A-P11-8 — a billing reversal is the cash refund of its kind, not a ledger correction.** A
+  reversed cash deposit receipt is money physically handed back, so it posts `DEPOSIT_CASH_REFUND`
+  (and a reversed folio payment `SERVICE_CASH_REFUND`). `CashService.correct` — which writes
+  `CASH_CORRECTION_IN`/`OUT` against the movement it corrects — is for a ledger entry that never
+  matched reality, which is a different fact (`CASH-DEC-004`, `-009`).
+- **A-P11-9 — a correction belongs to the shift it is effective in.** `SHIFT-DEC-006` forbids
+  rewriting a closed shift, so a correction is posted into the drawer's *current* shift with the
+  original movement's id, and the closed shift's movement count is unchanged. The original row is
+  refused any update by the append-only trigger, not by the service.
+- **A-P11-10 — a drawer never goes negative, and an idle drawer takes nothing.** Every outflow
+  re-derives the location's balance from its own movements and refuses `INSUFFICIENT_CASH`; every
+  drawer movement resolves the drawer's active shift and refuses `NO_ACTIVE_SHIFT` when there is
+  none. A safe has no shift and takes movements without one (`CASH-DEC-002`).
+- **A-P11-11 — the Manager reads the locations it may move cash between.** doc 18 §3 gives the
+  Manager `hotel.cash.transfer_initiate` but neither `hotel.cash.report_full` nor
+  `hotel.cash.location_manage`. Reading the drawer list and the ledger therefore also admits the
+  transfer permission: a Manager cannot move cash between drawers it is not allowed to see.
+- **A-P11-12 — `ONB-DEC-001`'s grant probe narrows to what it protects.** Phase 05 proved
+  "the runtime holds no `INSERT` on anything provisioning creates" by the absent grant, and included
+  `platform.cash_location`. doc 24 §2.1 explicitly puts drawer and safe creation in the Hotel
+  Admin's hands, so the API role now holds `INSERT`/`UPDATE` on that one table. What `ONB-DEC-001`
+  protects — that a runtime session cannot fabricate a hotel, its subscription, its owner link or
+  its profile — is unchanged, and the security test now proves the two things the missing grant used
+  to: the insert is confined to the caller's own tenant, and the default drawer stays the one
+  activation created. This is a narrowing of a test's scope to match a requirement, not a weakened
+  gate; it is recorded here because it touches an accepted phase's invariant.
+- **A-P11-13 — one lock order for a room and its minibar configuration.** A pre-existing inversion
+  surfaced under the Phase 11 concurrency load: the minibar apply shared the room, locked the
+  configuration and then upgraded the room to an exclusive lock to finalize its retirement, while a
+  check-in locked the room and waited for the configuration — an intermittent deadlock. Both paths
+  now take the room outright first. The fix is in Phase 07's module and is recorded here because it
+  changes an accepted phase's locking, not its behaviour.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain
