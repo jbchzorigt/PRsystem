@@ -8,6 +8,7 @@ import { apiEnv } from '@prsystem/config';
 import { Pool } from 'pg';
 import { API_PREFIX, UNVERSIONED_PATHS } from '@prsystem/contracts';
 import { selectKeyManagement } from '@prsystem/ports';
+import { selectPaymentGateways } from '@prsystem/ports';
 import { AppModule } from './app.module';
 import { DatabaseSubscriptionState } from './modules/onboarding/contracts/subscription-state.adapter';
 import { registerCorrelation } from './observability/correlation.plugin';
@@ -92,6 +93,14 @@ export async function createApp(
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
         },
+      },
+      billing: {
+        config: { databaseUrl: config.DATABASE_URL },
+        // doc 20 §2: a QPay or card movement is confirmed against the provider
+        // before it is recorded. Outside local, CI and test the adapters are
+        // the disabled ones, so an unconfirmed payment is refused rather than
+        // recorded (CLAUDE.md §9).
+        gateways: selectPaymentGateways(config.APP_ENV),
       },
       ownedPools: [subscriptionPool],
     }),

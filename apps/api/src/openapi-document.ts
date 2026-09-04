@@ -32,6 +32,11 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     )
     .addTag('stay-minibar-refills', 'Active-stay minibar refill requests and Cleaner tasks')
     .addTag('stay-cleaning-tasks', "The Cleaner's cleaning queue and routine refill")
+    .addTag('billing', 'The consolidated folio, the deposit, payments, refunds and corrections')
+    .addTag(
+      'billing-reconciliation',
+      "Platform Operation's late-refund reconciliation cases (DEP-DEC-010)",
+    )
     .build();
 
   return SwaggerModule.createDocument(app, config);

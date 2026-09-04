@@ -5880,6 +5880,808 @@ export const minibarRefillTask = platform
   )
   .enableRLS();
 
+// ---------------------------------------------------------------------
+// Phase 10 — folio, deposit, payment, and correction.
+// ---------------------------------------------------------------------
+
+/**
+ * The configured deposit: a hotel default and an optional category override,
+ * versioned so a confirmed stay's snapshot is never re-resolved (`RC-DEC-002`).
+ */
+export const depositConfig = platform
+  .table(
+    'deposit_config',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      categoryId: uuid('category_id'),
+      configId: uuid('config_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      configVersion: integer('config_version')
+        .notNull()
+        .default(sql`1`),
+      hotelId: uuid('hotel_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      updatedByAccountId: uuid('updated_by_account_id').notNull(),
+    },
+    (table) => [
+      check('deposit_config_amount_range', sql`((amount_mnt >= 50000) AND (amount_mnt <= 100000))`),
+      foreignKey({
+        name: 'deposit_config_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'deposit_config_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('deposit_config_revision_non_negative', sql`(revision >= 0)`),
+      check('deposit_config_version_positive', sql`(config_version >= 1)`),
+      uniqueIndex('deposit_config_category_uq')
+        .on(table.hotelId, table.categoryId)
+        .where(sql`category_id IS NOT NULL`),
+      uniqueIndex('deposit_config_default_uq')
+        .on(table.hotelId)
+        .where(sql`category_id IS NULL`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The one consolidated bill of a stay: what was charged, what was paid and what
+ * the deposit covered (`RC-DEC-001`).
+ */
+export const stayFolio = platform
+  .table(
+    'stay_folio',
+    {
+      chargedMnt: bigint('charged_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      depositAppliedMnt: bigint('deposit_applied_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      folioId: uuid('folio_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      openedAt: timestamp('opened_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      paidMnt: bigint('paid_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      reason: text('reason'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'stay_folio_amounts_non_negative',
+        sql`((charged_mnt >= 0) AND (paid_mnt >= 0) AND (deposit_applied_mnt >= 0))`,
+      ),
+      foreignKey({
+        name: 'stay_folio_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('stay_folio_not_overpaid', sql`((paid_mnt + deposit_applied_mnt) <= charged_mnt)`),
+      check(
+        'stay_folio_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check('stay_folio_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'stay_folio_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'stay_folio_settled_balanced',
+        sql`((state <> 'SETTLED'::text) OR ((paid_mnt + deposit_applied_mnt) = charged_mnt))`,
+      ),
+      check(
+        'stay_folio_settled_shape',
+        sql`((state = 'SETTLED'::text) = (settled_at IS NOT NULL))`,
+      ),
+      check(
+        'stay_folio_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'SETTLED'::text, 'VOID'::text]))`,
+      ),
+      foreignKey({
+        name: 'stay_folio_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      unique('stay_folio_stay_uq').on(table.stayId),
+      check('stay_folio_void_shape', sql`((state <> 'VOID'::text) OR (reason IS NOT NULL))`),
+      index('stay_folio_room_idx').on(table.hotelId, table.roomId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A charge on the folio, append-only and idempotent on what produced it, so a
+ * repeated posting bills nothing twice (doc 02 §3.3).
+ */
+export const folioLine = platform
+  .table(
+    'folio_line',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      description: text('description').notNull(),
+      folioId: uuid('folio_id').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      lineId: uuid('line_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      sourceRef: uuid('source_ref').notNull(),
+      sourceType: text('source_type').notNull(),
+    },
+    (table) => [
+      check('folio_line_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'folio_line_description_bounded',
+        sql`((length(description) >= 1) AND (length(description) <= 200))`,
+      ),
+      foreignKey({
+        name: 'folio_line_folio_fkey',
+        columns: [table.folioId],
+        foreignColumns: [stayFolio.folioId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'folio_line_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'folio_line_kind_known',
+        sql`(kind = ANY (ARRAY['ROOM'::text, 'MINIBAR'::text, 'OTHER'::text]))`,
+      ),
+      unique('folio_line_source_uq').on(table.folioId, table.sourceType, table.sourceRef),
+      index('folio_line_folio_idx').on(table.hotelId, table.folioId, table.createdAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The versioned deposit balance of a stay. Its invariant -
+ * received - reversed - allocated - reserved - refunded >= 0 - is a CHECK,
+ * and the requirement it was confirmed under is written once (`DEP-DEC-007`,
+ * `-008`).
+ */
+export const depositAggregate = platform
+  .table(
+    'deposit_aggregate',
+    {
+      allocatedMnt: bigint('allocated_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      categoryId: uuid('category_id'),
+      configScope: text('config_scope').notNull(),
+      configVersion: integer('config_version'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      frozen: boolean('frozen')
+        .notNull()
+        .default(sql`false`),
+      hotelId: uuid('hotel_id').notNull(),
+      receivedMnt: bigint('received_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      refundReservedMnt: bigint('refund_reserved_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      refundedMnt: bigint('refunded_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      required: boolean('required').notNull(),
+      requiredAmountMnt: bigint('required_amount_mnt', { mode: 'bigint' }),
+      reversedMnt: bigint('reversed_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      source: text('source').notNull(),
+      stayId: uuid('stay_id').primaryKey().notNull(),
+    },
+    (table) => [
+      check(
+        'deposit_aggregate_amount_shape',
+        sql`((required = (required_amount_mnt IS NOT NULL)) AND ((required_amount_mnt IS NULL) OR ((required_amount_mnt >= 50000) AND (required_amount_mnt <= 100000))))`,
+      ),
+      check(
+        'deposit_aggregate_amounts_non_negative',
+        sql`((received_mnt >= 0) AND (reversed_mnt >= 0) AND (allocated_mnt >= 0) AND (refund_reserved_mnt >= 0) AND (refunded_mnt >= 0))`,
+      ),
+      check(
+        'deposit_aggregate_available_non_negative',
+        sql`(((((received_mnt - reversed_mnt) - allocated_mnt) - refund_reserved_mnt) - refunded_mnt) >= 0)`,
+      ),
+      check(
+        'deposit_aggregate_config_shape',
+        sql`(((config_scope = 'NONE'::text) = (config_version IS NULL)) AND ((config_scope = 'CATEGORY'::text) = (category_id IS NOT NULL)))`,
+      ),
+      foreignKey({
+        name: 'deposit_aggregate_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('deposit_aggregate_required_shape', sql`(required = (source = 'WALK_IN'::text))`),
+      check('deposit_aggregate_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'deposit_aggregate_scope_known',
+        sql`(config_scope = ANY (ARRAY['HOTEL'::text, 'CATEGORY'::text, 'NONE'::text]))`,
+      ),
+      check(
+        'deposit_aggregate_source_known',
+        sql`(source = ANY (ARRAY['WALK_IN'::text, 'ONLINE'::text]))`,
+      ),
+      foreignKey({
+        name: 'deposit_aggregate_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The immutable money ledger: receipts, refunds, reversals and corrected
+ * records, one row per movement and one row per provider reference
+ * (`DEP-DEC-005`, `-006`, `-007`).
+ */
+export const paymentTransaction = platform
+  .table(
+    'payment_transaction',
+    {
+      actorAccountId: uuid('actor_account_id').notNull(),
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      approvalCode: text('approval_code'),
+      channel: text('channel').notNull(),
+      direction: text('direction').notNull(),
+      effectiveAt: timestamp('effective_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      folioId: uuid('folio_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      originalTransactionId: uuid('original_transaction_id'),
+      providerReference: text('provider_reference'),
+      reason: text('reason'),
+      refundRequestId: uuid('refund_request_id'),
+      shiftId: uuid('shift_id'),
+      stayId: uuid('stay_id').notNull(),
+      terminalId: text('terminal_id'),
+      transactionId: uuid('transaction_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+    },
+    (table) => [
+      check('payment_transaction_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'payment_transaction_cash_shape',
+        sql`((channel <> 'CASH'::text) OR (shift_id IS NOT NULL))`,
+      ),
+      check(
+        'payment_transaction_channel_known',
+        sql`(channel = ANY (ARRAY['CASH'::text, 'QPAY'::text, 'CARD_GATEWAY'::text, 'MANUAL_POS'::text]))`,
+      ),
+      check(
+        'payment_transaction_direction_known',
+        sql`(direction = ANY (ARRAY['IN'::text, 'OUT'::text]))`,
+      ),
+      check(
+        'payment_transaction_direction_shape',
+        sql`((direction = 'IN'::text) = (kind = ANY (ARRAY['DEPOSIT_RECEIPT'::text, 'FOLIO_PAYMENT'::text, 'CORRECTED_PAYMENT'::text])))`,
+      ),
+      foreignKey({
+        name: 'payment_transaction_folio_fkey',
+        columns: [table.folioId],
+        foreignColumns: [stayFolio.folioId],
+      }).onDelete('restrict'),
+      check(
+        'payment_transaction_gateway_shape',
+        sql`((channel <> ALL (ARRAY['QPAY'::text, 'CARD_GATEWAY'::text])) OR (kind = ANY (ARRAY['DEPOSIT_REVERSAL'::text, 'FOLIO_PAYMENT_REVERSAL'::text])) OR (provider_reference IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'payment_transaction_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'payment_transaction_kind_known',
+        sql`(kind = ANY (ARRAY['DEPOSIT_RECEIPT'::text, 'DEPOSIT_REFUND'::text, 'DEPOSIT_REVERSAL'::text, 'FOLIO_PAYMENT'::text, 'FOLIO_PAYMENT_REVERSAL'::text, 'CORRECTED_PAYMENT'::text, 'LATE_REFUND_COVERED'::text]))`,
+      ),
+      foreignKey({
+        name: 'payment_transaction_original_fkey',
+        columns: [table.originalTransactionId],
+        foreignColumns: [table.transactionId],
+      }).onDelete('restrict'),
+      check(
+        'payment_transaction_pos_shape',
+        sql`((channel <> 'MANUAL_POS'::text) OR (kind = ANY (ARRAY['DEPOSIT_REVERSAL'::text, 'FOLIO_PAYMENT_REVERSAL'::text])) OR ((provider_reference IS NOT NULL) AND (approval_code IS NOT NULL)))`,
+      ),
+      check(
+        'payment_transaction_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check(
+        'payment_transaction_reference_bounded',
+        sql`(((provider_reference IS NULL) OR ((length(provider_reference) >= 1) AND (length(provider_reference) <= 120))) AND ((approval_code IS NULL) OR ((length(approval_code) >= 1) AND (length(approval_code) <= 60))) AND ((terminal_id IS NULL) OR ((length(terminal_id) >= 1) AND (length(terminal_id) <= 60))))`,
+      ),
+      check(
+        'payment_transaction_refund_shape',
+        sql`((kind <> ALL (ARRAY['DEPOSIT_REFUND'::text, 'LATE_REFUND_COVERED'::text])) OR (refund_request_id IS NOT NULL))`,
+      ),
+      check(
+        'payment_transaction_reversal_shape',
+        sql`((kind <> ALL (ARRAY['DEPOSIT_REVERSAL'::text, 'FOLIO_PAYMENT_REVERSAL'::text, 'CORRECTED_PAYMENT'::text])) OR (original_transaction_id IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'payment_transaction_shift_fkey',
+        columns: [table.hotelId, table.shiftId],
+        foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'payment_transaction_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      index('payment_transaction_folio_idx').on(table.hotelId, table.folioId),
+      uniqueIndex('payment_transaction_provider_reference_uq')
+        .on(table.hotelId, table.channel, table.providerReference)
+        .where(sql`provider_reference IS NOT NULL`),
+      index('payment_transaction_stay_idx').on(table.hotelId, table.stayId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * What the deposit paid for, line by line - audited without a reason, an
+ * evidence photograph or a second approval (`DEP-DEC-002`).
+ */
+export const depositAllocation = platform
+  .table(
+    'deposit_allocation',
+    {
+      actorAccountId: uuid('actor_account_id').notNull(),
+      allocationId: uuid('allocation_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      folioLineId: uuid('folio_line_id').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check('deposit_allocation_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'deposit_allocation_deposit_fkey',
+        columns: [table.stayId],
+        foreignColumns: [depositAggregate.stayId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'deposit_allocation_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'deposit_allocation_line_fkey',
+        columns: [table.folioLineId],
+        foreignColumns: [folioLine.lineId],
+      }).onDelete('restrict'),
+      unique('deposit_allocation_line_uq').on(table.folioLineId),
+      index('deposit_allocation_stay_idx').on(table.hotelId, table.stayId, table.createdAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * A refund and its reservation: pending, failed, succeeded, released, and the
+ * reconciliation a late success forces (`DEP-DEC-003`, `-004`, `-009`).
+ */
+export const refundRequest = platform
+  .table(
+    'refund_request',
+    {
+      alternateChannel: boolean('alternate_channel')
+        .notNull()
+        .default(sql`false`),
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      approvalState: text('approval_state')
+        .notNull()
+        .default(sql`'NOT_REQUIRED'::text`),
+      channel: text('channel').notNull(),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      failureReason: text('failure_reason'),
+      hotelId: uuid('hotel_id').notNull(),
+      originalTransactionId: uuid('original_transaction_id').notNull(),
+      providerReference: text('provider_reference'),
+      reason: text('reason'),
+      releaseReason: text('release_reason'),
+      releasedAt: timestamp('released_at', { withTimezone: true }),
+      releasedByAccountId: uuid('released_by_account_id'),
+      requestId: uuid('request_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'refund_request_alternate_reason',
+        sql`((NOT alternate_channel) OR (reason IS NOT NULL))`,
+      ),
+      check(
+        'refund_request_alternate_shape',
+        sql`(alternate_channel = (approval_state <> 'NOT_REQUIRED'::text))`,
+      ),
+      check('refund_request_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'refund_request_approval_known',
+        sql`(approval_state = ANY (ARRAY['NOT_REQUIRED'::text, 'PENDING'::text, 'APPROVED'::text, 'REJECTED'::text]))`,
+      ),
+      check(
+        'refund_request_channel_known',
+        sql`(channel = ANY (ARRAY['CASH'::text, 'QPAY'::text, 'CARD_GATEWAY'::text, 'MANUAL_POS'::text]))`,
+      ),
+      check(
+        'refund_request_decision_shape',
+        sql`(((decided_at IS NULL) = (decided_by_account_id IS NULL)) AND ((approval_state = ANY (ARRAY['NOT_REQUIRED'::text, 'PENDING'::text])) = (decided_at IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'refund_request_deposit_fkey',
+        columns: [table.stayId],
+        foreignColumns: [depositAggregate.stayId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'refund_request_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'refund_request_original_fkey',
+        columns: [table.originalTransactionId],
+        foreignColumns: [paymentTransaction.transactionId],
+      }).onDelete('restrict'),
+      check(
+        'refund_request_reason_bounded',
+        sql`(((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))) AND ((release_reason IS NULL) OR ((length(release_reason) >= 1) AND (length(release_reason) <= 300))) AND ((failure_reason IS NULL) OR ((length(failure_reason) >= 1) AND (length(failure_reason) <= 300))))`,
+      ),
+      check(
+        'refund_request_release_shape',
+        sql`((((state = 'RELEASED'::text) OR (state = 'RECONCILING'::text) OR (state = 'RECONCILED'::text)) = (released_at IS NOT NULL)) AND ((released_at IS NULL) = (released_by_account_id IS NULL)) AND ((released_at IS NULL) = (release_reason IS NULL)))`,
+      ),
+      check('refund_request_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'refund_request_settled_shape',
+        sql`((state = 'SUCCEEDED'::text) = (settled_at IS NOT NULL))`,
+      ),
+      check(
+        'refund_request_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'FAILED'::text, 'SUCCEEDED'::text, 'RELEASED'::text, 'RECONCILING'::text, 'RECONCILED'::text]))`,
+      ),
+      uniqueIndex('refund_request_one_live_uq')
+        .on(table.originalTransactionId)
+        .where(sql`state = ANY (ARRAY['PENDING'::text, 'FAILED'::text, 'RECONCILING'::text])`),
+      index('refund_request_stay_idx').on(table.hotelId, table.stayId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The request that turns a wrong movement into a reversal plus a corrected
+ * record, one non-terminal per original transaction (`DEP-DEC-006`).
+ */
+export const financialCorrection = platform
+  .table(
+    'financial_correction',
+    {
+      correctedAmountMnt: bigint('corrected_amount_mnt', { mode: 'bigint' }),
+      correctedChannel: text('corrected_channel'),
+      correctedReference: text('corrected_reference'),
+      correctedTransactionId: uuid('corrected_transaction_id'),
+      correctionId: uuid('correction_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionReason: text('decision_reason'),
+      hotelId: uuid('hotel_id').notNull(),
+      originalTransactionId: uuid('original_transaction_id').notNull(),
+      reason: text('reason').notNull(),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      reversalTransactionId: uuid('reversal_transaction_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'financial_correction_amount_positive',
+        sql`((corrected_amount_mnt IS NULL) OR (corrected_amount_mnt > 0))`,
+      ),
+      check(
+        'financial_correction_channel_known',
+        sql`((corrected_channel IS NULL) OR (corrected_channel = ANY (ARRAY['CASH'::text, 'QPAY'::text, 'CARD_GATEWAY'::text, 'MANUAL_POS'::text])))`,
+      ),
+      foreignKey({
+        name: 'financial_correction_corrected_fkey',
+        columns: [table.correctedTransactionId],
+        foreignColumns: [paymentTransaction.transactionId],
+      }).onDelete('restrict'),
+      check(
+        'financial_correction_decision_shape',
+        sql`(((state = 'PENDING'::text) = (decided_at IS NULL)) AND ((decided_at IS NULL) = (decided_by_account_id IS NULL)))`,
+      ),
+      check(
+        'financial_correction_execution_shape',
+        sql`((state = 'EXECUTED'::text) = (reversal_transaction_id IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'financial_correction_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'financial_correction_original_fkey',
+        columns: [table.originalTransactionId],
+        foreignColumns: [paymentTransaction.transactionId],
+      }).onDelete('restrict'),
+      check(
+        'financial_correction_reason_bounded',
+        sql`(((length(reason) >= 1) AND (length(reason) <= 300)) AND ((decision_reason IS NULL) OR ((length(decision_reason) >= 1) AND (length(decision_reason) <= 300))))`,
+      ),
+      foreignKey({
+        name: 'financial_correction_reversal_fkey',
+        columns: [table.reversalTransactionId],
+        foreignColumns: [paymentTransaction.transactionId],
+      }).onDelete('restrict'),
+      check('financial_correction_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'financial_correction_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'REJECTED'::text, 'EXECUTED'::text]))`,
+      ),
+      foreignKey({
+        name: 'financial_correction_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      uniqueIndex('financial_correction_one_open_uq')
+        .on(table.originalTransactionId)
+        .where(sql`state = 'PENDING'::text`),
+      index('financial_correction_stay_idx').on(table.hotelId, table.stayId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The late-success case a released refund opens: one per request, claimed and
+ * resolved by Platform Operation, terminal in one of two outcomes
+ * (`DEP-DEC-010`).
+ */
+export const depositReconciliationCase = platform
+  .table(
+    'deposit_reconciliation_case',
+    {
+      caseId: uuid('case_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      claimedAt: timestamp('claimed_at', { withTimezone: true }),
+      claimedByAccountId: uuid('claimed_by_account_id'),
+      coveredAmountMnt: bigint('covered_amount_mnt', { mode: 'bigint' }),
+      hotelId: uuid('hotel_id').notNull(),
+      openedAt: timestamp('opened_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      outcome: text('outcome'),
+      providerAmountMnt: bigint('provider_amount_mnt', { mode: 'bigint' }),
+      providerReference: text('provider_reference'),
+      refundRequestId: uuid('refund_request_id').notNull(),
+      resolutionNote: text('resolution_note'),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+      resolvedByAccountId: uuid('resolved_by_account_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      shortfallAmountMnt: bigint('shortfall_amount_mnt', { mode: 'bigint' }),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check(
+        'deposit_reconciliation_case_amounts_non_negative',
+        sql`(((covered_amount_mnt IS NULL) OR (covered_amount_mnt >= 0)) AND ((shortfall_amount_mnt IS NULL) OR (shortfall_amount_mnt >= 0)) AND ((provider_amount_mnt IS NULL) OR (provider_amount_mnt > 0)))`,
+      ),
+      check(
+        'deposit_reconciliation_case_claim_shape',
+        sql`(((claimed_at IS NULL) = (claimed_by_account_id IS NULL)) AND ((state = 'OPEN'::text) = (claimed_at IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'deposit_reconciliation_case_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'deposit_reconciliation_case_note_bounded',
+        sql`((resolution_note IS NULL) OR ((length(resolution_note) >= 1) AND (length(resolution_note) <= 300)))`,
+      ),
+      check(
+        'deposit_reconciliation_case_outcome_known',
+        sql`((outcome IS NULL) OR (outcome = ANY (ARRAY['PROVIDER_STATUS_CORRECTED_NOT_SUCCESS'::text, 'PROVIDER_SUCCESS_POSTED'::text])))`,
+      ),
+      check(
+        'deposit_reconciliation_case_posting_shape',
+        sql`((outcome IS DISTINCT FROM 'PROVIDER_SUCCESS_POSTED'::text) = ((covered_amount_mnt IS NULL) AND (shortfall_amount_mnt IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'deposit_reconciliation_case_request_fkey',
+        columns: [table.refundRequestId],
+        foreignColumns: [refundRequest.requestId],
+      }).onDelete('restrict'),
+      unique('deposit_reconciliation_case_request_uq').on(table.refundRequestId),
+      check(
+        'deposit_reconciliation_case_resolution_shape',
+        sql`(((state = 'RESOLVED'::text) = (resolved_at IS NOT NULL)) AND ((resolved_at IS NULL) = (resolved_by_account_id IS NULL)) AND ((resolved_at IS NULL) = (outcome IS NULL)))`,
+      ),
+      check('deposit_reconciliation_case_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'deposit_reconciliation_case_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'RECONCILING'::text, 'RESOLVED'::text]))`,
+      ),
+      index('deposit_reconciliation_case_state_idx').on(table.hotelId, table.state, table.openedAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * What the deposit could not cover, recorded as the hotel's own loss rather
+ * than as a negative balance (`DEP-DEC-010`).
+ */
+export const hotelFinanceEvent = platform
+  .table(
+    'hotel_finance_event',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      caseId: uuid('case_id'),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      note: text('note'),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reference: text('reference'),
+      stayId: uuid('stay_id'),
+    },
+    (table) => [
+      check('hotel_finance_event_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'hotel_finance_event_case_fkey',
+        columns: [table.caseId],
+        foreignColumns: [depositReconciliationCase.caseId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_finance_event_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'hotel_finance_event_kind_known',
+        sql`(kind = ANY (ARRAY['LATE_REFUND_SHORTFALL'::text]))`,
+      ),
+      check(
+        'hotel_finance_event_note_bounded',
+        sql`(((note IS NULL) OR ((length(note) >= 1) AND (length(note) <= 300))) AND ((reference IS NULL) OR ((length(reference) >= 1) AND (length(reference) <= 120))))`,
+      ),
+      foreignKey({
+        name: 'hotel_finance_event_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      index('hotel_finance_event_hotel_idx').on(table.hotelId, table.kind, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -5971,4 +6773,15 @@ export const DECLARED_TABLES = [
   minibarPaymentLock,
   minibarReportAdjustment,
   minibarRefillTask,
+  // Phase 10.
+  depositConfig,
+  stayFolio,
+  folioLine,
+  depositAggregate,
+  paymentTransaction,
+  depositAllocation,
+  refundRequest,
+  financialCorrection,
+  depositReconciliationCase,
+  hotelFinanceEvent,
 ] as const;

@@ -18,6 +18,7 @@ import { UnavailableSubscriptionState } from './modules/iam/contracts/subscripti
 import { UnavailableStaffNotification } from './modules/iam/contracts/staff-notification.port';
 import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
 import { UnprovisionedPaymentAttempts } from './modules/stay/contracts/payment-attempts';
+import { UnprovisionedDeposits } from './modules/stay/contracts/deposits';
 import { UnavailableRestaurantDirectory } from './modules/iam/contracts/restaurant-directory.port';
 import { buildOpenApiDocument } from './openapi-document';
 
@@ -64,11 +65,16 @@ async function generate(): Promise<void> {
       // all it needs to describe its routes.
       catalog: { pool: new Pool({ max: 1 }) },
       minibar: { pool: new Pool({ max: 1 }) },
+      billing: {
+        pool: new Pool({ max: 1 }),
+        gateways: new PaymentGatewayRegistry(new Map()),
+      },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),
         xyp: new UnavailableXypIdentity(),
         payments: new UnprovisionedPaymentAttempts(),
+        deposits: new UnprovisionedDeposits(),
       },
     }),
     new FastifyAdapter(),

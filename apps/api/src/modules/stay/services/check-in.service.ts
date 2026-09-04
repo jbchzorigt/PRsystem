@@ -385,6 +385,15 @@ export class CheckInService extends StayServiceBase {
             policeMatchEligibility: guest.record.policeMatchEligibility,
           },
         });
+        // doc 02 §3.4, `DEP-DEC-001`: the confirmation is where the deposit
+        // requirement and the configuration behind it are snapshotted. A hotel
+        // that has configured no deposit cannot confirm a walk-in at all.
+        await this.deps.deposits.openForStay(uow, {
+          stayId,
+          roomId: room.roomId,
+          categoryId: room.categoryId,
+          source: input.source === 'ONLINE' ? 'ONLINE' : 'WALK_IN',
+        });
         await recordPlatformAudit(uow, {
           action: 'stay.check_in',
           outcome: 'allowed',

@@ -9,6 +9,8 @@ import type { MinibarHarness, MinibarHotel } from '../../minibar/test-support/mi
 import { attachMinibarHarness, key, request } from '../../minibar/test-support/minibar-harness';
 import { SimulatedConfirmedBookings } from '../contracts/confirmed-bookings';
 import { SimulatedPaymentAttempts } from '../contracts/payment-attempts';
+import type { DepositsPort } from '../contracts/deposits';
+import { SimulatedDeposits } from '../contracts/deposits';
 import type { GuestIdentityInput } from '../domain/identity';
 import { CheckInService } from '../services/check-in.service';
 import { CheckoutService } from '../services/checkout.service';
@@ -48,6 +50,7 @@ export interface StayHarness {
   readonly xyp: SimulatedXypIdentity;
   readonly bookings: SimulatedConfirmedBookings;
   readonly payments: SimulatedPaymentAttempts;
+  readonly deposits: SimulatedDeposits;
   readonly shifts: ShiftService;
   readonly housekeeping: HousekeepingService;
   readonly checkIns: CheckInService;
@@ -82,11 +85,22 @@ export function syntheticGuest(overrides: Partial<GuestIdentityInput> = {}): Gue
   } as GuestIdentityInput;
 }
 
-export function attachStayHarness(db: TestDatabase, suite: string): StayHarness {
+export interface StayHarnessOptions {
+  /** Phase 10 supplies its own implementation so a check-in opens a real folio. */
+  readonly deposits?: DepositsPort;
+}
+
+export function attachStayHarness(
+  db: TestDatabase,
+  suite: string,
+  options: StayHarnessOptions = {},
+): StayHarness {
   const minibar = attachMinibarHarness(db, suite);
   const xyp = new SimulatedXypIdentity();
   const bookings = new SimulatedConfirmedBookings();
   const payments = new SimulatedPaymentAttempts();
+  const simulatedDeposits = new SimulatedDeposits();
+  const deposits = options.deposits ?? simulatedDeposits;
   let offsetMs = 0;
   const clock = (): Date => new Date(Date.now() + offsetMs);
   const deps: StayDependencies = {
@@ -99,6 +113,7 @@ export function attachStayHarness(db: TestDatabase, suite: string): StayHarness 
     xyp,
     bookings,
     payments,
+    deposits,
     clock,
   };
   let hotelSequence = 0;
@@ -112,6 +127,7 @@ export function attachStayHarness(db: TestDatabase, suite: string): StayHarness 
     xyp,
     bookings,
     payments,
+    deposits: simulatedDeposits,
     shifts: new ShiftService(deps),
     housekeeping: new HousekeepingService(deps),
     checkIns: new CheckInService(deps),
@@ -175,9 +191,12 @@ export function attachStayHarness(db: TestDatabase, suite: string): StayHarness 
   };
 }
 
-export async function createStayHarness(suite: string): Promise<StayHarness> {
+export async function createStayHarness(
+  suite: string,
+  options: StayHarnessOptions = {},
+): Promise<StayHarness> {
   const db = await provisionIamDatabase(suite);
-  return attachStayHarness(db, suite);
+  return attachStayHarness(db, suite, options);
 }
 
 export { key, request };

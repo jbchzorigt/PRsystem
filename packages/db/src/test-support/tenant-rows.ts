@@ -655,7 +655,9 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     probeWhere: `category_id NOT IN (SELECT category_id FROM platform.room)
                  AND category_id NOT IN (SELECT category_id FROM platform.stay_rate_snapshot)
                  AND category_id NOT IN (SELECT category_id FROM platform.stay)
-                 AND category_id NOT IN (SELECT category_id FROM platform.booking_fulfillment_conflict)`,
+                 AND category_id NOT IN (SELECT category_id FROM platform.booking_fulfillment_conflict)
+                 AND category_id NOT IN (SELECT category_id FROM platform.deposit_config
+                                          WHERE category_id IS NOT NULL)`,
     updateColumn: 'description',
     updateSet: `description = 'acl-probe', revision = revision + 1`,
   },
@@ -1699,6 +1701,446 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     updateColumn: 'revision',
     updateSet: `state = 'IN_PROGRESS', cleaner_account_id = gen_random_uuid(), claimed_at = now(),
                 revision = revision + 1`,
+  },
+
+  // Phase 10. The folio, the deposit aggregate and the ledger all hang off a
+  // stay, and the uniqueness rules — one folio per stay, one aggregate per
+  // stay, one allocation per folio line, one live refund per receipt — mean
+  // each fixture builds the chain it needs in the same statement.
+  {
+    name: 'platform.deposit_config',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH c AS (
+              INSERT INTO platform.room_category (hotel_id, name, state)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12), 'ACTIVE')
+              RETURNING category_id)
+            INSERT INTO platform.deposit_config
+              (hotel_id, category_id, amount_mnt, updated_by_account_id)
+            SELECT $1, c.category_id, 60000, gen_random_uuid() FROM c`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `config_version = config_version + 1, revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.stay_folio',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id)
+            INSERT INTO platform.stay_folio (hotel_id, stay_id, room_id, charged_mnt)
+            SELECT $1, s.stay_id, s.room_id, 20000 FROM s`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `paid_mnt = charged_mnt, state = 'SETTLED', settled_at = now(), revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.folio_line',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            f AS (
+              INSERT INTO platform.stay_folio (hotel_id, stay_id, room_id, charged_mnt)
+              SELECT $1, s.stay_id, s.room_id, 20000 FROM s
+              RETURNING folio_id, stay_id),
+            fl AS (
+              INSERT INTO platform.folio_line
+                (hotel_id, folio_id, kind, source_type, source_ref, description, amount_mnt)
+              SELECT $1, f.folio_id, 'ROOM', 'STAY', f.stay_id, 'Fixture', 20000 FROM f
+              RETURNING line_id, folio_id)
+            SELECT line_id FROM fl`,
+      values: [hotelId],
+    }),
+    updateColumn: 'description',
+  },
+
+  {
+    name: 'platform.deposit_aggregate',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            d AS (
+              INSERT INTO platform.deposit_aggregate
+                (stay_id, hotel_id, source, required, required_amount_mnt, config_scope,
+                 config_version, received_mnt)
+              SELECT s.stay_id, $1, 'WALK_IN', true, 50000, 'HOTEL', 1, 50000 FROM s
+              RETURNING stay_id)
+            SELECT stay_id FROM d`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `received_mnt = received_mnt + 10000, revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.payment_transaction',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            t AS (
+              INSERT INTO platform.payment_transaction
+                (hotel_id, stay_id, kind, channel, direction, amount_mnt, provider_reference,
+                 actor_account_id)
+              SELECT $1, s.stay_id, 'DEPOSIT_RECEIPT', 'QPAY', 'IN', 50000,
+                     'p10-' || substr(gen_random_uuid()::text, 1, 20), gen_random_uuid()
+                FROM s
+              RETURNING transaction_id, stay_id)
+            SELECT transaction_id FROM t`,
+      values: [hotelId],
+    }),
+    updateColumn: 'reason',
+  },
+
+  {
+    name: 'platform.deposit_allocation',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            f AS (
+              INSERT INTO platform.stay_folio (hotel_id, stay_id, room_id, charged_mnt)
+              SELECT $1, s.stay_id, s.room_id, 20000 FROM s
+              RETURNING folio_id, stay_id),
+            fl AS (
+              INSERT INTO platform.folio_line
+                (hotel_id, folio_id, kind, source_type, source_ref, description, amount_mnt)
+              SELECT $1, f.folio_id, 'ROOM', 'STAY', f.stay_id, 'Fixture', 20000 FROM f
+              RETURNING line_id, folio_id),
+            d AS (
+              INSERT INTO platform.deposit_aggregate
+                (stay_id, hotel_id, source, required, required_amount_mnt, config_scope,
+                 config_version, received_mnt)
+              SELECT s.stay_id, $1, 'WALK_IN', true, 50000, 'HOTEL', 1, 50000 FROM s
+              RETURNING stay_id)
+            INSERT INTO platform.deposit_allocation
+              (hotel_id, stay_id, folio_line_id, amount_mnt, actor_account_id)
+            SELECT $1, d.stay_id, fl.line_id, 20000, gen_random_uuid() FROM d, fl`,
+      values: [hotelId],
+    }),
+    updateColumn: 'amount_mnt',
+  },
+
+  {
+    name: 'platform.refund_request',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            d AS (
+              INSERT INTO platform.deposit_aggregate
+                (stay_id, hotel_id, source, required, required_amount_mnt, config_scope,
+                 config_version, received_mnt)
+              SELECT s.stay_id, $1, 'WALK_IN', true, 50000, 'HOTEL', 1, 50000 FROM s
+              RETURNING stay_id),
+            t AS (
+              INSERT INTO platform.payment_transaction
+                (hotel_id, stay_id, kind, channel, direction, amount_mnt, provider_reference,
+                 actor_account_id)
+              SELECT $1, s.stay_id, 'DEPOSIT_RECEIPT', 'QPAY', 'IN', 50000,
+                     'p10-' || substr(gen_random_uuid()::text, 1, 20), gen_random_uuid()
+                FROM s
+              RETURNING transaction_id, stay_id)
+            INSERT INTO platform.refund_request
+              (hotel_id, stay_id, original_transaction_id, channel, amount_mnt,
+               requested_by_account_id)
+            SELECT $1, d.stay_id, t.transaction_id, 'QPAY', 50000, gen_random_uuid()
+              FROM d, t`,
+      values: [hotelId],
+    }),
+    // The reconciliation-case fixture owns a released request of its own; the
+    // UPDATE probe addresses the pending ones it may legally move.
+    probeWhere: `state = 'PENDING'`,
+    updateColumn: 'revision',
+    updateSet: `state = 'SUCCEEDED', settled_at = now(), revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.financial_correction',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            t AS (
+              INSERT INTO platform.payment_transaction
+                (hotel_id, stay_id, kind, channel, direction, amount_mnt, provider_reference,
+                 actor_account_id)
+              SELECT $1, s.stay_id, 'DEPOSIT_RECEIPT', 'QPAY', 'IN', 50000,
+                     'p10-' || substr(gen_random_uuid()::text, 1, 20), gen_random_uuid()
+                FROM s
+              RETURNING transaction_id, stay_id)
+            INSERT INTO platform.financial_correction
+              (hotel_id, stay_id, original_transaction_id, reason, requested_by_account_id)
+            SELECT $1, t.stay_id, t.transaction_id, 'fixture', gen_random_uuid() FROM t`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'REJECTED', decided_at = now(), decided_by_account_id = gen_random_uuid(),
+                revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.deposit_reconciliation_case',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p10-' || substr(gen_random_uuid()::text, 1, 12),
+                      coalesce((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1), ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id, cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     coalesce((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id, category_id),
+            d AS (
+              INSERT INTO platform.deposit_aggregate
+                (stay_id, hotel_id, source, required, required_amount_mnt, config_scope,
+                 config_version, received_mnt)
+              SELECT s.stay_id, $1, 'WALK_IN', true, 50000, 'HOTEL', 1, 50000 FROM s
+              RETURNING stay_id),
+            t AS (
+              INSERT INTO platform.payment_transaction
+                (hotel_id, stay_id, kind, channel, direction, amount_mnt, provider_reference,
+                 actor_account_id)
+              SELECT $1, s.stay_id, 'DEPOSIT_RECEIPT', 'QPAY', 'IN', 50000,
+                     'p10-' || substr(gen_random_uuid()::text, 1, 20), gen_random_uuid()
+                FROM s
+              RETURNING transaction_id, stay_id),
+            rq AS (
+              INSERT INTO platform.refund_request
+                (hotel_id, stay_id, original_transaction_id, channel, amount_mnt,
+                 requested_by_account_id, state, released_by_account_id, released_at,
+                 release_reason)
+              SELECT $1, d.stay_id, t.transaction_id, 'QPAY', 50000, gen_random_uuid(),
+                     'RELEASED', gen_random_uuid(), now(), 'fixture'
+                FROM d, t
+              RETURNING request_id, stay_id)
+            INSERT INTO platform.deposit_reconciliation_case
+              (hotel_id, stay_id, refund_request_id)
+            SELECT $1, rq.stay_id, rq.request_id FROM rq`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'RECONCILING', claimed_by_account_id = gen_random_uuid(), claimed_at = now(),
+                revision = revision + 1`,
+  },
+
+  {
+    name: 'platform.hotel_finance_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.hotel_finance_event (hotel_id, kind, amount_mnt, note)
+            VALUES ($1, 'LATE_REFUND_SHORTFALL', 10000, 'fixture')`,
+      values: [hotelId],
+    }),
+    updateColumn: 'note',
   },
 ];
 

@@ -240,6 +240,29 @@ export class MinibarReportService extends StayServiceBase {
     );
   }
 
+  /**
+   * What the billing module charges for the minibar: the total of the version
+   * that was actually settled, less every waiver decided on it. Absent while no
+   * report has settled, so a folio never carries a minibar charge the guest has
+   * not been shown (`CHK-DEC-004`, `PRICE-DEC-004`).
+   */
+  async settledMinibarCharge(
+    uow: UnitOfWork,
+    stayId: string,
+  ): Promise<{ readonly versionId: string; readonly amountMnt: bigint } | undefined> {
+    const reports = new ReportRepository(uow);
+    const result = await uow.query<{ report_id: string }>(
+      `SELECT report_id FROM platform.minibar_usage_report
+        WHERE hotel_id = $1 AND stay_id = $2 AND state = 'SETTLED'`,
+      [uow.context.hotelId, stayId],
+    );
+    const reportId = result.rows[0]?.report_id;
+    if (reportId === undefined) return undefined;
+    const settled = await reports.settledLock(reportId);
+    if (settled === undefined) return undefined;
+    return { versionId: settled.versionId, amountMnt: settled.amountMnt };
+  }
+
   // ------------------------------------------------------------ internals
 
   private async write(

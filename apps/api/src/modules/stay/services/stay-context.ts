@@ -16,6 +16,7 @@ import type { TariffService } from '../../catalog/services/tariff.service';
 import type { ConfigurationService } from '../../minibar/services/configuration.service';
 import type { ConfirmedBookingsPort } from '../contracts/confirmed-bookings';
 import type { PaymentAttemptsPort } from '../contracts/payment-attempts';
+import type { DepositsPort } from '../contracts/deposits';
 
 /**
  * The one transaction shape the stay module runs in — the catalog's and the
@@ -45,6 +46,12 @@ export interface StayDependencies {
    * version (`CHK-DEC-004`).
    */
   readonly payments: PaymentAttemptsPort;
+  /**
+   * The deposit a confirmed walk-in owes, from the module that owns the money
+   * (Phase 10). A hotel with no configured deposit cannot confirm a walk-in
+   * (`DEP-DEC-001`).
+   */
+  readonly deposits: DepositsPort;
   /**
    * The server's now for a command. Absent in production, where every command
    * reads the transaction's own server time; a test supplies one to move the

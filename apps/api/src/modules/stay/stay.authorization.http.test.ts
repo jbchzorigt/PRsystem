@@ -148,6 +148,31 @@ let stayA: string;
 let stayRevision: number;
 let shiftOpenedAt: string;
 
+/**
+ * Phase 10: the room charge is posted and paid, and the bill closed, which is
+ * what the actual checkout now waits for.
+ */
+async function settleFolio(stayId: string, token: string): Promise<void> {
+  const charged = await call('POST', `/hotels/${hotelA}/stays/${stayId}/folio/charges`, token, {});
+  expect(charged.status).toBe(200);
+  const balance = charged.body['balanceMnt'] as string;
+  if (balance !== '0') {
+    const shift = await call('GET', `/hotels/${hotelA}/shifts/current`, token);
+    const shiftId = (shift.body['shift'] as { shiftId: string } | null)?.shiftId;
+    const paid = await call('POST', `/hotels/${hotelA}/stays/${stayId}/folio/payments`, token, {
+      channel: 'CASH',
+      amountMnt: Number(balance),
+      shiftId,
+    });
+    expect(paid.status).toBe(201);
+  }
+  const view = await call('GET', `/hotels/${hotelA}/stays/${stayId}/folio`, token);
+  const settled = await call('POST', `/hotels/${hotelA}/stays/${stayId}/folio/settle`, token, {
+    expectedRevision: view.body['revision'],
+  });
+  expect(settled.status).toBe(200);
+}
+
 describe('Reception, Cleaner and Manager, each their own rows', () => {
   it('the Manager configures, the Cleaner cleans, Reception opens the shift, quotes and checks in', async () => {
     const manager = await signIn(managerA);
@@ -158,6 +183,15 @@ describe('Reception, Cleaner and Manager, each their own rows', () => {
           nightlyRateMnt: 100000,
           fixedCheckoutMinute: 720,
           cleaningBufferMinutes: 30,
+        })
+      ).status,
+    ).toBe(200);
+    // Phase 10: a walk-in checks in against a configured deposit, so the
+    // Manager configures one before any check-in is possible (`DEP-DEC-001`).
+    expect(
+      (
+        await call('PUT', `/hotels/${hotelA}/deposit-configuration`, manager, {
+          amountMnt: 50000,
         })
       ).status,
     ).toBe(200);
@@ -289,6 +323,13 @@ describe('Reception, Cleaner and Manager, each their own rows', () => {
       { expectedRevision: stayRevision },
     );
     expect(managerCheckout.status).toBe(404);
+    // Phase 10: the stay completes once its bill is settled (`RC-DEC-001`).
+    const open = await call('POST', `/hotels/${hotelA}/stays/${stayA}/checkout`, reception, {
+      expectedRevision: stayRevision,
+    });
+    expect(open.status).toBe(412);
+    expect(open.body['error']).toMatchObject({ code: 'PRECONDITION_FAILED' });
+    await settleFolio(stayA, reception);
     const checkout = await call('POST', `/hotels/${hotelA}/stays/${stayA}/checkout`, reception, {
       expectedRevision: stayRevision,
     });
@@ -481,6 +522,7 @@ describe('the checkout, the report and the Cleaner’s queue (Phase 09, doc 18 �
   it('the actual checkout leaves a task only its Cleaner completes, and the room becomes clean', async () => {
     const reception = await signIn(receptionA);
     const cleaner = await signIn(cleanerA);
+    await settleFolio(stayFree, reception);
     const done = await call('POST', `/hotels/${hotelA}/stays/${stayFree}/checkout`, reception, {
       expectedRevision: stayFreeRevision,
     });
@@ -519,5 +561,174 @@ describe('the checkout, the report and the Cleaner’s queue (Phase 09, doc 18 �
     expect(completed.body).toMatchObject({ state: 'COMPLETED' });
     const cleaning = await call('GET', `/hotels/${hotelA}/rooms/${roomFree}/cleaning`, cleaner);
     expect(cleaning.body).toMatchObject({ state: 'CLEAN' });
+  });
+});
+
+describe('the folio, the deposit and the money (Phase 10, doc 18 §3)', () => {
+  let depositStay: string;
+  let depositStayRevision: number;
+  let depositRoom: string;
+  let receiptId: string;
+
+  it('Reception takes the deposit and applies it; a Cleaner and a bare Hotel Admin cannot', async () => {
+    const reception = await signIn(receptionA);
+    const cleaner = await signIn(cleanerA);
+    const admin = await signIn(adminA);
+    const manager = await signIn(managerA);
+    const created = await call('POST', `/hotels/${hotelA}/catalog/rooms`, manager, {
+      roomNumber: '103',
+      categoryId: categoryA,
+      state: 'ACTIVE',
+    });
+    expect(created.status).toBe(201);
+    depositRoom = created.body['roomId'] as string;
+    expect(
+      (
+        await call('POST', `/hotels/${hotelA}/rooms/${depositRoom}/cleaning`, cleaner, {
+          toState: 'CLEAN',
+          expectedRevision: 0,
+        })
+      ).status,
+    ).toBe(200);
+    const checkIn = await call('POST', `/hotels/${hotelA}/stays`, reception, {
+      roomId: depositRoom,
+      stayType: 'HOURLY',
+      halfHourUnits: 2,
+      guest,
+    });
+    expect(checkIn.status).toBe(201);
+    depositStay = checkIn.body['stayId'] as string;
+    depositStayRevision = checkIn.body['revision'] as number;
+
+    // The bill exists with the deposit requirement the confirmation snapshotted.
+    const folio = await call('GET', `/hotels/${hotelA}/stays/${depositStay}/folio`, reception);
+    expect(folio.status).toBe(200);
+    expect(folio.body['deposit']).toMatchObject({ required: true, requiredAmountMnt: '50000' });
+
+    // A Cleaner sees no bill, and a Hotel Admin without Reception takes no deposit.
+    expect(
+      (await call('GET', `/hotels/${hotelA}/stays/${depositStay}/folio`, cleaner)).status,
+    ).toBe(404);
+    void depositRoom;
+    expect(
+      (
+        await call('POST', `/hotels/${hotelA}/stays/${depositStay}/deposit`, admin, {
+          channel: 'CASH',
+          amountMnt: 50000,
+        })
+      ).status,
+    ).toBe(404);
+
+    // Cash needs its shift; the Reception's own shift is the one it opened.
+    const noShift = await call(
+      'POST',
+      `/hotels/${hotelA}/stays/${depositStay}/deposit`,
+      reception,
+      {
+        channel: 'CASH',
+        amountMnt: 50000,
+      },
+    );
+    expect(noShift.status).toBe(400);
+    expect(code(noShift)).toBe('VALIDATION_FAILED');
+  });
+
+  it('the deposit is configured by a Manager alone, and covers a line without adding cash', async () => {
+    const reception = await signIn(receptionA);
+    const manager = await signIn(managerA);
+    // Reception never configures the deposit.
+    expect(
+      (
+        await call('PUT', `/hotels/${hotelA}/deposit-configuration`, reception, {
+          amountMnt: 60000,
+        })
+      ).status,
+    ).toBe(404);
+    const outOfRange = await call('PUT', `/hotels/${hotelA}/deposit-configuration`, manager, {
+      amountMnt: 10000,
+    });
+    expect(outOfRange.status).toBe(400);
+
+    const shift = await call('GET', `/hotels/${hotelA}/shifts/current`, reception);
+    const shiftId = (shift.body['shift'] as { shiftId: string } | null)?.shiftId;
+    const received = await call(
+      'POST',
+      `/hotels/${hotelA}/stays/${depositStay}/deposit`,
+      reception,
+      {
+        channel: 'CASH',
+        amountMnt: 50000,
+        ...(shiftId === undefined ? {} : { shiftId }),
+      },
+    );
+    expect(received.status).toBe(201);
+    receiptId = (
+      (received.body['transactions'] as { transactionId: string; kind: string }[]).find(
+        (t) => t.kind === 'DEPOSIT_RECEIPT',
+      ) as { transactionId: string }
+    ).transactionId;
+    const charged = await call(
+      'POST',
+      `/hotels/${hotelA}/stays/${depositStay}/folio/charges`,
+      reception,
+      {},
+    );
+    expect(charged.status).toBe(200);
+    const lines = charged.body['lines'] as { lineId: string; amountMnt: string }[];
+    const allocated = await call(
+      'POST',
+      `/hotels/${hotelA}/stays/${depositStay}/folio/allocations`,
+      reception,
+      { folioLineId: lines[0]?.lineId, amountMnt: Number(lines[0]?.amountMnt) },
+    );
+    expect(allocated.status).toBe(201);
+    expect(allocated.body['balanceMnt']).toBe('0');
+    void depositStayRevision;
+  });
+
+  it('an alternate-channel refund waits for a Manager, and the reconciliation is nobody’s here', async () => {
+    const reception = await signIn(receptionA);
+    const manager = await signIn(managerA);
+    const admin = await signIn(adminA);
+    const requested = await call(
+      'POST',
+      `/hotels/${hotelA}/stays/${depositStay}/deposit/refunds`,
+      reception,
+      {
+        originalTransactionId: receiptId,
+        amountMnt: 10000,
+        channel: 'QPAY',
+        reason: 'Бэлэн мөнгө байхгүй',
+      },
+    );
+    expect(requested.status).toBe(201);
+    const refund = (requested.body['refunds'] as { requestId: string; revision: number }[])[0];
+    // Reception does not decide its own exception.
+    expect(
+      (
+        await call(
+          'POST',
+          `/hotels/${hotelA}/deposit-refunds/${refund?.requestId as string}/decide`,
+          reception,
+          { expectedRevision: refund?.revision, approve: true, reason: 'Зөвшөөрөв' },
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await call(
+          'POST',
+          `/hotels/${hotelA}/deposit-refunds/${refund?.requestId as string}/decide`,
+          manager,
+          { expectedRevision: refund?.revision, approve: true, reason: 'Зөвшөөрөв' },
+        )
+      ).status,
+    ).toBe(200);
+    // The late-refund reconciliation is Platform Operation's, not the hotel's.
+    for (const token of [reception, manager, admin]) {
+      expect((await call('GET', `/hotels/${hotelA}/deposit-reconciliation`, token)).status).toBe(
+        404,
+      );
+    }
   });
 });

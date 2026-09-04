@@ -14,6 +14,9 @@ import type { MinibarModuleOptions } from './modules/minibar/minibar.module';
 import { MinibarModule } from './modules/minibar/minibar.module';
 import type { StayModuleOptions } from './modules/stay/stay.module';
 import { StayModule } from './modules/stay/stay.module';
+import type { BillingModuleOptions } from './modules/billing/billing.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
 
 export interface AppModuleOptions {
   /**
@@ -53,6 +56,13 @@ export interface AppModuleOptions {
    */
   readonly stay: StayModuleOptions;
   /**
+   * The Phase 10 folio, deposit and payment. It reads the stay's own billing
+   * facts and the settled minibar charge through the stay module's contracts,
+   * and the stay module's check-in opens the folio through this module's
+   * `BillingDeposits` — which takes nothing from it, so the two stay one-way.
+   */
+  readonly billing: BillingModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -88,6 +98,16 @@ export class AppModule {
     // And the minibar: the stay module imports the same object for its
     // check-in contracts.
     const minibar = MinibarModule.forRoot({ ...options.minibar, iam, catalog });
+    // The stay module is constructed once as well: the billing module imports
+    // the same object, and the check-in opens the folio through the deposit
+    // contract this module supplies.
+    const stay = StayModule.forRoot({
+      ...options.stay,
+      iam,
+      catalog,
+      minibar,
+      deposits: options.stay.deposits ?? new BillingDeposits(),
+    });
     return {
       module: AppModule,
       providers: [
@@ -103,7 +123,8 @@ export class AppModule {
         OnboardingModule.forRoot({ ...options.onboarding, iam }),
         catalog,
         minibar,
-        StayModule.forRoot({ ...options.stay, iam, catalog, minibar }),
+        stay,
+        BillingModule.forRoot({ ...options.billing, iam, stay }),
       ],
     };
   }

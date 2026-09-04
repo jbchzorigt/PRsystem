@@ -317,6 +317,40 @@ export class StayService extends StayServiceBase {
     );
   }
 
+  /**
+   * What the billing module needs to know about a stay, from the module that
+   * owns it (CLAUDE.md §3): the room it is in, where the booking came from —
+   * which decides whether a deposit is owed at all (`RC-DEC-003`) — the room
+   * charge its confirmation snapshotted, and whether it is still live.
+   */
+  async billingFacts(
+    uow: UnitOfWork,
+    stayId: string,
+  ): Promise<
+    | {
+        readonly stayId: string;
+        readonly roomId: string;
+        readonly categoryId: string;
+        readonly source: StayRow['source'];
+        readonly state: StayRow['state'];
+        readonly roomChargeMnt: bigint;
+        readonly minibarApplicable: boolean;
+      }
+    | undefined
+  > {
+    const stay = await new StayRepository(uow).byId(stayId);
+    if (stay === undefined) return undefined;
+    return {
+      stayId: stay.stayId,
+      roomId: stay.roomId,
+      categoryId: stay.categoryId,
+      source: stay.source,
+      state: stay.state,
+      roomChargeMnt: stay.roomChargeMnt,
+      minibarApplicable: stay.minibarApplicable,
+    };
+  }
+
   private async refuseOpenObligations(uow: UnitOfWork, stay: StayRow): Promise<void> {
     const evidence = await probeSources(uow, CHECKOUT_OBLIGATION_SOURCES, stay.stayId);
     const unavailable = evidence.filter((entry) => entry.state === 'unavailable');

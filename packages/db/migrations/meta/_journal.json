@@ -78,6 +78,13 @@
       "when": 1757203200001,
       "tag": "0010_cleaner_checkout",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1757289600001,
+      "tag": "0011_folio_deposit_payment",
+      "breakpoints": true
     }
   ]
 }

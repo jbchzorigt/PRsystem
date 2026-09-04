@@ -12,6 +12,8 @@ import type { ConfirmedBookingsPort } from './contracts/confirmed-bookings';
 import { UnprovisionedConfirmedBookings } from './contracts/confirmed-bookings';
 import type { PaymentAttemptsPort } from './contracts/payment-attempts';
 import { UnprovisionedPaymentAttempts } from './contracts/payment-attempts';
+import type { DepositsPort } from './contracts/deposits';
+import { UnprovisionedDeposits } from './contracts/deposits';
 import { CheckoutController } from './http/checkout.controller';
 import { CleaningTaskController } from './http/cleaning-task.controller';
 import { ConflictController } from './http/conflict.controller';
@@ -36,6 +38,7 @@ import type { StayDependencies } from './services/stay-context';
 import { StayService } from './services/stay.service';
 import {
   CONFIRMED_BOOKINGS,
+  DEPOSITS,
   PAYMENT_ATTEMPTS,
   STAY_CLOCK,
   STAY_POOL,
@@ -75,6 +78,7 @@ export interface StayModuleOptions {
   readonly xyp?: XypIdentityPort;
   readonly bookings?: ConfirmedBookingsPort;
   readonly payments?: PaymentAttemptsPort;
+  readonly deposits?: DepositsPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
@@ -116,6 +120,7 @@ export class StayModule {
     const xyp = options.xyp ?? selectXypIdentity(requiredConfig(options.config).appEnv);
     const bookings = options.bookings ?? new UnprovisionedConfirmedBookings();
     const payments = options.payments ?? new UnprovisionedPaymentAttempts();
+    const deposits = options.deposits ?? new UnprovisionedDeposits();
     const clock = options.clock;
     const deps = (
       subscription: SubscriptionStatePort,
@@ -132,6 +137,7 @@ export class StayModule {
       xyp,
       bookings,
       payments,
+      deposits,
       ...(clock === undefined ? {} : { clock }),
     });
     const inject = [SUBSCRIPTION_STATE, TariffService, LifecycleService, ConfigurationService];
@@ -170,6 +176,7 @@ export class StayModule {
         { provide: XYP_IDENTITY, useValue: xyp },
         { provide: CONFIRMED_BOOKINGS, useValue: bookings },
         { provide: PAYMENT_ATTEMPTS, useValue: payments },
+        { provide: DEPOSITS, useValue: deposits },
         { provide: STAY_CLOCK, useValue: clock ?? null },
         { provide: StayLifecycle, useValue: new StayLifecycle(pool, ownsPool) },
         { provide: ShiftService, useFactory: service((d) => new ShiftService(d)), inject },
@@ -222,6 +229,7 @@ export class StayModule {
         XYP_IDENTITY,
         CONFIRMED_BOOKINGS,
         PAYMENT_ATTEMPTS,
+        DEPOSITS,
       ],
     };
   }
