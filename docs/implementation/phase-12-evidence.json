@@ -1,0 +1,152 @@
+{
+  "phase": "12 — Public discovery and Guest authentication",
+  "phaseState": "DONE",
+  "acceptance": "AWAITING_CUSTOMER_ACCEPTANCE",
+  "measuredAtCommit": "713e101bee3c0f9e86139a523ed789ef4be044f5",
+  "battery": [
+    {
+      "command": "node tools/validate-governance.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "17 of 17 at the measured commit; 17 of 17 on the final tree"
+    },
+    {
+      "command": "node tools/validate-governance.fixtures.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "215 of 215 drift fixtures caught at the measured commit; 228 of 228 on the final tree"
+    },
+    {
+      "command": "node tools/validate-secret-scan.fixtures.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "72 of 72 correct"
+    },
+    {
+      "command": "node tools/validate-workspace.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "15 of 15"
+    },
+    {
+      "command": "node tools/validate-regression-coverage.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "724 of 724"
+    },
+    {
+      "command": "node tools/validate-regression-coverage.fixtures.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "76 of 76 bypasses caught"
+    },
+    {
+      "command": "node tools/validate-pool-error-fixture.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "12 of 12"
+    },
+    {
+      "command": "node tools/scan-secrets.mjs",
+      "executions": 1,
+      "exits": [0],
+      "result": "653 indexed files, 0 findings"
+    },
+    {
+      "command": "pnpm run format:check",
+      "executions": 1,
+      "exits": [0],
+      "result": "clean"
+    },
+    {
+      "command": "pnpm run lint",
+      "executions": 1,
+      "exits": [0],
+      "result": "17 of 17 projects"
+    },
+    {
+      "command": "pnpm run typecheck",
+      "executions": 1,
+      "exits": [0],
+      "result": "28 of 28 graphs"
+    },
+    {
+      "command": "pnpm run test:unit",
+      "executions": 1,
+      "exits": [0],
+      "result": "1,453 across 11 projects"
+    },
+    {
+      "command": "pnpm run test:migrations",
+      "executions": 1,
+      "exits": [0],
+      "result": "148: fresh, three upgrade paths including Phase 05 → 12, repeat and schema equality"
+    },
+    {
+      "command": "pnpm run test:integration",
+      "executions": 1,
+      "exits": [0],
+      "result": "430: db 41, outbox 5, api 382, worker 2"
+    },
+    {
+      "command": "pnpm run test:concurrency",
+      "executions": 3,
+      "exits": [0, 0, 0],
+      "result": "61 each run: db 16, api 45"
+    },
+    {
+      "command": "pnpm run test:regression",
+      "executions": 1,
+      "exits": [0],
+      "result": "51, every reproduced Phase 03 defect"
+    },
+    {
+      "command": "pnpm run test:security",
+      "executions": 3,
+      "exits": [0, 0, 0],
+      "result": "19 of 19 sub-gates, each run"
+    },
+    {
+      "command": "pnpm run test:e2e",
+      "executions": 1,
+      "exits": [0],
+      "result": "15 passed"
+    },
+    {
+      "command": "pnpm run audit:prod",
+      "executions": 1,
+      "exits": [0],
+      "result": "no known vulnerabilities"
+    },
+    {
+      "command": "pnpm run audit:tree",
+      "executions": 1,
+      "exits": [0],
+      "result": "none at high or critical; one moderate, DSR-01"
+    },
+    {
+      "command": "pnpm run build",
+      "executions": 1,
+      "exits": [0],
+      "result": "17 of 17 projects"
+    },
+    {
+      "command": "pnpm run openapi",
+      "executions": 1,
+      "exits": [0],
+      "result": "document generated"
+    },
+    {
+      "command": "pnpm run compose:config",
+      "executions": 1,
+      "exits": [0],
+      "result": "valid"
+    },
+    {
+      "command": "git diff --check",
+      "executions": 1,
+      "exits": [0],
+      "result": "clean"
+    }
+  ]
+}

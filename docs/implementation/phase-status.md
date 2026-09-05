@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 12 — Public discovery and Guest authentication |
+| Current phase | 13 — Online booking and inventory hold |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -35,6 +35,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 10 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 11 state | `DONE` |
 | Phase 11 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 12 state | `DONE` |
+| Phase 12 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -59,7 +61,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 09 | Cleaner and checkout coordination | `DONE` | `0010_cleaner_checkout` | the Phase 09 battery — counts in [Phase 09 record](#phase-09-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 10 | Folio, deposit, payment, and correction | `DONE` | `0011_folio_deposit_payment` | the Phase 10 battery — counts in [Phase 10 record](#phase-10-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 11 | Shift, cash drawer, expense, and hotel finance | `DONE` | `0012_shift_cash_expense` | the Phase 11 battery — counts in [Phase 11 record](#phase-11-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 12 | Public discovery and Guest authentication | `NOT STARTED` | — | — | — |
+| 12 | Public discovery and Guest authentication | `DONE` | `0013_guest_identity_discovery` | the Phase 12 battery — counts in [Phase 12 record](#phase-12-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 13 | Online booking and inventory hold | `NOT STARTED` | — | — | — |
 | 14 | Online payment, refund, commission, and settlement | `NOT STARTED` | — | — | — |
 | 15 | Restaurant | `NOT STARTED` | — | — | — |
@@ -4542,4 +4544,143 @@ The per-command exit codes, durations and execution environment are recorded in
 [phase-11-battery-log.md](phase-11-battery-log.md).
 
 Phase 11 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 12 is authorized to begin under the
+standing progression authorization and has **not** started.
+
+---
+
+## Phase 12 record
+
+Public discovery and Guest authentication. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 11 tree. Phase 12 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 13 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the two this phase owns — `BK-DEC-001` and `BK-DEC-002`. With the 171 already
+closed, 173 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0013_guest_identity_discovery`** — the Guest realm joins the Phase 04 account kernel
+  rather than getting a parallel identity: `user_account` and `server_session` admit
+  `realm = 'guest'`, and `email_normalized` drops `NOT NULL` behind
+  `CHECK (email_normalized IS NOT NULL OR realm = 'guest')`, so the two realms that sign in by email
+  stay exactly as strict (`A-P12-1`). Four account-global tables follow. `guest_account` holds one
+  verified number as an encrypted value beside a keyed lookup token, written once and never
+  replaced; its `registered_via` distinguishes doc 09 §6.1's door from §6.2's, the phone columns are
+  all-or-nothing, and the uniqueness of a number is a partial index so provider accounts holding
+  none do not collide (`A-P12-2`). `guest_phone_verification` stores the six-digit code as a keyed
+  HMAC with an expiry and an attempt budget, one live challenge per number and purpose.
+  `guest_identity_link` is append-only and binds one tokenized provider subject to one account.
+  `guest_account_link_request` carries doc 09 §6.3's dual-channel confirmation, and its CHECK makes
+  `CONFIRMED` unreachable without both channels, the verification it used and the link it produced.
+  `hotel_photo` is the one tenant-scoped table, RLS enabled and forced, holding object keys and
+  never bytes, with one cover per hotel.
+- **The public listing projection** — every table a listing needs is `FORCE ROW LEVEL SECURITY`, and
+  a public search legitimately crosses every tenant. `platform.public_hotel_listings()` and
+  `platform.public_category_offers(...)` are `SECURITY DEFINER`, owned by `prsystem_maintenance_fn`
+  — the same narrow, login-less resolver role Phase 05 uses for its pre-tenant probes — and reach
+  those rows only through `public_listing_read` / `public_availability_read` policies whose `USING`
+  clause *is* the visibility rule rather than `true`. The API may execute the functions and still
+  cannot select the tables across tenants, which `public.security.test.ts` proves both ways
+  (`A-P12-4`).
+- **The public module** (`public/services/search.service.ts`, `domain/listing.ts`) — unauthenticated
+  search and detail. doc 09 §5's five conditions are evaluated in the projection, three as separate
+  terms and two carried by the profile row's own `NOT NULL` columns (`A-P12-5`); availability is a
+  count of `ACTIVE` rooms free for the whole half-open window, each stay occupying
+  `[check-in, checkout + its own snapshotted cleaning buffer)`. Distance and ordering are computed
+  by the platform from the stored integer micro-degrees; the request has no distance field, and one
+  offered is refused with 400 rather than ignored (doc 09 §4). Without dates a card shows a price
+  floor and makes no availability claim, which is doc 09 §3.2's `…₮-с`.
+- **The guest module** (`guest/services/registration.service.ts`, `emongolia.service.ts`,
+  `domain/guest.ts`) — phone registration with a six-digit code and a password of the guest's own
+  choosing, sign-in, password reset that closes every session, e-Mongolia registration and sign-in,
+  and the dual-channel linking flow. Requesting a code answers identically for a known, an unknown
+  and a malformed number; every failed sign-in has one code and one message; and a denied attempt is
+  audited without the number (doc 09 §6.3).
+- **Two ports, both fail-closed** — `EMongoliaAuthPort` (`EXT-02`) answers `DISABLED` for both
+  steps before any network call, and the guest module translates that and an outage alike into
+  "register by phone", doc 09 §6.1's own fallback. `GeoPort` (`EXT-06`) gates `geocode` and
+  `reverseGeocode` and keeps `distance` server-side and provider-free, because doc 09 §4 requires
+  the platform to compute it and a disabled adapter would push the calculation to the client
+  (`A-P12-6`). Both ship with the simulator conformance suite.
+- **One contract, no shared tables** — the guest module reaches `user_account`,
+  `account_credential` and `server_session` through the IAM module's `GuestAccountsPort`, so there
+  is exactly one place that issues a Guest session. The public module owns no table at all and
+  subtracts Phase 13's confirmed bookings through `CategoryHoldsPort`, whose default answers
+  "nothing is held" and refuses to keep answering once `platform.booking` exists (`A-P12-9`).
+
+### Two defects the gates found, and this phase fixed
+
+- **An attempt budget that never decreased.** A wrong one-time code was recorded inside the
+  transaction its own refusal rolled back, so five wrong guesses left `attempts` at zero and a
+  six-digit code could be guessed without limit. Redemption now commits the attempt and settles the
+  challenge before the refusal is raised (`A-P12-3`). The integration suite holds the lock at the
+  budget and the concurrency suite holds two racing guesses to at most two attempts.
+- **A controller that resolved no service.** `PublicController` relied on inferred constructor
+  metadata and `this.search` was `undefined` at runtime — every search answered 500. Fixed with an
+  explicit `@Inject`, and `public.http.test.ts` exercises the route through the booted application
+  so it cannot regress silently.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 12 in `PROGRESSED_PHASES`, the current phase
+  advanced to 13), `docs/implementation/phase-12-evidence.json`, and the drift fixtures retargeted
+  to the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.25 — `BK-DEC-001` and `BK-DEC-002` `COVERED`
+  with code and test references; 173 of 279.
+- **Assumptions:** `A-P12-1`…`A-P12-10` in `assumptions-and-conflicts.md` §3.16.
+
+### External gates
+
+Unchanged: `EXT-01`, `EXT-03`, `EXT-04`, `EXT-11` BLOCKED with conformance-gated simulators;
+`INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items; `DSR-01`; and
+selecting `GATE-SEC` as a required GitHub status check. **Phase 12 adds no new external gate** — it
+ships the ports for two that were already registered. `EXT-02` and `EXT-06` remain **BLOCKED** and
+now carry a canonical port and a conformance-gated simulator; `EXT-06`'s geocoding half is gated
+while its distance half is provider-free, recorded as `A-P12-6`. The nearby radius and sort order
+remain **P1-01**, running on the interim 5 km, availability-then-distance values.
+
+### Evidence
+
+<!-- phase-12-evidence:begin -->
+
+Measured at implementation commit 713e101bee3c0f9e86139a523ed789ef4be044f5, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the disposable Compose project `prsystem-p06`.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 215 of 215 drift fixtures caught at the measured commit; 228 of 228 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 653 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,453 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 12, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 430: db 41, outbox 5, api 382, worker 2 |
+| `pnpm run test:concurrency` | PASS | 61 each run: db 16, api 45 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-12-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-12-battery-log.md](phase-12-battery-log.md).
+
+Phase 12 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 13 is authorized to begin under the
 standing progression authorization and has **not** started.
