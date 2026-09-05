@@ -702,6 +702,81 @@ recorded so a reviewer can see where a judgement was made.
   now take the room outright first. The fix is in Phase 07's module and is recorded here because it
   changes an accepted phase's locking, not its behaviour.
 
+### 3.16 Phase 12 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P12-1 — a Guest is an account in the Phase 04 kernel, holding no email.** doc 09 §6.4 keeps
+  account, booker and staying guest apart, and doc 09 §6.2 registers a guest by phone. Rather than a
+  parallel identity table, the Guest realm joins `platform.user_account` and
+  `platform.server_session`: realms never merge (ADR-0005), but they do share the kernel that issues
+  and revokes sessions. `user_account.email_normalized` therefore drops `NOT NULL` behind
+  `CHECK (email_normalized IS NOT NULL OR realm = 'guest')`, which keeps every other realm exactly
+  as strict. A synthesised placeholder address was rejected: it would occupy
+  `UNIQUE (realm, email_normalized)` and would be indistinguishable from a real address to every
+  query that reads it. `AccountRow.emailNormalized` becomes `string | null`, and the two Phase 04
+  sites that need an address assert the realm's guarantee rather than casting past it.
+- **A-P12-2 — a guest may register through the provider and hold no number at all.** doc 09 §6.1 is
+  a door of its own, not a decoration on §6.2. `guest_account.registered_via` is therefore
+  `PHONE_OTP` or `PROVIDER`, the phone columns are all-or-nothing
+  (`num_nulls(...) IN (0, 6)`), and `PHONE_OTP` without a proven number is unrepresentable. The
+  uniqueness of a verified number is a *partial* index, so many provider accounts holding none do
+  not collide. A provider account may gain a number later by proving it, exactly once: the guard
+  refuses to replace or withdraw one already proven.
+- **A-P12-3 — a one-time code is redeemed in its own committed transaction.** A wrong guess recorded
+  inside the caller's transaction is rolled back by the very refusal it causes, and the attempt
+  budget never decreases — an unbounded number of guesses against six digits. `redeem` therefore
+  commits the attempt and settles the challenge before the caller's work begins, and the refusal is
+  raised afterwards. The cost is that a code is spent even when the command that follows fails; the
+  remedy is a fresh code, and that is the right trade. The integration and concurrency suites hold
+  both halves: five wrong guesses lock the challenge, and two racing guesses cannot both spend the
+  same attempt.
+- **A-P12-4 — the public surface reads across tenants through `SECURITY DEFINER` functions.** Every
+  table a listing needs is `FORCE ROW LEVEL SECURITY`, and a public search legitimately crosses
+  every tenant. Migration `0013` adds `platform.public_hotel_listings()` and
+  `platform.public_category_offers(...)`, owned by `prsystem_maintenance_fn` — the same narrow,
+  login-less resolver role Phase 05 uses for its pre-tenant probes — reaching those rows only
+  through `public_listing_read` / `public_availability_read` policies whose `USING` clause *is* the
+  visibility rule rather than `true`. The API may execute the functions and still cannot select the
+  tables across tenants; `public.security.test.ts` proves both halves.
+- **A-P12-5 — two of doc 09 §5's five conditions are carried by the profile row.**
+  `platform.hotel_profile` declares its coordinates, its address and its public phone `NOT NULL` and
+  is append-only, so "location complete" and "public phone registered" cannot be withdrawn
+  individually: a hotel has a profile carrying both, or has neither. The projection enforces them by
+  joining that table, and a null test would have been dead SQL that read like a guarantee. The other
+  three — account active, subscription valid, listing published — are separate terms, because
+  doc 09 §3.2 refuses to collapse them into one word.
+- **A-P12-6 — distance is computed by the platform, and geocoding alone is gated.** doc 09 §4
+  requires distance and ordering to be computed server-side and a client-supplied distance never to
+  be trusted. `GeoPort.geocode` and `.reverseGeocode` need Google Maps and answer `DISABLED` until
+  `EXT-06` clears; `.distance` is a great-circle calculation over coordinates the platform already
+  holds, reaches no provider, and is available on both paths. Answering `DISABLED` for arithmetic
+  would push the calculation to the only other place it could go — the client — which is the outcome
+  the gate exists to prevent. Coordinates cross the boundary as integer micro-degrees and the result
+  is whole metres, so two callers agree exactly and an ordering never turns on a float's last bit.
+- **A-P12-7 — the platform scope now admits the Guest realm.** `assertTenantContext` allowed the
+  platform sentinel only in the Operation realm and for account-scoped Hotel work. A guest belongs
+  to no hotel, so registering, signing in and recovering a password are that same account-scoped
+  work, and the four `guest_*` tables carry no `hotel_id`. The rule is extended to `guest` on
+  exactly those terms and nothing else: the Police realm still has no platform-wide work and is
+  still refused, and `sec-rls.test.ts` holds that line.
+- **A-P12-8 — the nearby radius and the sort order are the interim P1-01 values.** 5 km, availability
+  first and then distance, named once in the domain rather than inlined. The ordering is total, so a
+  page is stable. `external-integration-gates.md` §4 still carries the open decision.
+- **A-P12-9 — the public module's category holds are a second, distinct booking contract.** The stay
+  module already has a `ConfirmedBookingsPort` asking about one physical room, because a check-in is
+  assigned a room. A public search never sees a room — `BK-DEC-013` offers a category and a count —
+  so `CategoryHoldsPort` aggregates by category. Both defaults refuse rather than answer once
+  `platform.booking` exists, so Phase 13 cannot implement one and silently leave the other
+  over-reporting availability.
+- **A-P12-10 — the second channel's code goes to the number the account holds.** doc 09 §6.3 asks
+  for a dual-channel confirmation before an e-Mongolia identity joins a phone account. A caller who
+  could name the number the code is sent to would prove nothing by answering it, so
+  `requestLinkCode` takes only the link request, reads the account's own encrypted number, decrypts
+  it for the length of the delivery call, and never returns it. `requirePurpose` refuses
+  `ACCOUNT_LINK` from a request body for the same reason.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

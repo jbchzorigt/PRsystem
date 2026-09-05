@@ -70,6 +70,35 @@ export type {
   XypLookup,
 } from './identity-verification.port';
 
+// EXT-02.
+export {
+  SimulatedEMongoliaAuth,
+  UnavailableEMongoliaAuth,
+  selectEMongoliaAuth,
+} from './emongolia-auth.port';
+export type {
+  EMongoliaAuthPort,
+  EMongoliaAuthorization,
+  EMongoliaBeginCommand,
+  EMongoliaCommand,
+  EMongoliaCompleteCommand,
+  EMongoliaIdentity,
+  EMongoliaMinimalClaims,
+  EMongoliaResult,
+} from './emongolia-auth.port';
+
+// EXT-06.
+export { SimulatedGeo, UnavailableGeo, greatCircleMetres, isGeoPoint, selectGeo } from './geo.port';
+export type {
+  GeoAddress,
+  GeoAnswer,
+  GeoCommand,
+  GeoDistance,
+  GeoPoint,
+  GeoPort,
+  GeocodeAnswer,
+} from './geo.port';
+
 // INT-OTP-01.
 export {
   SimulatedPhoneVerification,

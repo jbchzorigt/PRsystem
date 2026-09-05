@@ -92,6 +92,13 @@
       "when": 1757376000001,
       "tag": "0012_shift_cash_expense",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1757376000002,
+      "tag": "0013_guest_identity_discovery",
+      "breakpoints": true
     }
   ]
 }

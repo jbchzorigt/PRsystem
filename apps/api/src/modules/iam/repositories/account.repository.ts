@@ -24,7 +24,8 @@ export interface AccountRow {
   /** doc 18 §5 / §6. `null` for a Hotel account, which has no matrix column. */
   readonly realmRole: string | null;
   readonly policeScopeRef: string | null;
-  readonly emailNormalized: string;
+  /** `null` only in the Guest realm, which registers by phone (`BK-DEC-002`). */
+  readonly emailNormalized: string | null;
   readonly state: 'PENDING_ACTIVATION' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
   readonly authEpoch: number;
   readonly emailVerifiedAt: Date | null;
@@ -138,6 +139,26 @@ export class AccountRepository {
    * every device and in every membership. The epoch is what makes that one
    * write rather than a fan-out that could partly fail.
    */
+  /**
+   * A Guest account: realm `guest`, and no email at all.
+   *
+   * doc 09 §6.2 registers a guest by phone and a password of their own
+   * choosing. The address column stays NULL rather than holding a synthesised
+   * placeholder, because a placeholder would occupy `UNIQUE (realm,
+   * email_normalized)` and would be indistinguishable from a real address to
+   * every query that reads it.
+   */
+  async createGuest(): Promise<AccountRow> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `INSERT INTO platform.user_account (realm, email_normalized)
+       VALUES ('guest', NULL)
+       RETURNING ${ACCOUNT_COLUMNS}`,
+    );
+    const row = mapAccount(result.rows[0]);
+    if (row === undefined) throw new Error('the guest account insert returned no row');
+    return row;
+  }
+
   async bumpAuthEpoch(accountId: string, expectedRevision: number): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.user_account
@@ -659,7 +680,7 @@ function mapAccount(row: Record<string, unknown> | undefined): AccountRow | unde
     realm: String(row['realm']),
     realmRole: (row['realm_role'] as string | null) ?? null,
     policeScopeRef: (row['police_scope_ref'] as string | null) ?? null,
-    emailNormalized: String(row['email_normalized']),
+    emailNormalized: (row['email_normalized'] as string | null) ?? null,
     state: row['state'] as AccountRow['state'],
     authEpoch: Number(row['auth_epoch']),
     emailVerifiedAt: (row['email_verified_at'] as Date | null) ?? null,

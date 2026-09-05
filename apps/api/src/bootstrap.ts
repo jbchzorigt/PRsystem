@@ -106,6 +106,17 @@ export async function createApp(
       // provider — cash is counted, not confirmed — so it needs only the
       // database and the stay module's shift contract.
       finance: { config: { databaseUrl: config.DATABASE_URL } },
+      guest: {
+        config: {
+          databaseUrl: config.DATABASE_URL,
+          appEnv: config.APP_ENV,
+          kmsAdapter: config.KMS_ADAPTER,
+          ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+        },
+      },
+      public: {
+        config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

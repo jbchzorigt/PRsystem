@@ -27,7 +27,14 @@ export type KeyScope =
    * key would tie two rotation cadences together and make one compromise open
    * both populations (ADR-0020 §5).
    */
-  | 'pii.subscription_owner';
+  | 'pii.subscription_owner'
+  /**
+   * A Guest account's own phone number (doc 09 §6.2). Its own scope rather than
+   * `pii.hotel_guest`: the booking account and the person who actually stays are
+   * deliberately different records (doc 09 §6.4), collected by different parties
+   * under different retention, and one compromise must not open both.
+   */
+  | 'pii.guest_account';
 
 /**
  * Lookup scopes are separate from encryption scopes, and Police lookup has its
@@ -56,13 +63,24 @@ export type HmacScope =
    */
   | 'auth.activation_token'
   | 'auth.phone_otp'
-  | 'auth.onboarding_draft';
+  | 'auth.onboarding_draft'
+  /**
+   * Phase 12 Guest artefacts. A guest's phone is looked up by a keyed token in
+   * its own scope — never the hotel guest's identity scope, so the same digits
+   * cannot be correlated across the two — its one-time codes are hashed under a
+   * scope of their own, and an external provider's subject identifier gets a
+   * third (doc 09 §§6.1–6.3, CLAUDE.md §8).
+   */
+  | 'lookup.guest_phone'
+  | 'auth.guest_otp'
+  | 'lookup.guest_identity_subject';
 
 export const KEY_SCOPES: readonly KeyScope[] = [
   'pii.hotel_guest',
   'pii.police',
   'auth.delivery_secret',
   'pii.subscription_owner',
+  'pii.guest_account',
 ];
 export const HMAC_SCOPES: readonly HmacScope[] = [
   'lookup.identity',
@@ -73,6 +91,9 @@ export const HMAC_SCOPES: readonly HmacScope[] = [
   'auth.activation_token',
   'auth.phone_otp',
   'auth.onboarding_draft',
+  'lookup.guest_phone',
+  'auth.guest_otp',
+  'lookup.guest_identity_subject',
 ];
 
 export interface WrappedKey {

@@ -14,7 +14,14 @@ import type { HmacScope, KeyManagementPort } from './key-management.port';
  * two countries' numbering schemes.
  */
 export interface IdentityNamespace {
-  readonly identityType: 'registration_number' | 'passport' | 'foreign_id';
+  readonly identityType:
+    | 'registration_number'
+    | 'passport'
+    | 'foreign_id'
+    /** A Guest account's phone number (doc 09 §6.2). */
+    | 'phone'
+    /** An external identity provider's subject identifier (doc 09 §6.1). */
+    | 'provider_subject';
   readonly countryCode: string;
 }
 

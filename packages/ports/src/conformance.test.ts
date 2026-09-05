@@ -1,21 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
   SimulatedEBarimt,
+  SimulatedEMongoliaAuth,
+  SimulatedGeo,
   SimulatedNotification,
   SimulatedPaymentGateway,
   SimulatedPhoneVerification,
   SimulatedXypIdentity,
   UnavailableEBarimt,
+  UnavailableEMongoliaAuth,
+  UnavailableGeo,
   UnavailableNotification,
   UnavailablePaymentGateway,
   UnavailablePhoneVerification,
   UnavailableXypIdentity,
   selectEBarimt,
+  selectEMongoliaAuth,
+  selectGeo,
   selectNotification,
   selectPaymentGateways,
   selectPhoneVerification,
   selectXypIdentity,
 } from './index';
+import { greatCircleMetres } from './index';
 import type { PortContext, PortResult } from './index';
 
 /**
@@ -410,5 +417,104 @@ describe('NotificationPort simulator', () => {
       gate: 'INT-MAIL-01',
     });
     expect(selectNotification('production')).toBeInstanceOf(UnavailableNotification);
+  });
+});
+
+describe('EMongoliaAuthPort simulator', () => {
+  it('issues an authorization that carries no token, refuses an unknown and a replayed code, and answers DISABLED when uncleared', async () => {
+    const port = new SimulatedEMongoliaAuth();
+    expect(port.id).toBe('emongolia-auth');
+    const begin = { redirectUri: 'https://app.invalid/guest/emongolia', state: 's-1' };
+    const authorization = ok(await port.begin(begin, ctx));
+    expect(authorization.state).toBe('s-1');
+    // The provider's URL carries the state and nothing of ours: no session, no
+    // subject, no code (doc 09 §6.1).
+    expect(authorization.authorizationUrl).toContain('state=s-1');
+    expect(authorization.authorizationUrl).not.toContain('token');
+
+    port.register('code-1', {
+      providerSubject: 'sub-synthetic-1',
+      claims: { displayName: 'Синтетик Зочин', verified: true },
+    });
+    const complete = { code: 'code-1', state: 's-1', redirectUri: begin.redirectUri };
+    expect(ok(await port.complete(complete, ctx))).toEqual({
+      providerSubject: 'sub-synthetic-1',
+      claims: { displayName: 'Синтетик Зочин', verified: true },
+    });
+    // Single use is the provider's rule, so the simulator holds callers to it.
+    expect(err(await port.complete(complete, ctx))).toEqual({
+      kind: 'REJECTED',
+      providerCode: 'code_already_used',
+    });
+    expect(err(await port.complete({ ...complete, code: 'code-unknown' }, ctx))).toEqual({
+      kind: 'REJECTED',
+      providerCode: 'invalid_code',
+    });
+
+    port.failNext();
+    expect(err(await port.begin(begin, ctx))).toEqual({ kind: 'UNAVAILABLE', retryable: true });
+    port.timeoutNext();
+    expect(err(await port.complete(complete, ctx))).toEqual({ kind: 'TIMEOUT', retryable: true });
+
+    const disabled = new UnavailableEMongoliaAuth();
+    expect(err(await disabled.begin(begin, ctx))).toEqual({ kind: 'DISABLED', gate: 'EXT-02' });
+    expect(err(await disabled.complete(complete, ctx))).toEqual({
+      kind: 'DISABLED',
+      gate: 'EXT-02',
+    });
+    expect(selectEMongoliaAuth('production')).toBeInstanceOf(UnavailableEMongoliaAuth);
+    expect(selectEMongoliaAuth('test')).toBeInstanceOf(SimulatedEMongoliaAuth);
+  });
+});
+
+describe('GeoPort simulator', () => {
+  // Ulaanbaatar's centre and a point a known distance from it, both synthetic.
+  const centre = { latitudeMicro: 47_918_600, longitudeMicro: 106_917_700 };
+  const north = { latitudeMicro: 47_928_600, longitudeMicro: 106_917_700 };
+
+  it('geocodes only what it was taught, and fails over deterministically', async () => {
+    const port = new SimulatedGeo();
+    expect(port.id).toBe('geo');
+    port.register('Сүхбаатар талбай', { formattedAddress: 'Сүхбаатар талбай', point: centre });
+    expect(ok(await port.geocode('  сүхбаатар талбай ', ctx))).toEqual({
+      found: true,
+      address: { formattedAddress: 'Сүхбаатар талбай', point: centre },
+    });
+    expect(ok(await port.geocode('nowhere', ctx))).toEqual({ found: false });
+    expect(ok(await port.reverseGeocode(centre, ctx))).toEqual({
+      found: true,
+      address: { formattedAddress: 'Сүхбаатар талбай', point: centre },
+    });
+    expect(ok(await port.reverseGeocode(north, ctx))).toEqual({ found: false });
+    port.failNext();
+    expect(err(await port.geocode('nowhere', ctx))).toEqual({
+      kind: 'UNAVAILABLE',
+      retryable: true,
+    });
+    port.timeoutNext();
+    expect(err(await port.geocode('nowhere', ctx))).toEqual({ kind: 'TIMEOUT', retryable: true });
+    expect(selectGeo('production')).toBeInstanceOf(UnavailableGeo);
+    expect(selectGeo('test')).toBeInstanceOf(SimulatedGeo);
+  });
+
+  it('gates geocoding but not distance, and both paths compute the same metres', async () => {
+    const disabled = new UnavailableGeo();
+    expect(err(await disabled.geocode('Сүхбаатар талбай', ctx))).toEqual({
+      kind: 'DISABLED',
+      gate: 'EXT-06',
+    });
+    expect(err(await disabled.reverseGeocode(centre, ctx))).toEqual({
+      kind: 'DISABLED',
+      gate: 'EXT-06',
+    });
+    // Distance reaches no provider: it is the server-side calculation doc 09 §4
+    // requires, so answering DISABLED would leave only the client to do it.
+    const simulated = new SimulatedGeo();
+    expect(disabled.distance(centre, north)).toEqual(simulated.distance(centre, north));
+    // Ten thousandths of a degree of latitude is about 1,112 m; whole metres,
+    // so two callers agree exactly and an ordering never turns on a float bit.
+    expect(disabled.distance(centre, north).metres).toBe(1112);
+    expect(greatCircleMetres(centre, centre)).toBe(0);
+    expect(greatCircleMetres(centre, north)).toBe(greatCircleMetres(north, centre));
   });
 });

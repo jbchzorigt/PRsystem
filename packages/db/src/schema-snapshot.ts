@@ -1504,7 +1504,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'user_account',
       column: 'email_normalized',
-      shape: 'text | NOT NULL | no default | no identity | not generated',
+      shape: 'text | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -5565,7 +5565,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       column: 'state',
       shape: "text | NOT NULL | default 'OPEN'::text | no identity | not generated",
     },
-
     // Phase 09 — Cleaner and checkout coordination.
     {
       schema: 'platform',
@@ -6221,7 +6220,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       column: 'version_no',
       shape: 'integer | NOT NULL | no default | no identity | not generated',
     },
-
     // Phase 10 — folio, deposit, payment, and correction.
     {
       schema: 'platform',
@@ -7033,7 +7031,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       column: 'stay_id',
       shape: 'uuid | NOT NULL | no default | no identity | not generated',
     },
-
     // Phase 11 — shift, cash drawer, expense, and hotel finance.
     {
       schema: 'platform',
@@ -7694,6 +7691,404 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'reception_shift',
       column: 'variance_mnt',
       shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+
+    // Phase 12 — public discovery and Guest authentication.
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'display_name',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'phone_ciphertext',
+      shape: 'bytea | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'phone_key_version',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'phone_token',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'phone_token_key_version',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'phone_verified_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'phone_wrapped_dek',
+      shape: 'bytea | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'realm',
+      shape: "text | NOT NULL | default 'guest'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'registered_via',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      column: 'state',
+      shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'decided_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'expires_at',
+      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'link_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'phone_channel_verified_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'provider',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'provider_channel_verified_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'realm',
+      shape: "text | NOT NULL | default 'guest'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'request_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'requested_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'subject_key_version',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'subject_token',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      column: 'verification_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'link_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'linked_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'linked_via',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'provider',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'realm',
+      shape: "text | NOT NULL | default 'guest'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'subject_key_version',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      column: 'subject_token',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'account_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'attempts',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'code_hash',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'code_key_version',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'consumed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'expires_at',
+      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'max_attempts',
+      shape: 'integer | NOT NULL | default 5 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'phone_token',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'purpose',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'request_ip_hash',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'sent_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      column: 'verification_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'byte_size',
+      shape: 'integer | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'category_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'content_type',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'created_by_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'is_cover',
+      shape: 'boolean | NOT NULL | default false | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'object_key',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'photo_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'sort_order',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'state',
+      shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      column: 'subject_type',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
     },
   ],
   constraints: [
@@ -8436,7 +8831,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'server_session',
       name: 'server_session_realm_known',
       kind: 'c',
-      definition: "CHECK ((realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text])))",
+      definition:
+        "CHECK ((realm = ANY (ARRAY['hotel'::text, 'guest'::text, 'operation'::text, 'police'::text])))",
     },
     {
       schema: 'platform',
@@ -8748,7 +9144,8 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'user_account',
       name: 'user_account_realm_known',
       kind: 'c',
-      definition: "CHECK ((realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text])))",
+      definition:
+        "CHECK ((realm = ANY (ARRAY['hotel'::text, 'guest'::text, 'operation'::text, 'police'::text])))",
     },
     {
       schema: 'platform',
@@ -12740,7 +13137,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'FOREIGN KEY (hotel_id, overdue_stay_id) REFERENCES platform.stay(hotel_id, stay_id) ON DELETE RESTRICT',
     },
-
     // Phase 09 — Cleaner and checkout coordination.
     {
       schema: 'platform',
@@ -13478,7 +13874,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'c',
       definition: 'CHECK ((total_mnt >= 0))',
     },
-
     // Phase 10 — folio, deposit, payment, and correction.
     {
       schema: 'platform',
@@ -14290,7 +14685,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         "CHECK ((state = ANY (ARRAY['PENDING'::text, 'FAILED'::text, 'SUCCEEDED'::text, 'RELEASED'::text, 'RECONCILING'::text, 'RECONCILED'::text])))",
     },
-
     // Phase 11 — shift, cash drawer, expense, and hotel finance.
     {
       schema: 'platform',
@@ -14962,6 +15356,412 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'c',
       definition:
         'CHECK ((((counted_cash_mnt IS NULL) AND (expected_cash_mnt IS NULL) AND (variance_mnt IS NULL)) OR ((counted_cash_mnt IS NOT NULL) AND (expected_cash_mnt IS NOT NULL) AND (variance_mnt = (counted_cash_mnt - expected_cash_mnt)))))',
+    },
+
+    // Phase 12 — public discovery and Guest authentication.
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_account_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (account_id, realm) REFERENCES platform.user_account(account_id, realm) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_display_name_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((display_name IS NULL) OR ((length(display_name) >= 1) AND (length(display_name) <= 120))))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_phone_all_or_nothing',
+      kind: 'c',
+      definition:
+        'CHECK ((num_nulls(phone_token, phone_token_key_version, phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at) = ANY (ARRAY[0, 6])))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_phone_registration_has_phone',
+      kind: 'c',
+      definition: "CHECK (((registered_via <> 'PHONE_OTP'::text) OR (phone_token IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (account_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_realm_is_guest',
+      kind: 'c',
+      definition: "CHECK ((realm = 'guest'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_registered_via_known',
+      kind: 'c',
+      definition: "CHECK ((registered_via = ANY (ARRAY['PHONE_OTP'::text, 'PROVIDER'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'CLOSED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_token_shape',
+      kind: 'c',
+      definition: "CHECK (((phone_token IS NULL) OR (phone_token ~ '^[0-9a-f]{64}$'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_account_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (account_id, realm) REFERENCES platform.user_account(account_id, realm) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_decided_shape',
+      kind: 'c',
+      definition: "CHECK (((state = 'PENDING'::text) = (decided_at IS NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_dual_channel',
+      kind: 'c',
+      definition:
+        "CHECK (((state <> 'CONFIRMED'::text) OR ((provider_channel_verified_at IS NOT NULL) AND (phone_channel_verified_at IS NOT NULL) AND (verification_id IS NOT NULL) AND (link_id IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_link_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (link_id) REFERENCES platform.guest_identity_link(link_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (request_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_provider_known',
+      kind: 'c',
+      definition: "CHECK ((provider = 'EMONGOLIA'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_realm_is_guest',
+      kind: 'c',
+      definition: "CHECK ((realm = 'guest'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_reason_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['PENDING'::text, 'CONFIRMED'::text, 'REJECTED'::text, 'EXPIRED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_subject_shape',
+      kind: 'c',
+      definition: "CHECK ((subject_token ~ '^[0-9a-f]{64}$'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_verification_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (verification_id) REFERENCES platform.guest_phone_verification(verification_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_account_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (account_id, realm) REFERENCES platform.user_account(account_id, realm) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (link_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_provider_known',
+      kind: 'c',
+      definition: "CHECK ((provider = 'EMONGOLIA'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_realm_is_guest',
+      kind: 'c',
+      definition: "CHECK ((realm = 'guest'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_subject_shape',
+      kind: 'c',
+      definition: "CHECK ((subject_token ~ '^[0-9a-f]{64}$'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_via_known',
+      kind: 'c',
+      definition:
+        "CHECK ((linked_via = ANY (ARRAY['PROVIDER_REGISTRATION'::text, 'DUAL_CHANNEL_LINK'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_account_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (account_id) REFERENCES platform.user_account(account_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_attempts_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((attempts >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 10)) AND (attempts <= max_attempts)))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_code_shape',
+      kind: 'c',
+      definition: "CHECK ((code_hash ~ '^[0-9a-f]{64}$'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_consumed_shape',
+      kind: 'c',
+      definition: "CHECK (((state = 'CONSUMED'::text) = (consumed_at IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_expiry_after_send',
+      kind: 'c',
+      definition: 'CHECK ((expires_at > sent_at))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_ip_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((request_ip_hash IS NULL) OR (request_ip_hash ~ '^[0-9a-f]{64}$'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (verification_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_purpose_known',
+      kind: 'c',
+      definition:
+        "CHECK ((purpose = ANY (ARRAY['REGISTER'::text, 'SIGN_IN'::text, 'PASSWORD_RESET'::text, 'ACCOUNT_LINK'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['PENDING'::text, 'CONSUMED'::text, 'EXPIRED'::text, 'LOCKED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_token_shape',
+      kind: 'c',
+      definition: "CHECK ((phone_token ~ '^[0-9a-f]{64}$'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_category_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, category_id) REFERENCES platform.room_category(hotel_id, category_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_content_type_known',
+      kind: 'c',
+      definition:
+        "CHECK ((content_type = ANY (ARRAY['image/jpeg'::text, 'image/png'::text, 'image/webp'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_cover_is_active',
+      kind: 'c',
+      definition: "CHECK (((NOT is_cover) OR (state = 'ACTIVE'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_cover_is_hotel',
+      kind: 'c',
+      definition: "CHECK (((NOT is_cover) OR (subject_type = 'HOTEL'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_identity_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, photo_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_key_bounded',
+      kind: 'c',
+      definition: 'CHECK (((length(object_key) >= 1) AND (length(object_key) <= 400)))',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (photo_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_size_bounded',
+      kind: 'c',
+      definition: 'CHECK (((byte_size >= 1) AND (byte_size <= 10485760)))',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_sort_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((sort_order >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_state_known',
+      kind: 'c',
+      definition: "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'REMOVED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_subject_known',
+      kind: 'c',
+      definition: "CHECK ((subject_type = ANY (ARRAY['HOTEL'::text, 'ROOM_CATEGORY'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_subject_shape',
+      kind: 'c',
+      definition: "CHECK (((subject_type = 'ROOM_CATEGORY'::text) = (category_id IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'user_account',
+      name: 'user_account_email_required_outside_guest',
+      kind: 'c',
+      definition: "CHECK (((email_normalized IS NOT NULL) OR (realm = 'guest'::text)))",
     },
   ],
   indexes: [
@@ -16357,7 +17157,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'CREATE INDEX booking_fulfillment_conflict_room_idx ON platform.booking_fulfillment_conflict USING btree (hotel_id, room_id, state)',
     },
-
     // Phase 09 — Cleaner and checkout coordination.
     {
       schema: 'platform',
@@ -16555,7 +17354,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'CREATE INDEX minibar_usage_report_version_report_idx ON platform.minibar_usage_report_version USING btree (hotel_id, report_id, version_no)',
     },
-
     // Phase 10 — folio, deposit, payment, and correction.
     {
       schema: 'platform',
@@ -16753,7 +17551,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'CREATE INDEX refund_request_stay_idx ON platform.refund_request USING btree (hotel_id, stay_id, state)',
     },
-
     // Phase 11 — shift, cash drawer, expense, and hotel finance.
     {
       schema: 'platform',
@@ -16914,6 +17711,120 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'reception_shift_review_idx',
       definition:
         'CREATE INDEX reception_shift_review_idx ON platform.reception_shift USING btree (hotel_id, review_state, opened_at)',
+    },
+
+    // Phase 12 — public discovery and Guest authentication.
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_phone_token_uq',
+      definition:
+        'CREATE UNIQUE INDEX guest_account_phone_token_uq ON platform.guest_account USING btree (phone_token) WHERE (phone_token IS NOT NULL)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account',
+      name: 'guest_account_pkey',
+      definition:
+        'CREATE UNIQUE INDEX guest_account_pkey ON platform.guest_account USING btree (account_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_account_idx',
+      definition:
+        'CREATE INDEX guest_account_link_request_account_idx ON platform.guest_account_link_request USING btree (account_id, state)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_one_pending_uq',
+      definition:
+        "CREATE UNIQUE INDEX guest_account_link_request_one_pending_uq ON platform.guest_account_link_request USING btree (provider, subject_token) WHERE (state = 'PENDING'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_account_link_request',
+      name: 'guest_account_link_request_pkey',
+      definition:
+        'CREATE UNIQUE INDEX guest_account_link_request_pkey ON platform.guest_account_link_request USING btree (request_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_account_uq',
+      definition:
+        'CREATE UNIQUE INDEX guest_identity_link_account_uq ON platform.guest_identity_link USING btree (provider, account_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_pkey',
+      definition:
+        'CREATE UNIQUE INDEX guest_identity_link_pkey ON platform.guest_identity_link USING btree (link_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_identity_link',
+      name: 'guest_identity_link_subject_uq',
+      definition:
+        'CREATE UNIQUE INDEX guest_identity_link_subject_uq ON platform.guest_identity_link USING btree (provider, subject_token)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_one_pending_uq',
+      definition:
+        "CREATE UNIQUE INDEX guest_phone_verification_one_pending_uq ON platform.guest_phone_verification USING btree (phone_token, purpose) WHERE (state = 'PENDING'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_pkey',
+      definition:
+        'CREATE UNIQUE INDEX guest_phone_verification_pkey ON platform.guest_phone_verification USING btree (verification_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'guest_phone_verification',
+      name: 'guest_phone_verification_rate_idx',
+      definition:
+        'CREATE INDEX guest_phone_verification_rate_idx ON platform.guest_phone_verification USING btree (phone_token, sent_at DESC)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_identity_uq',
+      definition:
+        'CREATE UNIQUE INDEX hotel_photo_identity_uq ON platform.hotel_photo USING btree (hotel_id, photo_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_object_key_uq',
+      definition:
+        'CREATE UNIQUE INDEX hotel_photo_object_key_uq ON platform.hotel_photo USING btree (object_key)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_one_cover_uq',
+      definition:
+        'CREATE UNIQUE INDEX hotel_photo_one_cover_uq ON platform.hotel_photo USING btree (hotel_id) WHERE (is_cover IS TRUE)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_pkey',
+      definition:
+        'CREATE UNIQUE INDEX hotel_photo_pkey ON platform.hotel_photo USING btree (photo_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'hotel_photo_subject_idx',
+      definition:
+        'CREATE INDEX hotel_photo_subject_idx ON platform.hotel_photo USING btree (hotel_id, subject_type, category_id, sort_order)',
     },
   ],
   identitySequences: [
@@ -17134,8 +18045,18 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     { schema: 'platform', table: 'hotel_stay_configuration', enabled: true, forced: true },
     { schema: 'platform', table: 'minibar_product', enabled: true, forced: true },
     { schema: 'platform', table: 'minibar_template', enabled: true, forced: true },
-    { schema: 'platform', table: 'room', enabled: true, forced: true },
-    { schema: 'platform', table: 'room_category', enabled: true, forced: true },
+    {
+      schema: 'platform',
+      table: 'room',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'room_category',
+      enabled: true,
+      forced: true,
+    },
     { schema: 'platform', table: 'stay_rate_snapshot', enabled: true, forced: true },
     // Phase 07 — minibar inventory and templates.
     {
@@ -17265,7 +18186,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       enabled: true,
       forced: true,
     },
-
     // Phase 09 — Cleaner and checkout coordination.
     {
       schema: 'platform',
@@ -17321,7 +18241,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       enabled: true,
       forced: true,
     },
-
     // Phase 10 — folio, deposit, payment, and correction.
     {
       schema: 'platform',
@@ -17383,7 +18302,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       enabled: true,
       forced: true,
     },
-
     // Phase 11 — shift, cash drawer, expense, and hotel finance.
     {
       schema: 'platform',
@@ -17418,6 +18336,14 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'reception_shift',
+      enabled: true,
+      forced: true,
+    },
+
+    // Phase 12 — public discovery and Guest authentication.
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
       enabled: true,
       forced: true,
     },
@@ -18243,7 +19169,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       using: '(hotel_id = platform.current_hotel_id())',
       withCheck: '(hotel_id = platform.current_hotel_id())',
     },
-
     // Phase 09 — Cleaner and checkout coordination.
     {
       schema: 'platform',
@@ -18335,7 +19260,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       using: '(hotel_id = platform.current_hotel_id())',
       withCheck: '(hotel_id = platform.current_hotel_id())',
     },
-
     // Phase 10 — folio, deposit, payment, and correction.
     {
       schema: 'platform',
@@ -18437,7 +19361,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       using: '(hotel_id = platform.current_hotel_id())',
       withCheck: '(hotel_id = platform.current_hotel_id())',
     },
-
     // Phase 11 — shift, cash drawer, expense, and hotel finance.
     {
       schema: 'platform',
@@ -18498,6 +19421,105 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       to: ['public'],
       using: '(hotel_id = platform.current_hotel_id())',
       withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+
+    // Phase 12 — public discovery and Guest authentication.
+    {
+      schema: 'platform',
+      table: 'hotel',
+      name: 'public_listing_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = hotel.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'public_listing_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = hotel_photo.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_photo',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_profile',
+      name: 'public_listing_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using: "(listing_state = 'PUBLISHED'::text)",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_subscription',
+      name: 'public_listing_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = hotel_subscription.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'room',
+      name: 'public_listing_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = room.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'room_category',
+      name: 'public_listing_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = room_category.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'room_configuration_change',
+      name: 'public_availability_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = room_configuration_change.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'stay',
+      name: 'public_availability_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = stay.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
     },
   ],
 };

@@ -108,6 +108,15 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   // Phase 05 remediation 2: receipt delivery is its own job.
   'platform.pending_ebarimt_deliveries(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
 
+  // Phase 12. The public listing projection: the one path by which an
+  // unauthenticated searcher reads across tenants (doc 09 §§3, 5). The bodies
+  // return the listing fields and a count of free rooms; the role that owns
+  // them cannot log in and reaches the underlying rows only through the narrow
+  // `public_listing_read` / `public_availability_read` policies.
+  'platform.public_hotel_listings()': KERNEL_OWNERS.maintenanceFn,
+  'platform.public_category_offers(p_hotel_id uuid, p_start timestamp with time zone, p_end timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+
   // Phase 07. The inventory ledger's two triggers: the only path by which a
   // warehouse or room balance changes, on tables no runtime may write. They
   // belong to the same narrow definer owner for the same reason the

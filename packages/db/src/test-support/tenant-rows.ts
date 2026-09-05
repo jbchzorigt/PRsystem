@@ -2233,6 +2233,23 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     updateColumn: 'revision',
     updateSet: `state = 'SUBMITTED', submitted_at = now(), revision = revision + 1`,
   },
+
+  // Phase 12. The only tenant-scoped table of the public discovery surface: a
+  // photograph belongs to one hotel, and the row holds the object key.
+  {
+    name: 'platform.hotel_photo',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.hotel_photo
+              (hotel_id, subject_type, object_key, content_type, byte_size,
+               created_by_account_id)
+            VALUES ($1, 'HOTEL', 'fixture/' || gen_random_uuid()::text, 'image/jpeg', 4096,
+                    gen_random_uuid())`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `sort_order = sort_order + 1, revision = revision + 1`,
+  },
 ];
 
 /** Errors that mean "the row was malformed", never "the policy refused it". */

@@ -33,6 +33,7 @@ export type TokenPurpose =
   | 'password_reset'
   | 'hotel_admin_activation'
   | 'phone_otp'
+  | 'guest_otp'
   | 'onboarding_draft';
 
 const SCOPE_BY_PURPOSE: Readonly<Record<TokenPurpose, HmacScope>> = {
@@ -41,6 +42,7 @@ const SCOPE_BY_PURPOSE: Readonly<Record<TokenPurpose, HmacScope>> = {
   password_reset: 'auth.password_reset_token',
   hotel_admin_activation: 'auth.activation_token',
   phone_otp: 'auth.phone_otp',
+  guest_otp: 'auth.guest_otp',
   onboarding_draft: 'auth.onboarding_draft',
 };
 
@@ -85,7 +87,11 @@ export class TokenService {
    * bound and stored exactly like every other secret here; the plaintext exists
    * only long enough to reach the delivery port.
    */
-  async issueNumericCode(subject: string, digits: number): Promise<IssuedToken> {
+  async issueNumericCode(
+    subject: string,
+    digits: number,
+    purpose: 'phone_otp' | 'guest_otp' = 'phone_otp',
+  ): Promise<IssuedToken> {
     if (!Number.isInteger(digits) || digits < 4 || digits > 10) {
       throw new Error('a one-time code is 4 to 10 digits');
     }
@@ -97,7 +103,7 @@ export class TokenService {
     let sampled = limit;
     while (sampled >= limit) sampled = randomBytes(4).readUInt32BE(0);
     const token = String(sampled % ceiling).padStart(digits, '0');
-    const digest = await this.digest('phone_otp', subject, token);
+    const digest = await this.digest(purpose, subject, token);
     return { ...digest, token };
   }
 

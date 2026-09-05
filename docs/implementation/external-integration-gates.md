@@ -32,11 +32,11 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | Gate | System | Blocks | Status | Port phase | Adapter phase |
 | --- | --- | --- | --- | --- | --- |
 | EXT-01 | XYP / ХУР | Identity verification at check-in and Wanted-record creation | **BLOCKED** | 08 | 20 |
-| EXT-02 | e-Mongolia | Guest registration and login channel | **BLOCKED** | 12 | 20 |
+| EXT-02 | e-Mongolia | Guest registration and login channel | **BLOCKED** | 12 — canonical port and simulator, conformance-gated | 20 |
 | EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 | EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 | EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 | 20 |
-| EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 | 20 |
+| EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 — canonical port and simulator, geocoding gated; distance is server-side and provider-free | 20 |
 | EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 | 20 |
 | EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 | 20 |
 | EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 | 20 |
@@ -82,6 +82,16 @@ identifier, token lifecycle, account-linking conditions, sandbox and production 
 account without dual-channel verification (doc 09 §6.3).
 
 **Consumed by.** Phase 12.
+
+**Phase 12 status.** `EMongoliaAuthPort` and `SimulatedEMongoliaAuth` ship in `@prsystem/ports`
+with the simulator conformance suite; `UnavailableEMongoliaAuth` answers `DISABLED` for both
+`begin()` and `complete()` before any network call, and `selectEMongoliaAuth` returns it outside
+local, CI and test. The guest module translates a disabled gate and an outage alike into
+"e-Mongolia is not available; register by phone", which is doc 09 §6.1's own fallback. The provider
+subject is stored only as a keyed token in `lookup.guest_identity_subject`, and nothing links two
+accounts without the dual-channel confirmation of doc 09 §6.3. **Still BLOCKED**: no contract,
+field list, consent basis, token lifecycle or sandbox access exists, and the production adapter
+stays disabled.
 
 ---
 
@@ -160,6 +170,18 @@ profile.
 of 5 km, availability first and then distance.
 
 **Consumed by.** Phase 05 (onboarding location capture), Phase 12 (public discovery).
+
+**Phase 12 status.** `GeoPort` and `SimulatedGeo` ship in `@prsystem/ports` with the conformance
+suite. The gate is applied to the half that needs the provider: `geocode` and `reverseGeocode`
+answer `DISABLED` on the production path, while `distance` is a great-circle calculation over the
+integer micro-degree coordinates the platform already stores, reaches no provider, and is available
+on both paths. That split is deliberate and recorded as `A-P12-6`: doc 09 §4 requires distance and
+ordering to be computed server-side, and answering `DISABLED` for arithmetic would push the
+calculation to the only other place it could go — the client. The public search accepts no distance
+field at all and refuses one with 400 rather than ignoring it. **Still BLOCKED** for geocoding: the
+API surface, billing account, key restrictions and permitted storage of address and coordinates are
+undecided. The nearby radius and sort order remain **P1-01**, running on the interim 5 km,
+availability-then-distance values.
 
 ---
 

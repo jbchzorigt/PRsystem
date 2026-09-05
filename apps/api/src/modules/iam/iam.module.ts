@@ -20,8 +20,10 @@ import { selectOpenWork } from './contracts/open-work.port';
 import type { RestaurantDirectoryPort } from './contracts/restaurant-directory.port';
 import { selectRestaurantDirectory } from './contracts/restaurant-directory.port';
 import { AUTH_SECURITY_PARAMETERS } from './contracts/security-parameters';
+import { IamGuestAccounts } from './contracts/guest-accounts.port';
 import {
   AUTH_PARAMETERS,
+  GUEST_ACCOUNTS,
   IAM_POOL,
   KEY_MANAGEMENT,
   OPEN_WORK,
@@ -139,6 +141,13 @@ export class IamModule {
         { provide: SUBSCRIPTION_STATE, useValue: subscription },
         { provide: STAFF_NOTIFICATION, useValue: notifications },
         { provide: AUTH_PARAMETERS, useValue: deps.parameters },
+        // The Guest realm's door into the account kernel. Constructed here,
+        // where the keys and the parameter set live, and consumed by the guest
+        // module through the contract (CLAUDE.md §3).
+        {
+          provide: GUEST_ACCOUNTS,
+          useValue: new IamGuestAccounts(keys, deps.parameters ?? AUTH_SECURITY_PARAMETERS),
+        },
         { provide: OPEN_WORK, useValue: openWork },
         { provide: RESTAURANT_DIRECTORY, useValue: restaurants },
         { provide: SessionService, useValue: new SessionService(deps) },
@@ -153,6 +162,7 @@ export class IamModule {
         SUBSCRIPTION_STATE,
         STAFF_NOTIFICATION,
         AUTH_PARAMETERS,
+        GUEST_ACCOUNTS,
         OPEN_WORK,
         RESTAURANT_DIRECTORY,
       ],

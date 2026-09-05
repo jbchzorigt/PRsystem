@@ -607,6 +607,36 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: 'carries hotel_id; the expense lifecycle whose approval is not a cash outflow (FIN-DEC-005)',
   },
   {
+    schema: 'platform',
+    table: 'guest_account',
+    classification: 'ACCOUNT_GLOBAL',
+    why: "the Guest's own account; a Guest belongs to no hotel and carries no hotel_id (BK-DEC-002, doc 09 §6.2)",
+  },
+  {
+    schema: 'platform',
+    table: 'guest_phone_verification',
+    classification: 'ACCOUNT_GLOBAL',
+    why: 'the one-time code proving a phone number, before any account or hotel exists (doc 09 §6.2)',
+  },
+  {
+    schema: 'platform',
+    table: 'guest_identity_link',
+    classification: 'ACCOUNT_GLOBAL',
+    why: 'binds an external provider subject to a Guest account; no tenant is involved (doc 09 §6.1)',
+  },
+  {
+    schema: 'platform',
+    table: 'guest_account_link_request',
+    classification: 'ACCOUNT_GLOBAL',
+    why: 'the dual-channel confirmation between two account-level identities (doc 09 §6.3)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_photo',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the photographs a listing is not shown without (doc 09 §3.2, §5)',
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

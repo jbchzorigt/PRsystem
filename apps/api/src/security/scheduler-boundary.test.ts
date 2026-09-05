@@ -362,6 +362,15 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
             gateways: selectPaymentGateways('ci'),
           },
           finance: { config: { databaseUrl: apiUrl } },
+          guest: {
+            config: {
+              databaseUrl: apiUrl,
+              appEnv: 'test',
+              kmsAdapter: 'local',
+              kmsSeed: 'synthetic-scheduler-boundary-seed',
+            },
+          },
+          public: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           stay: {
             config: {
               databaseUrl: apiUrl,

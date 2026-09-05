@@ -400,10 +400,12 @@ describe('tenant isolation across CRUD, per runtime login', () => {
   it('refuses the platform sentinel in a realm that has no platform-wide work', async () => {
     // The application context boundary, where the pairing rule lives. Phase 04
     // added the account-scoped half of the Hotel realm — signing in, changing a
-    // password, logging out of every device — which belongs to an account rather
-    // than to one hotel. The Guest and Police realms have no such work and are
-    // still refused.
-    for (const realm of ['guest', 'police'] as const) {
+    // password, logging out of every device — which belongs to an account
+    // rather than to one hotel. Phase 12 added the Guest realm on the same
+    // terms: a guest belongs to no hotel, and registration, sign-in and
+    // recovery are that same account-scoped work. The Police realm has no
+    // platform-wide work and is still refused.
+    for (const realm of ['police'] as const) {
       expect(() =>
         assertTenantContext({
           hotelId: PLATFORM_SCOPE,
@@ -414,7 +416,7 @@ describe('tenant isolation across CRUD, per runtime login', () => {
       ).toThrow(/platform scope is valid only in the operation realm/);
     }
 
-    for (const realm of ['operation', 'hotel'] as const) {
+    for (const realm of ['operation', 'hotel', 'guest'] as const) {
       expect(() =>
         assertTenantContext({
           hotelId: PLATFORM_SCOPE,

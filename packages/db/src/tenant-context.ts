@@ -121,16 +121,25 @@ export function assertTenantContext(context: TenantContext): void {
   // correct reading of those flows: they touch only the tables that carry no
   // tenant column at all.
   //
+  // Phase 12 admits the Guest realm on exactly the same terms and for exactly
+  // the same work: a guest belongs to no hotel, so registering, signing in and
+  // recovering a password are account-scoped in the sense above, and the four
+  // `guest_*` tables carry no `hotel_id` either. The public listing projection
+  // runs here too, and reads across tenants only through the `SECURITY
+  // DEFINER` functions of migration `0013` — never by widening this context.
+  // The Police realm still has no platform-wide work and is still refused.
+  //
   // Anything else is a resolver that has widened a tenant request into a
   // platform one. This is an application-boundary rule, not a database one —
   // see the note on what custom-GUC RLS does and does not protect against.
   if (
     context.hotelId === PLATFORM_SCOPE &&
     context.realm !== 'operation' &&
-    context.realm !== 'hotel'
+    context.realm !== 'hotel' &&
+    context.realm !== 'guest'
   ) {
     throw new TenantScopeError(
-      'the platform scope is valid only in the operation realm and for account-scoped hotel work',
+      'the platform scope is valid only in the operation realm and for account-scoped work',
     );
   }
 }

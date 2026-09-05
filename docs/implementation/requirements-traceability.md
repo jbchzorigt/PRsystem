@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.24 (Phase 11 — the 20 shift, cash drawer, expense and hotel finance decisions move to
-`COVERED` with code and test references; 171 of 279 `COVERED`)
+**Version:** 1.25 (Phase 12 — the two public discovery and Guest authentication decisions move to
+`COVERED` with code and test references; 173 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -295,8 +295,8 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 | ID | Subject | Phase | Status |
 | --- | --- | --- | --- |
-| BK-DEC-001 | Public search by date, location and current position | 12 | PENDING |
-| BK-DEC-002 | e-Mongolia or phone-OTP booking authentication | 12 | PENDING |
+| BK-DEC-001 | Public search by date, location and current position | 12 | COVERED | `packages/db/migrations/0013_guest_identity_discovery.sql`, `apps/api/src/modules/public/domain/listing.ts`, `apps/api/src/modules/public/repositories/public.repository.ts`, `apps/api/src/modules/public/services/search.service.ts`, `apps/api/src/modules/public/http/public-validation.ts`, `packages/ports/src/geo.port.ts` | `apps/api/src/modules/public/domain/listing.test.ts`, `apps/api/src/modules/public/public.integration.test.ts`, `apps/api/src/modules/public/public.security.test.ts`, `apps/api/src/modules/public/public.http.test.ts`, `packages/ports/src/conformance.test.ts` |
+| BK-DEC-002 | e-Mongolia or phone-OTP booking authentication | 12 | COVERED | `packages/db/migrations/0013_guest_identity_discovery.sql`, `apps/api/src/modules/guest/domain/guest.ts`, `apps/api/src/modules/guest/services/registration.service.ts`, `apps/api/src/modules/guest/services/emongolia.service.ts`, `apps/api/src/modules/iam/contracts/guest-accounts.port.ts`, `packages/ports/src/emongolia-auth.port.ts` | `apps/api/src/modules/guest/domain/guest.test.ts`, `apps/api/src/modules/guest/guest.integration.test.ts`, `apps/api/src/modules/guest/guest.concurrency.test.ts`, `apps/api/src/modules/guest/guest.security.test.ts`, `packages/ports/src/conformance.test.ts` |
 | BK-DEC-003 | Booking payment routed through the platform | 14 | PENDING |
 | BK-DEC-004 | Hotel ratings and reviews on listings | 16 | PENDING |
 | BK-DEC-005 | Verified-stay review eligibility | 16 | PENDING |

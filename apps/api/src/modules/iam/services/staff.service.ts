@@ -957,6 +957,11 @@ export class StaffService extends IamServiceBase {
       const accounts = new AccountRepository(uow);
       const account = await accounts.findByEmail('hotel', entry.emailNormalized);
       if (account === undefined || account.state !== 'ACTIVE') return 'ignored';
+      // A Hotel account always holds an address — `user_account_email_required_
+      // outside_guest` is the constraint that says so, and only the Guest realm
+      // is exempt. Asserted rather than assumed, because the type stopped
+      // saying it when the Guest realm joined the table.
+      const emailNormalized = hotelEmailOf(account);
       await establishAccountScope(uow, account.accountId);
 
       // The intent this queue entry owns, if it has one.
@@ -999,7 +1004,7 @@ export class StaffService extends IamServiceBase {
           );
           return {
             accountId: account.accountId,
-            emailNormalized: account.emailNormalized,
+            emailNormalized,
             resetId: bound.resetId,
             deliveryId: bound.deliveryId,
             expiresAt: bound.expiresAt,
@@ -1056,14 +1061,14 @@ export class StaffService extends IamServiceBase {
           resetId: created.resetId,
           deliveryId: created.deliveryId,
           accountId: account.accountId,
-          emailNormalized: account.emailNormalized,
+          emailNormalized,
           initiatedBy: entry.initiatedBy,
         },
       });
 
       return {
         accountId: account.accountId,
-        emailNormalized: account.emailNormalized,
+        emailNormalized,
         resetId: created.resetId,
         deliveryId: created.deliveryId,
         expiresAt: created.expiresAt,
@@ -1124,7 +1129,7 @@ export class StaffService extends IamServiceBase {
       // may see: they are authenticated, hold the permission and already know
       // this member exists, so an operational failure here is information they
       // are entitled to rather than an oracle — and queueing failing is one.
-      await new AccountRepository(uow).queueResetIntake(account.emailNormalized, {
+      await new AccountRepository(uow).queueResetIntake(hotelEmailOf(account), {
         by: 'hotel_admin',
         accountId: gate.principal.accountId,
       });
@@ -1598,6 +1603,25 @@ function deliveryAad(resetId: string): { table: string; column: string; rowRef: 
 }
 
 /** A committed delivery intent, ready to hand to a provider. */
+/**
+ * The address of an account outside the Guest realm.
+ *
+ * `user_account.email_normalized` became nullable in Phase 12 so a Guest can
+ * register by phone (`BK-DEC-002`). Every other realm still requires it, by
+ * database constraint; this reads that guarantee rather than casting past it,
+ * so a future realm that forgets the rule fails here instead of writing a
+ * `null` into a delivery.
+ */
+function hotelEmailOf(account: {
+  readonly realm: string;
+  readonly emailNormalized: string | null;
+}): string {
+  if (account.emailNormalized === null) {
+    throw new Error(`an account in the ${account.realm} realm must hold an email address`);
+  }
+  return account.emailNormalized;
+}
+
 interface PreparedDelivery {
   readonly accountId: string;
   readonly emailNormalized: string;

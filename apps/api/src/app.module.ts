@@ -18,6 +18,10 @@ import type { BillingModuleOptions } from './modules/billing/billing.module';
 import { BillingModule } from './modules/billing/billing.module';
 import type { FinanceModuleOptions } from './modules/finance/finance.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import type { GuestModuleOptions } from './modules/guest/guest.module';
+import { GuestModule } from './modules/guest/guest.module';
+import type { PublicModuleOptions } from './modules/public/public.module';
+import { PublicModule } from './modules/public/public.module';
 import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
 import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
 import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
@@ -73,6 +77,17 @@ export interface AppModuleOptions {
    * the billing module mirrors its cash payments into this module's ledger.
    */
   readonly finance: FinanceModuleOptions;
+  /**
+   * The Phase 12 Guest realm. It reaches the account kernel through the IAM
+   * module's `GuestAccountsPort`, so there is one place that issues a session.
+   */
+  readonly guest: GuestModuleOptions;
+  /**
+   * The Phase 12 public surface. It owns no table and imports no module: what
+   * it reads it reads through the listing projection, which is a reviewed SQL
+   * boundary rather than another module's repository.
+   */
+  readonly public: PublicModuleOptions;
   /**
    * A pool the application should close on shutdown.
    *
@@ -143,6 +158,8 @@ export class AppModule {
           stay,
         }),
         FinanceModule.forRoot({ ...options.finance, iam, stay }),
+        GuestModule.forRoot({ ...options.guest, iam }),
+        PublicModule.forRoot(options.public),
       ],
     };
   }

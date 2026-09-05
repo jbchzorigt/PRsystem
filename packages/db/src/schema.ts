@@ -593,6 +593,13 @@ export const hotel = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('public_listing_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = hotel.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
     ],
   )
   .enableRLS();
@@ -609,7 +616,7 @@ export const userAccount = platform.table(
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .default(sql`now()`),
-    emailNormalized: text('email_normalized').notNull(),
+    emailNormalized: text('email_normalized'),
     emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     policeScopeRef: text('police_scope_ref'),
     realm: text('realm').notNull(),
@@ -633,8 +640,12 @@ export const userAccount = platform.table(
       sql`((police_scope_ref IS NULL) OR (realm = 'police'::text))`,
     ),
     check(
+      'user_account_email_required_outside_guest',
+      sql`((email_normalized IS NOT NULL) OR (realm = 'guest'::text))`,
+    ),
+    check(
       'user_account_realm_known',
-      sql`(realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text]))`,
+      sql`(realm = ANY (ARRAY['hotel'::text, 'guest'::text, 'operation'::text, 'police'::text]))`,
     ),
     check(
       'user_account_realm_role_matches_realm',
@@ -734,7 +745,7 @@ export const serverSession = platform.table(
     check('server_session_expiry_ordered', sql`(idle_expires_at <= absolute_expires_at)`),
     check(
       'server_session_realm_known',
-      sql`(realm = ANY (ARRAY['hotel'::text, 'operation'::text, 'police'::text]))`,
+      sql`(realm = ANY (ARRAY['hotel'::text, 'guest'::text, 'operation'::text, 'police'::text]))`,
     ),
     check('server_session_revision_non_negative', sql`(revision >= 0)`),
     check(
@@ -2234,6 +2245,11 @@ export const hotelProfile = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('public_listing_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(listing_state = 'PUBLISHED'::text)`,
+      }),
     ],
   )
   .enableRLS();
@@ -2366,6 +2382,13 @@ export const hotelSubscription = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('public_listing_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = hotel_subscription.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
       }),
     ],
   )
@@ -3166,6 +3189,13 @@ export const roomCategory = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('public_listing_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = room_category.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
     ],
   )
   .enableRLS();
@@ -3243,6 +3273,13 @@ export const room = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('public_listing_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = room.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
       }),
     ],
   )
@@ -4109,6 +4146,13 @@ export const roomConfigurationChange = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('public_availability_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = room_configuration_change.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
     ],
   )
   .enableRLS();
@@ -4709,6 +4753,13 @@ export const stay = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('public_availability_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = stay.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
       }),
     ],
   )
@@ -7186,6 +7237,380 @@ export const expense = platform
   )
   .enableRLS();
 
+// ---------------------------------------------------------------------
+// Phase 12 — public discovery and Guest authentication.
+// ---------------------------------------------------------------------
+
+/**
+ * The Guest's own account: one verified phone number, held as a keyed lookup
+ * token beside the encrypted number itself, and never in the clear
+ * (`BK-DEC-002`, doc 09 §6.2). Its identity is written once.
+ */
+export const guestAccount = platform.table(
+  'guest_account',
+  {
+    accountId: uuid('account_id').primaryKey().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    displayName: text('display_name'),
+    phoneCiphertext: bytea('phone_ciphertext'),
+    phoneKeyVersion: text('phone_key_version'),
+    phoneToken: text('phone_token'),
+    phoneTokenKeyVersion: text('phone_token_key_version'),
+    phoneVerifiedAt: timestamp('phone_verified_at', { withTimezone: true }),
+    phoneWrappedDek: bytea('phone_wrapped_dek'),
+    realm: text('realm')
+      .notNull()
+      .default(sql`'guest'::text`),
+    registeredVia: text('registered_via').notNull(),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    state: text('state')
+      .notNull()
+      .default(sql`'ACTIVE'::text`),
+  },
+  (table) => [
+    foreignKey({
+      name: 'guest_account_account_fkey',
+      columns: [table.accountId, table.realm],
+      foreignColumns: [userAccount.accountId, userAccount.realm],
+    }).onDelete('restrict'),
+    check(
+      'guest_account_display_name_bounded',
+      sql`((display_name IS NULL) OR ((length(display_name) >= 1) AND (length(display_name) <= 120)))`,
+    ),
+    check(
+      'guest_account_phone_all_or_nothing',
+      sql`(num_nulls(phone_token, phone_token_key_version, phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at) = ANY (ARRAY[0, 6]))`,
+    ),
+    check(
+      'guest_account_phone_registration_has_phone',
+      sql`((registered_via <> 'PHONE_OTP'::text) OR (phone_token IS NOT NULL))`,
+    ),
+    check('guest_account_realm_is_guest', sql`(realm = 'guest'::text)`),
+    check(
+      'guest_account_registered_via_known',
+      sql`(registered_via = ANY (ARRAY['PHONE_OTP'::text, 'PROVIDER'::text]))`,
+    ),
+    check('guest_account_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'guest_account_state_known',
+      sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text, 'CLOSED'::text]))`,
+    ),
+    check(
+      'guest_account_token_shape',
+      sql`((phone_token IS NULL) OR (phone_token ~ '^[0-9a-f]{64}$'::text))`,
+    ),
+    uniqueIndex('guest_account_phone_token_uq')
+      .on(table.phoneToken)
+      .where(sql`phone_token IS NOT NULL`),
+  ],
+);
+
+/**
+ * The one-time code that proves a number. Stored as a keyed HMAC, time-limited
+ * and attempt-limited; one live code per number and purpose, so a resend
+ * supersedes rather than stacks (doc 09 §6.2).
+ */
+export const guestPhoneVerification = platform.table(
+  'guest_phone_verification',
+  {
+    accountId: uuid('account_id'),
+    attempts: integer('attempts')
+      .notNull()
+      .default(sql`0`),
+    codeHash: text('code_hash').notNull(),
+    codeKeyVersion: text('code_key_version').notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    maxAttempts: integer('max_attempts')
+      .notNull()
+      .default(sql`5`),
+    phoneToken: text('phone_token').notNull(),
+    purpose: text('purpose').notNull(),
+    requestIpHash: text('request_ip_hash'),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    sentAt: timestamp('sent_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    state: text('state')
+      .notNull()
+      .default(sql`'PENDING'::text`),
+    verificationId: uuid('verification_id')
+      .primaryKey()
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+  },
+  (table) => [
+    foreignKey({
+      name: 'guest_phone_verification_account_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    check(
+      'guest_phone_verification_attempts_bounded',
+      sql`((attempts >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 10)) AND (attempts <= max_attempts))`,
+    ),
+    check('guest_phone_verification_code_shape', sql`(code_hash ~ '^[0-9a-f]{64}$'::text)`),
+    check(
+      'guest_phone_verification_consumed_shape',
+      sql`((state = 'CONSUMED'::text) = (consumed_at IS NOT NULL))`,
+    ),
+    check('guest_phone_verification_expiry_after_send', sql`(expires_at > sent_at)`),
+    check(
+      'guest_phone_verification_ip_shape',
+      sql`((request_ip_hash IS NULL) OR (request_ip_hash ~ '^[0-9a-f]{64}$'::text))`,
+    ),
+    check(
+      'guest_phone_verification_purpose_known',
+      sql`(purpose = ANY (ARRAY['REGISTER'::text, 'SIGN_IN'::text, 'PASSWORD_RESET'::text, 'ACCOUNT_LINK'::text]))`,
+    ),
+    check('guest_phone_verification_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'guest_phone_verification_state_known',
+      sql`(state = ANY (ARRAY['PENDING'::text, 'CONSUMED'::text, 'EXPIRED'::text, 'LOCKED'::text]))`,
+    ),
+    check('guest_phone_verification_token_shape', sql`(phone_token ~ '^[0-9a-f]{64}$'::text)`),
+    uniqueIndex('guest_phone_verification_one_pending_uq')
+      .on(table.phoneToken, table.purpose)
+      .where(sql`state = 'PENDING'::text`),
+    index('guest_phone_verification_rate_idx').on(
+      table.phoneToken,
+      table.sentAt.desc().nullsFirst(),
+    ),
+  ],
+);
+
+/**
+ * An external identity bound to a Guest account. What e-Mongolia returns is a
+ * provider subject, tokenized under its own scope; the link is append-only and
+ * one subject reaches one account (doc 09 §6.1).
+ */
+export const guestIdentityLink = platform.table(
+  'guest_identity_link',
+  {
+    accountId: uuid('account_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    linkId: uuid('link_id')
+      .primaryKey()
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+    linkedAt: timestamp('linked_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    linkedVia: text('linked_via').notNull(),
+    provider: text('provider').notNull(),
+    realm: text('realm')
+      .notNull()
+      .default(sql`'guest'::text`),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    subjectKeyVersion: text('subject_key_version').notNull(),
+    subjectToken: text('subject_token').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'guest_identity_link_account_fkey',
+      columns: [table.accountId, table.realm],
+      foreignColumns: [userAccount.accountId, userAccount.realm],
+    }).onDelete('restrict'),
+    check('guest_identity_link_provider_known', sql`(provider = 'EMONGOLIA'::text)`),
+    check('guest_identity_link_realm_is_guest', sql`(realm = 'guest'::text)`),
+    check('guest_identity_link_revision_non_negative', sql`(revision >= 0)`),
+    check('guest_identity_link_subject_shape', sql`(subject_token ~ '^[0-9a-f]{64}$'::text)`),
+    check(
+      'guest_identity_link_via_known',
+      sql`(linked_via = ANY (ARRAY['PROVIDER_REGISTRATION'::text, 'DUAL_CHANNEL_LINK'::text]))`,
+    ),
+    uniqueIndex('guest_identity_link_account_uq').on(table.provider, table.accountId),
+    uniqueIndex('guest_identity_link_subject_uq').on(table.provider, table.subjectToken),
+  ],
+);
+
+/**
+ * The dual-channel confirmation doc 09 §6.3 requires before an e-Mongolia
+ * identity joins an existing phone account. `CONFIRMED` is unreachable without
+ * both channels, the verification it used and the link it produced.
+ */
+export const guestAccountLinkRequest = platform.table(
+  'guest_account_link_request',
+  {
+    accountId: uuid('account_id').notNull(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    linkId: uuid('link_id'),
+    phoneChannelVerifiedAt: timestamp('phone_channel_verified_at', { withTimezone: true }),
+    provider: text('provider').notNull(),
+    providerChannelVerifiedAt: timestamp('provider_channel_verified_at', { withTimezone: true }),
+    realm: text('realm')
+      .notNull()
+      .default(sql`'guest'::text`),
+    reason: text('reason'),
+    requestId: uuid('request_id')
+      .primaryKey()
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+    requestedAt: timestamp('requested_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    state: text('state')
+      .notNull()
+      .default(sql`'PENDING'::text`),
+    subjectKeyVersion: text('subject_key_version').notNull(),
+    subjectToken: text('subject_token').notNull(),
+    verificationId: uuid('verification_id'),
+  },
+  (table) => [
+    foreignKey({
+      name: 'guest_account_link_request_account_fkey',
+      columns: [table.accountId, table.realm],
+      foreignColumns: [userAccount.accountId, userAccount.realm],
+    }).onDelete('restrict'),
+    check(
+      'guest_account_link_request_decided_shape',
+      sql`((state = 'PENDING'::text) = (decided_at IS NULL))`,
+    ),
+    check(
+      'guest_account_link_request_dual_channel',
+      sql`((state <> 'CONFIRMED'::text) OR ((provider_channel_verified_at IS NOT NULL) AND (phone_channel_verified_at IS NOT NULL) AND (verification_id IS NOT NULL) AND (link_id IS NOT NULL)))`,
+    ),
+    foreignKey({
+      name: 'guest_account_link_request_link_fkey',
+      columns: [table.linkId],
+      foreignColumns: [guestIdentityLink.linkId],
+    }).onDelete('restrict'),
+    check('guest_account_link_request_provider_known', sql`(provider = 'EMONGOLIA'::text)`),
+    check('guest_account_link_request_realm_is_guest', sql`(realm = 'guest'::text)`),
+    check(
+      'guest_account_link_request_reason_bounded',
+      sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+    ),
+    check('guest_account_link_request_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'guest_account_link_request_state_known',
+      sql`(state = ANY (ARRAY['PENDING'::text, 'CONFIRMED'::text, 'REJECTED'::text, 'EXPIRED'::text]))`,
+    ),
+    check(
+      'guest_account_link_request_subject_shape',
+      sql`(subject_token ~ '^[0-9a-f]{64}$'::text)`,
+    ),
+    foreignKey({
+      name: 'guest_account_link_request_verification_fkey',
+      columns: [table.verificationId],
+      foreignColumns: [guestPhoneVerification.verificationId],
+    }).onDelete('restrict'),
+    index('guest_account_link_request_account_idx').on(table.accountId, table.state),
+    uniqueIndex('guest_account_link_request_one_pending_uq')
+      .on(table.provider, table.subjectToken)
+      .where(sql`state = 'PENDING'::text`),
+  ],
+);
+
+/**
+ * The photographs a listing cannot be shown without (doc 09 §3.2, §3.3, §5).
+ * The bytes live in private object storage; the row holds the key. One cover
+ * per hotel, and a category photograph names its category.
+ */
+export const hotelPhoto = platform
+  .table(
+    'hotel_photo',
+    {
+      byteSize: integer('byte_size').notNull(),
+      categoryId: uuid('category_id'),
+      contentType: text('content_type').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      isCover: boolean('is_cover')
+        .notNull()
+        .default(sql`false`),
+      objectKey: text('object_key').notNull(),
+      photoId: uuid('photo_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      sortOrder: integer('sort_order')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      subjectType: text('subject_type').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'hotel_photo_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      check(
+        'hotel_photo_content_type_known',
+        sql`(content_type = ANY (ARRAY['image/jpeg'::text, 'image/png'::text, 'image/webp'::text]))`,
+      ),
+      check('hotel_photo_cover_is_active', sql`((NOT is_cover) OR (state = 'ACTIVE'::text))`),
+      check('hotel_photo_cover_is_hotel', sql`((NOT is_cover) OR (subject_type = 'HOTEL'::text))`),
+      foreignKey({
+        name: 'hotel_photo_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('hotel_photo_identity_uq').on(table.hotelId, table.photoId),
+      check(
+        'hotel_photo_key_bounded',
+        sql`((length(object_key) >= 1) AND (length(object_key) <= 400))`,
+      ),
+      check('hotel_photo_revision_non_negative', sql`(revision >= 0)`),
+      check('hotel_photo_size_bounded', sql`((byte_size >= 1) AND (byte_size <= 10485760))`),
+      check('hotel_photo_sort_non_negative', sql`(sort_order >= 0)`),
+      check('hotel_photo_state_known', sql`(state = ANY (ARRAY['ACTIVE'::text, 'REMOVED'::text]))`),
+      check(
+        'hotel_photo_subject_known',
+        sql`(subject_type = ANY (ARRAY['HOTEL'::text, 'ROOM_CATEGORY'::text]))`,
+      ),
+      check(
+        'hotel_photo_subject_shape',
+        sql`((subject_type = 'ROOM_CATEGORY'::text) = (category_id IS NOT NULL))`,
+      ),
+      uniqueIndex('hotel_photo_object_key_uq').on(table.objectKey),
+      uniqueIndex('hotel_photo_one_cover_uq')
+        .on(table.hotelId)
+        .where(sql`is_cover IS TRUE`),
+      index('hotel_photo_subject_idx').on(
+        table.hotelId,
+        table.subjectType,
+        table.categoryId,
+        table.sortOrder,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('public_listing_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = hotel_photo.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -7293,4 +7718,10 @@ export const DECLARED_TABLES = [
   cashTransfer,
   cashRequest,
   expense,
+  // Phase 12.
+  guestAccount,
+  guestPhoneVerification,
+  guestIdentityLink,
+  guestAccountLinkRequest,
+  hotelPhoto,
 ] as const;
