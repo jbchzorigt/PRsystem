@@ -9761,6 +9761,11 @@ export const hotelReview = platform
         for: 'select',
         using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
       }),
+      pgPolicy('moderation_resolution_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(status = ANY (ARRAY['PUBLISHED'::text, 'HIDDEN'::text]))`,
+      }),
       pgPolicy('public_review_read', {
         for: 'select',
         to: ['prsystem_maintenance_fn'],
@@ -9951,6 +9956,11 @@ export const reviewReport = platform
         .on(table.accountId, table.reviewId)
         .where(sql`state = 'OPEN'::text`),
       index('review_report_queue_idx').on(table.state, table.createdAt),
+      pgPolicy('queue_resolution_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'OPEN'::text)`,
+      }),
       pgPolicy('own_report_read', {
         for: 'select',
         using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,

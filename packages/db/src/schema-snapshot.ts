@@ -25834,6 +25834,16 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'hotel_review',
+      name: 'moderation_resolution_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using: "(status = ANY (ARRAY['PUBLISHED'::text, 'HIDDEN'::text]))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'hotel_review',
       name: 'public_review_read',
       as: 'PERMISSIVE',
       command: 'SELECT',
@@ -25934,6 +25944,16 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       to: ['public'],
       using: '(hotel_id = platform.current_hotel_id())',
       withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'review_report',
+      name: 'queue_resolution_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using: "(state = 'OPEN'::text)",
+      withCheck: null,
     },
     {
       schema: 'platform',
