@@ -31,6 +31,7 @@ const PHASE11_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-11-evidence
 const PHASE12_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-12-evidence.json');
 const PHASE13_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-13-evidence.json');
 const PHASE14_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-14-evidence.json');
+const PHASE15_MANIFEST = join(ROOT, 'docs', 'implementation', 'phase-15-evidence.json');
 const originalRunbook = readFileSync(RUNBOOK, 'utf8');
 const originalPhaseStatus = readFileSync(PHASE_STATUS, 'utf8');
 const originalManifest = readFileSync(EVIDENCE_MANIFEST, 'utf8');
@@ -44,6 +45,7 @@ const originalPhase11Manifest = readFileSync(PHASE11_MANIFEST, 'utf8');
 const originalPhase12Manifest = readFileSync(PHASE12_MANIFEST, 'utf8');
 const originalPhase13Manifest = readFileSync(PHASE13_MANIFEST, 'utf8');
 const originalPhase14Manifest = readFileSync(PHASE14_MANIFEST, 'utf8');
+const originalPhase15Manifest = readFileSync(PHASE15_MANIFEST, 'utf8');
 
 const SOURCES = {
   runbook: { text: originalRunbook, env: 'PRSYSTEM_RUNBOOK', file: 'doc.md' },
@@ -102,6 +104,11 @@ const SOURCES = {
     text: originalPhase14Manifest,
     env: 'PRSYSTEM_PHASE14_MANIFEST',
     file: 'phase-14-evidence.json',
+  },
+  'phase15-manifest': {
+    text: originalPhase15Manifest,
+    env: 'PRSYSTEM_PHASE15_MANIFEST',
+    file: 'phase-15-evidence.json',
   },
 };
 
@@ -162,6 +169,18 @@ function inPhase11Region(text, change) {
   const region = text.slice(begin, end + endMarker.length);
   const changed = change(region);
   if (changed === region) throw new Error('the change did not alter the Phase 11 evidence region');
+  return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
+}
+
+/** Applies `change` only inside the Phase 15 evidence region (check 17). */
+function inPhase15Region(text, change) {
+  const begin = text.indexOf('<!-- phase-15-evidence:begin -->');
+  const endMarker = '<!-- phase-15-evidence:end -->';
+  const end = text.indexOf(endMarker);
+  if (begin < 0 || end < 0) throw new Error('the Phase 15 evidence markers are missing');
+  const region = text.slice(begin, end + endMarker.length);
+  const changed = change(region);
+  if (changed === region) throw new Error('the change did not alter the Phase 15 evidence region');
   return text.slice(0, begin) + changed + text.slice(end + endMarker.length);
 }
 
@@ -871,6 +890,99 @@ const FIXTURES = [
       ),
   },
 
+  // ------------------------------------------------ Phase 15 evidence (check 17)
+  {
+    name: 'phase 15 manifest: an acceptance the governed state does not record',
+    file: 'phase15-manifest',
+    expect: /Phase 15 manifest declares acceptance = "ACCEPTED"/,
+    mutate: (text) =>
+      text.replace('"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"', '"acceptance": "ACCEPTED"'),
+  },
+  {
+    name: 'phase 15 manifest: a non-zero exit recorded',
+    file: 'phase15-manifest',
+    expect: /records a non-zero exit code in the Phase 15 manifest/,
+    mutate: (text) => text.replace('"exits": [0]', '"exits": [1]'),
+  },
+  {
+    name: 'phase 15 manifest: measured at the Phase 05 acceptance commit',
+    file: 'phase15-manifest',
+    expect: /Phase 15 manifest names the Phase 05 acceptance commit as its measured commit/,
+    mutate: (text) =>
+      text.replace(
+        /"measuredAtCommit": "[0-9a-f]{40}"/,
+        '"measuredAtCommit": "35314ba210f609269863f0b528bbe827e6a5d3ce"',
+      ),
+  },
+  {
+    name: 'phase 15 manifest: a required command removed',
+    file: 'phase15-manifest',
+    expect: /Phase 15 manifest omits required battery commands: pnpm run test:security/,
+    mutate: (text) => {
+      const manifest = JSON.parse(text);
+      manifest.battery = manifest.battery.filter(
+        (entry) => entry.command !== 'pnpm run test:security',
+      );
+      return `${JSON.stringify(manifest, null, 2)}\n`;
+    },
+  },
+  {
+    name: 'phase 15 manifest: the concurrency gate run once instead of three times',
+    file: 'phase15-manifest',
+    expect:
+      /pnpm run test:concurrency must be executed 3 time\(s\); the Phase 15 manifest records 1/,
+    mutate: (text) => {
+      const manifest = JSON.parse(text);
+      const entry = manifest.battery.find((e) => e.command === 'pnpm run test:concurrency');
+      entry.executions = 1;
+      entry.exits = [0];
+      return `${JSON.stringify(manifest, null, 2)}\n`;
+    },
+  },
+  {
+    name: 'phase 15 manifest: a key the contract does not declare',
+    file: 'phase15-manifest',
+    expect: /Phase 15 manifest declares keys \[.*remediationNumber/,
+    mutate: (text) => text.replace('"battery":', '"remediationNumber": 1,\n  "battery":'),
+  },
+  {
+    name: 'phase 15 evidence: the region markers removed',
+    file: 'phase-status',
+    expect: /phase-15-evidence: the begin marker text occurs 0 times/,
+    mutate: (text) =>
+      text
+        .replace('<!-- phase-15-evidence:begin -->\n', '')
+        .replace('<!-- phase-15-evidence:end -->\n', ''),
+  },
+  {
+    name: 'phase 15 evidence: a result restated differently from the manifest',
+    file: 'phase-status',
+    expect: /Phase 15 evidence result for pnpm run test:regression is/,
+    mutate: (text) =>
+      inPhase15Region(text, (region) =>
+        region.replace(/(\| `pnpm run test:regression` \| PASS \| )([^|]+)\|/, '$1altered |'),
+      ),
+  },
+  {
+    name: 'phase 15 evidence: the measured commit stated differently from the manifest',
+    file: 'phase-status',
+    expect: /Phase 15 evidence was measured at/,
+    mutate: (text) =>
+      inPhase15Region(text, (region) =>
+        region.replace(
+          /Measured at (implementation|correction) commit [0-9a-f]{40}/,
+          'Measured at $1 commit 0000000000000000000000000000000000000000',
+        ),
+      ),
+  },
+  {
+    // The ledger cannot advance a phase the governed state has not: Phase 16 is
+    // the current phase and NOT STARTED until the commit completing it lands.
+    name: 'phase status: the current phase advanced by editing the ledger',
+    file: 'phase-status',
+    expect: /Phase 16 ledger state cell renders/,
+    mutate: (text) => text.replace(/^(\| 16 \| Verified reviews \| )`NOT STARTED`/m, '$1`DONE`'),
+  },
   // ------------------------------------------------ Phase 14 evidence (check 17)
   {
     name: 'phase 14 manifest: an acceptance the governed state does not record',
@@ -955,14 +1067,6 @@ const FIXTURES = [
           'Measured at $1 commit 0000000000000000000000000000000000000000',
         ),
       ),
-  },
-  {
-    // The ledger cannot advance a phase the governed state has not: Phase 15 is
-    // the current phase and NOT STARTED until the commit completing it lands.
-    name: 'phase status: the current phase advanced by editing the ledger',
-    file: 'phase-status',
-    expect: /Phase 15 ledger state cell renders/,
-    mutate: (text) => text.replace(/^(\| 15 \| Restaurant \| )`NOT STARTED`/m, '$1`DONE`'),
   },
   // ------------------------------------------------ Phase 13 evidence (check 17)
   {
@@ -1913,11 +2017,11 @@ const FIXTURES = [
     // Starting the next phase is an authorization, not an edit.
     name: 'current position: the current phase advanced past the governed one',
     file: 'phase-status',
-    expect: /states Current phase = "16 [^"]*"; the governed value is "15 — Restaurant"/,
+    expect: /states Current phase = "17 [^"]*"; the governed value is "16 — Verified reviews"/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 15 — Restaurant |',
         '| Current phase | 16 — Verified reviews |',
+        '| Current phase | 17 — Guest registry, exports, and Hotel Admin reports |',
       ),
   },
   {
@@ -1939,8 +2043,8 @@ const FIXTURES = [
   {
     name: 'coordinated: the current phase quietly starts in the ledger',
     file: 'phase-status',
-    expect: /Phase 15 ledger state cell renders "`IN PROGRESS`"/,
-    mutate: (text) => text.replace(/^(\| 15 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
+    expect: /Phase 16 ledger state cell renders "`IN PROGRESS`"/,
+    mutate: (text) => text.replace(/^(\| 16 \|[^|]*\| )`NOT STARTED`/m, '$1`IN PROGRESS`'),
   },
   {
     name: 'coordinated: one repair removed from the manifest and the history',
@@ -2126,8 +2230,8 @@ const FIXTURES = [
     expect: /raw HTML is not an approved boundary marker: <div>/,
     mutate: (text) =>
       text.replace(
-        '| Current phase | 15 — Restaurant |',
-        '| Current phase | 15 — Restaurant |\n\n<div>raw</div>\n',
+        '| Current phase | 16 — Verified reviews |',
+        '| Current phase | 16 — Verified reviews |\n\n<div>raw</div>\n',
       ),
   },
   {
@@ -2601,6 +2705,7 @@ for (const fixture of FIXTURES) {
       phase12ManifestPath: PHASE12_MANIFEST,
       phase13ManifestPath: PHASE13_MANIFEST,
       phase14ManifestPath: PHASE14_MANIFEST,
+      phase15ManifestPath: PHASE15_MANIFEST,
     };
     const KEY = {
       runbook: 'runbookPath',
@@ -2616,6 +2721,7 @@ for (const fixture of FIXTURES) {
       'phase12-manifest': 'phase12ManifestPath',
       'phase13-manifest': 'phase13ManifestPath',
       'phase14-manifest': 'phase14ManifestPath',
+      'phase15-manifest': 'phase15ManifestPath',
     };
     for (const name of names) {
       const path = join(dir, SOURCES[name].file);
@@ -2670,6 +2776,7 @@ for (const [name, path, original] of [
   ['the Phase 12 manifest', PHASE12_MANIFEST, originalPhase12Manifest],
   ['the Phase 13 manifest', PHASE13_MANIFEST, originalPhase13Manifest],
   ['the Phase 14 manifest', PHASE14_MANIFEST, originalPhase14Manifest],
+  ['the Phase 15 manifest', PHASE15_MANIFEST, originalPhase15Manifest],
 ]) {
   const unchanged = readFileSync(path, 'utf8') === original;
   results.push({
@@ -2734,6 +2841,10 @@ const decoyPhase14Manifest = originalPhase14Manifest.replace(
   '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
   '"acceptance": "ACCEPTED"',
 );
+const decoyPhase15Manifest = originalPhase15Manifest.replace(
+  '"acceptance": "AWAITING_CUSTOMER_ACCEPTANCE"',
+  '"acceptance": "ACCEPTED"',
+);
 for (const [label, contents, original] of [
   ['phase status', decoyPhaseStatus, originalPhaseStatus],
   ['manifest', decoyManifest, originalManifest],
@@ -2748,6 +2859,7 @@ for (const [label, contents, original] of [
   ['phase 12 manifest', decoyPhase12Manifest, originalPhase12Manifest],
   ['phase 13 manifest', decoyPhase13Manifest, originalPhase13Manifest],
   ['phase 14 manifest', decoyPhase14Manifest, originalPhase14Manifest],
+  ['phase 15 manifest', decoyPhase15Manifest, originalPhase15Manifest],
 ]) {
   const changed = contents !== original;
   results.push({
@@ -2770,6 +2882,7 @@ writeFileSync(join(DECOY_DIR, 'phase-11-evidence.json'), decoyPhase11Manifest);
 writeFileSync(join(DECOY_DIR, 'phase-12-evidence.json'), decoyPhase12Manifest);
 writeFileSync(join(DECOY_DIR, 'phase-13-evidence.json'), decoyPhase13Manifest);
 writeFileSync(join(DECOY_DIR, 'phase-14-evidence.json'), decoyPhase14Manifest);
+writeFileSync(join(DECOY_DIR, 'phase-15-evidence.json'), decoyPhase15Manifest);
 
 // And the decoys really would fail, read through the core the CLI uses.
 for (const [label, paths, expected] of [
@@ -2825,6 +2938,16 @@ for (const [label, paths, expected] of [
     { phase13ManifestPath: join(DECOY_DIR, 'phase-13-evidence.json') },
     /Phase 13 manifest declares acceptance = "ACCEPTED"/,
   ],
+  [
+    'phase 14 manifest',
+    { phase14ManifestPath: join(DECOY_DIR, 'phase-14-evidence.json') },
+    /Phase 14 manifest declares acceptance = "ACCEPTED"/,
+  ],
+  [
+    'phase 15 manifest',
+    { phase15ManifestPath: join(DECOY_DIR, 'phase-15-evidence.json') },
+    /Phase 15 manifest declares acceptance = "ACCEPTED"/,
+  ],
 ]) {
   const outcome = runGovernanceChecks({
     root: ROOT,
@@ -2840,6 +2963,8 @@ for (const [label, paths, expected] of [
     phase11ManifestPath: PHASE11_MANIFEST,
     phase12ManifestPath: PHASE12_MANIFEST,
     phase13ManifestPath: PHASE13_MANIFEST,
+    phase14ManifestPath: PHASE14_MANIFEST,
+    phase15ManifestPath: PHASE15_MANIFEST,
     ...paths,
   });
   const rejected = outcome.results.some((r) => !r.ok && expected.test(r.detail));

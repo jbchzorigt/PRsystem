@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 15 — Restaurant |
+| Current phase | 16 — Verified reviews |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -41,6 +41,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 13 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 14 state | `DONE` |
 | Phase 14 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 15 state | `DONE` |
+| Phase 15 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -68,7 +70,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 12 | Public discovery and Guest authentication | `DONE` | `0013_guest_identity_discovery` | the Phase 12 battery — counts in [Phase 12 record](#phase-12-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 13 | Online booking and inventory hold | `DONE` | `0014_online_booking_inventory` | the Phase 13 battery — counts in [Phase 13 record](#phase-13-record) | implemented at `4768ec1`, corrected at the commit named in the record; the record and its evidence are the commit after it |
 | 14 | Online payment, refund, commission, and settlement | `DONE` | `0015_booking_settlement` | the Phase 14 battery — counts in [Phase 14 record](#phase-14-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 15 | Restaurant | `NOT STARTED` | — | — | — |
+| 15 | Restaurant | `DONE` | `0016_restaurant_ordering` | the Phase 15 battery — counts in [Phase 15 record](#phase-15-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 16 | Verified reviews | `NOT STARTED` | — | — | — |
 | 17 | Guest registry, exports, and Hotel Admin reports | `NOT STARTED` | — | — | — |
 | 18 | Police monitoring | `NOT STARTED` | — | — | — |
@@ -4971,3 +4973,156 @@ for nothing.
 Phase 14 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 15 is authorized to begin under the
 standing progression authorization and has **not** started.
 
+---
+
+## Phase 15 record
+
+Restaurant registration, guest access, ordering and refunds. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 14 tree. Phase 15 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 16 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the nineteen this phase owns — `REST-DEC-001`…`-006` and `RC-DEC-019`…`-031`.
+With the 191 already closed, 210 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0016_restaurant_ordering`** — fifteen tables. The restaurant and its
+  `hotel_restaurant_link`, which is where activation lives (`RC-DEC-019`); `restaurant_schedule` and
+  `restaurant_schedule_override` for the weekly and holiday ordering hours (`RC-DEC-022`);
+  `restaurant_menu_category` and `restaurant_menu_item`; `room_access_token`, `stay_guest_access`,
+  `guest_access_code` and `guest_session` for the way in (`RC-DEC-026`, `-027`); `restaurant_order`
+  with its items and its append-only event log; `restaurant_payment_attempt` and `restaurant_refund`.
+- **Seven axes, seven columns** (`REST-DEC-001`). Order, fulfillment, payment, refund policy, refund
+  request, refund and handoff each have their own column and their own CHECK. A late capture on a
+  cancelled order moves `payment_state` and leaves the other six exactly where they were, which is
+  the case a single collapsed status could not represent at all.
+- **The invoice window is a constraint** (`RC-DEC-023`, `A-P15-7`). `expires_at <=
+  ordering_closes_at` is a CHECK on every attempt, so the fifteen minutes is a ceiling that the day's
+  closing time can cut short — and it is true of every row rather than of the rows the application
+  remembered to trim.
+- **Five devices is a stored counter with a CHECK** (`RC-DEC-027`, `A-P15-8`).
+  `active_sessions + pending_codes <= 5` on `stay_guest_access`; the counter row is locked before
+  either half moves and a code is spent by a compare-and-set. doc 08 §7 asks specifically that two
+  codes confirmed at the same instant cannot exceed the allowance, and the constraint is what answers
+  that rather than a count the application took and then trusted.
+- **The QR is a starting point, never an authorization** (`RC-DEC-026`). The permanent room token
+  identifies the room; what creates a session is a one-time code Reception issued for *this* stay,
+  and the two must agree. A rotation voids every code and session that reached the room through the
+  old QR. None of the three secrets is stored in plaintext, none reaches an audit payload, and an
+  idempotency replay does not hand the one-time code back a second time.
+- **The guest's confinement is a database rule** (`A-P15-3`, `A-P15-4`). `app.guest_stay_id` and a
+  `RESTRICTIVE` policy on each of the five stay-scoped relations keep one room out of another's
+  orders; the room session is presented on its own header and can never be mistaken for a
+  Guest-realm account bearer, or the reverse. The hotel behind a session token is resolved by a
+  narrow `SECURITY DEFINER` function, and the service then re-reads the row inside that hotel's own
+  scope rather than trusting the lookup (`A-P15-5`).
+- **The server prices the order and decides whether it may exist** (`RC-DEC-020`). The basket names
+  items and quantities and has nowhere to put a price. Availability, the schedule, the link, the
+  stay and each item's price are re-read inside the transaction that writes the order, and the price
+  is snapshotted onto the line so a later menu edit cannot rewrite what the guest agreed to.
+- **Only the provider confirms a payment** (`RC-DEC-020`, `RC-DEC-021`). Signature first, then the
+  provider event deduplicated, then the provider's own status re-queried, then provider, reference,
+  amount and currency matched against the *stored* attempt. A capture that arrives after the window
+  closed does not reopen the order — it raises the mandatory refund `REST-DEC-005` requires. A
+  forged callback, an unknown invoice and a wrong signature all receive the same uninformative
+  answer.
+- **The acceptance race is decided by the row lock and by nothing else** (`REST-DEC-002`). Whichever
+  transaction takes the order's row first decides; the loser re-reads and gets a different, still
+  correct answer. Pre-accept and past the ten minutes, the refund is `MANDATORY`/`APPROVED` and the
+  order is cancelled; accepted first, the later request is `DISCRETIONARY`/`OPEN` and fulfilment
+  continues. Neither outcome moves money — only a verified provider refund does that.
+- **The SLAs and the ETA** (`RC-DEC-030`, `-031`, `REST-DEC-003`, `REST-DEC-006`). Acceptance warns
+  at five minutes and escalates at ten; an unresolved refund request warns at five, escalates at ten
+  and pauses the hotel link at thirty. The ETA is one of 15/30/45/60 and nothing else, and
+  `promised_ready_at = accepted_at + eta_minutes` is a CHECK rather than a value the application
+  computed twice.
+- **Checkout** (`RC-DEC-028`, `-029`, `REST-DEC-004`, `A-P15-9`, `A-P15-11`). A checked-out stay
+  places no new order. An unfinished order does **not** hard-block the final checkout; an
+  unacknowledged one does, re-read under the stay's own lock at the moment the checkout is confirmed
+  rather than taken from the list the screen drew earlier. Recording one of the three handoff choices
+  clears it; `REFUND_REQUEST` raises the request the restaurant still has to resolve. The checkout
+  cancels no order and starts no refund, and it closes the stay's guest access in that same
+  transaction. All of it crosses the module boundary as `RestaurantOrdersPort`, whose `Unprovisioned`
+  default fails closed once `platform.restaurant_order` exists.
+- **The money is the restaurant's** (`RC-DEC-021`, `A-P15-10`). doc 08 §13 sends a food payment to
+  the restaurant's own merchant: there is no payable, no batch, no commission and no platform payout
+  for it, and nothing in this module reaches a folio, a deposit, a cash drawer or a shift total. The
+  separation is structural — those tables do not exist here — and the integration gate asserts it
+  against every one of them.
+- **Two sweeps and four resolvers.** `lapsed_restaurant_invoices` and `unresolved_refund_requests`
+  find waiting work across every hotel and answer identifiers only; `room_of_access_token`,
+  `hotel_of_guest_session` and `restaurant_attempt_of_invoice` resolve what a caller who names no
+  tenant is allowed to reach. All are owned by the login-less maintenance role and catalogued in the
+  ownership manifest, and each has a narrow `FOR SELECT` policy because RLS applies to the definer's
+  owner too.
+- **doc 18 §3's restaurant actions.** `hotel.restaurant.register`, `restaurant.menu_manage` and
+  `restaurant.order_process` gate the commands this phase adds, evaluated by the Phase 04 pipeline
+  inside each command's own transaction, with `own_restaurant` comparing the target restaurant
+  against the membership's own. The fourth, `hotel.restaurant.manager_invite`, is Phase 04's
+  existing invitation flow and was **not** re-implemented here (`A-P15-2`). The 30,000₮ entitlement
+  is in those permission cells and is written nowhere else (`A-P15-1`).
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 15 in `PROGRESSED_PHASES`, the current phase
+  advanced to 16), `docs/implementation/phase-15-evidence.json`, and the drift fixtures retargeted to
+  the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.28 — the nineteen decisions `COVERED` with code
+  and test references; 210 of 279.
+- **Assumptions:** `A-P15-1`…`A-P15-11` in `assumptions-and-conflicts.md` §3.19.
+
+### External gates
+
+Unchanged. `EXT-03` — the payment gateway — is the one this phase exercises, and it stays BLOCKED:
+the restaurant's merchant is reached through the same typed port and the same deterministic
+simulator every gate here was measured against, and the production adapter makes no network call.
+`EXT-01`, `EXT-02`, `EXT-04`, `EXT-06`, `EXT-07`, `EXT-11` BLOCKED with conformance-gated
+simulators; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items;
+`DSR-01`; and selecting `GATE-SEC` as a required GitHub status check. **Phase 15 adds no new
+external gate.**
+
+### Evidence
+
+<!-- phase-15-evidence:begin -->
+
+Measured at implementation commit ff121ef641ac36d5087ec9cd3823bbe8056e71c3, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the repository's own Compose stack.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 252 of 252 drift fixtures caught at the measured commit; 265 of 265 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 724 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,521 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 15, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 493: db 41, outbox 5, api 445, worker 2 |
+| `pnpm run test:concurrency` | PASS | 75 each run: db 16, api 59 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-15-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-15-battery-log.md](phase-15-battery-log.md).
+
+Phase 15 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 16 is authorized to begin under the
+standing progression authorization and has **not** started.
