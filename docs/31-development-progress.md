@@ -15,14 +15,14 @@
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-## Энэ удаагийн 4 багц ажил — 3/4, CI баталгаажуулалт хүлээгдэж байна
+## Энэ удаагийн 4 багц ажил — 4/4
 
 | № | Багц | Үр дүн |
 | --- | --- | --- |
 | 1 | Membership/Primary/takeover canonical дүрэм | Дууссан |
 | 2 | Migration, service, API | Дууссан: role/status, scope revoke, atomic queue, Manager claim |
-| 3 | Integration тест | 25 шинэ тест бичсэн; бодит PostgreSQL CI шалгалт хүлээгдэж байна |
-| 4 | Баримт, CI, branch/PR | Хийгдэж байна |
+| 3 | Integration тест | Дууссан: 25 шинэ тест; нийт 113 тест бодит PostgreSQL CI дээр амжилттай |
+| 4 | Баримт, CI, branch/PR | Дууссан: contract/grants/явц болон Draft PR шинэчлэгдсэн |
 
 Claim нь касс тоолох, ээлж хаах эсвэл Cleaner ажлыг өөр хүнд шилжүүлсэн гэсэн үг биш. Source adapter-ууд, replacement/physical takeover, paid onboarding болон бодит email deployment үлдсэн. [Хэрэгжүүлэлтийн хязгаар ба contract](33-membership-work.md).
 
@@ -37,6 +37,6 @@ Claim нь касс тоолох, ээлж хаах эсвэл Cleaner ажлы�
 | Membership/queue API | 25 |
 | **Нийт** | **113** |
 
-`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 83 integration тестийг skip хийнэ; 30 domain тест ажиллана. 113 тестийн бодит PostgreSQL CI үр дүнг энэ багцын push-ийн дараа баталгаажуулна.
+`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 83 integration тестийг skip хийнэ; 30 domain тест ажиллана. [PostgreSQL 17 CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34015694845) бүх 113 тестийг skip-гүй амжилттай ажиллуулсан.
 
 Дараагийн ажил: actual source/shift integration, replacement selection, physical takeover/cleaning continuation, email delivery болон invite recovery. Явцын update мөн `үе шат N/6` болон тухайн багцын дууссан/нийт тоог харуулна.

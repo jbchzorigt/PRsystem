@@ -64,6 +64,6 @@ Identity/queue table-ууд private server table: HTTP handler tenant predicate,
 
 ## Баталгаажуулалт ба үлдсэн эрсдэл
 
-25 шинэ PostgreSQL/API тест: scope/session revoke, role/package/Primary, transition validation, idempotency, concurrent mutation/claim, source registration-vs-suspension lock ordering, queue permissions/pagination, claimant release, pending invite invalidation, deferred commit rollback болон minimum grants. Dependency-free local run эдгээрийг skip хийнэ; бодит DB баталгаа CI-ээс гарна.
+25 шинэ PostgreSQL/API тест: scope/session revoke, role/package/Primary, transition validation, idempotency, concurrent mutation/claim, source registration-vs-suspension lock ordering, queue permissions/pagination, claimant release, pending invite invalidation, deferred commit rollback болон minimum grants. Dependency-free local run эдгээрийг skip хийнэ; [бодит PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34015694845) нийт 113 тестийг skip-гүй амжилттай ажиллуулсан.
 
 Unverified pending invite-ийг suspend/terminate хийсний дараах дахин урих recovery энэ багцад байхгүй: хуучин invite хүчингүй, generic reactivate account verification-ийг тойрохгүй. Tenant lock recovery, package/account өөрчлөлтөөс болж эрхгүй болсон claimant-ийн recovery, denied-action security audit, Restaurant scope, paid Primary provisioning, real email transport/worker болон operational adapters дараагийн ажлууд. Эдгээр нь 2-р үе шатыг хаах/production-д гаргах gate хэвээр.

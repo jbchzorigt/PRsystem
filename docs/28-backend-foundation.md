@@ -57,7 +57,7 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 | Дараалал | Ажил | Acceptance gate |
 | --- | --- | --- |
 | 1 | Cash adapter/migration/RLS/receipt/outbox intent нэмсэн; booking persistence, provider inbox, outbox delivery үлдсэн | Cash concurrency/commit-failure rollback integration tests; дараа нь last-room, process-crash recovery, delivery retry |
-| 2 | Staff authentication, invitation/reset API, mail intent нэмсэн; бодит email delivery, role/suspension/reactivation, takeover болон бусад action policy үлдсэн | Tenant/revoke/throttling, invitation/reset replay/concurrency tests; дараа нь Primary Admin guard, takeover/action-specific permission |
+| 2 | Staff authentication, invitation/reset, protected membership mutation, queue claim, mail intent нэмсэн; бодит email delivery, takeover execution болон бусад action policy үлдсэн | Tenant/revoke/throttling, invitation/reset, Primary guard, mutation/claim concurrency ба rollback tests; дараа нь source takeover/action-specific permission |
 | 3 | Reception vertical slice: room, open shift, deposit, check-in, checkout, cleaning, handover | Synthetic end-to-end; old-obligation expiry completion; no new-sale bypass |
 | 4 | Online booking/payment/refund/payout adapters | Last-unit concurrency; duplicate/late callback; zero-refund exactly-once eligibility; no duplicate payout |
 | 5 | Minibar/Restaurant/Operation modules | Stock conservation, snapshot prices, task claim, refund/fulfillment state tests |
