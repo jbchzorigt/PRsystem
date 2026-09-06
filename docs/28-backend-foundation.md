@@ -1,19 +1,19 @@
 # Backend foundation — эхний хэрэгжүүлэлт ба дараагийн gate
 
 **Огноо:** 2026-09-06
-**Төлөв:** Domain core хэрэгжүүлсэн; persistence/API/UI болон production integration хийгдээгүй.
+**Төлөв:** Domain core, PostgreSQL cash adapter/migration хэрэгжүүлсэн; authentication/API/UI болон production integration хийгдээгүй.
 
 ## Architecture decision
 
 Нэг backend application дотор domain module-уудаа заагласан modular monolith-оор эхэлнэ. Эхний Python 3.12+ package runtime dependency-гүй: subscription expiry policy, cash reservation state transition, settlement assessment/commission/batch time. Эдгээр нь HTTP framework-аас хамаарахгүй тул батлагдсан дүрмийг эхэлж тестэлнэ. Transport framework болон frontend сонголт энэ commit-д хийгдээгүй.
 
-Production persistence target нь PostgreSQL; worker нь provider event inbox, transactional outbox, reconciliation болон export delivery ажиллуулна. Police нь commercial/hotel scope-оос тусдаа service identity, API boundary, key/access policy-тай байна. Final hosting/physical database isolation нь EXT-10-ын нөхцөлөөс хамаарна. Энэ repository-д database server, credential, migration эсвэл production deployment үүсгээгүй.
+Production persistence target нь PostgreSQL; worker нь provider event inbox, transactional outbox, reconciliation болон export delivery ажиллуулна. Police нь commercial/hotel scope-оос тусдаа service identity, API boundary, key/access policy-тай байна. Final hosting/physical database isolation нь EXT-10-ын нөхцөлөөс хамаарна. Cash migration болон CI-ийн disposable PostgreSQL service нэмсэн; production database/credential/deployment үүсгээгүй.
 
 `AccessFacts`, `Obligation`, `CashContext`, `SettlementFacts` нь **trusted adapter input**. HTTP body-оос эдгээр dataclass-ийг шууд байгуулж болохгүй. Domain gate дангаараа authentication, role matrix, approved refund/expense, provider verification эсвэл tenant isolation implementation биш.
 
 ## Persistence contract
 
-Дараах нь migration бэлтгэх design contract; ажиллуулсан SQL schema гэж үзэхгүй.
+Дараах нь нийт backend-ийн design contract. Cash хэсгийн хэрэгжүүлэлт, бусад үлдсэн хязгаарыг [29-postgres-cash.md](29-postgres-cash.md)-д тодорхойлсон.
 
 | Aggregate/table | Identity / хамгаалалт | Transaction хамрах хүрээ |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ Production persistence target нь PostgreSQL; worker нь provider event inbox,
 
 Өгөгдлийн бүх foreign key-д same-tenant invariant хэрэгтэй. Application query scope + database policy давхар хэрэглэнэ. RLS ашиглавал runtime role table owner/superuser bypass-гүй байх нөхцөлийг тусад нь тестэлнэ.
 
-Cash reducer энэ эхний хувилбарт immutable hotel snapshot ашиглана. Production adapter нь бүх hotel history-г command бүрд уншихгүй: involved locations/transfer, balance projection, receipt-ийг л authoritative байдлаар load хийнэ. Aggregate root-ийн CAS protocol эсвэл involved-row lock strategy-г сонгож, database integration-аар баталгаажуулсны дараа adapter нэмнэ. Pure function-ийг in-memory singleton-д хадгалаад web process олон болгохыг production implementation гэж үзэхгүй.
+Cash reducer immutable snapshot ашиглана. PostgreSQL adapter hotel cash root-ийн row lock ба expected revision-ийг хамтад нь хэрэглэнэ. Тухайн hotel's drawer projection, pending transfers, command-д хамаарах transfer/receipt/financial reference-ийг уншина; бүх түүхийг load хийхгүй. Нэг hotel's cash command-ууд дараалан commit хийнэ, өөр hotel-ууд тусдаа root lock-тай. Энэ хялбар serialization-ийн throughput-ийг P1-10 load gate дээр хэмжинэ; involved-row locking руу шилжих нь дараагийн optimization.
 
 ## Application command boundary
 
@@ -40,7 +40,7 @@ Cash reducer энэ эхний хувилбарт immutable hotel snapshot аш�
 6. CAS/serialization conflict бол transaction rollback хийж bounded retry; stale client command-ийг шинэ balance дээр дахин validate хийнэ.
 7. Provider network call-ийг урт cash/booking database lock дотор хүлээхгүй. Durable intent → verified outcome → transaction protocol ашиглана. UNKNOWN outcome-ийг success эсвэл failure гэж таахгүй.
 
-Cash reducer-ийн `authorized` flag нь дээрх шалгалтууд **аль хэдийн** амжилттай болсны trusted үр дүн. `SpendCash` generic domain debit нь public endpoint биш; expense/refund/customer type, approval болон source-state validation-ийг adapter заавал нэмнэ. System reconciliation нь тусдаа service principal; hotel role-оор system action дуудахгүй.
+Cash reducer-ийн `authorized` flag нь дээрх шалгалтууд **аль хэдийн** амжилттай болсны trusted үр дүн. PostgreSQL adapter нь transaction дотор mandatory `authorize` callback ажиллуулж, түүний үр дүнгээр domain flag-ийг тогтооно; caller-ийн boolean-д итгэхгүй. `SpendCash` generic domain debit нь public endpoint биш; expense/refund/customer type, approval болон source-state validation/posting application service-д хэрэгжинэ. System reconciliation нь тусдаа service principal; hotel role-оор system action дуудахгүй.
 
 ## Одоо шалгаж болох зүйл
 
@@ -56,7 +56,7 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 
 | Дараалал | Ажил | Acceptance gate |
 | --- | --- | --- |
-| 1 | PostgreSQL adapter, migrations, RLS/scope, inbox/outbox/idempotency | Real database concurrent last-cash/last-room test; crash rollback; unique posting |
+| 1 | Cash adapter/migration/RLS/receipt/outbox intent нэмсэн; booking persistence, provider inbox, outbox delivery үлдсэн | Cash concurrency/commit-failure rollback integration tests; дараа нь last-room, process-crash recovery, delivery retry |
 | 2 | Authentication, membership/session revoke, explicit action permission | Hotel A → B access deny; suspended session/API/export deny; no client authorization flags |
 | 3 | Reception vertical slice: room, open shift, deposit, check-in, checkout, cleaning, handover | Synthetic end-to-end; old-obligation expiry completion; no new-sale bypass |
 | 4 | Online booking/payment/refund/payout adapters | Last-unit concurrency; duplicate/late callback; zero-refund exactly-once eligibility; no duplicate payout |
