@@ -85,7 +85,7 @@ Hold үүсгэх, хугацаа дуусгах болон booking болгох
 ## 8. Settlement
 
 - Stay `COMPLETED` болж actual checkout бүртгэгдэхэд тухайн booking-ийн retained room charge payout-д eligible болно.
-- Guest cancellation/no-show үед шаардлагатай refund `REFUNDED` terminal болсны дараа retained first-night fee eligible болно.
+- Guest cancellation/no-show terminal үед `refund_due = 0` бол Refund `NONE` хэвээр, provider refund command үүсгэхгүй; бусад санхүүгийн hold байхгүй бол retained fee нэн даруй eligible. `refund_due > 0` бол шаардлагатай бүх refund provider-оор дууссаны дараа eligible (`PAY-DEC-010`).
 - Refund, chargeback эсвэл manual reconciliation non-terminal бол payout `HELD` байна.
 - Өдөр `D`-д eligible болсон мөрийг `D+1` өдрийн `12:00 Asia/Ulaanbaatar` payout batch-д оруулна.
 - Payout амжилтгүй бол хуучин мөрийг overwrite хийхгүй, шинэ retry attempt үүсгэнэ. Амралт/банк ажиллахгүйгээс саатсан нь eligibility-г өөрчлөхгүй.
@@ -159,7 +159,12 @@ Hold үүсгэх, хугацаа дуусгах болон booking болгох
 ### PAY-DEC-009 — Settlement lifecycle
 
 - **Төлөв:** Батлагдсан
-- **Шийдвэр:** Completed stay эсвэл refund дууссан cancellation/no-show-ийн retained payable `D+1 12:00 Asia/Ulaanbaatar` batch-д орно. Non-terminal refund/reconciliation payout-ийг hold хийнэ. Failed payout шинэ attempt-аар retry; payout дараах refund/chargeback immutable negative adjustment болж дараагийн payout-аас суутгагдана.
+- **Шийдвэр:** Completed stay эсвэл refund шаардлагагүй/шаардлагатай refund бүр дууссан cancellation/no-show-ийн retained payable `D+1 12:00 Asia/Ulaanbaatar` batch-д орно. Non-terminal refund/reconciliation payout-ийг hold хийнэ. Failed payout шинэ attempt-аар retry; payout дараах refund/chargeback immutable negative adjustment болж дараагийн payout-аас суутгагдана.
+
+### PAY-DEC-010 — Zero-refund settlement eligibility
+
+- **Төлөв:** 2026-09-06 хэрэглэгчийн зөвшөөрлөөр батлагдсан (R03).
+- **Шийдвэр:** Нэг шөнийн late cancellation/no-show-д retained fee нийт төлбөртэй тэнцвэл refund_due=0; Refund NONE хэвээр, 0₮ provider command явуулахгүй. Terminal booking-ийн positive retained payable нь бүх refund obligation, chargeback болон reconciliation hold хаагдсан үед нэг удаа ELIGIBLE болно. Duplicate/late capture-ийн бусад нээлттэй obligation zero-refund shortcut-ийг хориглоно. Commission/eligibility immutable event, D+1 12:00 Asia/Ulaanbaatar batch хэвээр. Full refund/zero payable нь payout үүсгэхгүй; өмнө PAID болсон payable-г eligibility worker дахин нээхгүй.
 
 ## 11. Хаагдсан төлөв
 

@@ -156,6 +156,17 @@ Variance = Actual counted cash − Expected drawer cash
 
 Drawer → Safe transfer drawer balance-ийг бууруулж safe balance-ийг нэмэх боловч hotel-ийн нийт physical cash-ийг өөрчлөхгүй. Bank/owner withdrawal physical cash-ийг бууруулах боловч business expense гэж автоматаар ангилахгүй.
 
+### 6.1 Зарцуулж болох үлдэгдэл
+
+`Available to spend = Posted balance − Active outgoing reservations`.
+
+- Physical debit болон шинэ transfer reservation бүр `amount <= available_to_spend` нөхцөлтэй. Бүх involved location-ийг тогтмол ID дарааллаар lock хийж, ижил transaction-д дахин шалгана.
+- Transfer initiation reservation үүсгэнэ. Recipient confirm үед reservation release + source OUT + destination IN + terminal state нэг атомик commit байна.
+- Cancel нь source Reception бодит буцсан мөнгийг бүрэн тоолж баталсны дараа reservation release хийнэ. Partial/missing return үед pending хэвээр; variance/reconciliation шаардлагатай, мөнгийг суллахгүй.
+- Source/destination shift өөрчлөгдөхгүй; pending transfer-тай shift хаагдахгүй. Hotel total posted cash transfer-ээр өөрчлөгдөхгүй.
+- Idempotency key нь hotel + command scope-д unique; ижил key/өөр payload conflict. Duplicate submit/retry balance, reservation, movement, audit-ийг давхар үүсгэхгүй.
+- Posted balance, reserved/in-transit amount, available balance-ийг тусад нь харуулна. Accounting-only correction энэ physical debit дүрмээр хийсвэр бэлэн мөнгө бий болгохгүй.
+
 ## 7. Customer payment, deposit болон refund
 
 - Reception existing payment/deposit permission-ийн хүрээнд cash receipt/refund movement үүсгэнэ.
@@ -190,7 +201,7 @@ Draft → Submitted → Approved for payment → Paid
 1. Manager/Manager Plus transfer эхлүүлнэ.
 2. Хүлээн авах drawer-ийн Reception мөнгийг бодитоор тоолно.
 3. Дүн зөв бол recipient confirm хийхэд source `OUT` болон destination `IN` movement нэг атомик completion болно.
-4. Pending transfer balance-д орохгүй. Дүн зөрвөл confirm хийхгүй, дахин тоолно эсвэл cancel хийнэ.
+4. Pending transfer posted balance-д орохгүй боловч source available balance-аас reservation-аар хасагдана (CASH-DEC-011). Дүн зөрвөл confirm хийхгүй, дахин тоолно эсвэл cancel хийнэ.
 
 Transfer үүсэхэд source/destination drawer болон тухайн үеийн хоёр active shift ID immutable холбоостой хадгалагдана; confirm үед өөр shift-ээр сольж post хийхгүй. Source болон destination drawer хоёул active shift-тэй байна. Хоёр movement нэг transfer ID-тай байна.
 
@@ -346,7 +357,7 @@ Manager/Manager Plus өөрийн удирдсан operational drawer/shift бо
 ### CASH-DEC-006 — Transfer
 
 - **Төлөв:** Батлагдсан
-- **Шийдвэр:** Drawer transfer-ийн source/destination drawer/shift initiation үед immutable холбоостой болно. Recipient confirm үед linked OUT/IN-оор атомик complete болно. Drawer ↔ safe linked movement байна; pending transfer balance-д орохгүй бөгөөд complete/cancel болоогүй transfer оролцсон shift хаагдахгүй. Cancel хийхэд source Reception буцсан cash-ийг дахин тоолж батална.
+- **Шийдвэр:** Drawer transfer-ийн source/destination drawer/shift initiation үед immutable холбоостой болно. Recipient confirm үед linked OUT/IN-оор атомик complete болно. Drawer ↔ safe linked movement байна; pending transfer posted balance-д орохгүй боловч source available balance-аас reservation-аар хасагдаж, complete/cancel болоогүй transfer оролцсон shift хаагдахгүй. Cancel хийхэд source Reception буцсан cash-ийг дахин тоолж батална.
 
 ### CASH-DEC-007 — Bank ба owner withdrawal
 
@@ -367,6 +378,11 @@ Manager/Manager Plus өөрийн удирдсан operational drawer/shift бо
 
 - **Төлөв:** Батлагдсан
 - **Шийдвэр:** Hotel Admin location/full report/approval, Manager/Manager Plus operational transfer/request/review, Reception өөрийн shift/customer cash/approved payout execution хүрээтэй. Hotel Admin drawer transfer болон bank-deposit request хийх бол нэмэлт Manager/Manager Plus role авна; owner/other withdrawal-ийг self-approved audit-тай өөрөө үүсгэж болно. Full cash report/export зөвхөн Hotel Admin-д байна.
+
+### CASH-DEC-011 — Outgoing reservation ба concurrent cash debit
+
+- **Төлөв:** 2026-09-06 хэрэглэгчийн зөвшөөрлөөр батлагдсан (R02).
+- **Шийдвэр:** §6.1-ийн available invariant бүх physical debit-д үйлчилнэ. Pending transfer source reservation-тай; confirm linked OUT/IN + release, cancel бодит cash return-ийн дараах release байна. Нэг transaction/version хамгаалалт, canonical shift binding болон idempotency шаардлагатай. 100,000₮ posted, 80,000₮ reserved үед 50,000₮ debit reject; 20,000₮ debit зөвшөөрнө.
 
 ## 16. Дараагийн баталгаажуулах нэг асуудал
 
