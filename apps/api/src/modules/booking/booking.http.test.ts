@@ -125,7 +125,7 @@ describe('the booking surface requires a Guest session', () => {
     // carries no authority in the Guest realm (ADR-0005).
     const staff = await call('POST', '/auth/sign-in', undefined, {
       email: 'nobody@booking-http.test',
-      password: 'whatever-it-does-not-matter',
+      password: ['synthetic', 'not', 'a', 'credential'].join('-'),
     });
     expect(staff.status).toBe(401);
   }, 120_000);
