@@ -1,6 +1,7 @@
 """Staff API factory. Run with an application DSN, never migration credentials."""
 
 import os
+import base64
 from typing import Annotated
 
 import psycopg
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from prsystem.auth import AuthSettings, StaffAuth
 from prsystem.common import DomainError
+from prsystem.staff_lifecycle import StaffLifecycle
 
 
 class Login(BaseModel):
@@ -27,9 +29,37 @@ class PasswordChange(BaseModel):
     new_password: SecretStr = Field(min_length=12, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None) -> FastAPI:
+class Invitation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    email: str = Field(min_length=3, max_length=254)
+    name: str = Field(min_length=1, max_length=200)
+    roles: list[str] = Field(min_length=1, max_length=4)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class InvitationChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class LinkPassword(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    token: SecretStr = Field(min_length=20, max_length=256)
+    password: SecretStr = Field(min_length=1, max_length=128)
+
+
+class ResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    email: str = Field(min_length=3, max_length=254)
+
+
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None) -> FastAPI:
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
-    app = FastAPI(title="PRsystem staff API", version="0.2.0")
+    if token_key is None and os.environ.get("PRSYSTEM_LINK_KEY"):
+        token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
+    lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
+    app = FastAPI(title="PRsystem staff API", version="0.3.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -41,12 +71,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None) -> 
         # Ignore user-supplied X-Forwarded-For. Configure trusted proxies at deployment.
         return request.client.host if request.client else "unknown"
 
+    def links():
+        if lifecycle is None:
+            raise DomainError("LINK_SERVICE_UNAVAILABLE")
+        return lifecycle
+
     @app.middleware("http")
     async def private_responses(request, call_next):
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.exception_handler(RequestValidationError)
@@ -58,7 +94,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None) -> 
     async def domain_error(request, exc):
         code = str(exc)
         status = {"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
-                  "INVALID_PASSWORD": 422, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
+                  "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
+                  "MEMBERSHIP_NOT_FOUND": 404, "MEMBERSHIP_EXISTS": 409, "MEMBERSHIP_NOT_PENDING": 409,
+                  "REVISION_CONFLICT": 409, "IDEMPOTENCY_CONFLICT": 409, "LINK_SERVICE_UNAVAILABLE": 503,
+                  "TOKEN_KEY_MISMATCH": 503, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
         headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
         if status == 429:
             headers["Retry-After"] = str(service.settings.login_window_seconds)
@@ -98,5 +137,31 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None) -> 
     @app.get("/hotels/{tenant_id}/cash/drawers")
     def cash_drawers(tenant_id: str, secret: Annotated[str, Depends(token)]):
         return service.cash_drawers(secret, tenant_id)
+
+    @app.post("/hotels/{tenant_id}/staff/invitations", status_code=201)
+    def invite(tenant_id: str, body: Invitation, secret: Annotated[str, Depends(token)]):
+        return links().invite(secret, tenant_id, body.email, body.name, body.roles, body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/invitations/resend")
+    def resend(tenant_id: str, account_id: str, body: InvitationChange, secret: Annotated[str, Depends(token)]):
+        return links().change_invite(secret, tenant_id, account_id, body.expected_revision, body.idempotency_key, resend=True)
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/invitations/revoke")
+    def revoke(tenant_id: str, account_id: str, body: InvitationChange, secret: Annotated[str, Depends(token)]):
+        return links().change_invite(secret, tenant_id, account_id, body.expected_revision, body.idempotency_key, resend=False)
+
+    @app.post("/auth/invitations/accept")
+    def accept_invite(body: LinkPassword, request: Request):
+        return links().accept(body.token.get_secret_value(), body.password.get_secret_value(), peer(request))
+
+    @app.post("/auth/password/reset/request", status_code=202)
+    def request_reset(body: ResetRequest, request: Request):
+        links().request_reset(body.email, peer(request))
+        return {"status": "ACCEPTED"}
+
+    @app.post("/auth/password/reset/complete", status_code=204)
+    def complete_reset(body: LinkPassword, request: Request):
+        links().complete_reset(body.token.get_secret_value(), body.password.get_secret_value(), peer(request))
+        return Response(status_code=204)
 
     return app

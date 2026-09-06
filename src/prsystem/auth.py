@@ -77,7 +77,7 @@ class StaffAuth:
             # Shared order for identity operations: account -> session -> membership -> hotel.
             account = conn.execute("""SELECT id, password_hash, status, verified_at, auth_epoch
                 FROM prsystem.staff_account WHERE email = %s FOR UPDATE""", (email,)).fetchone()
-            valid = self._verify(self.passwords, account[1] if account else self._dummy_hash, password)
+            valid = self._verify(self.passwords, account[1] if account and account[3] is not None else self._dummy_hash, password)
             if not valid or not account or account[2] != "ACTIVE" or account[3] is None:
                 raise DomainError("INVALID_CREDENTIALS")
             membership = conn.execute("""SELECT revision FROM prsystem.staff_membership
