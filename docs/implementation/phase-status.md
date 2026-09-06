@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 14 — Online payment, refund, commission, and settlement |
+| Current phase | 15 — Restaurant |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -39,6 +39,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 12 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 13 state | `DONE` |
 | Phase 13 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 14 state | `DONE` |
+| Phase 14 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -65,7 +67,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 11 | Shift, cash drawer, expense, and hotel finance | `DONE` | `0012_shift_cash_expense` | the Phase 11 battery — counts in [Phase 11 record](#phase-11-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 12 | Public discovery and Guest authentication | `DONE` | `0013_guest_identity_discovery` | the Phase 12 battery — counts in [Phase 12 record](#phase-12-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 13 | Online booking and inventory hold | `DONE` | `0014_online_booking_inventory` | the Phase 13 battery — counts in [Phase 13 record](#phase-13-record) | implemented at `4768ec1`, corrected at the commit named in the record; the record and its evidence are the commit after it |
-| 14 | Online payment, refund, commission, and settlement | `NOT STARTED` | — | — | — |
+| 14 | Online payment, refund, commission, and settlement | `DONE` | `0015_booking_settlement` | the Phase 14 battery — counts in [Phase 14 record](#phase-14-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 15 | Restaurant | `NOT STARTED` | — | — | — |
 | 16 | Verified reviews | `NOT STARTED` | — | — | — |
 | 17 | Guest registry, exports, and Hotel Admin reports | `NOT STARTED` | — | — | — |
@@ -4822,3 +4824,150 @@ The per-command exit codes, durations and execution environment are recorded in
 
 Phase 13 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 14 is authorized to begin under the
 standing progression authorization and has **not** started.
+---
+
+## Phase 14 record
+
+Online payment, refund, commission and settlement. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 13 tree. Phase 14 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 15 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the eleven this phase owns — `BK-DEC-003`, `-008`, `-010`, `-011`,
+`PAY-DEC-001`, `-003`, `-004`, `-005`, `-007`, `-008` and `-009`. With the 180 already closed, 191 of
+the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0015_booking_settlement`** — `hotel_commission_contract` carries the hotel's explicit
+  negotiated rate in integer basis points, with **no** DEFAULT and no fallback (`PAY-DEC-001`);
+  `booking_payable` carries what one booking earns and the contract snapshot it settled under;
+  `booking_ledger_event` is the append-only money ledger, unique per cause; `booking_refund` is the
+  refund axis; `payout_batch` and `payout_batch_item` are the `D+1 12:00` attempt and its lines.
+- **The arithmetic is a constraint, not a convention.** `retained = gross − refunded`,
+  `commission = (retained × bps + 5000) / 10000` — exactly `ROUND_HALF_UP` on non-negative bigints —
+  and `hotel_payable = retained − commission` are CHECKs on the row (`PAY-DEC-008`, `A-P14-4`). A
+  unit test asserts the application's arithmetic and the database's agree across the tie cases.
+  `PAY-DEC-008`'s "commission base zero on a full refund" needs no branch and cannot be forgotten in
+  one: a full refund makes the base zero.
+- **The gateway fee cannot be deducted** (`BK-DEC-011`, `PAY-DEC-004`, `A-P14-5`), because the payout
+  formula has no term for it. It is recorded on its own `PROVIDER_FEE` ledger line and appears only
+  in the platform's own net result.
+- **No default commission** (`PAY-DEC-001`, `BK-DEC-008`, `A-P14-1`). A hotel with no `ACTIVE`
+  contract cannot take an online booking payment at all — the hold is refused before a unit is
+  taken, and a contract that lapses between the hold and the capture refuses the confirmation. doc 18
+  names no permission for administering a rate, so both runtime logins hold `SELECT` on the contract
+  and nothing else, and this phase invented no role to write it.
+- **A server-verified capture, end to end** (`PAY-DEC-005`): the signature first, before anything is
+  looked up; the hotel resolved on the server from the invoice through a `SECURITY DEFINER` resolver,
+  because a callback names no tenant (`A-P14-8`); the provider event deduplicated through the Phase
+  03 inbox; the provider's own status re-queried server to server; then provider, reference, amount
+  and currency matched against the *stored* attempt. Only then a transition. A forged callback, an
+  unknown invoice and a wrong signature all receive the same uninformative answer.
+- **Cancellation and no-show, by the numbers `PAY-DEC-007` fixes.** Free 24 hours or more before the
+  arrival day begins in the hotel's own timezone; after that, `min(total, first-night unit price)` is
+  retained — the `min` matters for a one-night booking, where the fee and the whole booking are the
+  same money. A no-show is the same fee, may not be confirmed before the arrival date's `23:59:59`
+  hotel-local, and is never automatic. A hotel cancellation retains nothing. Every terminal path
+  computes it in one place, so a cancellation and a no-show cannot drift into charging differently
+  for the same rule.
+- **The refund axis moves only on a verified provider result** (doc 11 §5, `A-P14-3`). A cancellation
+  raises the obligation and puts the payable `HELD`; the commission base shrinks in exactly one
+  transaction — the one recording the provider's confirmed refund — and the differences are posted as
+  their own ledger events rather than edited into the earlier ones. A failed refund leaves the
+  booking cancelled and the capture captured, and posts nothing for money that did not move.
+- **The `D+1 12:00 Asia/Ulaanbaatar` payout** (`PAY-DEC-009`). Eligibility is filed under the hotel's
+  own calendar day; the batch is derived from it, never from when a transfer happened to succeed. A
+  failure is a new `attempt_no` and the old row keeps its failure. One payable enters one successful
+  payout, enforced by a partial unique index on settled `PAYABLE` lines. A refund landing after a
+  payout becomes the negative adjustment the next batch deducts; a batch that would move no money to
+  the hotel is not opened at all, so the receivable stands visibly on its own row (`A-P14-6`).
+- **Two jobs and three resolvers.** `open_booking_refunds` and `due_payout_batches` find waiting work
+  across every hotel and answer identifiers only; `booking_attempt_of_invoice` resolves the hotel a
+  callback belongs to. All three are owned by the login-less role, catalogued in the scheduler's
+  entry-point register with their invocation-time guards, and in the bootstrap runbook. Both jobs run
+  on the **worker's** connection in test as in production, whose grants are narrower than the API's.
+- **doc 18 §3.3's two staff actions** — `booking.no_show_confirm` and `booking.cancelled_hotel` —
+  evaluated by the Phase 04 pipeline inside the command's own transaction. There is deliberately no
+  route that marks a refund successful: that row of the matrix is refused to every column.
+
+### Two defects the gates found, and this phase fixed
+
+- **A booking cancelled after confirmation was unrepresentable.** `booking_confirmed_has_time` was
+  written as an equivalence — the state is one of `CONFIRMED`/`CHECKED_IN`/`COMPLETED` **iff**
+  `confirmed_at` is set — which no Phase 13 path could violate. The first Phase 14 path to reach it, a
+  guest cancelling a *paid* booking, did: the moment the state left the set the constraint demanded
+  that the confirmation had never happened. Migration 0015 restates it as the implication the
+  requirements make (`A-P14-9`). Found by the settlement integration suite.
+- **A post-payout refund raised no adjustment.** The eligibility recompute skipped a payable that was
+  already `PAID`, which is exactly the case `PAY-DEC-009`'s negative adjustment exists for — the
+  hotel would have kept money the booking no longer earned. Only a live batch is skipped now. Found
+  by the `ADJUSTMENT_DUE` integration test.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 14 in `PROGRESSED_PHASES`, the current phase
+  advanced to 15), `docs/implementation/phase-14-evidence.json`, and the drift fixtures retargeted to
+  the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.27 — the eleven decisions `COVERED` with code
+  and test references; 191 of 279.
+- **Assumptions:** `A-P14-1`…`A-P14-11` in `assumptions-and-conflicts.md` §3.18.
+
+### External gates
+
+`EXT-07` — the platform central account — is **first touched by this phase** and stays BLOCKED. Its
+canonical port, `HotelPayoutPort`, has a production adapter that answers `DISABLED` and makes no
+network call, and a deterministic simulator that every gate here was measured against; no real
+transfer is possible. Otherwise unchanged: `EXT-01`, `EXT-02`, `EXT-03`, `EXT-04`, `EXT-06`, `EXT-11`
+BLOCKED with conformance-gated simulators; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline
+verification surface; 17 P1 items; `DSR-01`; and selecting `GATE-SEC` as a required GitHub status
+check. **Phase 14 adds no new external gate.**
+
+### Evidence
+
+<!-- phase-14-evidence:begin -->
+
+Measured at implementation commit e9f11ad325d5ea218150abbdfb64b070dc89b811, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the repository's own Compose stack. The record
+itself — the manifest and this table — is the commit after it; the governance validator and its
+fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 241 of 241 drift fixtures caught at the measured commit; 252 of 252 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 695 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,494 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 to 14, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 471: db 41, outbox 5, api 423, worker 2 |
+| `pnpm run test:concurrency` | PASS | 71 each run: db 16, api 55 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-14-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-14-battery-log.md](phase-14-battery-log.md). A first run of that battery was pointed at a
+second PostgreSQL cluster, failed `pnpm run test:migrations` because the schema dump resolves its
+container from the checkout's own Compose project, was stopped rather than recorded, and is evidence
+for nothing.
+
+Phase 14 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 15 is authorized to begin under the
+standing progression authorization and has **not** started.
+
