@@ -35,6 +35,7 @@ const { results, failed } = runGovernanceChecks({
   phase10ManifestPath: join(IMPL, 'phase-10-evidence.json'),
   phase11ManifestPath: join(IMPL, 'phase-11-evidence.json'),
   phase12ManifestPath: join(IMPL, 'phase-12-evidence.json'),
+  phase13ManifestPath: join(IMPL, 'phase-13-evidence.json'),
 });
 
 const width = Math.max(...results.map((r) => r.title.length));

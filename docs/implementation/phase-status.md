@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 13 — Online booking and inventory hold |
+| Current phase | 14 — Online payment, refund, commission, and settlement |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -37,6 +37,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 11 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 12 state | `DONE` |
 | Phase 12 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 13 state | `DONE` |
+| Phase 13 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -62,7 +64,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 10 | Folio, deposit, payment, and correction | `DONE` | `0011_folio_deposit_payment` | the Phase 10 battery — counts in [Phase 10 record](#phase-10-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 11 | Shift, cash drawer, expense, and hotel finance | `DONE` | `0012_shift_cash_expense` | the Phase 11 battery — counts in [Phase 11 record](#phase-11-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 12 | Public discovery and Guest authentication | `DONE` | `0013_guest_identity_discovery` | the Phase 12 battery — counts in [Phase 12 record](#phase-12-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 13 | Online booking and inventory hold | `NOT STARTED` | — | — | — |
+| 13 | Online booking and inventory hold | `DONE` | `0014_online_booking_inventory` | the Phase 13 battery — counts in [Phase 13 record](#phase-13-record) | implemented at `4768ec1`, corrected at the commit named in the record; the record and its evidence are the commit after it |
 | 14 | Online payment, refund, commission, and settlement | `NOT STARTED` | — | — | — |
 | 15 | Restaurant | `NOT STARTED` | — | — | — |
 | 16 | Verified reviews | `NOT STARTED` | — | — | — |
@@ -4683,4 +4685,140 @@ The per-command exit codes, durations and execution environment are recorded in
 [phase-12-battery-log.md](phase-12-battery-log.md).
 
 Phase 12 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 13 is authorized to begin under the
+standing progression authorization and has **not** started.
+
+---
+
+## Phase 13 record
+
+Online booking and inventory hold. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 12 tree. Phase 13 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 14 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the seven this phase owns — `BK-DEC-009`, `-012`, `-013`, `-014`,
+`PAY-DEC-002`, `PAY-DEC-006` and `RC-DEC-005`. With the 173 already closed, 180 of the 279 canonical
+decisions are now `COVERED`.
+
+**Two commits.** The implementation is `4768ec1`; its governed battery found a committed test
+literal that the secret scanner reads as a credential, and `5d51fa9` composed it the way every other
+synthetic passphrase in the repository is. The battery was stopped rather than allowed to record a
+run against a tree with a known failure, and re-measured on the correction — the same course Phase
+08 took.
+
+### Scope completed
+
+- **Migration `0014_online_booking_inventory`** — `booking` in the shape `BK-DEC-012` fixes: one
+  category unit, one primary staying guest, whole nights, its identity, window and booker written
+  once, its price a snapshot the guard refuses to re-resolve, and a terminal state the guard refuses
+  to reopen. `booking_night` records the exact nights a booking took, so releasing it releases
+  those. `category_night_inventory` carries the capacity of a category on one night and the units
+  taken, and its `CHECK (units_held <= units_capacity)` **is** the anti-overbooking rule
+  (`A-P13-1`). `booking_payment_attempt` allows exactly one `ACTIVE` attempt per booking by partial
+  unique index. `booking_event` is the append-only history. `stay.fulfilled_booking_id` names the
+  booking a stay fulfilled, uniquely.
+- **The hold** (`booking/services/booking.service.ts`) — ten minutes from the server's own clock,
+  written once and never extended; no payment session outlives it; the window, the price and the
+  availability are all re-checked inside the transaction that takes the units, because a check made
+  before the lock is a check made against a different world (doc 09 §10).
+- **The confirmation and the races** — expiry and the callback compete on one booking row. A capture
+  that lands after the hold has gone makes the payment `PAID` and the refund `REQUIRED` without
+  reopening the booking or retaking its units; a second capture of a paid booking does the same; a
+  capture on a superseded attempt decides nothing (`PAY-DEC-006`). What Phase 13 records is the
+  obligation — settlement is Phase 14's (`A-P13-5`).
+- **The sweep** (`services/expiry.service.ts`) — reads lapsed holds across every hotel through a
+  resolver function, then settles each in its own transaction on its own row lock, so a failure
+  anywhere does not roll back the ones already settled and no guest waits on a hundred locked
+  inventory rows.
+- **Both contracts Phase 12 was owed** (`booking/contracts/booking-reads.ts`) — the stay's
+  `ConfirmedBookingsPort` and the public surface's `CategoryHoldsPort`, implemented together because
+  both defaults refused the moment `platform.booking` existed, plus the write half: a check-in
+  consumes the booking inside its own transaction, so the category reservation becomes the stay's
+  occupancy without ever being counted twice (`BK-DEC-013`, `A-P13-2`).
+- **The Guest boundary, carried forward** — a guest reads their own booking through
+  `own_booking_read`, which matches only under the platform sentinel and only where the booker is
+  the authenticated account; commands run in the hotel's own scope with the identity bound by the
+  server; another guest's booking answers `NOT_FOUND`, identically to one that never existed; and
+  the Guest scope reaches no hotel tenant table. Proven over real HTTP and real PostgreSQL
+  (`A-P13-7`).
+- **Three resolver functions** — `hotel_of_category`, `public_category_holds` and
+  `lapsed_booking_holds`, owned by the login-less role Phase 05 introduced, so a request never
+  chooses the tenant its command runs in, a public search can subtract what bookings hold, and the
+  sweep can see across hotels. The last is catalogued in the scheduler's entry-point register with
+  its invocation-time guard, and in the bootstrap runbook (`A-P13-6`).
+
+### Three defects the gates found, and this phase fixed
+
+- **Dates shifted across the session timezone.** Every calendar date was bound as a `Date`, so UTC
+  midnight on the 4th was stored as the 3rd east of Greenwich — the night a booking took was not the
+  night availability asked about. `toDateString` and `fromPgDate` are now the only crossings
+  (`A-P13-8`). Found by the integration suite.
+- **An expired booking was unrepresentable.** `booking_confirmed_has_snapshot` required a price of
+  every state but `HOLDING`; it now requires one of the three states that were actually confirmed
+  (`A-P13-10`).
+- **The dependency registry named a column that does not exist.** `room.future_booking` probed
+  `booking.assigned_room_id`, which `BK-DEC-013` does not create. The source was removed rather than
+  a column invented to satisfy it, and the catalog probe test now breaks and restores a real
+  relation's shape (`A-P13-9`).
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 13 in `PROGRESSED_PHASES`, the current phase
+  advanced to 14), `docs/implementation/phase-13-evidence.json`, and the drift fixtures retargeted
+  to the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.26 — the seven decisions `COVERED` with code
+  and test references; 180 of 279.
+- **Assumptions:** `A-P13-1`…`A-P13-11` in `assumptions-and-conflicts.md` §3.17.
+
+### External gates
+
+Unchanged: `EXT-01`, `EXT-02`, `EXT-03`, `EXT-04`, `EXT-06`, `EXT-11` BLOCKED with conformance-gated
+simulators; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items;
+`DSR-01`; and selecting `GATE-SEC` as a required GitHub status check. **Phase 13 adds no new
+external gate.** It records payment *attempts* against the ports Phase 05 already gated and settles
+no money; `EXT-07` (the platform central account) is Phase 14's and is untouched.
+
+### Evidence
+
+<!-- phase-13-evidence:begin -->
+
+Measured at correction commit 5d51fa9d0956e194c27614249829bd62c04581a8, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the disposable Compose project `prsystem-p06`.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 228 of 228 drift fixtures caught at the measured commit; 241 of 241 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 673 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,467 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 13, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 446: db 41, outbox 5, api 398, worker 2 |
+| `pnpm run test:concurrency` | PASS | 66 each run: db 16, api 50 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-13-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-13-battery-log.md](phase-13-battery-log.md).
+
+Phase 13 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 14 is authorized to begin under the
 standing progression authorization and has **not** started.

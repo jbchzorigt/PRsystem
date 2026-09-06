@@ -1,4 +1,4 @@
-# Autonomous checkpoint — Phase 12 complete, Phase 13 in progress
+# Autonomous checkpoint — Phase 13 complete, Phase 14 authorized
 
 **Written:** 2026-09-05, at the close of Phase 12 under the standing progression authorization.
 **Status of this document:** a handoff. It records what is true in the checkout, not what was
@@ -26,8 +26,9 @@ re-measured. Implementation completion is not customer acceptance and not releas
 | Phase 09 commits | implementation `4063ac530ee536bb2cda5c27a1cb2526d22a660a` (the measured tree), record `11ca271` |
 | Phase 10 commits | implementation `1ac4656cfd47be97785a4a990604b73b0c4ff872` (the measured tree), record `c3fd42e` |
 | Phase 11 commits | implementation `92bceaf8a25f74d82797ae207e61ad86ef6ce3c1` (the measured tree), record `dcd6395` |
-| Phase 12 implementation commit | `713e101bee3c0f9e86139a523ed789ef4be044f5` (the measured tree) |
-| Phase 12 record commit | the commit that carries this checkpoint (see `git log -1`) |
+| Phase 12 commits | implementation `713e101bee3c0f9e86139a523ed789ef4be044f5` (the measured tree), record `affb63c` |
+| Phase 13 commits | implementation `4768ec189a28c702689226eaf42ff76e8cbdd41f`, correction `5d51fa9d0956e194c27614249829bd62c04581a8` (the measured tree) |
+| Phase 13 record commit | the commit that carries this checkpoint (see `git log -1`) |
 
 **Where the work lives, and why.** Unchanged since the Phase 06 checkpoint: the work is on this
 worktree's branch. The main checkout at `/Users/zorigtgantumur/Documents/Work/prsystem` still holds
@@ -53,34 +54,40 @@ Declared in [`tools/programme-state.mjs`](../../tools/programme-state.mjs):
 | 10 — Folio, deposit, payment, and correction | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | 11 — Shift, cash drawer, expense, and hotel finance | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | 12 — Public discovery and Guest authentication | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
-| 13 — Online booking and inventory hold | `NOT STARTED` | — (authorized to begin) |
+| 13 — Online booking and inventory hold | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| 14 — Online payment, refund, commission, and settlement | `NOT STARTED` | — (authorized to begin) |
 
 The standing progression authorization of 2026-09-03 is unchanged: implementation authorization for
-Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phases 06 to 12
+Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phases 06 to 13
 are the entries of `PROGRESSED_PHASES`; governance check 17 holds each manifest, governed entry and
 record to one another.
 
-## 3. What Phase 12 delivered
+## 3. What Phase 13 delivered
 
-See the [Phase 12 record](phase-status.md#phase-12-record). Migration
-`0013_guest_identity_discovery` admits the Guest realm to the Phase 04 account kernel rather than
-building a parallel identity beside it, adds the four account-global `guest_*` tables, the
-tenant-scoped `hotel_photo`, and the public listing projection — two `SECURITY DEFINER` functions
-owned by the existing login-less resolver role, reaching tenant rows only through policies whose
-`USING` clause is the visibility rule itself. The public module serves unauthenticated search and
-detail with distance and ordering computed by the platform; the guest module serves phone
-registration, sign-in, recovery, e-Mongolia and doc 09 §6.3's dual-channel linking. Two ports ship
-fail-closed with the conformance suite: `EXT-02` entirely, and `EXT-06`'s geocoding half.
-Traceability v1.25 (`BK-DEC-001`, `BK-DEC-002`; 173 of 279 `COVERED`); assumptions
-`A-P12-1`…`A-P12-10`.
+See the [Phase 13 record](phase-status.md#phase-13-record). Migration
+`0014_online_booking_inventory` makes overbooking a constraint violation rather than a race:
+occupancy is a row per category per night carrying the capacity and the units taken, with
+`CHECK (units_held <= units_capacity)`, and every path that changes it locks those rows in night
+order. A booking is `BK-DEC-012`'s MVP shape with its identity, window and booker written once and
+its price a snapshot; the hold is ten minutes from the server's clock and is never extended; exactly
+one payment attempt is `ACTIVE`. Expiry and the callback compete on one row, and a capture arriving
+after the hold has gone raises a full refund obligation without reopening anything. Both contracts
+Phase 12 was owed are implemented, together with the write half that consumes a booking inside the
+check-in's own transaction. Traceability v1.26 (seven decisions; 180 of 279 `COVERED`); assumptions
+`A-P13-1`…`A-P13-11`.
 
-Two defects the gates found and this phase fixed:
+Three defects the gates found and this phase fixed:
 
-- an attempt budget that never decreased, because a wrong one-time code was recorded inside the
-  transaction its own refusal rolled back — a six-digit code could be guessed without limit
-  (`A-P12-3`);
-- `PublicController` resolved no service at runtime, because it relied on inferred constructor
-  metadata; every search answered 500 until an explicit `@Inject` was added.
+- every calendar date was bound as a `Date` and shifted across the session timezone, so the night a
+  booking took was not the night availability asked about (`A-P13-8`);
+- `booking_confirmed_has_snapshot` made an expired booking unrepresentable (`A-P13-10`);
+- the dependency registry named `booking.assigned_room_id`, a column `BK-DEC-013` does not create
+  (`A-P13-9`).
+
+A fourth was found by the battery itself: a committed test literal that the secret scanner reads as
+a credential. The battery was stopped rather than allowed to record a run against a tree with a
+known failure, `5d51fa9` composed the value the way every other synthetic passphrase is, and the
+battery was re-measured on that commit.
 
 ## 4. Working tree at this checkpoint
 
@@ -94,55 +101,52 @@ Everything is committed except the untracked
 
 | Command | Result |
 | --- | --- |
-| `@prsystem/ports` `test:unit` (both new port conformance suites) | 54 passed |
-| Phase 12 `guest/domain/guest` and `public/domain/listing` unit suites | 16 passed |
-| `guest.integration` / `guest.concurrency` / `guest.security` | 11 / 3 / 8 passed |
-| `public.integration` / `public.security` / `public.http` | 9 / 5 / 8 passed |
-| api `test:unit` / `test:security` / `test:integration` / `test:concurrency` | 199 / 64 / 382 / 45 |
-| `@prsystem/db` `test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,681 / 88 / 41 / 16 / 51 |
+| Phase 13 `booking/domain/booking` unit suite | 14 passed |
+| `booking.integration` / `booking.concurrency` (×3) / `booking.security` / `booking.http` | 10 / 5 each / 8 / 6 passed |
+| api `test:unit` / `test:security` / `test:integration` / `test:concurrency` | 213 / 72 / 398 / 50 |
+| `@prsystem/db` `test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 1,778 / 88 / 41 / 16 / 51 |
+| `@prsystem/ports` `test:unit`, `@prsystem/worker` `test:unit` | 54 / 14 |
 | `turbo run lint typecheck` forced (45 tasks), `openapi`, `prettier --check .` | exit 0 |
-| `node tools/validate-governance.mjs` / `validate-governance.fixtures.mjs` on the final tree | 17 of 17 / 228 of 228 |
+| `node tools/validate-governance.mjs` / `validate-governance.fixtures.mjs` on the final tree | 17 of 17 / 241 of 241 |
 
-**The governed battery** ran in a clean detached checkout of the Phase 12 implementation commit
-`713e101` with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true` (no cached task
-replay), after a preparatory `pnpm run build`. **All 26 executions exited 0 on their first
-attempt**: unit 1,453; migrations 148; integration 430; concurrency 61 ×3; regression 51; GATE-SEC
-19 of 19 ×3; e2e 15; both dependency audits clean on the first request. Exit codes and durations are
-in [`phase-12-battery-log.md`](phase-12-battery-log.md), results in
-[`phase-12-evidence.json`](phase-12-evidence.json), restated in the Phase 12 record. The two
+**The governed battery** ran in a clean detached checkout of the Phase 13 correction commit
+`5d51fa9` with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true`, after a
+preparatory `pnpm run build`. Exit codes and durations are in
+[`phase-13-battery-log.md`](phase-13-battery-log.md), results in
+[`phase-13-evidence.json`](phase-13-evidence.json), restated in the Phase 13 record. The two
 governance rows there are from the final tree, which is the only tree that carries the record.
 
-**Historical evidence (unchanged, not re-measured):** the Phase 03/04/05/06/07/08/09/10/11 batteries
-and the Phase 05 CI ledger are frozen records of earlier trees.
+**An earlier battery on the implementation commit `4768ec1` was stopped, not recorded.** It had
+reached `validate-secret-scan.fixtures.mjs`, which exited 1 on the committed test literal described
+in §3. Its output directory was removed and the run was repeated in full on `5d51fa9`; no part of it
+is evidence for anything.
+
+**Historical evidence (unchanged, not re-measured):** the Phase 03/04/05/06/07/08/09/10/11/12
+batteries and the Phase 05 CI ledger are frozen records of earlier trees.
 
 ## 6. Integration obligations now open on later phases
 
-- **Phase 13 owes two implementations, not one.** `platform.booking` arriving makes both
-  `ConfirmedBookingsPort` (stay: commitments on one physical room) and `CategoryHoldsPort` (public:
-  units of a category held in a window) refuse rather than answer. Implementing one and forgetting
-  the other leaves public availability over-reporting, and the default is written to fail loudly at
-  exactly that moment.
-- Phase 13 also owes: `assigned_room_id` / `category_id` on the booking, `ConflictService.detect`,
-  the assignment application and the refund obligation on `stay.conflict.resolved` /
-  `CANCELLED_HOTEL`; `captureRateSnapshot` for `ONLINE_BOOKING`; the online side of
-  `stay.minibar_report_settled`; and an online booking's prepayment as a folio payment rather than a
-  deposit. The Guest session Phase 12 issues is the identity a booking is made under, and
-  `booking.cancel_own` is already declared in `GUEST_ACTIONS`.
-- Phase 14: the provider callback that detects a late refund success unprompted — the contract it
-  calls, freeze and open one case, is already in `RefundService`.
-- Phase 15: Restaurant money stays out of the hotel drawer (doc 24 §1).
-- Phase 16: `review.report_published` is already declared in `GUEST_ACTIONS`; a verified-stay review
-  reads the Guest account Phase 12 created.
-- Phase 17: guest identity corrections as new `stay_guest` revisions; the folio, the money ledger,
-  the cash ledger, the shift counts, the expenses and the finance events feed the hotel's financial
-  reporting.
-- Phase 18: `stay.checked_in` (token, never the number) and `stay.actual_time_corrected`.
+**Phase 13 discharged the two the last checkpoint named.** `ConfirmedBookingsPort` and
+`CategoryHoldsPort` are both implemented, so neither default refuses any more; `BookingFulfilmentPort`
+was added for the write half and its own default refuses until it is implemented, which it now is.
+
+- **Phase 14** owes the settlement half of what Phase 13 records: capture and refund execution,
+  commission, the gateway fee, `EXT-07`'s central account, and the payout axis. The obligations are
+  already on the row — `payment_state = 'PAID'` with `refund_state = 'REQUIRED'` — and
+  `booking.refund_required` is on the outbox. `BK-DEC-014`'s "commission 0, gateway fee the
+  platform's cost" is a settlement rule with nothing yet to settle.
+- Phase 14 also owes the provider callback that detects a late refund success unprompted; the
+  contract it calls is already in `RefundService`.
+- **Phase 15**: Restaurant money stays out of the hotel drawer (doc 24 §1).
+- **Phase 16**: a verified-stay review reads the booking and the stay it became.
+- **Phase 17**: the booking's money feeds the hotel's financial reporting.
+- **Phase 18**: `stay.checked_in` and `stay.actual_time_corrected` are unchanged by this phase.
 - Every phase that resolves a lifecycle blocker keeps calling `LifecycleService.finalizeIfClear`.
 
 ## 7. Processes, containers and services
 
 - **No task-owned process is running.** `git worktree list` shows the main checkout, this worktree
-  and five task-owned detached checkouts the batteries ran in — `scratchpad/battery-wt-08b` at
+  and six task-owned detached checkouts the batteries ran in — `scratchpad/battery-wt-08b` at
   `5b3603a`, `battery-wt-09` at `4063ac5`, `battery-wt-10` at `1ac4656`, `battery-wt-11` at
   `92bceaf` and `battery-wt-12` at `713e101` — all safe to remove with `git worktree remove
   --force`. The failed first Phase 08 battery's worktree was removed after its account was
@@ -164,7 +168,9 @@ and the Phase 05 CI ledger are frozen records of earlier trees.
   `EXT-01` (BLOCKED for its contract), `INT-OTP-01`, `INT-MAIL-01`, the Phase 19 offline
   verification surface, 17 P1 configuration items, `DSR-01`, and selecting `GATE-SEC` as a required
   GitHub status check.
-- **Phase 12 adds no new external gate.** It ships the ports for two that were already registered.
+- **Phase 13 adds no new external gate.** It records payment *attempts* against the ports Phase 05
+  already gated and settles no money; `EXT-07` is Phase 14's and is untouched.
+- **Phase 12 added no new external gate either.** It ships the ports for two that were already registered.
   `EXT-02` and `EXT-06` remain **BLOCKED** and now carry a canonical port and a conformance-gated
   simulator; `EXT-06`'s geocoding half is gated while its distance half is provider-free, recorded
   as `A-P12-6`. **P1-01** — the nearby radius and the sort order — is now live on its interim
@@ -175,63 +181,23 @@ and the Phase 05 CI ledger are frozen records of earlier trees.
 - The main-checkout reconciliation of §1 remains the one decision this checkpoint asks of the
   customer.
 
-## 8a. Phase 13 in progress — what exists in the working tree
-
-**HEAD is still the Phase 12 record `affb63c`.** Everything below is uncommitted.
-
-**The schema layer is complete and every `@prsystem/db` gate passes on it**: migrations 148, unit
-88, security 1,778, regression 51, integration 41, concurrency 16.
-
-- `packages/db/migrations/0014_online_booking_inventory.sql` (untracked) — `booking` (the MVP shape,
-  identity/window/booker written once, price a snapshot, terminal never reopened), `booking_night`,
-  `category_night_inventory` whose `CHECK (units_held <= units_capacity)` **is** the anti-overbooking
-  rule, `booking_payment_attempt` (one `ACTIVE` per booking by partial unique index),
-  `booking_event`, `stay.fulfilled_booking_id` with a partial unique index, the `own_booking_read`
-  policy that lets a Guest read their own booking and nothing else, the two
-  `public_availability_read` policies the Phase 12 projection needs, and
-  `platform.hotel_of_category(uuid)` — a `SECURITY DEFINER` resolver so a request never chooses the
-  tenant its command runs in.
-- Journal entry 14; migration counts 14 → 15 in the three suites; snapshot and Drizzle declarations
-  regenerated; `classification.ts`, `test-support/tenant-rows.ts` (five fixtures) and
-  `ownership-manifest.ts` updated; `migrations.test.ts` records Phase 13's table ownership.
-
-**The API module is written and typechecks**, not yet exercised: `booking/domain/booking.ts`,
-`repositories/booking.repository.ts`, `services/{booking-context,booking.service,expiry.service}.ts`,
-`contracts/booking-reads.ts` (both ports Phase 13 owed, plus the fulfilment write),
-`stay/contracts/booking-fulfilment.ts`, and the check-in now consumes the booking inside its own
-transaction.
-
-**One registry correction, made deliberately.** `room.future_booking` named
-`platform.booking.assigned_room_id`, a column `BK-DEC-013` does not create: a booking holds a
-category unit and reaches a room only by becoming a stay. The source was removed rather than a
-column invented to satisfy it, and the three tests that named it were retargeted — including the
-catalog probe test, which now breaks and restores a real relation's shape instead of creating a
-fake one, since every registered relation exists once Phase 13 lands.
-
-**Still to do:** the guest-facing HTTP layer, the module and its wiring into `app.module`, the
-worker's expiry job, the test suites (unit, integration, concurrency ×3, security, HTTP), then
-traceability v1.26, assumptions §3.17, the Phase 13 record, governance, the governed battery on the
-implementation commit, evidence, and the two commits.
-
 ## 9. Exact next action
 
-**Phase 13 — Online booking and inventory hold — is the current phase, authorized and under way.**
-Resume from §8a: write `booking/http/`, `booking.module.ts` and the `app.module` wiring, then the
-suites. Nothing already built needs redoing. Before editing: reread `CLAUDE.md`, this checkpoint,
-`phase-status.md` (current position, ledger, the Phase 11 and 12 records), `build-plan.md`
-§"Phase 13", and the requirement files that phase assigns; list its owned DEC IDs from
-`requirements-traceability.md` §2 and the family tables. Then verify `git status` matches §4.
+**Phase 14 — Online payment, refund, commission, and settlement — is the current phase and is
+authorized to begin under the standing authorization.** Before editing: reread `CLAUDE.md`, this
+checkpoint, `phase-status.md` (current position, ledger, the Phase 12 and 13 records),
+`build-plan.md` §"Phase 14", and the requirement files that phase assigns; list its owned DEC IDs
+from `requirements-traceability.md` §2 and the family tables. Then verify `git status` matches §4.
 
 **The exact next command.**
 
 ```
 cd /Users/zorigtgantumur/Documents/Work/prsystem/.claude/worktrees/prsystem-phases-06-23-d506eb \
   && git log --oneline -3 && git status --porcelain \
-  && sed -n '/^### Phase 13/,/^### Phase 14/p' docs/implementation/build-plan.md
+  && sed -n '/^### Phase 14/,/^### Phase 15/p' docs/implementation/build-plan.md
 ```
 
-Begin with the two contracts §6 names: `platform.booking` cannot be created without implementing
-`ConfirmedBookingsPort` *and* `CategoryHoldsPort` in the same phase, because both defaults are
-written to refuse the moment that table exists. Everything else in Phase 13 — the hold, the
-category inventory of `BK-DEC-013`, the conflict detection and the assignment — hangs off that
-table.
+Begin where Phase 13 stopped deliberately: the refund obligations it raises. A booking already
+carries `payment_state = 'PAID'` with `refund_state = 'REQUIRED'` and emits `booking.refund_required`
+on the outbox, so Phase 14's first job is the axis that settles them — not a new way to record that
+they exist.
