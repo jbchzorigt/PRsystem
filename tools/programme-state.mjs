@@ -85,7 +85,7 @@ export const GOVERNED_STATE = {
    * it reads as covering whatever HEAD happens to be.
    */
   implementedPhaseAcceptedAtCommit: '35314ba210f609269863f0b528bbe827e6a5d3ce',
-  currentPhase: '16 — Verified reviews',
+  currentPhase: '17 — Guest registry, exports, and Hotel Admin reports',
   currentPhaseState: 'NOT STARTED',
 };
 
@@ -242,6 +242,18 @@ export const PROGRESSED_PHASES = [
       manifestKeys: ['phase', 'phaseState', 'acceptance', 'measuredAtCommit', 'battery'],
     },
   },
+  {
+    number: '16',
+    name: '16 — Verified reviews',
+    state: 'DONE',
+    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidence: {
+      manifest: 'phase-16-evidence.json',
+      region: 'phase-16-evidence',
+      heading: 'Phase 16 record',
+      manifestKeys: ['phase', 'phaseState', 'acceptance', 'measuredAtCommit', 'battery'],
+    },
+  },
 ];
 
 /**
@@ -264,7 +276,7 @@ export const GOVERNED_PHASES = [
     name: phase.name,
     state: phase.state,
   })),
-  { number: '16', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
+  { number: '17', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
 ];
 
 /**

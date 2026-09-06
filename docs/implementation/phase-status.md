@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 16 — Verified reviews |
+| Current phase | 17 — Guest registry, exports, and Hotel Admin reports |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -43,6 +43,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 14 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 15 state | `DONE` |
 | Phase 15 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 16 state | `DONE` |
+| Phase 16 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -71,7 +73,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 13 | Online booking and inventory hold | `DONE` | `0014_online_booking_inventory` | the Phase 13 battery — counts in [Phase 13 record](#phase-13-record) | implemented at `4768ec1`, corrected at the commit named in the record; the record and its evidence are the commit after it |
 | 14 | Online payment, refund, commission, and settlement | `DONE` | `0015_booking_settlement` | the Phase 14 battery — counts in [Phase 14 record](#phase-14-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 15 | Restaurant | `DONE` | `0016_restaurant_ordering` | the Phase 15 battery — counts in [Phase 15 record](#phase-15-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 16 | Verified reviews | `NOT STARTED` | — | — | — |
+| 16 | Verified reviews | `DONE` | `0017_verified_reviews` | the Phase 16 battery — counts in [Phase 16 record](#phase-16-record) | implemented and corrected at the commits named in the record; the record and its evidence are the commit after them |
 | 17 | Guest registry, exports, and Hotel Admin reports | `NOT STARTED` | — | — | — |
 | 18 | Police monitoring | `NOT STARTED` | — | — | — |
 | 19 | Platform Operation | `NOT STARTED` | — | — | — |
@@ -5125,4 +5127,138 @@ The per-command exit codes, durations and execution environment are recorded in
 [phase-15-battery-log.md](phase-15-battery-log.md).
 
 Phase 15 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 16 is authorized to begin under the
+standing progression authorization and has **not** started.
+
+---
+
+## Phase 16 record
+
+Verified-stay reviews, reports, moderation and the one official hotel reply.
+Authorized under the [standing progression authorization](#standing-progression-authorization),
+implemented and gated on top of the Phase 15 tree. It took two commits: the implementation, and a
+correction the governed battery found — two `SECURITY DEFINER` read policies present in the
+migration and absent from the declaration. Phase 16 is `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`; Phase 17 is the current phase, authorized to begin, and has **not**
+started.
+
+**Decisions closed:** the eleven this phase owns — `RV-DEC-001`…`-007`, `BK-DEC-004`, `-005`, `-006`
+and `-007`. With the 210 already closed, 221 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0017_verified_reviews`** — seven tables. `hotel_review` with its seven columns of
+  content and status; `hotel_review_edit`, the words a reviewer wrote before an edit;
+  `hotel_review_aggregate`, the published count, rating sum and derived average; `review_report`,
+  the Guest's report; `review_moderation_event`, the append-only hide, restore and resolution
+  history; `hotel_review_reply` and `hotel_review_reply_event`.
+- **A review is earned, and earned once** (`RV-DEC-002`, `BK-DEC-005`). Eligibility is three
+  conditions read together from the booking module's own contract, inside the transaction that
+  writes the row: the account made the booking, the booking is `COMPLETED`, and it carries the
+  checkout that completed it. The client's booking status decides nothing, and doc 10 §3 says so.
+  `booking_id` is UNIQUE, so the second review for a booking is a constraint violation — including
+  when the first was soft-deleted, because that row still occupies its booking (`A-P16-2`).
+- **Nothing is ever deleted** (`RV-DEC-004`, `BK-DEC-007`). The owner's withdrawal is
+  `status = 'DELETED'`; the moderator's hide is `status = 'HIDDEN'`; every table of this phase
+  refuses `DELETE` outright. A trigger refuses any transition *out* of `DELETED`, so doc 10 §7.3's
+  "a moderator does not undo an owner's delete" is a property of the schema rather than of a check.
+- **The 30-day window is snapshotted, not re-derived** (`RV-DEC-003`, `A-P16-1`, `A-P16-2`).
+  `review_deadline_at` is written once from the checkout that completed the booking and is
+  immutable; the create and the edit are both judged against it, at the instant of submission rather
+  than when the form was opened. The owner's delete has no deadline at all.
+- **The aggregate is arithmetic the database owns** (doc 10 §6, `A-P16-4`). Published count, rating
+  sum and `average_rating_centi` are one row with a CHECK binding the three:
+  `(sum × 200 + count) / (max(count,1) × 2)` is exactly half-up on non-negative integers, so the
+  average cannot be written to disagree with what it summarises and no client ever computes it.
+- **The aggregate moves with the review, never afterwards** (`A-P16-5`). Publish, edit, hide,
+  restore and soft-delete each take the hotel's aggregate row lock and write it in the same
+  transaction. There is no job to schedule and nothing to fall behind — which is why this phase
+  holds **no worker grant on any of its seven tables**.
+- **A report is a request for attention, and nothing more** (`RV-DEC-005`). Any authenticated Guest
+  may report a published review: no completed stay, no hotel membership, no role, no package — doc
+  18 §8 grants `review.report_published` to the whole Guest column. It hides nothing and moves no
+  aggregate. One open report per account and review is a partial unique index, and the service reads
+  the caller's own open report under the review's row lock before inserting (`A-P16-6`).
+- **Moderation is an explicitly granted permission, never a role name** (`RV-DEC-005`, `RV-DEC-006`).
+  `OPERATION_ADMIN` and `PLATFORM_SUPER_ADMIN` grant nothing on their own; what opens the three
+  commands is `REVIEW_MODERATE` on the acting account plus the step-up recency doc 18 §5 attaches to
+  it. The Phase 04 pipeline re-reads the grant inside each command's transaction, so a revocation
+  that commits first wins over a request authorised a moment earlier. A hide states one of the four
+  approved reasons and a mandatory note; a negative rating is not a reason.
+- **One official reply per review** (`RV-DEC-007`). `review_id` is UNIQUE on the reply table, so a
+  withdrawn reply is *restored* rather than replaced and a second record cannot exist. A reply never
+  writes to the review: nothing in that service touches `hotel_review` at all.
+- **The public surface** (`BK-DEC-004`, doc 10 §6). The listing projection now carries the review
+  count and the average, and a second projection returns a hotel's published reviews with the masked
+  name, the words and the live reply — and no `account_id`, `booking_id`, `hotel_id` or `status`
+  (doc 10 §8). Both are `SECURITY DEFINER` functions owned by the login-less resolver role, reading
+  through policies written for that role alone.
+- **Two resolvers for a caller with no tenant** (`A-P16-8`). A reporter saw the review on a public
+  page and has no relationship with the hotel; a Platform moderator holds no membership anywhere.
+  `hotel_of_published_review` answers for the first and `hotel_of_moderatable_review` for the
+  second, and neither answers for a review the owner deleted.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 16 in `PROGRESSED_PHASES`, the current phase
+  advanced to 17), `docs/implementation/phase-16-evidence.json`, and the drift fixtures retargeted to
+  the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.29 — the eleven decisions `COVERED` with code
+  and test references; 221 of 279.
+- **Assumptions:** `A-P16-1`…`A-P16-11` in `assumptions-and-conflicts.md` §3.20.
+
+### External gates
+
+Unchanged, and **this phase touches none**. A review is written, moderated and published entirely
+inside the platform: no provider, no gateway, no external identity. `EXT-01`, `EXT-02`, `EXT-03`,
+`EXT-04`, `EXT-06`, `EXT-07`, `EXT-11` remain BLOCKED with conformance-gated simulators;
+`INT-OTP-01`, `INT-MAIL-01`; the Phase 19 offline verification surface; 17 P1 items; `DSR-01`; and
+selecting `GATE-SEC` as a required GitHub status check. **Phase 16 adds no new external gate.**
+
+### Evidence
+
+<!-- phase-16-evidence:begin -->
+
+Measured at correction commit fbb498bd4e832e868fbeaa4ae8d39a9523612cfb, in a clean detached
+checkout of that commit with a fresh install, a fresh Turborepo cache directory and forced task
+execution — no task was replayed from any cache — on the repository's own Compose stack.
+The record itself — the manifest and this table — is the commit after it; the governance validator
+and its fixtures were run again on that final tree and are what the two governance rows report.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 265 of 265 drift fixtures caught at the measured commit; 277 of 277 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 747 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,540 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 16, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 525: db 41, outbox 5, api 477, worker 2 |
+| `pnpm run test:concurrency` | PASS | 80 each run: db 16, api 64 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-16-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-16-battery-log.md](phase-16-battery-log.md). A first run of that battery, on the
+implementation commit `d5cf786`, failed `pnpm run test:migrations`: migration 0017 creates two
+`SECURITY DEFINER` read policies that were added after the canonical snapshot was generated and were
+therefore undeclared, and the schema comparator caught exactly that. It was **stopped rather than
+recorded**, its output removed, and the run repeated in full on the corrected commit named above.
+
+Phase 16 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 17 is authorized to begin under the
 standing progression authorization and has **not** started.
