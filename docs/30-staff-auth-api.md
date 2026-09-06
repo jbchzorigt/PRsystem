@@ -72,7 +72,7 @@ uvicorn prsystem.api:create_app --factory --host 127.0.0.1 --port 8000 --no-prox
 
 `python -m pip install '.[api,test]'` дараа isolated PostgreSQL-ийн `PRSYSTEM_TEST_ADMIN_DSN`-тэй `python -m unittest discover -s tests -v` ажиллуулна. CI нь cash болон staff API suite-уудыг тус бүр disposable database/restricted role-оор ажиллуулна.
 
-21 staff API integration test: token hash, safe response, verified account, tenant scope, explicit Hotel Admin permission, scoped/global revoke, role change, password change, logout, idle/absolute expiry, subscription/security suspension, persisted login/IP throttle, concurrent suspension-vs-login, runtime grants болон unsafe owner connection rejection.
+22 staff API integration test: token hash, safe response, verified account, tenant scope, explicit Hotel Admin permission, scoped/global revoke, role change, password change, logout, idle/absolute expiry, subscription/security suspension, persisted login/IP throttle, concurrent suspension-vs-login, logout lock order, runtime grants болон unsafe owner connection rejection.
 
 Үлдсэн ажил: invitation/resend/accept ба reset-email delivery, Primary Admin хамгаалалттай staff lifecycle API, suspension takeover/reassignment queue, бүх operational action permission/shift/source validation, outbox delivery. Membership trigger нь session invalidation primitive; admin fixture-ийн SQL status update нь production staff suspension workflow биш. Rate/session row cleanup, auth failure monitoring/retention, request body/connection limits болон load/restore drills production gate хэвээр. Browser UI ороход token хадгалалт ба XSS/CSRF загварыг хамт шийднэ; token localStorage хадгалах default жишээ оруулаагүй.
 

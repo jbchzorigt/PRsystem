@@ -131,9 +131,15 @@ class StaffAuth:
     def logout(self, token):
         # Idempotent, including expired/revoked sessions; no privilege is granted.
         with transaction(self.dsn) as conn:
+            key = digest(token)
+            identity = conn.execute("SELECT account_id FROM prsystem.staff_session WHERE token_hash = %s", (key,)).fetchone()
+            if identity is None:
+                return
+            # Keep account -> session order, including the audit's account FK lock.
+            conn.execute("SELECT id FROM prsystem.staff_account WHERE id = %s FOR UPDATE", (identity[0],))
             row = conn.execute("""UPDATE prsystem.staff_session SET revoked_at = clock_timestamp()
                 WHERE token_hash = %s AND revoked_at IS NULL RETURNING account_id, tenant_id""",
-                (digest(token),)).fetchone()
+                (key,)).fetchone()
             if row:
                 self._audit(conn, "LOGOUT", *row)
 

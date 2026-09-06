@@ -88,6 +88,20 @@ class StaffApiTests(PostgresCase):
                 conn.execute("""UPDATE prsystem.staff_membership SET roles = %s, is_primary = %s
                     WHERE tenant_id = %s AND account_id = %s""", (roles, "HOTEL_ADMIN" in roles, self.tenant, self.account))
 
+    def wait_for_app_lock(self, owner):
+        # Use fresh observer transactions: pg_stat_activity snapshots inside the
+        # long-lived owner transaction can hide a newly connected waiter.
+        with psycopg.connect(self.owner_dsn, autocommit=True) as observer:
+            deadline = monotonic() + 4
+            while monotonic() < deadline:
+                waiting = observer.execute("""SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                    WHERE datname = current_database() AND usename = %s
+                      AND %s = ANY(pg_blocking_pids(pid)))""", (self.role, owner.info.backend_pid)).fetchone()[0]
+                if waiting:
+                    return True
+                sleep(0.02)
+        return False
+
     def test_login_opaque_hashed_session_and_private_response(self):
         response = self.login()
         self.assertEqual(response.status_code, 200, response.text)
@@ -270,14 +284,7 @@ class StaffApiTests(PostgresCase):
         with psycopg.connect(self.owner_dsn) as owner, ThreadPoolExecutor(max_workers=1) as pool:
             owner.execute("SELECT * FROM prsystem.staff_membership WHERE tenant_id = %s FOR UPDATE", (self.tenant,))
             future = pool.submit(self.login)
-            deadline = monotonic() + 4
-            waiting = False
-            while monotonic() < deadline:
-                waiting = owner.execute("""SELECT EXISTS(SELECT 1 FROM pg_stat_activity
-                    WHERE datname = current_database() AND usename = %s AND wait_event_type = 'Lock')""", (self.role,)).fetchone()[0]
-                if waiting:
-                    break
-                sleep(0.02)
+            waiting = self.wait_for_app_lock(owner)
             owner.execute("UPDATE prsystem.staff_membership SET status = 'SUSPENDED' WHERE tenant_id = %s", (self.tenant,))
             owner.commit()
             self.assertTrue(waiting, "Login must contend on the authoritative membership lock")
@@ -293,6 +300,21 @@ class StaffApiTests(PostgresCase):
             for statement in statements:
                 with self.subTest(statement=statement), self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     conn.execute(statement)
+
+    def test_logout_does_not_lock_session_while_waiting_for_account(self):
+        token = self.token()
+        with psycopg.connect(self.owner_dsn) as owner, ThreadPoolExecutor(max_workers=1) as pool:
+            owner.execute("SELECT id FROM prsystem.staff_account WHERE id = %s FOR UPDATE", (self.account,))
+            future = pool.submit(self.client.post, "/auth/logout", headers=self.headers(token))
+            waiting = self.wait_for_app_lock(owner)
+            # If logout held this row first, an authenticated request holding the
+            # account could deadlock with logout's audit foreign-key check.
+            row = owner.execute("SELECT revoked_at FROM prsystem.staff_session WHERE token_hash = %s FOR UPDATE NOWAIT",
+                                (digest(token),)).fetchone()
+            owner.commit()
+            self.assertTrue(waiting)
+            self.assertIsNone(row[0])
+            self.assertEqual(future.result(timeout=10).status_code, 204)
 
     def test_privileged_database_role_fails_closed_without_leaking_details(self):
         with TestClient(create_app(self.owner_dsn, self.settings)) as client:
