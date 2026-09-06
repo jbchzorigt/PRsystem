@@ -95,6 +95,11 @@ describe('migration journal', () => {
       // `booking_event` — are compound names the rule does not match, so only
       // the bare one is named here.
       '0014_online_booking_inventory.sql': ['booking'],
+      // doc 08 §3: the restaurant is Phase 15's, and this is the phase that
+      // introduces it. Its other tables — `restaurant_order`,
+      // `restaurant_menu_item`, `guest_session` and the rest — are compound
+      // names the rule does not match, so only the bare one is named here.
+      '0016_restaurant_ordering.sql': ['restaurant'],
     };
 
     for (const file of sqlFiles) {

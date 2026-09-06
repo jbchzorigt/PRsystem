@@ -12,6 +12,8 @@ import { SimulatedBookingFulfilment } from '../contracts/booking-fulfilment';
 import { SimulatedPaymentAttempts } from '../contracts/payment-attempts';
 import type { DepositsPort } from '../contracts/deposits';
 import { SimulatedDeposits } from '../contracts/deposits';
+import type { RestaurantOrdersPort } from '../contracts/restaurant-orders';
+import { SimulatedRestaurantOrders } from '../contracts/restaurant-orders';
 import type { GuestIdentityInput } from '../domain/identity';
 import { CheckInService } from '../services/check-in.service';
 import { CheckoutService } from '../services/checkout.service';
@@ -54,6 +56,7 @@ export interface StayHarness {
   readonly bookingFulfilment: SimulatedBookingFulfilment;
   readonly payments: SimulatedPaymentAttempts;
   readonly deposits: SimulatedDeposits;
+  readonly restaurantOrders: SimulatedRestaurantOrders;
   readonly shifts: ShiftService;
   readonly housekeeping: HousekeepingService;
   readonly checkIns: CheckInService;
@@ -91,6 +94,7 @@ export function syntheticGuest(overrides: Partial<GuestIdentityInput> = {}): Gue
 export interface StayHarnessOptions {
   /** Phase 10 supplies its own implementation so a check-in opens a real folio. */
   readonly deposits?: DepositsPort;
+  readonly restaurantOrders?: RestaurantOrdersPort;
 }
 
 export function attachStayHarness(
@@ -105,6 +109,8 @@ export function attachStayHarness(
   const payments = new SimulatedPaymentAttempts();
   const simulatedDeposits = new SimulatedDeposits();
   const deposits = options.deposits ?? simulatedDeposits;
+  const simulatedRestaurantOrders = new SimulatedRestaurantOrders();
+  const restaurantOrders = options.restaurantOrders ?? simulatedRestaurantOrders;
   let offsetMs = 0;
   const clock = (): Date => new Date(Date.now() + offsetMs);
   const deps: StayDependencies = {
@@ -119,6 +125,7 @@ export function attachStayHarness(
     bookingFulfilment,
     payments,
     deposits,
+    restaurantOrders,
     cash: new LedgerCashLedger(),
     clock,
   };
@@ -135,6 +142,7 @@ export function attachStayHarness(
     bookingFulfilment,
     payments,
     deposits: simulatedDeposits,
+    restaurantOrders: simulatedRestaurantOrders,
     shifts: new ShiftService(deps),
     housekeeping: new HousekeepingService(deps),
     checkIns: new CheckInService(deps),

@@ -373,6 +373,14 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
           public: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           booking: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           settlement: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
+          restaurant: {
+            config: {
+              databaseUrl: apiUrl,
+              appEnv: 'test',
+              kmsAdapter: 'local',
+              kmsSeed: 'scheduler-boundary-restaurant-seed',
+            },
+          },
           stay: {
             config: {
               databaseUrl: apiUrl,

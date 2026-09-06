@@ -913,6 +913,64 @@ recorded so a reviewer can see where a judgement was made.
   gated. Wiring the conflict resolution itself to that command is not in this phase's scope and
   remains open.
 
+### 3.19 Phase 15 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P15-1 — the 30,000₮ entitlement is enforced only in the permission matrix.** doc 08 §3 puts
+  the whole module inside the 30,000₮ package. `hotel.restaurant.register`, `restaurant.menu_manage`
+  and `restaurant.order_process` are granted on `P30` alone in doc 18 §3, so the Phase 04 pipeline
+  refuses a smaller package before any row of this module is read. No second copy of that rule is
+  written into the restaurant services, because a second copy is a second thing to drift.
+- **A-P15-2 — the Restaurant Manager account is invited, not created.** doc 08 §3 requires an
+  invitation, which is Phase 04's `hotel.restaurant.manager_invite` and its existing flow. Phase 15
+  registers the restaurant and links it; it creates no account and sets no password.
+- **A-P15-3 — the room session is its own credential, on its own header.** A restaurant guest is not
+  an account (doc 08 §7). The session is presented as `X-Restaurant-Session` and never as
+  `Authorization: Bearer`, so a Guest-realm account token can never be mistaken for a room session
+  and vice versa. Realms do not merge (CLAUDE.md §4), and a shared header would have been the one
+  place they could.
+- **A-P15-4 — the guest's confinement is a database rule, not a service convention.**
+  `app.guest_stay_id` and a `RESTRICTIVE` policy on each of the five stay-scoped relations are what
+  keep one room out of another's orders. A restrictive policy is vacuous when the GUC is unset,
+  which is deliberate: the staff and job scopes see the hotel's own rows, and only a guest
+  transaction carries the stay.
+- **A-P15-5 — the hotel behind a room session is resolved by a `SECURITY DEFINER` function.** A
+  guest presents no tenant, so `platform.hotel_of_guest_session` answers with the hotel and nothing
+  else, for a live session only; the service then re-reads the row inside that hotel's own scope
+  rather than trusting the lookup. The same shape as Phase 13's invoice resolver and Phase 15's own
+  `room_of_access_token`.
+- **A-P15-6 — the ordering window is a wall-clock pair, and midnight is not a window.** doc 08 §5
+  gives the schedule as hotel-local opening and closing times, stored as `time without time zone`.
+  An overnight window is recognised by a closing earlier than its opening, and evaluated against the
+  previous and current local dates. A day whose closing equals its opening is a zero-length day, and
+  the database refuses it.
+- **A-P15-7 — the invoice's fifteen minutes is a ceiling, not a promise.** `RC-DEC-023` gives the
+  invoice fifteen minutes and doc 08 §5 closes ordering at the day's closing time. The attempt's
+  expiry is therefore the earlier of the two, and a `CHECK` — not the application — is what makes
+  that true of every row.
+- **A-P15-8 — five devices is a stored counter with a `CHECK`, not a count the code took.**
+  `RC-DEC-027` asks explicitly that two codes confirmed at the same instant cannot exceed the
+  allowance. `stay_guest_access` holds `active_sessions + pending_codes <= 5` as a constraint, the
+  row is locked before either half moves, and a code is spent by a compare-and-set — so the refusal
+  is the database's.
+- **A-P15-9 — an unfinished order does not block a checkout; an unacknowledged one does.** doc 08
+  §18 says an unfinished restaurant order must not hard-block the checkout, and §19 says Reception
+  records one of three handoff choices per order first. Both hold if what refuses the final checkout
+  is a *missing acknowledgement* rather than the order itself, re-read under the stay's own lock at
+  the moment the checkout is confirmed (doc 08 §8). The checkout cancels nothing and refunds
+  nothing.
+- **A-P15-10 — the restaurant module has no Operation surface and no settlement.** doc 08 §13 sends
+  a food payment to the restaurant's own merchant. There is no payable, no batch, no commission and
+  no platform payout for it, and nothing in this module reaches a folio, a deposit, a cash drawer or
+  a shift total. That separation is structural — the tables do not exist — rather than remembered.
+- **A-P15-11 — the checkout's two restaurant obligations cross the module boundary as a contract.**
+  The stay module never names a restaurant table: `RestaurantOrdersPort` carries the unacknowledged
+  orders and the closing of the stay's guest access, and its `Unprovisioned` default fails closed
+  once `platform.restaurant_order` exists — so a deployment that forgot to register the
+  implementation refuses the checkout instead of leaving a live room session behind.
+
 ---
 
 ## 4. P1 configuration register

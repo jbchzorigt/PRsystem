@@ -69,6 +69,21 @@ export interface TenantContext {
    * rather than everybody's.
    */
   readonly onboardingRef?: string;
+  /**
+   * The stay a Restaurant guest session is bound to (Phase 15).
+   *
+   * A restaurant guest is not an account. They are whoever holds the room's QR
+   * and a one-time code, and doc 08 §7 confines what they may see to their own
+   * stay — which cannot be expressed by `hotel_id`, because the menus they must
+   * be able to read are the hotel's. So this is a separate axis, and the
+   * restrictive policies of migration `0016` read it: a guest-realm transaction
+   * that carries one sees the orders of that stay and no other.
+   *
+   * Unset it is NULL, and the restriction is then vacuous — which is the
+   * correct reading of the one path that has no stay yet: redeeming a code,
+   * where the stay is what the redemption is about to establish.
+   */
+  readonly guestStayId?: string;
   readonly correlationId: string;
   readonly causationId?: string;
 }
@@ -104,6 +119,19 @@ export function assertTenantContext(context: TenantContext): void {
   }
   if (context.onboardingRef !== undefined && !UUID.test(context.onboardingRef)) {
     throw new TenantScopeError('the onboarding reference must be a UUID');
+  }
+  if (context.guestStayId !== undefined && !UUID.test(context.guestStayId)) {
+    throw new TenantScopeError('the guest stay reference must be a UUID');
+  }
+  // A restaurant guest session belongs to one stay inside one hotel, so it is
+  // meaningless outside a hotel scope and meaningless outside the Guest realm.
+  if (context.guestStayId !== undefined) {
+    if (context.realm !== 'guest') {
+      throw new TenantScopeError('a guest stay scope belongs to the Guest realm');
+    }
+    if (context.hotelId === PLATFORM_SCOPE) {
+      throw new TenantScopeError('a guest stay scope belongs to a hotel, not to the platform');
+    }
   }
   // The platform sentinel is not a hotel. It is the scope work that belongs to
   // no single tenant runs in: platform-wide Operation work, and — from Phase 04

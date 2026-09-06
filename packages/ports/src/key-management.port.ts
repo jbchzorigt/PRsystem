@@ -73,7 +73,19 @@ export type HmacScope =
    */
   | 'lookup.guest_phone'
   | 'auth.guest_otp'
-  | 'lookup.guest_identity_subject';
+  | 'lookup.guest_identity_subject'
+  /**
+   * Phase 15 Restaurant guest access, three kinds and therefore three scopes
+   * (doc 08 §7, `RC-DEC-026`).
+   *
+   * The room's permanent QR token, the one-time code Reception hands over, and
+   * the session token a redeemed code produces are each hashed under their own
+   * key: a leaked QR is not a session, and a code read off a desk is not a
+   * token. None of the three is ever stored, logged or audited in plaintext.
+   */
+  | 'auth.room_qr_token'
+  | 'auth.guest_access_code'
+  | 'auth.restaurant_guest_session';
 
 export const KEY_SCOPES: readonly KeyScope[] = [
   'pii.hotel_guest',
@@ -94,6 +106,9 @@ export const HMAC_SCOPES: readonly HmacScope[] = [
   'lookup.guest_phone',
   'auth.guest_otp',
   'lookup.guest_identity_subject',
+  'auth.room_qr_token',
+  'auth.guest_access_code',
+  'auth.restaurant_guest_session',
 ];
 
 export interface WrappedKey {

@@ -1229,6 +1229,28 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'by a policy on the owner, and answers a hotel and a batch date. The batch is assembled ' +
         "in the hotel's own scope on the payables' own locks",
     },
+    {
+      // Phase 15. The two restaurant sweeps, in the same shape: waiting work in
+      // every hotel has to be found before any of it can be settled in one.
+      signature:
+        'platform.lapsed_restaurant_invoices(p_limit integer, p_now timestamp with time zone)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only payment attempts still ACTIVE whose window has closed, ' +
+        'confined to those by a policy on the owner, and answers two identifiers per row. The ' +
+        "settling happens in the hotel's own scope on the order's own lock",
+    },
+    {
+      signature:
+        'platform.unresolved_refund_requests(p_limit integer, p_now timestamp with time zone)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only orders whose refund request is still OPEN or APPROVED, ' +
+        'confined to those by a policy on the owner, and answers three identifiers per row. The ' +
+        "escalation and the link pause happen in the hotel's own scope on their own locks",
+    },
     // Phase 05's three boundary-worker discovery wrappers. Each exists for the
     // same reason: the rows a worker must find live behind a tenant policy, and
     // a worker outside any tenant scope cannot see them to find out which tenant

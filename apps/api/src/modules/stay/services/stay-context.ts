@@ -18,6 +18,7 @@ import type { ConfirmedBookingsPort } from '../contracts/confirmed-bookings';
 import type { BookingFulfilmentPort } from '../contracts/booking-fulfilment';
 import type { PaymentAttemptsPort } from '../contracts/payment-attempts';
 import type { DepositsPort } from '../contracts/deposits';
+import type { RestaurantOrdersPort } from '../contracts/restaurant-orders';
 import type { CashLedgerPort } from '../contracts/cash-ledger';
 
 /**
@@ -66,6 +67,13 @@ export interface StayDependencies {
    * whether a transfer still blocks its close (`CASH-DEC-001`, `-006`).
    */
   readonly cash: CashLedgerPort;
+  /**
+   * What a checkout owes the restaurant module (Phase 15): Reception's
+   * acknowledgement of every paid, unfinished order, re-read at the moment the
+   * checkout is confirmed, and the closing of the stay's guest access
+   * (`RC-DEC-028`, `RC-DEC-029`, doc 08 §§7, 17–19).
+   */
+  readonly restaurantOrders: RestaurantOrdersPort;
   /**
    * The server's now for a command. Absent in production, where every command
    * reads the transaction's own server time; a test supplies one to move the

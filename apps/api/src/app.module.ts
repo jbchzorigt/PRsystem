@@ -34,6 +34,9 @@ import {
   RepositoryBookingFulfilment,
 } from './modules/booking/contracts/booking-reads';
 import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
+import { RepositoryRestaurantOrders } from './modules/restaurant/contracts/stay-checkout';
+import type { RestaurantModuleOptions } from './modules/restaurant/restaurant.module';
+import { RestaurantModule } from './modules/restaurant/restaurant.module';
 import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
 import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
 import { RepositoryShiftLookup } from './modules/stay/contracts/shift-lookup';
@@ -113,6 +116,12 @@ export interface AppModuleOptions {
    */
   readonly settlement: SettlementModuleOptions;
   /**
+   * The Phase 15 restaurant: registration, the room guest's way in, ordering
+   * and refunds. Its money is the restaurant's own merchant's and reaches no
+   * folio, deposit, drawer or shift (doc 08 §13).
+   */
+  readonly restaurant: RestaurantModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -164,6 +173,10 @@ export class AppModule {
       bookingFulfilment:
         options.stay.bookingFulfilment ??
         new RepositoryBookingFulfilment(new RepositorySettlement()),
+      // Phase 15 supplies the checkout's two restaurant obligations: the
+      // acknowledgement of every unfinished order, and the closing of the
+      // stay's guest access — both inside the checkout's own transaction.
+      restaurantOrders: options.stay.restaurantOrders ?? new RepositoryRestaurantOrders(),
     });
     return {
       module: AppModule,
@@ -203,6 +216,7 @@ export class AppModule {
           iam,
           catalog,
         }),
+        RestaurantModule.forRoot({ ...options.restaurant, iam }),
         SettlementModule.forRoot({
           ...options.settlement,
           bookings: options.settlement?.bookings ?? new RepositoryBookingRefundAxis(),

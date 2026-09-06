@@ -19,6 +19,7 @@ import { UnavailableStaffNotification } from './modules/iam/contracts/staff-noti
 import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
 import { UnprovisionedPaymentAttempts } from './modules/stay/contracts/payment-attempts';
 import { UnprovisionedDeposits } from './modules/stay/contracts/deposits';
+import { UnprovisionedRestaurantOrders } from './modules/stay/contracts/restaurant-orders';
 import { UnavailableRestaurantDirectory } from './modules/iam/contracts/restaurant-directory.port';
 import { buildOpenApiDocument } from './openapi-document';
 
@@ -74,12 +75,14 @@ async function generate(): Promise<void> {
       public: { pool: new Pool({ max: 1 }) },
       booking: { pool: new Pool({ max: 1 }) },
       settlement: { pool: new Pool({ max: 1 }) },
+      restaurant: { pool: new Pool({ max: 1 }), keys: new UnavailableKeyManagement() },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),
         xyp: new UnavailableXypIdentity(),
         payments: new UnprovisionedPaymentAttempts(),
         deposits: new UnprovisionedDeposits(),
+        restaurantOrders: new UnprovisionedRestaurantOrders(),
       },
     }),
     new FastifyAdapter(),

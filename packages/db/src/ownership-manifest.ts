@@ -139,6 +139,17 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.booking_attempt_of_invoice(p_provider text, p_invoice_id text)':
     KERNEL_OWNERS.maintenanceFn,
 
+  // Phase 15. A guest scans a QR and presents a token; the hotel and room it
+  // names are the server's to resolve. The two sweeps have the same shape as
+  // Phase 13's: find the work across every hotel, and decide nothing.
+  'platform.room_of_access_token(p_token_hash text)': KERNEL_OWNERS.maintenanceFn,
+  'platform.hotel_of_guest_session(p_token_hash text)': KERNEL_OWNERS.maintenanceFn,
+  'platform.lapsed_restaurant_invoices(p_limit integer, p_now timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.unresolved_refund_requests(p_limit integer, p_now timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.restaurant_attempt_of_invoice(p_invoice_id text)': KERNEL_OWNERS.maintenanceFn,
+
   // Phase 07. The inventory ledger's two triggers: the only path by which a
   // warehouse or room balance changes, on tables no runtime may write. They
   // belong to the same narrow definer owner for the same reason the

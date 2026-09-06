@@ -703,7 +703,12 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
                                       WHERE room_id IS NOT NULL)
                  AND room_id NOT IN (SELECT room_id FROM platform.cleaning_task)
                  AND room_id NOT IN (SELECT room_id FROM platform.minibar_usage_report)
-                 AND room_id NOT IN (SELECT room_id FROM platform.minibar_refill_task)`,
+                 AND room_id NOT IN (SELECT room_id FROM platform.minibar_refill_task)
+                 AND room_id NOT IN (SELECT room_id FROM platform.room_access_token)
+                 AND room_id NOT IN (SELECT room_id FROM platform.stay_guest_access)
+                 AND room_id NOT IN (SELECT room_id FROM platform.guest_access_code)
+                 AND room_id NOT IN (SELECT room_id FROM platform.guest_session)
+                 AND room_id NOT IN (SELECT room_id FROM platform.restaurant_order)`,
     updateColumn: 'floor_label',
     updateSet: `floor_label = 'acl-probe', revision = revision + 1`,
   },
@@ -2533,6 +2538,331 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     }),
     updateColumn: 'settled',
     updateSet: `settled = true`,
+  },
+
+  // Phase 15. The restaurant, the guest's way in, and the order. Each fixture
+  // creates what only it can have and binds to the tenant's first row for the
+  // rest, so a cross-tenant probe is refused by the policy before any foreign
+  // key is reached.
+  {
+    name: 'platform.restaurant',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant
+              (hotel_id, display_name, cuisine_kind, address_line, latitude_micro,
+               longitude_micro, contact_phone)
+            VALUES ($1, 'p15-' || substr(gen_random_uuid()::text, 1, 12), 'MONGOLIAN',
+                    'Синтетик хаяг', 47918600, 106917700, '+97670001111')`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'SUSPENDED', revision = revision + 1`,
+  },
+  {
+    name: 'platform.hotel_restaurant_link',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // One link per restaurant, so the fixture brings its own.
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.restaurant
+                (hotel_id, display_name, cuisine_kind, address_line, latitude_micro,
+                 longitude_micro, contact_phone)
+              VALUES ($1, 'p15l-' || substr(gen_random_uuid()::text, 1, 11), 'MONGOLIAN',
+                      'Синтетик хаяг', 47918600, 106917700, '+97670001112')
+              RETURNING restaurant_id)
+            INSERT INTO platform.hotel_restaurant_link (hotel_id, restaurant_id)
+            SELECT $1, r.restaurant_id FROM r`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `link_state = 'INACTIVE', revision = revision + 1`,
+  },
+  {
+    name: 'platform.restaurant_schedule',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.restaurant_schedule
+              (hotel_id, restaurant_id, weekday, closed, opens_at, closes_at)
+            VALUES ($1,
+                    COALESCE((SELECT r.restaurant_id FROM platform.restaurant r
+                               WHERE r.hotel_id = $1 ORDER BY r.created_at LIMIT 1),
+                             ${ABSENT_UUID}),
+                    $2::integer % 7, false, TIME '09:00', TIME '22:00')`,
+      values: [hotelId, n],
+    }),
+    updateColumn: 'revision',
+    updateSet: `closed = true, opens_at = NULL, closes_at = NULL, revision = revision + 1`,
+  },
+  {
+    name: 'platform.restaurant_schedule_override',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.restaurant_schedule_override
+              (hotel_id, restaurant_id, local_date, closed, reason)
+            VALUES ($1,
+                    COALESCE((SELECT r.restaurant_id FROM platform.restaurant r
+                               WHERE r.hotel_id = $1 ORDER BY r.created_at LIMIT 1),
+                             ${ABSENT_UUID}),
+                    current_date + $2::integer, true, 'fixture')`,
+      values: [hotelId, n],
+    }),
+  },
+  {
+    name: 'platform.restaurant_menu_category',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_menu_category (hotel_id, restaurant_id, name)
+            VALUES ($1,
+                    COALESCE((SELECT r.restaurant_id FROM platform.restaurant r
+                               WHERE r.hotel_id = $1 ORDER BY r.created_at LIMIT 1),
+                             ${ABSENT_UUID}),
+                    'p15c-' || substr(gen_random_uuid()::text, 1, 11))`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'INACTIVE', revision = revision + 1`,
+  },
+  {
+    name: 'platform.restaurant_menu_item',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_menu_item
+              (hotel_id, restaurant_id, menu_category_id, name, price_mnt)
+            SELECT $1, c.restaurant_id, c.menu_category_id,
+                   'p15i-' || substr(gen_random_uuid()::text, 1, 11), 12000
+              FROM (SELECT COALESCE((SELECT mc.restaurant_id
+                                       FROM platform.restaurant_menu_category mc
+                                      WHERE mc.hotel_id = $1 ORDER BY mc.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS restaurant_id,
+                           COALESCE((SELECT mc.menu_category_id
+                                       FROM platform.restaurant_menu_category mc
+                                      WHERE mc.hotel_id = $1 ORDER BY mc.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS menu_category_id) c`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `available = false, revision = revision + 1`,
+  },
+  {
+    name: 'platform.room_access_token',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    // One live token per room, so the fixture brings its own room.
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p15r-' || substr(gen_random_uuid()::text, 1, 11),
+                      COALESCE((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1),
+                               ${ABSENT_UUID}))
+              RETURNING room_id)
+            INSERT INTO platform.room_access_token (hotel_id, room_id, token_hash)
+            SELECT $1, r.room_id, encode(digest(gen_random_uuid()::text, 'sha256'), 'hex') FROM r`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'ROTATED', rotated_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.stay_guest_access',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // One counter per stay, so the fixture brings its own stay — the same chain
+    // the Phase 08 stay fixture builds.
+    insert: (hotelId) => ({
+      sql: `WITH r AS (
+              INSERT INTO platform.room (hotel_id, room_number, category_id)
+              VALUES ($1, 'p15g-' || substr(gen_random_uuid()::text, 1, 11),
+                      COALESCE((SELECT category_id FROM platform.room_category
+                                 WHERE hotel_id = $1 ORDER BY category_id LIMIT 1),
+                               ${ABSENT_UUID}))
+              RETURNING room_id, category_id),
+            snap AS (
+              INSERT INTO platform.stay_rate_snapshot
+                (hotel_id, subject_type, subject_ref, stay_type, unit_price_mnt, source_level,
+                 source_entity_id, pricing_config_version, category_id, room_id,
+                 cleaning_buffer_minutes)
+              SELECT $1, 'WALK_IN_STAY', gen_random_uuid(), 'HOURLY', 20000, 'HOTEL', $1, 1,
+                     r.category_id, r.room_id, 30
+                FROM r
+              RETURNING snapshot_id, category_id, room_id),
+            s AS (
+              INSERT INTO platform.stay
+                (hotel_id, room_id, category_id, source, stay_type, actual_check_in_at,
+                 check_in_recorded_at, planned_checkout_at, half_hour_units, duration_minutes,
+                 cleaning_buffer_minutes, rate_snapshot_id, unit_rate_mnt, room_charge_mnt,
+                 pricing_config_version, deposit_required, shift_id, checked_in_by_account_id)
+              SELECT $1, snap.room_id, snap.category_id, 'WALK_IN', 'HOURLY', now(), now(),
+                     now() + interval '60 minutes', 2, 60, 30, snap.snapshot_id, 20000, 20000, 1,
+                     true,
+                     COALESCE((SELECT shift_id FROM platform.reception_shift
+                                WHERE hotel_id = $1 AND state = 'OPEN' LIMIT 1), ${ABSENT_UUID}),
+                     gen_random_uuid()
+                FROM snap
+              RETURNING stay_id, room_id)
+            INSERT INTO platform.stay_guest_access (stay_id, hotel_id, room_id)
+            SELECT s.stay_id, $1, s.room_id FROM s`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `revision = revision + 1`,
+  },
+  {
+    name: 'platform.guest_access_code',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.guest_access_code
+              (hotel_id, stay_id, room_id, code_hash, key_version, expires_at,
+               issued_by_account_id)
+            SELECT $1, st.stay_id, st.room_id,
+                   encode(digest(gen_random_uuid()::text, 'sha256'), 'hex'), 'v1',
+                   now() + interval '30 minutes', gen_random_uuid()
+              FROM (SELECT COALESCE((SELECT s.stay_id FROM platform.stay s
+                                      WHERE s.hotel_id = $1 ORDER BY s.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS stay_id,
+                           COALESCE((SELECT s.room_id FROM platform.stay s
+                                      WHERE s.hotel_id = $1 ORDER BY s.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS room_id) st`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'REVOKED', settled_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.guest_session',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // A session spends exactly one code, so the fixture issues its own.
+    insert: (hotelId) => ({
+      sql: `WITH c AS (
+              INSERT INTO platform.guest_access_code
+                (hotel_id, stay_id, room_id, code_hash, key_version, expires_at,
+                 issued_by_account_id)
+              SELECT $1, st.stay_id, st.room_id,
+                     encode(digest(gen_random_uuid()::text, 'sha256'), 'hex'), 'v1',
+                     now() + interval '30 minutes', gen_random_uuid()
+                FROM (SELECT COALESCE((SELECT s.stay_id FROM platform.stay s
+                                        WHERE s.hotel_id = $1 ORDER BY s.created_at LIMIT 1),
+                                      ${ABSENT_UUID}) AS stay_id,
+                             COALESCE((SELECT s.room_id FROM platform.stay s
+                                        WHERE s.hotel_id = $1 ORDER BY s.created_at LIMIT 1),
+                                      ${ABSENT_UUID}) AS room_id) st
+              RETURNING code_id, stay_id, room_id)
+            INSERT INTO platform.guest_session
+              (hotel_id, stay_id, room_id, token_hash, code_id, expires_at)
+            SELECT $1, c.stay_id, c.room_id,
+                   encode(digest(gen_random_uuid()::text, 'sha256'), 'hex'), c.code_id,
+                   now() + interval '12 hours'
+              FROM c`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'REVOKED', revoked_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.restaurant_order',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_order
+              (hotel_id, restaurant_id, stay_id, room_id, guest_session_id, order_no,
+               total_amount_mnt, contact_phone_snapshot, ordering_closes_at)
+            SELECT $1,
+                   COALESCE((SELECT r.restaurant_id FROM platform.restaurant r
+                              WHERE r.hotel_id = $1 ORDER BY r.created_at LIMIT 1),
+                            ${ABSENT_UUID}),
+                   g.stay_id, g.room_id, g.guest_session_id,
+                   upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                   12000, '+97670001111', now() + interval '6 hours'
+              FROM (SELECT COALESCE((SELECT gs.guest_session_id FROM platform.guest_session gs
+                                      WHERE gs.hotel_id = $1 ORDER BY gs.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS guest_session_id,
+                           COALESCE((SELECT gs.stay_id FROM platform.guest_session gs
+                                      WHERE gs.hotel_id = $1 ORDER BY gs.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS stay_id,
+                           COALESCE((SELECT gs.room_id FROM platform.guest_session gs
+                                      WHERE gs.hotel_id = $1 ORDER BY gs.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS room_id) g`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `guest_note = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.restaurant_order_item',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_order_item
+              (hotel_id, order_id, stay_id, item_id, name_snapshot, unit_price_mnt, quantity,
+               line_total_mnt)
+            SELECT $1, o.order_id, o.stay_id, gen_random_uuid(), 'Синтетик хоол', 12000, 1, 12000
+              FROM (SELECT COALESCE((SELECT ro.order_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS order_id,
+                           COALESCE((SELECT ro.stay_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS stay_id) o`,
+      values: [hotelId],
+    }),
+  },
+  {
+    name: 'platform.restaurant_order_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_order_event
+              (hotel_id, order_id, stay_id, axis, event_type, to_state, actor_ref)
+            SELECT $1, o.order_id, o.stay_id, 'order', 'order.placed', 'PENDING_PAYMENT',
+                   'fixture'
+              FROM (SELECT COALESCE((SELECT ro.order_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS order_id,
+                           COALESCE((SELECT ro.stay_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS stay_id) o`,
+      values: [hotelId],
+    }),
+  },
+  {
+    name: 'platform.restaurant_payment_attempt',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // Settled rather than live: one `ACTIVE` attempt per order is a partial
+    // unique index, and a fixture that seeded two would be asserting against
+    // that invariant rather than alongside it.
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_payment_attempt
+              (hotel_id, order_id, restaurant_id, amount_mnt, state, ordering_closes_at,
+               expires_at, settled_at, settled_reason)
+            SELECT $1, o.order_id, o.restaurant_id, 12000, 'EXPIRED',
+                   now() + interval '6 hours', now() + interval '10 minutes', now(), 'fixture'
+              FROM (SELECT COALESCE((SELECT ro.order_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS order_id,
+                           COALESCE((SELECT ro.restaurant_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS restaurant_id) o`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `settled_reason = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.restaurant_refund',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // Failed rather than pending, for the same reason: one open refund per
+    // order is a partial unique index.
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.restaurant_refund
+              (hotel_id, order_id, restaurant_id, amount_mnt, state, provider_payment_id,
+               failure_code, initiated_by_account_id, settled_at)
+            SELECT $1, o.order_id, o.restaurant_id, 12000, 'FAILED',
+                   'sim-pay-' || substr(gen_random_uuid()::text, 1, 12), 'fixture',
+                   gen_random_uuid(), now()
+              FROM (SELECT COALESCE((SELECT ro.order_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS order_id,
+                           COALESCE((SELECT ro.restaurant_id FROM platform.restaurant_order ro
+                                      WHERE ro.hotel_id = $1 ORDER BY ro.created_at LIMIT 1),
+                                    ${ABSENT_UUID}) AS restaurant_id) o`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `failure_code = 'acl-probe', revision = revision + 1`,
   },
 ];
 

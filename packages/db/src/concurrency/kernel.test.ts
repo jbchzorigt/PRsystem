@@ -105,12 +105,14 @@ describe('connection pool tenant context (ADR-0017 §2)', () => {
       // check that inspected four of five would pass while the newest one
       // survived on the connection. The object comparison is what keeps this
       // honest — a setting added without being listed here fails the test rather
-      // than being quietly excluded from it.
+      // than being quietly excluded from it. Phase 15 added the guest stay a
+      // room session is confined to, which is the sixth.
       expect(await readSessionScope(single)).toEqual({
         hotelId: null,
         realm: null,
         accountId: null,
         onboardingRef: null,
+        guestStayId: null,
       });
     } finally {
       await single.end();

@@ -245,6 +245,25 @@ export class StayService extends StayServiceBase {
           );
         }
         await this.refuseOpenObligations(uow, stay);
+        // doc 08 §§8, 18–19: the unfinished food orders are re-read *here*,
+        // under the stay's own lock, and not taken from the list the checkout
+        // screen drew earlier. An unfinished order does not block the checkout;
+        // one Reception has not yet recorded a handoff choice for does, and the
+        // refusal names them so the desk knows what to acknowledge.
+        const unacknowledged = await this.deps.restaurantOrders.unacknowledgedAtCheckout(
+          uow,
+          stay.stayId,
+        );
+        if (unacknowledged.length > 0) {
+          throw new ApiError(
+            'PRECONDITION_FAILED',
+            'RESTAURANT_ORDERS_UNACKNOWLEDGED: record a handoff choice for each unfinished order',
+            unacknowledged.map((order) => ({
+              field: 'orderId',
+              issue: `${order.orderId} (${order.orderNo}) is ${order.fulfillmentState}`,
+            })),
+          );
+        }
 
         const now = serverNow(this.deps, uow);
         const completed = await stays.transition({
@@ -289,6 +308,11 @@ export class StayService extends StayServiceBase {
           stay.stayId,
           now,
         );
+        // doc 08 §7 and §17: the stay's access dies with the stay, in this
+        // transaction, so the next occupant of the room inherits neither a live
+        // session nor a code that still works. Nothing about the orders
+        // themselves moves — a checkout cancels nothing and refunds nothing.
+        await this.deps.restaurantOrders.closeGuestAccess(uow, stay.stayId, now);
         await this.deps.minibar.advanceScheduled(uow, stay.roomId, 'stay.checked_out');
         await this.deps.lifecycle.finalizeIfClear(uow, 'ROOM', stay.roomId, {
           source: 'stay.checkout_record',

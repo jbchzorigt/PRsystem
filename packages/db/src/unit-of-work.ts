@@ -63,6 +63,13 @@ async function applyContext(client: PoolClient, context: TenantContext): Promise
     'app.onboarding_ref',
     context.onboardingRef ?? '',
   ]);
+  // Likewise for the Restaurant guest session's stay (Phase 15): empty means
+  // "no stay", the restriction is vacuous, and the previous transaction on this
+  // connection cannot leak one in.
+  await client.query('SELECT set_config($1, $2, true)', [
+    'app.guest_stay_id',
+    context.guestStayId ?? '',
+  ]);
 
   const now = await client.query<{ now: Date }>('SELECT now() AS now');
   const serverNow = now.rows[0]?.now;
@@ -110,7 +117,7 @@ export async function withTenantTransaction<T>(
     try {
       await client.query(
         'RESET app.hotel_id; RESET app.realm; RESET app.actor_ref; RESET app.correlation_id; ' +
-          'RESET app.account_id; RESET app.onboarding_ref',
+          'RESET app.account_id; RESET app.onboarding_ref; RESET app.guest_stay_id',
       );
     } catch {
       // Ignored: the connection is being released either way.
@@ -128,6 +135,7 @@ export async function readSessionScope(pool: Pool): Promise<{
   realm: string | null;
   accountId: string | null;
   onboardingRef: string | null;
+  guestStayId: string | null;
 }> {
   const client = await pool.connect();
   try {
@@ -136,17 +144,20 @@ export async function readSessionScope(pool: Pool): Promise<{
       realm: string | null;
       account_id: string | null;
       onboarding_ref: string | null;
+      guest_stay_id: string | null;
     }>(
       `SELECT nullif(current_setting('app.hotel_id', true), '')        AS hotel_id,
               nullif(current_setting('app.realm', true), '')           AS realm,
               nullif(current_setting('app.account_id', true), '')      AS account_id,
-              nullif(current_setting('app.onboarding_ref', true), '')  AS onboarding_ref`,
+              nullif(current_setting('app.onboarding_ref', true), '')  AS onboarding_ref,
+              nullif(current_setting('app.guest_stay_id', true), '')    AS guest_stay_id`,
     );
     return {
       hotelId: result.rows[0]?.hotel_id ?? null,
       realm: result.rows[0]?.realm ?? null,
       accountId: result.rows[0]?.account_id ?? null,
       onboardingRef: result.rows[0]?.onboarding_ref ?? null,
+      guestStayId: result.rows[0]?.guest_stay_id ?? null,
     };
   } finally {
     client.release();

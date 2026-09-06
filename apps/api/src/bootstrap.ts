@@ -123,6 +123,14 @@ export async function createApp(
       settlement: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
       },
+      restaurant: {
+        config: {
+          databaseUrl: config.DATABASE_URL,
+          appEnv: config.APP_ENV,
+          kmsAdapter: config.KMS_ADAPTER,
+          ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
+        },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

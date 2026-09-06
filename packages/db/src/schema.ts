@@ -32,6 +32,19 @@ const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
 });
 
 /**
+ * `time without time zone`, which is what a restaurant's ordering window is:
+ * a wall-clock reading in the hotel's own timezone, not an instant.
+ *
+ * Drizzle's built-in `time()` reports its type as `time`, and the comparator
+ * reads `time without time zone` back from the catalogue — the same name in two
+ * spellings is a difference it cannot be asked to ignore, so the column states
+ * the catalogue's spelling itself.
+ */
+const wallTime = customType<{ data: string }>({
+  dataType: () => 'time without time zone',
+});
+
+/**
  * Drizzle schema representation of the Phase 03 kernel.
  *
  * The migration SQL is authoritative — it carries the policies, grants, triggers
@@ -8526,6 +8539,1123 @@ export const payoutBatchItem = platform
   )
   .enableRLS();
 
+/**
+ * doc 08 §3: the restaurant a Manager Plus registered on a 30,000₮ package.
+ * Activation lives on the link, not here, so one restaurant can later be linked
+ * to more than one hotel on separate terms (doc 08 §4).
+ */
+export const restaurant = platform
+  .table(
+    'restaurant',
+    {
+      addressLine: text('address_line').notNull(),
+      contactPhone: text('contact_phone').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      cuisineKind: text('cuisine_kind').notNull(),
+      description: text('description'),
+      displayName: text('display_name').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      latitudeMicro: integer('latitude_micro').notNull(),
+      longitudeMicro: integer('longitude_micro').notNull(),
+      restaurantId: uuid('restaurant_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      timezone: text('timezone')
+        .notNull()
+        .default(sql`'Asia/Ulaanbaatar'::text`),
+    },
+    (table) => [
+      check(
+        'restaurant_address_bounded',
+        sql`((length(address_line) >= 1) AND (length(address_line) <= 300))`,
+      ),
+      check(
+        'restaurant_description_bounded',
+        sql`((description IS NULL) OR ((length(description) >= 1) AND (length(description) <= 2000)))`,
+      ),
+      foreignKey({
+        name: 'restaurant_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('restaurant_identity_uq').on(table.hotelId, table.restaurantId),
+      check(
+        'restaurant_kind_bounded',
+        sql`((length(cuisine_kind) >= 1) AND (length(cuisine_kind) <= 80))`,
+      ),
+      check(
+        'restaurant_name_bounded',
+        sql`((length(display_name) >= 1) AND (length(display_name) <= 200))`,
+      ),
+      check('restaurant_phone_shape', sql`(contact_phone ~ '^\\+976[0-9]{8}$'::text)`),
+      check(
+        'restaurant_position_bounded',
+        sql`(((latitude_micro >= '-90000000'::integer) AND (latitude_micro <= 90000000)) AND ((longitude_micro >= '-180000000'::integer) AND (longitude_micro <= 180000000)))`,
+      ),
+      check('restaurant_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'restaurant_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text]))`,
+      ),
+      check('restaurant_timezone_known', sql`(timezone = 'Asia/Ulaanbaatar'::text)`),
+      index('restaurant_hotel_idx').on(table.hotelId, table.state),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * doc 08 §4: whether this hotel may order from this restaurant. The
+ * `RC-DEC-031` SLA pause is a separate column from the manual state, so lifting
+ * the pause cannot switch a link back on that Manager Plus had switched off.
+ */
+export const hotelRestaurantLink = platform
+  .table(
+    'hotel_restaurant_link',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      linkId: uuid('link_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      linkState: text('link_state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      slaPaused: boolean('sla_paused')
+        .notNull()
+        .default(sql`false`),
+      slaPausedAt: timestamp('sla_paused_at', { withTimezone: true }),
+      slaPausedReason: text('sla_paused_reason'),
+    },
+    (table) => [
+      foreignKey({
+        name: 'hotel_restaurant_link_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('hotel_restaurant_link_identity_uq').on(table.hotelId, table.linkId),
+      check(
+        'hotel_restaurant_link_pause_reason_bounded',
+        sql`((sla_paused_reason IS NULL) OR ((length(sla_paused_reason) >= 1) AND (length(sla_paused_reason) <= 200)))`,
+      ),
+      check('hotel_restaurant_link_pause_shape', sql`(sla_paused = (sla_paused_at IS NOT NULL))`),
+      foreignKey({
+        name: 'hotel_restaurant_link_restaurant_fkey',
+        columns: [table.hotelId, table.restaurantId],
+        foreignColumns: [restaurant.hotelId, restaurant.restaurantId],
+      }).onDelete('restrict'),
+      check('hotel_restaurant_link_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_restaurant_link_state_known',
+        sql`(link_state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
+      unique('hotel_restaurant_link_uq').on(table.hotelId, table.restaurantId),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * doc 08 §5: one ordering window per weekday. An overnight window is the case
+ * where `closes_at <= opens_at`, which is why the domain reasons in local
+ * wall-clock terms rather than by comparing two instants.
+ */
+export const restaurantSchedule = platform
+  .table(
+    'restaurant_schedule',
+    {
+      closed: boolean('closed')
+        .notNull()
+        .default(sql`false`),
+      closesAt: wallTime('closes_at'),
+      hotelId: uuid('hotel_id').notNull(),
+      opensAt: wallTime('opens_at'),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      scheduleId: uuid('schedule_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      weekday: integer('weekday').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'restaurant_schedule_restaurant_fkey',
+        columns: [table.hotelId, table.restaurantId],
+        foreignColumns: [restaurant.hotelId, restaurant.restaurantId],
+      }).onDelete('restrict'),
+      check('restaurant_schedule_revision_non_negative', sql`(revision >= 0)`),
+      unique('restaurant_schedule_uq').on(table.restaurantId, table.weekday),
+      check('restaurant_schedule_weekday_known', sql`((weekday >= 0) AND (weekday <= 6))`),
+      check(
+        'restaurant_schedule_window_shape',
+        sql`((closed = (opens_at IS NULL)) AND (closed = (closes_at IS NULL)))`,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/** doc 08 §5: a holiday or a temporary closure, outranking the weekly row. */
+export const restaurantScheduleOverride = platform
+  .table(
+    'restaurant_schedule_override',
+    {
+      closed: boolean('closed')
+        .notNull()
+        .default(sql`true`),
+      closesAt: wallTime('closes_at'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      localDate: date('local_date').notNull(),
+      opensAt: wallTime('opens_at'),
+      overrideId: uuid('override_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      reason: text('reason'),
+      restaurantId: uuid('restaurant_id').notNull(),
+    },
+    (table) => [
+      check(
+        'restaurant_schedule_override_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 200)))`,
+      ),
+      foreignKey({
+        name: 'restaurant_schedule_override_restaurant_fkey',
+        columns: [table.hotelId, table.restaurantId],
+        foreignColumns: [restaurant.hotelId, restaurant.restaurantId],
+      }).onDelete('restrict'),
+      unique('restaurant_schedule_override_uq').on(table.restaurantId, table.localDate),
+      check(
+        'restaurant_schedule_override_window_shape',
+        sql`((closed = (opens_at IS NULL)) AND (closed = (closes_at IS NULL)))`,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/** doc 08 §6: the menu's own sections. */
+export const restaurantMenuCategory = platform
+  .table(
+    'restaurant_menu_category',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      menuCategoryId: uuid('menu_category_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      name: text('name').notNull(),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      sortOrder: integer('sort_order')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      unique('restaurant_menu_category_identity_uq').on(table.restaurantId, table.menuCategoryId),
+      check(
+        'restaurant_menu_category_name_bounded',
+        sql`((length(name) >= 1) AND (length(name) <= 120))`,
+      ),
+      unique('restaurant_menu_category_name_uq').on(table.restaurantId, table.name),
+      foreignKey({
+        name: 'restaurant_menu_category_restaurant_fkey',
+        columns: [table.hotelId, table.restaurantId],
+        foreignColumns: [restaurant.hotelId, restaurant.restaurantId],
+      }).onDelete('restrict'),
+      check('restaurant_menu_category_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'restaurant_menu_category_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * doc 08 §6: the price is the server's. A basket total is recomputed from these
+ * rows and never taken from the guest's device.
+ */
+export const restaurantMenuItem = platform
+  .table(
+    'restaurant_menu_item',
+    {
+      available: boolean('available')
+        .notNull()
+        .default(sql`true`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      description: text('description'),
+      hotelId: uuid('hotel_id').notNull(),
+      imageObjectKey: text('image_object_key'),
+      itemId: uuid('item_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      menuCategoryId: uuid('menu_category_id').notNull(),
+      name: text('name').notNull(),
+      priceMnt: bigint('price_mnt', { mode: 'bigint' }).notNull(),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'restaurant_menu_item_category_fkey',
+        columns: [table.restaurantId, table.menuCategoryId],
+        foreignColumns: [
+          restaurantMenuCategory.restaurantId,
+          restaurantMenuCategory.menuCategoryId,
+        ],
+      }).onDelete('restrict'),
+      check(
+        'restaurant_menu_item_description_bounded',
+        sql`((description IS NULL) OR ((length(description) >= 1) AND (length(description) <= 1000)))`,
+      ),
+      unique('restaurant_menu_item_identity_uq').on(table.restaurantId, table.itemId),
+      check(
+        'restaurant_menu_item_image_bounded',
+        sql`((image_object_key IS NULL) OR ((length(image_object_key) >= 1) AND (length(image_object_key) <= 300)))`,
+      ),
+      check(
+        'restaurant_menu_item_name_bounded',
+        sql`((length(name) >= 1) AND (length(name) <= 200))`,
+      ),
+      check('restaurant_menu_item_price_positive', sql`(price_mnt > 0)`),
+      foreignKey({
+        name: 'restaurant_menu_item_restaurant_fkey',
+        columns: [table.hotelId, table.restaurantId],
+        foreignColumns: [restaurant.hotelId, restaurant.restaurantId],
+      }).onDelete('restrict'),
+      check('restaurant_menu_item_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'restaurant_menu_item_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
+      index('restaurant_menu_item_menu_idx').on(
+        table.restaurantId,
+        table.menuCategoryId,
+        table.state,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * `RC-DEC-026`: the permanent QR in the room. It carries no room number and no
+ * stay id, and the token is stored as a keyed hash — a leaked database gives
+ * nobody a working QR.
+ */
+export const roomAccessToken = platform
+  .table(
+    'room_access_token',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      issuedAt: timestamp('issued_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomAccessId: uuid('room_access_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      roomId: uuid('room_id').notNull(),
+      rotatedAt: timestamp('rotated_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      tokenHash: text('token_hash').notNull(),
+      tokenVersion: integer('token_version')
+        .notNull()
+        .default(sql`1`),
+    },
+    (table) => [
+      check('room_access_token_hash_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+      check('room_access_token_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'room_access_token_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'room_access_token_rotated_shape',
+        sql`((state = 'ROTATED'::text) = (rotated_at IS NOT NULL))`,
+      ),
+      check(
+        'room_access_token_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'ROTATED'::text]))`,
+      ),
+      check('room_access_token_version_positive', sql`(token_version > 0)`),
+      uniqueIndex('room_access_token_hash_uq').on(table.tokenHash),
+      uniqueIndex('room_access_token_room_uq')
+        .on(table.roomId)
+        .where(sql`state = 'ACTIVE'::text`),
+      pgPolicy('qr_resolution_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'ACTIVE'::text)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * `RC-DEC-027`, counted by the database: active sessions plus valid unused codes
+ * may not exceed five, and `CHECK (active + pending <= 5)` on this row is what
+ * refuses the sixth rather than a count taken in another statement.
+ */
+export const stayGuestAccess = platform
+  .table(
+    'stay_guest_access',
+    {
+      activeSessions: integer('active_sessions')
+        .notNull()
+        .default(sql`0`),
+      closedAt: timestamp('closed_at', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      pendingCodes: integer('pending_codes')
+        .notNull()
+        .default(sql`0`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      stayId: uuid('stay_id').primaryKey().notNull(),
+    },
+    (table) => [
+      check(
+        'stay_guest_access_counts_non_negative',
+        sql`((active_sessions >= 0) AND (pending_codes >= 0))`,
+      ),
+      unique('stay_guest_access_identity_uq').on(table.hotelId, table.stayId),
+      check('stay_guest_access_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'stay_guest_access_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check('stay_guest_access_within_limit', sql`((active_sessions + pending_codes) <= 5)`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * doc 08 §7: the one-time code Reception hands the guest, stored as a keyed hash
+ * and never in plaintext — not here, not in a log, not in an audit payload.
+ */
+export const guestAccessCode = platform
+  .table(
+    'guest_access_code',
+    {
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      codeHash: text('code_hash').notNull(),
+      codeId: uuid('code_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      issuedAt: timestamp('issued_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      issuedByAccountId: uuid('issued_by_account_id').notNull(),
+      keyVersion: text('key_version').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stayId: uuid('stay_id').notNull(),
+    },
+    (table) => [
+      check('guest_access_code_attempts_bounded', sql`((attempts >= 0) AND (attempts <= 10))`),
+      check('guest_access_code_hash_shape', sql`(code_hash ~ '^[0-9a-f]{64}$'::text)`),
+      check(
+        'guest_access_code_key_version_bounded',
+        sql`((length(key_version) >= 1) AND (length(key_version) <= 40))`,
+      ),
+      check('guest_access_code_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'guest_access_code_room_fkey',
+        columns: [table.hotelId, table.roomId],
+        foreignColumns: [room.hotelId, room.roomId],
+      }).onDelete('restrict'),
+      check(
+        'guest_access_code_settled_shape',
+        sql`((state = 'PENDING'::text) = (settled_at IS NULL))`,
+      ),
+      check(
+        'guest_access_code_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'USED'::text, 'REVOKED'::text, 'EXPIRED'::text]))`,
+      ),
+      foreignKey({
+        name: 'guest_access_code_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check('guest_access_code_window', sql`(expires_at > issued_at)`),
+      index('guest_access_code_stay_idx').on(table.stayId, table.state),
+      pgPolicy('guest_stay_confinement', {
+        as: 'restrictive',
+        using: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+        withCheck: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The session a confirmed code creates, bound to one hotel, one room and one
+ * stay. doc 08 §7 refuses the guest any choice of room, and this row is why
+ * there is none to make.
+ */
+export const guestSession = platform
+  .table(
+    'guest_session',
+    {
+      codeId: uuid('code_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      guestSessionId: uuid('guest_session_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      revokedAt: timestamp('revoked_at', { withTimezone: true }),
+      revokedReason: text('revoked_reason'),
+      roomId: uuid('room_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      stayId: uuid('stay_id').notNull(),
+      tokenHash: text('token_hash').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'guest_session_code_fkey',
+        columns: [table.codeId],
+        foreignColumns: [guestAccessCode.codeId],
+      }).onDelete('restrict'),
+      unique('guest_session_code_uq').on(table.codeId),
+      unique('guest_session_identity_uq').on(table.hotelId, table.guestSessionId),
+      check(
+        'guest_session_reason_bounded',
+        sql`((revoked_reason IS NULL) OR ((length(revoked_reason) >= 1) AND (length(revoked_reason) <= 120)))`,
+      ),
+      check('guest_session_revision_non_negative', sql`(revision >= 0)`),
+      check('guest_session_revoked_shape', sql`((state = 'ACTIVE'::text) = (revoked_at IS NULL))`),
+      check(
+        'guest_session_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'REVOKED'::text, 'EXPIRED'::text]))`,
+      ),
+      foreignKey({
+        name: 'guest_session_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check('guest_session_token_shape', sql`(token_hash ~ '^[0-9a-f]{64}$'::text)`),
+      check('guest_session_window', sql`(expires_at > created_at)`),
+      index('guest_session_stay_idx').on(table.stayId, table.state),
+      uniqueIndex('guest_session_token_uq').on(table.tokenHash),
+      pgPolicy('session_resolution_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'ACTIVE'::text)`,
+      }),
+      pgPolicy('guest_stay_confinement', {
+        as: 'restrictive',
+        using: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+        withCheck: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * doc 08 §10 / `REST-DEC-001`: seven axes, seven columns, seven CHECKs. A late
+ * capture on a cancelled order moves `payment_state` and leaves the other six
+ * exactly where they were.
+ */
+export const restaurantOrder = platform
+  .table(
+    'restaurant_order',
+    {
+      acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+      checkoutNotifiedAt: timestamp('checkout_notified_at', { withTimezone: true }),
+      contactPhoneSnapshot: text('contact_phone_snapshot').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      etaMinutes: integer('eta_minutes'),
+      fulfillmentState: text('fulfillment_state')
+        .notNull()
+        .default(sql`'NOT_STARTED'::text`),
+      guestNote: text('guest_note'),
+      guestSessionId: uuid('guest_session_id').notNull(),
+      handoffMode: text('handoff_mode')
+        .notNull()
+        .default(sql`'ROOM'::text`),
+      hotelId: uuid('hotel_id').notNull(),
+      orderId: uuid('order_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      orderNo: text('order_no').notNull(),
+      orderState: text('order_state')
+        .notNull()
+        .default(sql`'PENDING_PAYMENT'::text`),
+      orderingClosesAt: timestamp('ordering_closes_at', { withTimezone: true }).notNull(),
+      paymentConfirmedAt: timestamp('payment_confirmed_at', { withTimezone: true }),
+      paymentState: text('payment_state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      promisedReadyAt: timestamp('promised_ready_at', { withTimezone: true }),
+      refundPolicy: text('refund_policy')
+        .notNull()
+        .default(sql`'NONE'::text`),
+      refundReason: text('refund_reason'),
+      refundRequestState: text('refund_request_state')
+        .notNull()
+        .default(sql`'NONE'::text`),
+      refundRequestedAt: timestamp('refund_requested_at', { withTimezone: true }),
+      refundState: text('refund_state')
+        .notNull()
+        .default(sql`'NONE'::text`),
+      rejectReason: text('reject_reason'),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomId: uuid('room_id').notNull(),
+      stayId: uuid('stay_id').notNull(),
+      totalAmountMnt: bigint('total_amount_mnt', { mode: 'bigint' }).notNull(),
+    },
+    (table) => [
+      check(
+        'restaurant_order_accept_shape',
+        sql`(((accepted_at IS NULL) = (eta_minutes IS NULL)) AND ((accepted_at IS NULL) = (promised_ready_at IS NULL)))`,
+      ),
+      check(
+        'restaurant_order_cancelled_shape',
+        sql`((fulfillment_state = 'CANCELLED'::text) = (order_state = 'CANCELLED'::text))`,
+      ),
+      check(
+        'restaurant_order_completed_shape',
+        sql`((fulfillment_state = ANY (ARRAY['DELIVERED_TO_ROOM'::text, 'HANDED_TO_RECEPTION'::text, 'PICKED_UP_BY_GUEST'::text])) = (order_state = 'COMPLETED'::text))`,
+      ),
+      check(
+        'restaurant_order_confirmed_shape',
+        sql`((order_state <> 'CONFIRMED'::text) OR ((payment_state = 'PAID'::text) AND (fulfillment_state = ANY (ARRAY['AWAITING_ACCEPTANCE'::text, 'ACCEPTED'::text, 'PREPARING'::text, 'READY'::text, 'OUT_FOR_DELIVERY'::text]))))`,
+      ),
+      check(
+        'restaurant_order_eta_known',
+        sql`((eta_minutes IS NULL) OR (eta_minutes = ANY (ARRAY[15, 30, 45, 60])))`,
+      ),
+      check(
+        'restaurant_order_fulfillment_state_known',
+        sql`(fulfillment_state = ANY (ARRAY['NOT_STARTED'::text, 'AWAITING_ACCEPTANCE'::text, 'ACCEPTED'::text, 'PREPARING'::text, 'READY'::text, 'OUT_FOR_DELIVERY'::text, 'DELIVERED_TO_ROOM'::text, 'HANDED_TO_RECEPTION'::text, 'PICKED_UP_BY_GUEST'::text, 'CANCELLED'::text]))`,
+      ),
+      check(
+        'restaurant_order_handoff_known',
+        sql`(handoff_mode = ANY (ARRAY['ROOM'::text, 'RECEPTION'::text, 'GUEST_PICKUP'::text, 'REFUND_REQUEST'::text]))`,
+      ),
+      check(
+        'restaurant_order_handoff_matches',
+        sql`(((fulfillment_state <> 'HANDED_TO_RECEPTION'::text) OR (handoff_mode = 'RECEPTION'::text)) AND ((fulfillment_state <> 'PICKED_UP_BY_GUEST'::text) OR (handoff_mode = 'GUEST_PICKUP'::text)) AND ((fulfillment_state <> 'DELIVERED_TO_ROOM'::text) OR (handoff_mode = 'ROOM'::text)))`,
+      ),
+      unique('restaurant_order_identity_uq').on(table.hotelId, table.orderId),
+      check(
+        'restaurant_order_mandatory_is_approved',
+        sql`((refund_policy <> 'MANDATORY'::text) OR (refund_request_state = ANY (ARRAY['APPROVED'::text, 'RESOLVED'::text])))`,
+      ),
+      check('restaurant_order_no_shape', sql`(order_no ~ '^[A-Z0-9]{8,12}$'::text)`),
+      unique('restaurant_order_no_uq').on(table.orderNo),
+      check(
+        'restaurant_order_note_bounded',
+        sql`((guest_note IS NULL) OR ((length(guest_note) >= 1) AND (length(guest_note) <= 500)))`,
+      ),
+      check(
+        'restaurant_order_order_state_known',
+        sql`(order_state = ANY (ARRAY['PENDING_PAYMENT'::text, 'CONFIRMED'::text, 'CANCELLED'::text, 'COMPLETED'::text]))`,
+      ),
+      check(
+        'restaurant_order_payment_state_known',
+        sql`(payment_state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      check(
+        'restaurant_order_payment_time_shape',
+        sql`((payment_state = 'PAID'::text) = (payment_confirmed_at IS NOT NULL))`,
+      ),
+      check(
+        'restaurant_order_pending_payment_shape',
+        sql`((order_state <> 'PENDING_PAYMENT'::text) OR (payment_state = ANY (ARRAY['PENDING'::text, 'FAILED'::text])))`,
+      ),
+      check(
+        'restaurant_order_pending_shape',
+        sql`((payment_state <> 'PENDING'::text) OR ((order_state = 'PENDING_PAYMENT'::text) AND (fulfillment_state = 'NOT_STARTED'::text)))`,
+      ),
+      check(
+        'restaurant_order_phone_shape',
+        sql`(contact_phone_snapshot ~ '^\\+976[0-9]{8}$'::text)`,
+      ),
+      check(
+        'restaurant_order_promise_derived',
+        sql`((promised_ready_at IS NULL) OR (promised_ready_at = (accepted_at + ((eta_minutes)::double precision * '00:01:00'::interval))))`,
+      ),
+      check(
+        'restaurant_order_refund_axes_agree',
+        sql`((refund_policy = 'NONE'::text) = (refund_request_state = 'NONE'::text))`,
+      ),
+      check(
+        'restaurant_order_refund_needs_approval',
+        sql`((refund_state = 'NONE'::text) OR (refund_request_state = ANY (ARRAY['APPROVED'::text, 'RESOLVED'::text])))`,
+      ),
+      check(
+        'restaurant_order_refund_needs_payment',
+        sql`((refund_policy = 'NONE'::text) OR (payment_state = 'PAID'::text))`,
+      ),
+      check(
+        'restaurant_order_refund_policy_known',
+        sql`(refund_policy = ANY (ARRAY['NONE'::text, 'MANDATORY'::text, 'DISCRETIONARY'::text]))`,
+      ),
+      check(
+        'restaurant_order_refund_reason_known',
+        sql`((refund_reason IS NULL) OR (refund_reason = ANY (ARRAY['PRE_ACCEPT_SLA'::text, 'RESTAURANT_CANCELLED'::text, 'PAID_AFTER_INVOICE_EXPIRY'::text, 'RESTAURANT_INACTIVE_AT_PAYMENT'::text, 'RESTAURANT_OR_ITEM_INACTIVE_AT_PAYMENT'::text, 'GUEST_REQUEST'::text, 'CHECKOUT_REFUND_REQUEST'::text, 'ETA_OVERDUE'::text])))`,
+      ),
+      check(
+        'restaurant_order_refund_reason_shape',
+        sql`((refund_policy = 'NONE'::text) = (refund_reason IS NULL))`,
+      ),
+      check(
+        'restaurant_order_refund_request_known',
+        sql`(refund_request_state = ANY (ARRAY['NONE'::text, 'OPEN'::text, 'APPROVED'::text, 'REJECTED'::text, 'RESOLVED'::text]))`,
+      ),
+      check(
+        'restaurant_order_refund_state_known',
+        sql`(refund_state = ANY (ARRAY['NONE'::text, 'PENDING'::text, 'REFUNDED'::text, 'FAILED'::text]))`,
+      ),
+      check(
+        'restaurant_order_reject_reason_known',
+        sql`((reject_reason IS NULL) OR (reject_reason = ANY (ARRAY['PREPARATION_STARTED'::text, 'FOOD_READY'::text, 'OUT_FOR_DELIVERY'::text, 'HANDED_OVER'::text])))`,
+      ),
+      check(
+        'restaurant_order_reject_reason_shape',
+        sql`((refund_request_state = 'REJECTED'::text) = (reject_reason IS NOT NULL))`,
+      ),
+      check(
+        'restaurant_order_request_time_shape',
+        sql`((refund_request_state = 'NONE'::text) = (refund_requested_at IS NULL))`,
+      ),
+      check(
+        'restaurant_order_resolved_is_refunded',
+        sql`((refund_state = 'REFUNDED'::text) = (refund_request_state = 'RESOLVED'::text))`,
+      ),
+      foreignKey({
+        name: 'restaurant_order_restaurant_fkey',
+        columns: [table.hotelId, table.restaurantId],
+        foreignColumns: [restaurant.hotelId, restaurant.restaurantId],
+      }).onDelete('restrict'),
+      check('restaurant_order_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'restaurant_order_session_fkey',
+        columns: [table.hotelId, table.guestSessionId],
+        foreignColumns: [guestSession.hotelId, guestSession.guestSessionId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'restaurant_order_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      unique('restaurant_order_stay_uq').on(table.orderId, table.stayId),
+      check('restaurant_order_total_positive', sql`(total_amount_mnt > 0)`),
+      index('restaurant_order_open_refund_idx')
+        .on(table.hotelId, table.restaurantId, table.refundRequestedAt)
+        .where(sql`refund_request_state = ANY (ARRAY['OPEN'::text, 'APPROVED'::text])`),
+      index('restaurant_order_queue_idx').on(
+        table.restaurantId,
+        table.fulfillmentState,
+        table.paymentConfirmedAt,
+      ),
+      index('restaurant_order_session_idx').on(
+        table.guestSessionId,
+        table.createdAt.desc().nullsFirst(),
+      ),
+      index('restaurant_order_stay_idx').on(table.stayId, table.createdAt.desc().nullsFirst()),
+      pgPolicy('guest_stay_confinement', {
+        as: 'restrictive',
+        using: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+        withCheck: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+      }),
+      pgPolicy('refund_sla_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(refund_request_state = ANY (ARRAY['OPEN'::text, 'APPROVED'::text]))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/** doc 08 §11: name, unit price and quantity as they were when the order was placed. */
+export const restaurantOrderItem = platform
+  .table(
+    'restaurant_order_item',
+    {
+      hotelId: uuid('hotel_id').notNull(),
+      itemId: uuid('item_id').notNull(),
+      lineTotalMnt: bigint('line_total_mnt', { mode: 'bigint' }).notNull(),
+      nameSnapshot: text('name_snapshot').notNull(),
+      orderId: uuid('order_id').notNull(),
+      orderItemId: uuid('order_item_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      quantity: integer('quantity').notNull(),
+      stayId: uuid('stay_id').notNull(),
+      unitPriceMnt: bigint('unit_price_mnt', { mode: 'bigint' }).notNull(),
+    },
+    (table) => [
+      check(
+        'restaurant_order_item_line_total',
+        sql`(line_total_mnt = (unit_price_mnt * quantity))`,
+      ),
+      check(
+        'restaurant_order_item_name_bounded',
+        sql`((length(name_snapshot) >= 1) AND (length(name_snapshot) <= 200))`,
+      ),
+      foreignKey({
+        name: 'restaurant_order_item_order_fkey',
+        columns: [table.hotelId, table.orderId],
+        foreignColumns: [restaurantOrder.hotelId, restaurantOrder.orderId],
+      }).onDelete('restrict'),
+      check('restaurant_order_item_price_positive', sql`(unit_price_mnt > 0)`),
+      check('restaurant_order_item_quantity_bounded', sql`((quantity >= 1) AND (quantity <= 50))`),
+      foreignKey({
+        name: 'restaurant_order_item_stay_fkey',
+        columns: [table.orderId, table.stayId],
+        foreignColumns: [restaurantOrder.orderId, restaurantOrder.stayId],
+      }).onDelete('restrict'),
+      unique('restaurant_order_item_uq').on(table.orderId, table.itemId),
+      pgPolicy('guest_stay_confinement', {
+        as: 'restrictive',
+        using: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+        withCheck: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/** The order's append-only history, per axis. */
+export const restaurantOrderEvent = platform
+  .table(
+    'restaurant_order_event',
+    {
+      actorRef: text('actor_ref').notNull(),
+      axis: text('axis').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      eventType: text('event_type').notNull(),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      orderId: uuid('order_id').notNull(),
+      reason: text('reason'),
+      stayId: uuid('stay_id').notNull(),
+      toState: text('to_state'),
+    },
+    (table) => [
+      check(
+        'restaurant_order_event_actor_bounded',
+        sql`((length(actor_ref) >= 1) AND (length(actor_ref) <= 120))`,
+      ),
+      check(
+        'restaurant_order_event_axis_known',
+        sql`(axis = ANY (ARRAY['order'::text, 'fulfillment'::text, 'payment'::text, 'refund_policy'::text, 'refund_request'::text, 'refund'::text, 'handoff'::text]))`,
+      ),
+      foreignKey({
+        name: 'restaurant_order_event_order_fkey',
+        columns: [table.hotelId, table.orderId],
+        foreignColumns: [restaurantOrder.hotelId, restaurantOrder.orderId],
+      }).onDelete('restrict'),
+      check(
+        'restaurant_order_event_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      foreignKey({
+        name: 'restaurant_order_event_stay_fkey',
+        columns: [table.orderId, table.stayId],
+        foreignColumns: [restaurantOrder.orderId, restaurantOrder.stayId],
+      }).onDelete('restrict'),
+      check(
+        'restaurant_order_event_type_bounded',
+        sql`((length(event_type) >= 1) AND (length(event_type) <= 80))`,
+      ),
+      index('restaurant_order_event_order_idx').on(table.orderId, table.occurredAt),
+      pgPolicy('guest_stay_confinement', {
+        as: 'restrictive',
+        using: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+        withCheck: sql`((platform.current_guest_stay_id() IS NULL) OR (stay_id = platform.current_guest_stay_id()))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * doc 08 §11: one invoice per attempt on the restaurant's own merchant, whose
+ * expiry `RC-DEC-023` will not let outlive the day's ordering close — the close
+ * is snapshotted here so that is a property of the row.
+ */
+export const restaurantPaymentAttempt = platform
+  .table(
+    'restaurant_payment_attempt',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      attemptId: uuid('attempt_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      orderId: uuid('order_id').notNull(),
+      orderingClosesAt: timestamp('ordering_closes_at', { withTimezone: true }).notNull(),
+      provider: text('provider')
+        .notNull()
+        .default(sql`'QPAY'::text`),
+      providerInvoiceId: text('provider_invoice_id'),
+      providerPaymentId: text('provider_payment_id'),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      settledReason: text('settled_reason'),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      check('restaurant_payment_attempt_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'restaurant_payment_attempt_order_fkey',
+        columns: [table.hotelId, table.orderId],
+        foreignColumns: [restaurantOrder.hotelId, restaurantOrder.orderId],
+      }).onDelete('restrict'),
+      check('restaurant_payment_attempt_provider_known', sql`(provider = 'QPAY'::text)`),
+      check(
+        'restaurant_payment_attempt_reason_bounded',
+        sql`((settled_reason IS NULL) OR ((length(settled_reason) >= 1) AND (length(settled_reason) <= 200)))`,
+      ),
+      check('restaurant_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'restaurant_payment_attempt_settled_shape',
+        sql`((state = 'ACTIVE'::text) = (settled_at IS NULL))`,
+      ),
+      check(
+        'restaurant_payment_attempt_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      check('restaurant_payment_attempt_within_close', sql`(expires_at <= ordering_closes_at)`),
+      uniqueIndex('restaurant_payment_attempt_invoice_uq')
+        .on(table.provider, table.providerInvoiceId)
+        .where(sql`provider_invoice_id IS NOT NULL`),
+      uniqueIndex('restaurant_payment_attempt_one_active_uq')
+        .on(table.orderId)
+        .where(sql`state = 'ACTIVE'::text`),
+      uniqueIndex('restaurant_payment_attempt_payment_uq')
+        .on(table.provider, table.providerPaymentId)
+        .where(sql`provider_payment_id IS NOT NULL`),
+      pgPolicy('callback_dispatch_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(provider_invoice_id IS NOT NULL)`,
+      }),
+      pgPolicy('invoice_sweep_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'ACTIVE'::text)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * `RC-DEC-024`: the refund the restaurant executes on its own merchant. The
+ * platform records it and moves no money; there is no payable and no batch.
+ */
+export const restaurantRefund = platform
+  .table(
+    'restaurant_refund',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      failureCode: text('failure_code'),
+      hotelId: uuid('hotel_id').notNull(),
+      initiatedByAccountId: uuid('initiated_by_account_id').notNull(),
+      orderId: uuid('order_id').notNull(),
+      provider: text('provider')
+        .notNull()
+        .default(sql`'QPAY'::text`),
+      providerPaymentId: text('provider_payment_id').notNull(),
+      providerRefundId: text('provider_refund_id'),
+      refundId: uuid('refund_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      restaurantId: uuid('restaurant_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check('restaurant_refund_amount_positive', sql`(amount_mnt > 0)`),
+      check(
+        'restaurant_refund_completed_has_reference',
+        sql`((state <> 'REFUNDED'::text) OR (provider_refund_id IS NOT NULL))`,
+      ),
+      check(
+        'restaurant_refund_failure_bounded',
+        sql`((failure_code IS NULL) OR ((length(failure_code) >= 1) AND (length(failure_code) <= 80)))`,
+      ),
+      foreignKey({
+        name: 'restaurant_refund_order_fkey',
+        columns: [table.hotelId, table.orderId],
+        foreignColumns: [restaurantOrder.hotelId, restaurantOrder.orderId],
+      }).onDelete('restrict'),
+      check('restaurant_refund_provider_known', sql`(provider = 'QPAY'::text)`),
+      check('restaurant_refund_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'restaurant_refund_settled_shape',
+        sql`((state = 'PENDING'::text) = (settled_at IS NULL))`,
+      ),
+      check(
+        'restaurant_refund_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'REFUNDED'::text, 'FAILED'::text]))`,
+      ),
+      uniqueIndex('restaurant_refund_one_open_uq')
+        .on(table.orderId)
+        .where(sql`state = 'PENDING'::text`),
+      uniqueIndex('restaurant_refund_provider_uq')
+        .on(table.providerRefundId)
+        .where(sql`provider_refund_id IS NOT NULL`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -8652,4 +9782,20 @@ export const DECLARED_TABLES = [
   bookingRefund,
   payoutBatch,
   payoutBatchItem,
+  // Phase 15.
+  restaurant,
+  hotelRestaurantLink,
+  restaurantSchedule,
+  restaurantScheduleOverride,
+  restaurantMenuCategory,
+  restaurantMenuItem,
+  roomAccessToken,
+  stayGuestAccess,
+  guestAccessCode,
+  guestSession,
+  restaurantOrder,
+  restaurantOrderItem,
+  restaurantOrderEvent,
+  restaurantPaymentAttempt,
+  restaurantRefund,
 ] as const;
