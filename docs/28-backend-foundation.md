@@ -1,11 +1,11 @@
 # Backend foundation — эхний хэрэгжүүлэлт ба дараагийн gate
 
 **Огноо:** 2026-09-06
-**Төлөв:** Domain core, PostgreSQL cash adapter/migration хэрэгжүүлсэн; authentication/API/UI болон production integration хийгдээгүй.
+**Төлөв:** Domain core, PostgreSQL cash adapter, staff authentication болон cash read API хэрэгжүүлсэн; UI/operational write API/production integration хийгдээгүй.
 
 ## Architecture decision
 
-Нэг backend application дотор domain module-уудаа заагласан modular monolith-оор эхэлнэ. Эхний Python 3.12+ package runtime dependency-гүй: subscription expiry policy, cash reservation state transition, settlement assessment/commission/batch time. Эдгээр нь HTTP framework-аас хамаарахгүй тул батлагдсан дүрмийг эхэлж тестэлнэ. Transport framework болон frontend сонголт энэ commit-д хийгдээгүй.
+Нэг backend application дотор domain module-уудаа заагласан modular monolith ашиглана. Python 3.12+ domain core runtime dependency-гүй: subscription expiry policy, cash reservation state transition, settlement assessment/commission/batch time. PostgreSQL adapter optional dependency; staff transport нь FastAPI, password hashing нь Argon2id. Domain module-ууд HTTP framework-аас хамаарахгүй. Frontend сонголт хараахан хийгдээгүй.
 
 Production persistence target нь PostgreSQL; worker нь provider event inbox, transactional outbox, reconciliation болон export delivery ажиллуулна. Police нь commercial/hotel scope-оос тусдаа service identity, API boundary, key/access policy-тай байна. Final hosting/physical database isolation нь EXT-10-ын нөхцөлөөс хамаарна. Cash migration болон CI-ийн disposable PostgreSQL service нэмсэн; production database/credential/deployment үүсгээгүй.
 
@@ -57,7 +57,7 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 | Дараалал | Ажил | Acceptance gate |
 | --- | --- | --- |
 | 1 | Cash adapter/migration/RLS/receipt/outbox intent нэмсэн; booking persistence, provider inbox, outbox delivery үлдсэн | Cash concurrency/commit-failure rollback integration tests; дараа нь last-room, process-crash recovery, delivery retry |
-| 2 | Authentication, membership/session revoke, explicit action permission | Hotel A → B access deny; suspended session/API/export deny; no client authorization flags |
+| 2 | Staff login/logout/password change, account epoch/membership revision, Hotel Admin cash read нэмсэн; invitation/reset email, full lifecycle болон бусад action policy үлдсэн | Hotel A → B deny, scoped/global revocation, auth race, throttling API tests; дараа нь invitation/takeover/action-specific permission |
 | 3 | Reception vertical slice: room, open shift, deposit, check-in, checkout, cleaning, handover | Synthetic end-to-end; old-obligation expiry completion; no new-sale bypass |
 | 4 | Online booking/payment/refund/payout adapters | Last-unit concurrency; duplicate/late callback; zero-refund exactly-once eligibility; no duplicate payout |
 | 5 | Minibar/Restaurant/Operation modules | Stock conservation, snapshot prices, task claim, refund/fulfillment state tests |

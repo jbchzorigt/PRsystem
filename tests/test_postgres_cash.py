@@ -11,51 +11,18 @@ from uuid import uuid4
 
 from prsystem.cash import CancelTransfer, CashContext, ConfirmTransfer, ReserveTransfer, SpendCash
 from prsystem.common import DomainError
+from postgres_support import PostgresCase
 
 ADMIN_DSN = os.environ.get("PRSYSTEM_TEST_ADMIN_DSN")
 if ADMIN_DSN:
     import psycopg
     from psycopg import sql
-    from psycopg.conninfo import make_conninfo
     from prsystem.postgres.cash import PostgresCash
     from prsystem.postgres.migrate import migrate
 
 
 @unittest.skipUnless(ADMIN_DSN, "PRSYSTEM_TEST_ADMIN_DSN is not set")
-class PostgresCashTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.database = "prsystem_test_" + uuid4().hex
-        cls.role = "cash_test_" + uuid4().hex
-        password = uuid4().hex
-        with psycopg.connect(ADMIN_DSN, autocommit=True) as conn:
-            conn.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT PASSWORD {}")
-                         .format(sql.Identifier(cls.role), sql.Literal(password)))
-            conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(cls.database)))
-        cls.addClassCleanup(cls.cleanup_database)
-        cls.owner_dsn = make_conninfo(ADMIN_DSN, dbname=cls.database)
-        cls.app_dsn = make_conninfo(cls.owner_dsn, user=cls.role, password=password)
-        migrate(cls.owner_dsn)
-        migrate(cls.owner_dsn)  # Already-applied migrations must be a no-op.
-        with psycopg.connect(cls.owner_dsn) as conn:
-            for grant in (
-                "GRANT USAGE ON SCHEMA prsystem TO {}",
-                "GRANT SELECT ON prsystem.cash_book, prsystem.cash_drawer, prsystem.cash_transfer, "
-                "prsystem.cash_event, prsystem.cash_receipt, prsystem.cash_outbox TO {}",
-                "GRANT UPDATE (revision) ON prsystem.cash_book TO {}",
-                "GRANT UPDATE (posted, reserved) ON prsystem.cash_drawer TO {}",
-                "GRANT UPDATE (state) ON prsystem.cash_transfer TO {}",
-                "GRANT INSERT ON prsystem.cash_transfer, prsystem.cash_event, "
-                "prsystem.cash_receipt, prsystem.cash_outbox TO {}",
-            ):
-                conn.execute(sql.SQL(grant).format(sql.Identifier(cls.role)))
-
-    @classmethod
-    def cleanup_database(cls):
-        with psycopg.connect(ADMIN_DSN, autocommit=True) as conn:
-            conn.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(cls.database)))
-            conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(cls.role)))
-
+class PostgresCashTests(PostgresCase):
     def setUp(self):
         self.tenant = uuid4().hex
         self.other = uuid4().hex
@@ -238,11 +205,11 @@ class PostgresCashTests(unittest.TestCase):
 
     def test_migration_checksum_mismatch_is_rejected(self):
         with psycopg.connect(self.owner_dsn) as conn:
-            original = conn.execute("SELECT checksum FROM prsystem.schema_migrations").fetchone()[0]
-            conn.execute("UPDATE prsystem.schema_migrations SET checksum = 'tampered'")
+            original = conn.execute("SELECT checksum FROM prsystem.schema_migrations WHERE name = '001_cash.sql'").fetchone()[0]
+            conn.execute("UPDATE prsystem.schema_migrations SET checksum = 'tampered' WHERE name = '001_cash.sql'")
         try:
             with self.assertRaisesRegex(RuntimeError, "Migration checksum changed"):
                 migrate(self.owner_dsn)
         finally:
             with psycopg.connect(self.owner_dsn) as conn:
-                conn.execute("UPDATE prsystem.schema_migrations SET checksum = %s", (original,))
+                conn.execute("UPDATE prsystem.schema_migrations SET checksum = %s WHERE name = '001_cash.sql'", (original,))

@@ -2,12 +2,13 @@
 
 Hotel operations, online booking, subscription, restaurant болон тусгаарлагдсан Police portal-ийн систем.
 
-Одоогийн milestone: **батлагдсан R01–R03 эрсдэлийн засвар, domain core, PostgreSQL cash persistence**. API, UI, authentication болон бодит provider integration хараахан хэрэгжээгүй.
+Одоогийн milestone: **domain core, PostgreSQL cash persistence, staff authentication API**. Staff login/session/password change болон Hotel Admin-ийн cash read API хэрэгжсэн. UI, staff invitation/reset email, operational write API болон бодит provider integration хараахан хэрэгжээгүй.
 
 - [Шаардлагын baseline ба P1/EXT](docs/00-mvp-open-decisions.md)
 - [Зөвшөөрсөн засвар, action/command contract](docs/27-approved-risk-controls.md)
 - [Backend architecture, persistence contract, backlog](docs/28-backend-foundation.md)
 - [PostgreSQL migration, runtime role, integration tests](docs/29-postgres-cash.md)
+- [Staff authentication ба API contract](docs/30-staff-auth-api.md)
 
 ## Шалгах
 
@@ -34,7 +35,19 @@ python -m unittest discover -s tests -v
 | `prsystem.cash` | Pending outgoing reservation, available balance, immutable transfer/debit, replay/revision guard |
 | `prsystem.settlement` | Zero-refund eligibility, бусад hold, integer commission, D+1 local batch time |
 | `prsystem.postgres` | Versioned migration, tenant RLS, cash transaction, append-only journal/receipt/outbox |
+| `prsystem.auth`, `prsystem.api` | Staff password/session, scope revocation, login throttling, authorized cash read |
 
-Module input нь server-аас баталгаажсан фактууд байна. Authorization boolean, tenant/root холбоос, cash count эсвэл provider status-ийг browser request-ээс шууд дамжуулж болохгүй. PostgreSQL adapter cash projection, transfer, journal, receipt, outbox-ийг нэг transaction-д хадгална. Production-д ашиглахын өмнө authentication/authorization, бодит expense/refund source approval/posting, shift lifecycle болон outbox worker-ийг холбоно.
+Module input нь server-аас баталгаажсан фактууд байна. Authorization boolean, tenant/root холбоос, cash count эсвэл provider status-ийг browser request-ээс шууд дамжуулж болохгүй. PostgreSQL adapter cash projection, transfer, journal, receipt, outbox-ийг нэг transaction-д хадгална. Cash write endpoint гаргахаас өмнө бодит expense/refund source approval/posting, shift lifecycle болон command-specific authorization-ийг холбоно.
+
+Staff API ажиллуулах:
+
+```bash
+python -m pip install '.[api]'
+# Owner credential-ээр migration; minimum-grant app credential-ийг PRSYSTEM_APP_DSN-д тохируулна.
+python -m prsystem.postgres.migrate
+uvicorn prsystem.api:create_app --factory --host 127.0.0.1 --port 8000 --no-proxy-headers
+```
+
+Migration нь `PRSYSTEM_MIGRATION_DSN` хэрэглэнэ. Runtime grants, staff fixture/provisioning хязгаар болон HTTPS deployment нөхцөлийг [API contract](docs/30-staff-auth-api.md)-оос үзнэ.
 
 Domain-only ажиллуулахад PostgreSQL тестүүд skip хийнэ. CI-ийн тусдаа `postgres` job бодит PostgreSQL 17 дээр бүх тестийг ажиллуулна; local ажиллуулах заавар [энд](docs/29-postgres-cash.md).
