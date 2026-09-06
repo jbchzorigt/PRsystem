@@ -53,3 +53,5 @@ uvicorn prsystem.api:create_app --factory --host 127.0.0.1 --port 8000 --no-prox
 Migration нь `PRSYSTEM_MIGRATION_DSN` хэрэглэнэ. Runtime grants, staff fixture/provisioning хязгаар болон HTTPS deployment нөхцөлийг [API contract](docs/30-staff-auth-api.md)-оос үзнэ.
 
 Domain-only ажиллуулахад PostgreSQL тестүүд skip хийнэ. CI-ийн тусдаа `postgres` job бодит PostgreSQL 17 дээр бүх тестийг ажиллуулна; local ажиллуулах заавар [энд](docs/29-postgres-cash.md).
+
+Staff membership role/status API, Primary хамгаалалт болон claim-only operational queue: [implementation contract](docs/33-membership-work.md).

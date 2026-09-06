@@ -75,6 +75,8 @@ Role нь table owner/superuser/BYPASSRLS биш; audit/receipt rewrite, token h
 
 22 шинэ integration тест: шинэ/хуучин account, canonical membership, replay/conflict, resend/revoke/expiry, package/role/tenant deny, accept-vs-resend болон duplicate create, reset session revoke, suspended account, stale/out-of-order reset job, purpose isolation, concurrent consume, delivery retry, wrong key, audit integrity, deferred commit rollback.
 
-Primary Admin paid provisioning, Hotel Admin-аас staff reset email эхлүүлэх action, role change/suspend/terminate/reactivate, takeover/reassignment, denied-action security audit өргөтгөл, Restaurant invitation realm, actual email provider болон worker deployment дараагийн багц. Эдгээр дуусаагүй тул 2-р үе шат бүхэлдээ хаагдаагүй.
+Primary Admin paid provisioning, Hotel Admin-аас staff reset email эхлүүлэх action, takeover/reassignment execution, denied-action security audit өргөтгөл, Restaurant invitation realm, actual email provider болон worker deployment дараагийн багц. Эдгээр дуусаагүй тул 2-р үе шат бүхэлдээ хаагдаагүй.
 
 Reference: [OWASP password recovery guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
+
+Role/status mutation, scope session revoke, Primary хамгаалалт ба queue claim нь [дараагийн багцад](33-membership-work.md) нэмэгдсэн.

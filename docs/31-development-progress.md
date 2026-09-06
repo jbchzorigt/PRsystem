@@ -9,23 +9,22 @@
 | № | Үе шат | Одоогийн төлөв |
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
-| **2** | **Нэвтрэлт, ажилтны эрх ба lifecycle** | **Идэвхтэй:** auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, takeover, бодит email холболт үлдсэн |
+| **2** | **Нэвтрэлт, ажилтны эрх ба lifecycle** | **Идэвхтэй:** auth/session, invitation/reset API бэлэн. Role/suspension/reactivation ба takeover queue claim нэмэгдсэн; бодит takeover execution, email холболт үлдсэн |
 | 3 | Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover | Эхлээгүй; cash/domain суурийг ашиглана |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-## Энэ удаагийн 5 багц ажил — 5/5
+## Энэ удаагийн 4 багц ажил — 3/4, CI баталгаажуулалт хүлээгдэж байна
 
 | № | Багц | Үр дүн |
 | --- | --- | --- |
-| 1 | Урилга/reset-ийн canonical дүрэм шалгах | Дууссан: нэг membership, current token, package/role, existing account, session revoke |
-| 2 | Migration ба service | Дууссан: `003_staff_links.sql`, hash-only token, receipt/audit/mail intent, async reset request |
-| 3 | API | Дууссан: invite, resend, revoke, accept, reset request/complete |
-| 4 | Integration тест | Дууссан: 22 шинэ тест; нийт 88 тест CI PostgreSQL 17 дээр амжилттай |
-| 5 | Баримт, явц, branch/PR | Дууссан: contract, minimum grants, энэ явцын хүснэгт болон Draft PR шинэчлэгдсэн |
+| 1 | Membership/Primary/takeover canonical дүрэм | Дууссан |
+| 2 | Migration, service, API | Дууссан: role/status, scope revoke, atomic queue, Manager claim |
+| 3 | Integration тест | 25 шинэ тест бичсэн; бодит PostgreSQL CI шалгалт хүлээгдэж байна |
+| 4 | Баримт, CI, branch/PR | Хийгдэж байна |
 
-Бодит email илгээсэн гэж тооцоогүй: тест нь memory transport ашигласан. Email provider/worker deployment, Primary Admin paid onboarding, lifecycle mutation болон takeover нь дараагийн багцууд.
+Claim нь касс тоолох, ээлж хаах эсвэл Cleaner ажлыг өөр хүнд шилжүүлсэн гэсэн үг биш. Source adapter-ууд, replacement/physical takeover, paid onboarding болон бодит email deployment үлдсэн. [Хэрэгжүүлэлтийн хязгаар ба contract](33-membership-work.md).
 
 ## Тестийн бүрэлдэхүүн
 
@@ -35,8 +34,9 @@
 | PostgreSQL cash | 14 |
 | Staff authentication API | 22 |
 | Invitation/reset/email boundary | 22 |
-| **Нийт** | **88** |
+| Membership/queue API | 25 |
+| **Нийт** | **113** |
 
-`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run integration тестүүдийг skip хийнэ. [Бодит PostgreSQL дээрх CI шалгалт](https://github.com/jbchzorigt/PRsystem/actions/runs/34014542132) бүх 88 тестийг ажиллуулсан.
+`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 83 integration тестийг skip хийнэ; 30 domain тест ажиллана. 113 тестийн бодит PostgreSQL CI үр дүнг энэ багцын push-ийн дараа баталгаажуулна.
 
-Дараагийн багц: Primary Hotel Admin-ийн хамгаалалттай role change, suspension/termination/reactivation; эдгээрийг open-work takeover/reassignment queue-тай нэг transaction-д холбох. Явцын дараагийн update мөн `үе шат N/6` болон тухайн багцын дууссан/нийт тоог харуулна.
+Дараагийн ажил: actual source/shift integration, replacement selection, physical takeover/cleaning continuation, email delivery болон invite recovery. Явцын update мөн `үе шат N/6` болон тухайн багцын дууссан/нийт тоог харуулна.

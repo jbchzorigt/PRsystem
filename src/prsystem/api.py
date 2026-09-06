@@ -5,7 +5,7 @@ import base64
 from typing import Annotated
 
 import psycopg
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from prsystem.auth import AuthSettings, StaffAuth
 from prsystem.common import DomainError
 from prsystem.staff_lifecycle import StaffLifecycle
+from prsystem.membership import MembershipService
 
 
 class Login(BaseModel):
@@ -49,6 +50,14 @@ class LinkPassword(BaseModel):
     password: SecretStr = Field(min_length=1, max_length=128)
 
 
+class MembershipChange(InvitationChange):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class RoleChange(MembershipChange):
+    roles: list[str] = Field(min_length=1, max_length=5)
+
+
 class ResetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     email: str = Field(min_length=3, max_length=254)
@@ -59,7 +68,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     if token_key is None and os.environ.get("PRSYSTEM_LINK_KEY"):
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
-    app = FastAPI(title="PRsystem staff API", version="0.3.0")
+    memberships = MembershipService(service)
+    app = FastAPI(title="PRsystem staff API", version="0.4.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -95,6 +105,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         code = str(exc)
         status = {"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
+                  "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
+                  "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
                   "MEMBERSHIP_NOT_FOUND": 404, "MEMBERSHIP_EXISTS": 409, "MEMBERSHIP_NOT_PENDING": 409,
                   "REVISION_CONFLICT": 409, "IDEMPOTENCY_CONFLICT": 409, "LINK_SERVICE_UNAVAILABLE": 503,
                   "TOKEN_KEY_MISMATCH": 503, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
@@ -153,6 +165,33 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/auth/invitations/accept")
     def accept_invite(body: LinkPassword, request: Request):
         return links().accept(body.token.get_secret_value(), body.password.get_secret_value(), peer(request))
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/roles")
+    def roles(tenant_id: str, account_id: str, body: RoleChange, secret: Annotated[str, Depends(token)]):
+        return memberships.change(secret, tenant_id, account_id, "ROLES", body.expected_revision,
+                                  body.idempotency_key, body.reason, body.roles)
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/suspend")
+    def suspend(tenant_id: str, account_id: str, body: MembershipChange, secret: Annotated[str, Depends(token)]):
+        return memberships.change(secret, tenant_id, account_id, "SUSPEND", body.expected_revision, body.idempotency_key, body.reason)
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/terminate")
+    def terminate(tenant_id: str, account_id: str, body: MembershipChange, secret: Annotated[str, Depends(token)]):
+        return memberships.change(secret, tenant_id, account_id, "TERMINATE", body.expected_revision, body.idempotency_key, body.reason)
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/reactivate")
+    def reactivate(tenant_id: str, account_id: str, body: MembershipChange, secret: Annotated[str, Depends(token)]):
+        return memberships.change(secret, tenant_id, account_id, "REACTIVATE", body.expected_revision, body.idempotency_key, body.reason)
+
+    @app.get("/hotels/{tenant_id}/staff-work/exceptions")
+    def exceptions(tenant_id: str, secret: Annotated[str, Depends(token)],
+                   limit: Annotated[int, Query(ge=1, le=100)] = 100,
+                   after: Annotated[str, Query(max_length=128)] = ""):
+        return memberships.exceptions(secret, tenant_id, limit, after)
+
+    @app.post("/hotels/{tenant_id}/staff-work/exceptions/{exception_id}/claim")
+    def claim(tenant_id: str, exception_id: str, body: InvitationChange, secret: Annotated[str, Depends(token)]):
+        return memberships.claim(secret, tenant_id, exception_id, body.expected_revision, body.idempotency_key)
 
     @app.post("/auth/password/reset/request", status_code=202)
     def request_reset(body: ResetRequest, request: Request):
