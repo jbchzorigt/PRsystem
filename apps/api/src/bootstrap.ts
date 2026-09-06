@@ -131,6 +131,9 @@ export async function createApp(
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
         },
       },
+      review: {
+        config: { databaseUrl: config.DATABASE_URL },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

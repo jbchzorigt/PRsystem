@@ -144,6 +144,16 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   // Phase 13's: find the work across every hotel, and decide nothing.
   'platform.room_of_access_token(p_token_hash text)': KERNEL_OWNERS.maintenanceFn,
   'platform.hotel_of_guest_session(p_token_hash text)': KERNEL_OWNERS.maintenanceFn,
+
+  // Phase 16. A stranger reads a hotel's published reviews and its rating with
+  // no session and no tenant; both answer for published hotels only.
+  'platform.public_hotel_reviews(p_hotel_id uuid, p_limit integer, p_offset integer)':
+    KERNEL_OWNERS.maintenanceFn,
+  // A reporter and a moderator each name a review and no tenant, so the hotel
+  // they act in is resolved here and the command runs in that hotel's scope.
+  'platform.hotel_of_published_review(p_review_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.hotel_of_moderatable_review(p_review_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.open_review_reports(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   'platform.lapsed_restaurant_invoices(p_limit integer, p_now timestamp with time zone)':
     KERNEL_OWNERS.maintenanceFn,
   'platform.unresolved_refund_requests(p_limit integer, p_now timestamp with time zone)':

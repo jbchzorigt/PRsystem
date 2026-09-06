@@ -1,5 +1,5 @@
 import type { UnitOfWork } from '@prsystem/db';
-import type { CategoryOffer, Listing } from '../domain/listing';
+import type { CategoryOffer, Listing, PublicReview } from '../domain/listing';
 
 /**
  * The public listing projection (doc 09 §§3, 5).
@@ -20,7 +20,8 @@ export class PublicRepository {
   async listings(): Promise<readonly Listing[]> {
     const result = await this.uow.query<Record<string, unknown>>(
       `SELECT hotel_id, public_name, district, khoroo, address_line, public_phone,
-              latitude_micro, longitude_micro, cover_object_key, from_rate_mnt
+              latitude_micro, longitude_micro, cover_object_key, from_rate_mnt,
+              review_count, average_rating_centi
          FROM platform.public_hotel_listings()`,
     );
     return result.rows.map((row) => ({
@@ -36,6 +37,40 @@ export class PublicRepository {
       },
       coverObjectKey: (row['cover_object_key'] as string | null) ?? null,
       fromRateMnt: row['from_rate_mnt'] === null ? null : BigInt(String(row['from_rate_mnt'])),
+      reviewCount: Number(row['review_count']),
+      averageRatingCenti: Number(row['average_rating_centi']),
+    }));
+  }
+
+  /**
+   * doc 10 §6: a hotel's published reviews, for a visitor with no session.
+   *
+   * The projection returns no `account_id`, no `booking_id` and no contact
+   * detail — the masked name and the words, plus the hotel's live reply.
+   */
+  async reviews(hotelId: string, limit: number, offset: number): Promise<readonly PublicReview[]> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT review_id, rating, comment, display_name_snapshot, edited, created_at,
+              updated_at, reply_body, reply_edited, reply_updated_at
+         FROM platform.public_hotel_reviews($1::uuid, $2, $3)`,
+      [hotelId, limit, offset],
+    );
+    return result.rows.map((row) => ({
+      reviewId: String(row['review_id']),
+      rating: Number(row['rating']),
+      comment: String(row['comment']),
+      displayName: String(row['display_name_snapshot']),
+      edited: row['edited'] === true,
+      createdAt: row['created_at'] as Date,
+      updatedAt: row['updated_at'] as Date,
+      reply:
+        row['reply_body'] === null || row['reply_body'] === undefined
+          ? null
+          : {
+              body: String(row['reply_body']),
+              edited: row['reply_edited'] === true,
+              updatedAt: row['reply_updated_at'] as Date,
+            },
     }));
   }
 

@@ -7,6 +7,10 @@ import type {
 } from '../../stay/contracts/confirmed-bookings';
 import type { CategoryHold, CategoryHoldsPort } from '../../public/contracts/category-holds';
 import type { BookingFulfilmentPort } from '../../stay/contracts/booking-fulfilment';
+import type {
+  ReviewEligibility,
+  ReviewEligibilityPort,
+} from '../../review/contracts/review-eligibility';
 import { fromPgDate, nightsOf, toDateString } from '../domain/booking';
 import { BookingRepository } from '../repositories/booking.repository';
 import { hotelTimeZone } from '../services/booking-context';
@@ -232,5 +236,54 @@ export class RepositoryBookingFulfilment implements BookingFulfilmentPort {
       payload: { bookingId: booking.bookingId, hotelId: booking.hotelId },
     });
     return booking.bookingId;
+  }
+}
+
+/**
+ * The review module's view: what makes a review earned (`RV-DEC-002`).
+ *
+ * One read, answering all three of doc 10 §3's conditions — the account made
+ * the booking, the booking is `COMPLETED`, and the checkout that completed it.
+ *
+ * The checkout time comes from the booking's own `terminal_at`, not from a join
+ * to `platform.stay`. Two reasons, and they agree. The value is the same
+ * instant: `recordActualCheckout` stamps `stay.actual_checkout_at` and calls
+ * `completeAtCheckout` in one transaction, both from that transaction's server
+ * time. And the reviewer reads this in their *own* account scope, where the
+ * only rows visible are their own bookings — `platform.stay` is a hotel tenant
+ * row and is invisible there, so a join to it would silently answer NULL for
+ * every legitimate reviewer.
+ *
+ * A booking that is not theirs is simply not visible, so the ownership check
+ * and the tenant check are the same read rather than two that have to agree.
+ */
+export class RepositoryReviewEligibility implements ReviewEligibilityPort {
+  async bookingForReviewer(
+    uow: UnitOfWork,
+    bookingId: string,
+    accountId: string,
+  ): Promise<ReviewEligibility | undefined> {
+    const result = await uow.query<{
+      booking_id: string;
+      hotel_id: string;
+      booker_account_id: string;
+      state: string;
+      actual_checkout_at: Date | null;
+    }>(
+      `SELECT b.booking_id, b.hotel_id, b.booker_account_id, b.state,
+              CASE WHEN b.state = 'COMPLETED' THEN b.terminal_at END AS actual_checkout_at
+         FROM platform.booking b
+        WHERE b.booking_id = $1::uuid AND b.booker_account_id = $2::uuid`,
+      [bookingId, accountId],
+    );
+    const row = result.rows[0];
+    if (row === undefined) return undefined;
+    return {
+      bookingId: row.booking_id,
+      hotelId: row.hotel_id,
+      bookerAccountId: row.booker_account_id,
+      state: row.state,
+      actualCheckoutAt: row.actual_checkout_at,
+    };
   }
 }

@@ -35,6 +35,14 @@ export interface Listing {
   readonly point: GeoPoint;
   readonly coverObjectKey: string | null;
   readonly fromRateMnt: bigint | null;
+  /**
+   * `BK-DEC-004` and doc 10 §6: what the published reviews say about this
+   * hotel. The count and the average are the server's own aggregate — a hotel
+   * with no published review reports `0` and `0`, never a null the caller has
+   * to interpret and never an invented average.
+   */
+  readonly reviewCount: number;
+  readonly averageRatingCenti: number;
 }
 
 export interface RankedListing extends Listing {
@@ -104,4 +112,26 @@ export function matchesLocation(listing: Listing, query: string | undefined): bo
   return [listing.district, listing.khoroo, listing.addressLine, listing.publicName].some(
     (field) => field !== null && field.toLocaleLowerCase().includes(needle),
   );
+}
+
+/**
+ * One published review, as a stranger sees it (doc 10 §6, §8).
+ *
+ * The masked name and nothing that identifies the reviewer: no account, no
+ * booking, no room, no contact detail. The reply is present only while both it
+ * and its review are live.
+ */
+export interface PublicReview {
+  readonly reviewId: string;
+  readonly rating: number;
+  readonly comment: string;
+  readonly displayName: string;
+  readonly edited: boolean;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly reply: {
+    readonly body: string;
+    readonly edited: boolean;
+    readonly updatedAt: Date;
+  } | null;
 }

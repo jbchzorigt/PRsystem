@@ -84,10 +84,10 @@ describe('R2 — two runners against a completely empty database', () => {
     // 0005_onboarding_remediation2, 0006_onboarding_remediation3,
     // 0007_hotel_catalog, 0008_minibar_inventory, 0009_stay_reception,
     // 0010_cleaner_checkout.
-    expect(first.appliedAfter).toBe(17);
-    expect(second.appliedAfter).toBe(17);
+    expect(first.appliedAfter).toBe(18);
+    expect(second.appliedAfter).toBe(18);
     // Exactly one of them did the applying.
-    const applied = [first, second].filter((r) => r.appliedBefore === 0 && r.appliedAfter === 17);
+    const applied = [first, second].filter((r) => r.appliedBefore === 0 && r.appliedAfter === 18);
     expect(applied).toHaveLength(1);
   }, 120000);
 });

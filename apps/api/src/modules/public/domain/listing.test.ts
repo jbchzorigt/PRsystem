@@ -23,6 +23,8 @@ const listing = (over: Partial<Listing> = {}): Listing => ({
   publicPhone: '+97611223344',
   point: { latitudeMicro: 47_918_600, longitudeMicro: 106_917_700 },
   coverObjectKey: 'cover/1',
+  reviewCount: 0,
+  averageRatingCenti: 0,
   fromRateMnt: 120_000n,
   ...over,
 });

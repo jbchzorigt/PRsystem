@@ -37,6 +37,9 @@ import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
 import { RepositoryRestaurantOrders } from './modules/restaurant/contracts/stay-checkout';
 import type { RestaurantModuleOptions } from './modules/restaurant/restaurant.module';
 import { RestaurantModule } from './modules/restaurant/restaurant.module';
+import type { ReviewModuleOptions } from './modules/review/review.module';
+import { ReviewModule } from './modules/review/review.module';
+import { RepositoryReviewEligibility } from './modules/booking/contracts/booking-reads';
 import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
 import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
 import { RepositoryShiftLookup } from './modules/stay/contracts/shift-lookup';
@@ -121,6 +124,12 @@ export interface AppModuleOptions {
    * folio, deposit, drawer or shift (doc 08 §13).
    */
   readonly restaurant: RestaurantModuleOptions;
+  /**
+   * The Phase 16 reviews. A Guest writes, a hotel replies, a Platform account
+   * with `REVIEW_MODERATE` hides and restores; the published aggregate moves in
+   * the same transaction as the review it summarises.
+   */
+  readonly review: ReviewModuleOptions;
   /**
    * A pool the application should close on shutdown.
    *
@@ -217,6 +226,13 @@ export class AppModule {
           catalog,
         }),
         RestaurantModule.forRoot({ ...options.restaurant, iam }),
+        // Phase 13 supplies what makes a review earned: the account's own
+        // booking, its COMPLETED state and the stay's actual checkout.
+        ReviewModule.forRoot({
+          eligibility: new RepositoryReviewEligibility(),
+          ...options.review,
+          iam,
+        }),
         SettlementModule.forRoot({
           ...options.settlement,
           bookings: options.settlement?.bookings ?? new RepositoryBookingRefundAxis(),

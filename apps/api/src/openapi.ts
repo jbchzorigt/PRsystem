@@ -76,6 +76,7 @@ async function generate(): Promise<void> {
       booking: { pool: new Pool({ max: 1 }) },
       settlement: { pool: new Pool({ max: 1 }) },
       restaurant: { pool: new Pool({ max: 1 }), keys: new UnavailableKeyManagement() },
+      review: { pool: new Pool({ max: 1 }) },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),

@@ -2864,6 +2864,291 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     updateColumn: 'revision',
     updateSet: `failure_code = 'acl-probe', revision = revision + 1`,
   },
+  {
+    name: 'platform.hotel_review',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p16-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+                FROM g, c RETURNING booking_id, hotel_id, booker_account_id),
+            r AS (
+              INSERT INTO platform.hotel_review
+                (hotel_id, booking_id, account_id, rating, comment, display_name_snapshot,
+                 review_deadline_at)
+              SELECT b.hotel_id, b.booking_id, b.booker_account_id, 5,
+                     'Синтетик сэтгэгдэл, хангалттай урт байна.', 'С***',
+                     now() + interval '27 days'
+                FROM b RETURNING review_id, hotel_id, account_id)
+            SELECT review_id FROM r`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `comment = 'acl-probe, and long enough to pass', revision = revision + 1`,
+  },
+  {
+    name: 'platform.hotel_review_edit',
+    grants: { api: ['SELECT', 'INSERT'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p16-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+                FROM g, c RETURNING booking_id, hotel_id, booker_account_id),
+            r AS (
+              INSERT INTO platform.hotel_review
+                (hotel_id, booking_id, account_id, rating, comment, display_name_snapshot,
+                 review_deadline_at)
+              SELECT b.hotel_id, b.booking_id, b.booker_account_id, 5,
+                     'Синтетик сэтгэгдэл, хангалттай урт байна.', 'С***',
+                     now() + interval '27 days'
+                FROM b RETURNING review_id, hotel_id, account_id)
+            INSERT INTO platform.hotel_review_edit
+              (hotel_id, review_id, account_id, from_rating, from_comment, to_rating, to_comment)
+            SELECT r.hotel_id, r.review_id, r.account_id, 5,
+                   'Синтетик сэтгэгдэл, хангалттай урт байна.', 4,
+                   'Засварласан сэтгэгдэл, мөн хангалттай урт.'
+              FROM r`,
+      values: [hotelId],
+    }),
+  },
+  {
+    name: 'platform.hotel_review_aggregate',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    // One row per hotel: the aggregate is keyed by the tenant itself, so the
+    // probe seeds exactly one and updates it in place.
+    rowsPerTenant: 1,
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.hotel_review_aggregate
+              (hotel_id, published_count, rating_sum, average_rating_centi)
+            VALUES ($1, 1, 5, 500)
+            ON CONFLICT (hotel_id) DO UPDATE
+               SET revision = platform.hotel_review_aggregate.revision + 1`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `updated_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.review_report',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p16-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+                FROM g, c RETURNING booking_id, hotel_id, booker_account_id),
+            r AS (
+              INSERT INTO platform.hotel_review
+                (hotel_id, booking_id, account_id, rating, comment, display_name_snapshot,
+                 review_deadline_at)
+              SELECT b.hotel_id, b.booking_id, b.booker_account_id, 5,
+                     'Синтетик сэтгэгдэл, хангалттай урт байна.', 'С***',
+                     now() + interval '27 days'
+                FROM b RETURNING review_id, hotel_id, account_id)
+            INSERT INTO platform.review_report
+              (hotel_id, review_id, account_id, reason)
+            SELECT r.hotel_id, r.review_id, r.account_id, 'SPAM_FRAUD' FROM r`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'RESOLVED', resolved_at = now(),
+                resolved_by_account_id = account_id, resolution = 'DISMISSED',
+                resolution_note = 'acl-probe resolution note', revision = revision + 1`,
+  },
+  {
+    name: 'platform.review_moderation_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p16-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+                FROM g, c RETURNING booking_id, hotel_id, booker_account_id),
+            r AS (
+              INSERT INTO platform.hotel_review
+                (hotel_id, booking_id, account_id, rating, comment, display_name_snapshot,
+                 review_deadline_at)
+              SELECT b.hotel_id, b.booking_id, b.booker_account_id, 5,
+                     'Синтетик сэтгэгдэл, хангалттай урт байна.', 'С***',
+                     now() + interval '27 days'
+                FROM b RETURNING review_id, hotel_id, account_id)
+            INSERT INTO platform.review_moderation_event
+              (hotel_id, review_id, action, actor_account_id, permission, reason, note,
+               from_status, to_status)
+            SELECT r.hotel_id, r.review_id, 'HIDE', r.account_id, 'REVIEW_MODERATE',
+                   'SPAM_FRAUD', 'acl-probe moderation note', 'PUBLISHED', 'HIDDEN'
+              FROM r`,
+      values: [hotelId],
+    }),
+  },
+  {
+    name: 'platform.hotel_review_reply',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p16-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+                FROM g, c RETURNING booking_id, hotel_id, booker_account_id),
+            r AS (
+              INSERT INTO platform.hotel_review
+                (hotel_id, booking_id, account_id, rating, comment, display_name_snapshot,
+                 review_deadline_at)
+              SELECT b.hotel_id, b.booking_id, b.booker_account_id, 5,
+                     'Синтетик сэтгэгдэл, хангалттай урт байна.', 'С***',
+                     now() + interval '27 days'
+                FROM b RETURNING review_id, hotel_id, account_id)
+            INSERT INTO platform.hotel_review_reply
+              (hotel_id, review_id, body, created_by_account_id)
+            SELECT r.hotel_id, r.review_id, 'Буудлын албан ёсны хариу, урт нь хангалттай.',
+                   r.account_id
+              FROM r`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `edited = true, revision = revision + 1`,
+  },
+  {
+    name: 'platform.hotel_review_reply_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p16-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+                FROM g, c RETURNING booking_id, hotel_id, booker_account_id),
+            r AS (
+              INSERT INTO platform.hotel_review
+                (hotel_id, booking_id, account_id, rating, comment, display_name_snapshot,
+                 review_deadline_at)
+              SELECT b.hotel_id, b.booking_id, b.booker_account_id, 5,
+                     'Синтетик сэтгэгдэл, хангалттай урт байна.', 'С***',
+                     now() + interval '27 days'
+                FROM b RETURNING review_id, hotel_id, account_id),
+            y AS (
+              INSERT INTO platform.hotel_review_reply
+                (hotel_id, review_id, body, created_by_account_id)
+              SELECT r.hotel_id, r.review_id, 'Буудлын албан ёсны хариу, урт нь хангалттай.',
+                     r.account_id
+                FROM r RETURNING reply_id, hotel_id, review_id, created_by_account_id)
+            INSERT INTO platform.hotel_review_reply_event
+              (hotel_id, reply_id, review_id, action, actor_account_id, to_body, to_state)
+            SELECT y.hotel_id, y.reply_id, y.review_id, 'CREATE', y.created_by_account_id,
+                   'Буудлын албан ёсны хариу, урт нь хангалттай.', 'ACTIVE'
+              FROM y`,
+      values: [hotelId],
+    }),
+  },
 ];
 
 /** Errors that mean "the row was malformed", never "the policy refused it". */

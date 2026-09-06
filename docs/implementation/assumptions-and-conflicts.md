@@ -971,6 +971,69 @@ recorded so a reviewer can see where a judgement was made.
   once `platform.restaurant_order` exists — so a deployment that forgot to register the
   implementation refuses the checkout instead of leaving a live room session behind.
 
+### 3.20 Phase 16 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P16-1 — the review's checkout time is the booking's `terminal_at`.** doc 10 §5 measures the
+  30-day window from the stay's `actual_checkout_at`. The two are the same instant by construction:
+  `recordActualCheckout` stamps the stay and calls `completeAtCheckout` in one transaction, both from
+  that transaction's server time. Reading it from the booking matters because the reviewer reads
+  their eligibility in their *own account scope*, where `platform.stay` is a hotel tenant row and is
+  invisible — a join to it would have answered NULL for every legitimate reviewer and refused them
+  all. If a later phase ever lets a checkout time be corrected after the fact, that correction has to
+  reach the booking's `terminal_at` too, or the review window will measure from the wrong instant.
+- **A-P16-2 — the window is snapshotted onto the review at creation.** `review_deadline_at` is
+  written once and the trigger refuses to change it, so the edit is judged against the deadline the
+  review was created under. doc 10 §7.1 gives the owner "until the review deadline"; a deadline
+  re-derived on each edit would move if the source time ever moved.
+- **A-P16-3 — the masked public name is the first character.** doc 10 §5 and §8 require a masked name
+  and do not specify the masking. One character plus `***` is the narrowest thing that is still
+  attributable on the page; an account with no display name becomes `Зочин` rather than an empty
+  string. The mask is snapshotted at creation, so a later profile edit cannot retroactively expose a
+  reviewer. Refining it is a P1 UX item, and doc 10 §11 already says so.
+- **A-P16-4 — the average is an integer, in hundredths, derived by a CHECK.** doc 10 §6 requires the
+  server's own aggregate. `average_rating_centi = (sum × 200 + count) / (max(count,1) × 2)` is
+  exactly half-up rounding on non-negative integers, and the constraint recomputes what the
+  application wrote — the same shape Phase 14's commission uses (`A-P14-4`). No float exists at any
+  layer, and the wire carries a formatted string.
+- **A-P16-5 — the aggregate moves inside the transaction that moved the review.** doc 10 §6 asks for
+  a reliable recomputation on hide, restore and soft-delete. Doing it in the same transaction, on the
+  aggregate's own row lock, means there is no job to schedule, nothing to fall behind and no window
+  in which the published average disagrees with the published reviews. This phase therefore has **no
+  worker grant at all**.
+- **A-P16-6 — a report is checked under the review's row lock, not caught as a constraint
+  violation.** doc 10 §7.2 says a repeat submission must not create a duplicate. The service reads
+  the account's own open report first, under the lock that orders concurrent reports of the same
+  review, and answers with it. The partial unique index remains the backstop, and a race that reached
+  it aborts the transaction rather than being papered over — a caught unique violation cannot be
+  recovered from inside the same transaction anyway.
+- **A-P16-7 — an OTHER report explains itself and the other three carry no note.** doc 10 §7.2 gives
+  four reasons and one 10–500 character note for `OTHER`. Allowing a note alongside the other three
+  would have been a way of reporting something the approved list does not include, so the note is
+  refused there — by a CHECK as well as by the service.
+- **A-P16-8 — a moderator resolves a hotel through two narrow definer functions.** A Platform account
+  holds no membership anywhere, so the hotel a moderation command runs in cannot come from a
+  membership and must not come from the request. `hotel_of_published_review` answers for the
+  reporter and `hotel_of_moderatable_review` for the moderator; neither answers for a review the
+  owner deleted, which is what makes "a moderator does not undo an owner's delete" true of the read
+  as well as of the write.
+- **A-P16-9 — the moderation queue is checked for permission with an empty target.** An Operation
+  permission is not scoped to a hotel, so `authorizeCommand` is called with no `hotelId`: naming one
+  would invite the pipeline to look for a membership that can never exist. The queue answers
+  identifiers only — the review's words and the reporter's note are read afterwards, in the hotel's
+  own scope and under the same permission.
+- **A-P16-10 — a hotel may withdraw its reply even after the review is hidden.** doc 10 §7.4 forbids
+  *creating* or *editing* a reply while its review is not public, and says a hidden review's reply is
+  not shown. It does not forbid withdrawing one, and forbidding it would trap a hotel's words on a
+  review it can no longer answer. Restoring a reply does require the review public again.
+- **A-P16-11 — no permission exists for creating, editing or deleting a review.** doc 18 §8 names one
+  Guest review action, `review.report_published`, and no others. Writing and editing one's own review
+  is ownership-based the way `booking.cancel_own`'s siblings are — the session's realm and the
+  account that owns the row are the whole gate — so this phase invented no permission row to sit
+  above them.
+
 ---
 
 ## 4. P1 configuration register

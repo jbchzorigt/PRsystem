@@ -120,6 +120,13 @@
       "when": 1757376000005,
       "tag": "0016_restaurant_ordering",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1757376000006,
+      "tag": "0017_verified_reviews",
+      "breakpoints": true
     }
   ]
 }

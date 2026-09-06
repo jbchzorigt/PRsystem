@@ -9657,6 +9657,501 @@ export const restaurantRefund = platform
   .enableRLS();
 
 /** The kernel tables this declaration covers, for the drift check. */
+/**
+ * Phase 16 — verified reviews, reports, moderation and the official reply.
+ *
+ * doc 10. A review is earned by a `COMPLETED` booking the account itself made,
+ * so `booking_id` is UNIQUE and a soft-deleted review keeps its booking
+ * forever. Nothing here is ever deleted: the owner soft-deletes and the
+ * moderator hides, and both keep the row, the owner and the audit. The
+ * aggregate's average is a CHECK on the count and the sum, so a client never
+ * computes it and it cannot drift from what it summarises.
+ */
+export const hotelReview = platform
+  .table(
+    'hotel_review',
+    {
+      accountId: uuid('account_id').notNull(),
+      bookingId: uuid('booking_id').notNull(),
+      comment: text('comment').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deletedAt: timestamp('deleted_at', { withTimezone: true }),
+      displayNameSnapshot: text('display_name_snapshot').notNull(),
+      edited: boolean('edited')
+        .notNull()
+        .default(sql`false`),
+      hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+      hiddenByAccountId: uuid('hidden_by_account_id'),
+      hotelId: uuid('hotel_id').notNull(),
+      rating: integer('rating').notNull(),
+      reviewDeadlineAt: timestamp('review_deadline_at', { withTimezone: true }).notNull(),
+      reviewId: uuid('review_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      status: text('status')
+        .notNull()
+        .default(sql`'PUBLISHED'::text`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'hotel_review_account_fkey',
+        columns: [table.accountId],
+        foreignColumns: [guestAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_review_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      unique('hotel_review_booking_uq').on(table.bookingId),
+      check(
+        'hotel_review_comment_bounded',
+        sql`((length(comment) >= 10) AND (length(comment) <= 1000))`,
+      ),
+      check('hotel_review_comment_trimmed', sql`(comment = btrim(comment))`),
+      check(
+        'hotel_review_deleted_when_deleted',
+        sql`((status = 'DELETED'::text) = (deleted_at IS NOT NULL))`,
+      ),
+      check(
+        'hotel_review_display_name_bounded',
+        sql`((length(display_name_snapshot) >= 1) AND (length(display_name_snapshot) <= 120))`,
+      ),
+      foreignKey({
+        name: 'hotel_review_hidden_by_fkey',
+        columns: [table.hiddenByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'hotel_review_hidden_shape',
+        sql`((hidden_at IS NULL) = (hidden_by_account_id IS NULL))`,
+      ),
+      check(
+        'hotel_review_hidden_when_hidden',
+        sql`((status <> 'HIDDEN'::text) OR (hidden_at IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'hotel_review_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('hotel_review_identity_uq').on(table.hotelId, table.reviewId),
+      check('hotel_review_rating_range', sql`((rating >= 1) AND (rating <= 5))`),
+      check('hotel_review_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_review_status_known',
+        sql`(status = ANY (ARRAY['PUBLISHED'::text, 'HIDDEN'::text, 'DELETED'::text]))`,
+      ),
+      index('hotel_review_account_idx').on(table.accountId, table.createdAt.desc().nullsFirst()),
+      index('hotel_review_hotel_idx').on(
+        table.hotelId,
+        table.status,
+        table.createdAt.desc().nullsFirst(),
+      ),
+      pgPolicy('own_review_read', {
+        for: 'select',
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
+      }),
+      pgPolicy('public_review_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`((status = 'PUBLISHED'::text) AND (EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = hotel_review.hotel_id) AND (p.listing_state = 'PUBLISHED'::text)))))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelReviewEdit = platform
+  .table(
+    'hotel_review_edit',
+    {
+      accountId: uuid('account_id').notNull(),
+      editId: uuid('edit_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      editedAt: timestamp('edited_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      fromComment: text('from_comment').notNull(),
+      fromRating: integer('from_rating').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      reviewId: uuid('review_id').notNull(),
+      toComment: text('to_comment').notNull(),
+      toRating: integer('to_rating').notNull(),
+    },
+    (table) => [
+      check(
+        'hotel_review_edit_comment_bounded',
+        sql`(((length(from_comment) >= 10) AND (length(from_comment) <= 1000)) AND ((length(to_comment) >= 10) AND (length(to_comment) <= 1000)))`,
+      ),
+      check(
+        'hotel_review_edit_rating_range',
+        sql`(((from_rating >= 1) AND (from_rating <= 5)) AND ((to_rating >= 1) AND (to_rating <= 5)))`,
+      ),
+      foreignKey({
+        name: 'hotel_review_edit_review_fkey',
+        columns: [table.hotelId, table.reviewId],
+        foreignColumns: [hotelReview.hotelId, hotelReview.reviewId],
+      }).onDelete('restrict'),
+      index('hotel_review_edit_review_idx').on(table.reviewId, table.editedAt),
+      pgPolicy('own_review_edit_read', {
+        for: 'select',
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelReviewAggregate = platform
+  .table(
+    'hotel_review_aggregate',
+    {
+      averageRatingCenti: integer('average_rating_centi')
+        .notNull()
+        .default(sql`0`),
+      hotelId: uuid('hotel_id').primaryKey().notNull(),
+      publishedCount: integer('published_count')
+        .notNull()
+        .default(sql`0`),
+      ratingSum: bigint('rating_sum', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      check(
+        'hotel_review_aggregate_average_derived',
+        sql`(average_rating_centi = ((((rating_sum * 200) + published_count) / (GREATEST(published_count, 1) * 2)))::integer)`,
+      ),
+      check(
+        'hotel_review_aggregate_counts_non_negative',
+        sql`((published_count >= 0) AND (rating_sum >= 0))`,
+      ),
+      foreignKey({
+        name: 'hotel_review_aggregate_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check('hotel_review_aggregate_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_review_aggregate_sum_in_range',
+        sql`((rating_sum >= published_count) AND (rating_sum <= (published_count * 5)))`,
+      ),
+      pgPolicy('public_aggregate_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = hotel_review_aggregate.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const reviewReport = platform
+  .table(
+    'review_report',
+    {
+      accountId: uuid('account_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      note: text('note'),
+      reason: text('reason').notNull(),
+      reportId: uuid('report_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      resolution: text('resolution'),
+      resolutionNote: text('resolution_note'),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+      resolvedByAccountId: uuid('resolved_by_account_id'),
+      reviewId: uuid('review_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'review_report_account_fkey',
+        columns: [table.accountId],
+        foreignColumns: [guestAccount.accountId],
+      }).onDelete('restrict'),
+      unique('review_report_identity_uq').on(table.hotelId, table.reportId),
+      check(
+        'review_report_note_bounded',
+        sql`((note IS NULL) OR ((note = btrim(note)) AND ((length(note) >= 10) AND (length(note) <= 500))))`,
+      ),
+      check('review_report_note_shape', sql`((reason = 'OTHER'::text) = (note IS NOT NULL))`),
+      check(
+        'review_report_reason_known',
+        sql`(reason = ANY (ARRAY['PERSONAL_DATA'::text, 'ABUSE_ILLEGAL'::text, 'SPAM_FRAUD'::text, 'OTHER'::text]))`,
+      ),
+      check(
+        'review_report_resolution_known',
+        sql`((resolution IS NULL) OR (resolution = ANY (ARRAY['UPHELD'::text, 'DISMISSED'::text])))`,
+      ),
+      check(
+        'review_report_resolution_note_bounded',
+        sql`((resolution_note IS NULL) OR ((resolution_note = btrim(resolution_note)) AND ((length(resolution_note) >= 10) AND (length(resolution_note) <= 500))))`,
+      ),
+      foreignKey({
+        name: 'review_report_resolved_by_fkey',
+        columns: [table.resolvedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'review_report_resolved_shape',
+        sql`((state = 'RESOLVED'::text) = ((resolved_at IS NOT NULL) AND (resolved_by_account_id IS NOT NULL) AND (resolution IS NOT NULL) AND (resolution_note IS NOT NULL)))`,
+      ),
+      foreignKey({
+        name: 'review_report_review_fkey',
+        columns: [table.hotelId, table.reviewId],
+        foreignColumns: [hotelReview.hotelId, hotelReview.reviewId],
+      }).onDelete('restrict'),
+      check('review_report_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'review_report_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'RESOLVED'::text]))`,
+      ),
+      uniqueIndex('review_report_one_open_uq')
+        .on(table.accountId, table.reviewId)
+        .where(sql`state = 'OPEN'::text`),
+      index('review_report_queue_idx').on(table.state, table.createdAt),
+      pgPolicy('own_report_read', {
+        for: 'select',
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (account_id = platform.current_account_id()))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const reviewModerationEvent = platform
+  .table(
+    'review_moderation_event',
+    {
+      action: text('action').notNull(),
+      actorAccountId: uuid('actor_account_id').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      fromStatus: text('from_status'),
+      hotelId: uuid('hotel_id').notNull(),
+      note: text('note').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      permission: text('permission').notNull(),
+      reason: text('reason').notNull(),
+      reportId: uuid('report_id'),
+      reviewId: uuid('review_id').notNull(),
+      toStatus: text('to_status'),
+    },
+    (table) => [
+      check(
+        'review_moderation_event_action_known',
+        sql`(action = ANY (ARRAY['HIDE'::text, 'RESTORE'::text, 'REPORT_RESOLVE'::text]))`,
+      ),
+      foreignKey({
+        name: 'review_moderation_event_actor_fkey',
+        columns: [table.actorAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'review_moderation_event_note_bounded',
+        sql`((note = btrim(note)) AND ((length(note) >= 10) AND (length(note) <= 500)))`,
+      ),
+      check(
+        'review_moderation_event_permission_known',
+        sql`(permission = 'REVIEW_MODERATE'::text)`,
+      ),
+      check(
+        'review_moderation_event_reason_known',
+        sql`(reason = ANY (ARRAY['PERSONAL_DATA'::text, 'ABUSE_ILLEGAL'::text, 'SPAM_FRAUD'::text, 'OTHER'::text, 'RESTORED'::text, 'DISMISSED'::text, 'UPHELD'::text]))`,
+      ),
+      foreignKey({
+        name: 'review_moderation_event_report_fkey',
+        columns: [table.hotelId, table.reportId],
+        foreignColumns: [reviewReport.hotelId, reviewReport.reportId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'review_moderation_event_review_fkey',
+        columns: [table.hotelId, table.reviewId],
+        foreignColumns: [hotelReview.hotelId, hotelReview.reviewId],
+      }).onDelete('restrict'),
+      check(
+        'review_moderation_event_status_known',
+        sql`(((from_status IS NULL) OR (from_status = ANY (ARRAY['PUBLISHED'::text, 'HIDDEN'::text, 'DELETED'::text]))) AND ((to_status IS NULL) OR (to_status = ANY (ARRAY['PUBLISHED'::text, 'HIDDEN'::text, 'DELETED'::text]))))`,
+      ),
+      index('review_moderation_event_review_idx').on(table.reviewId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelReviewReply = platform
+  .table(
+    'hotel_review_reply',
+    {
+      body: text('body').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      deletedAt: timestamp('deleted_at', { withTimezone: true }),
+      edited: boolean('edited')
+        .notNull()
+        .default(sql`false`),
+      hotelId: uuid('hotel_id').notNull(),
+      replyId: uuid('reply_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      reviewId: uuid('review_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      updatedByAccountId: uuid('updated_by_account_id'),
+    },
+    (table) => [
+      check(
+        'hotel_review_reply_body_bounded',
+        sql`((length(body) >= 10) AND (length(body) <= 1000))`,
+      ),
+      check('hotel_review_reply_body_trimmed', sql`(body = btrim(body))`),
+      foreignKey({
+        name: 'hotel_review_reply_created_by_fkey',
+        columns: [table.createdByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'hotel_review_reply_deleted_shape',
+        sql`((state = 'DELETED'::text) = (deleted_at IS NOT NULL))`,
+      ),
+      unique('hotel_review_reply_identity_uq').on(table.hotelId, table.replyId),
+      foreignKey({
+        name: 'hotel_review_reply_review_fkey',
+        columns: [table.hotelId, table.reviewId],
+        foreignColumns: [hotelReview.hotelId, hotelReview.reviewId],
+      }).onDelete('restrict'),
+      unique('hotel_review_reply_review_uq').on(table.reviewId),
+      check('hotel_review_reply_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_review_reply_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'DELETED'::text]))`,
+      ),
+      foreignKey({
+        name: 'hotel_review_reply_updated_by_fkey',
+        columns: [table.updatedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      pgPolicy('public_reply_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`((state = 'ACTIVE'::text) AND (EXISTS ( SELECT 1
+   FROM platform.hotel_profile p
+  WHERE ((p.hotel_id = hotel_review_reply.hotel_id) AND (p.listing_state = 'PUBLISHED'::text)))))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const hotelReviewReplyEvent = platform
+  .table(
+    'hotel_review_reply_event',
+    {
+      action: text('action').notNull(),
+      actorAccountId: uuid('actor_account_id').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      fromBody: text('from_body'),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      replyId: uuid('reply_id').notNull(),
+      reviewId: uuid('review_id').notNull(),
+      toBody: text('to_body'),
+      toState: text('to_state'),
+    },
+    (table) => [
+      check(
+        'hotel_review_reply_event_action_known',
+        sql`(action = ANY (ARRAY['CREATE'::text, 'EDIT'::text, 'DELETE'::text, 'RESTORE'::text]))`,
+      ),
+      foreignKey({
+        name: 'hotel_review_reply_event_actor_fkey',
+        columns: [table.actorAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'hotel_review_reply_event_reply_fkey',
+        columns: [table.hotelId, table.replyId],
+        foreignColumns: [hotelReviewReply.hotelId, hotelReviewReply.replyId],
+      }).onDelete('restrict'),
+      index('hotel_review_reply_event_reply_idx').on(table.replyId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 export const DECLARED_TABLES = [
   idempotencyKey,
   outboxEvent,
@@ -9798,4 +10293,12 @@ export const DECLARED_TABLES = [
   restaurantOrderEvent,
   restaurantPaymentAttempt,
   restaurantRefund,
+  // Phase 16.
+  hotelReview,
+  hotelReviewEdit,
+  hotelReviewAggregate,
+  reviewReport,
+  reviewModerationEvent,
+  hotelReviewReply,
+  hotelReviewReplyEvent,
 ] as const;

@@ -1,10 +1,11 @@
 import { Controller, Get, Inject, Param, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiError } from '@prsystem/contracts';
 import type { FastifyRequest } from 'fastify';
 import { requireUuid } from '../../iam/http/validation';
 import { PublicSearchService, newPublicRequest } from '../services/search.service';
-import type { HotelDetailView, SearchView } from './public-views';
-import { detailView, searchView } from './public-views';
+import type { HotelDetailView, PublicReviewView, SearchView } from './public-views';
+import { detailView, publicReviewView, searchView } from './public-views';
 import {
   optionalDate,
   optionalPoint,
@@ -51,6 +52,22 @@ export class PublicController {
     );
   }
 
+  @Get('hotels/:hotelId/reviews')
+  @ApiOperation({ summary: 'The published reviews of one hotel (doc 10 §6)' })
+  @ApiResponse({ status: 404, description: 'Unpublished and non-existent are the same answer' })
+  async reviews(
+    @Param('hotelId') hotelIdParam: string,
+    @Req() request: FastifyRequest,
+  ): Promise<{ reviews: PublicReviewView[] }> {
+    const query = (request.query ?? {}) as Record<string, unknown>;
+    const page = reviewPage(query);
+    const result = await this.search.reviews(
+      { hotelId: requireUuid(hotelIdParam, 'hotelId'), ...page },
+      newPublicRequest(),
+    );
+    return { reviews: result.reviews.map(publicReviewView) };
+  }
+
   @Get('hotels/:hotelId')
   @ApiOperation({ summary: 'One published hotel, with the categories it can offer' })
   @ApiResponse({ status: 404, description: 'Unpublished and non-existent are the same answer' })
@@ -73,4 +90,31 @@ export class PublicController {
       ),
     );
   }
+}
+
+/**
+ * The page a review listing asks for.
+ *
+ * Bounded here and again in the projection, which clamps its own limit — so an
+ * unbounded page is refused whichever caller asks for one.
+ */
+function reviewPage(query: Record<string, unknown>): { limit?: number; offset?: number } {
+  const limit = wholeNumber(query['limit'], 'limit', 1, 100);
+  const offset = wholeNumber(query['offset'], 'offset', 0, 10_000);
+  return {
+    ...(limit === undefined ? {} : { limit }),
+    ...(offset === undefined ? {} : { offset }),
+  };
+}
+
+function wholeNumber(value: unknown, field: string, min: number, max: number): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      `${field} must be a whole number from ${String(min)} to ${String(max)}`,
+    );
+  }
+  return parsed;
 }

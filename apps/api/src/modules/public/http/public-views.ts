@@ -1,4 +1,5 @@
-import type { CategoryOffer, RankedListing } from '../domain/listing';
+import type { CategoryOffer, PublicReview, RankedListing } from '../domain/listing';
+import { formatAverage } from '../../review/domain/review';
 import type { HotelDetail, SearchResult } from '../services/search.service';
 
 /**
@@ -32,6 +33,15 @@ export interface ListingView {
   readonly longitudeMicro: number;
   readonly coverObjectKey: string | null;
   readonly fromRateMnt: string | null;
+  /**
+   * `BK-DEC-004`: the rating the server computed, and the count behind it.
+   *
+   * The average is sent as a formatted string from the integer hundredths the
+   * aggregate stores — never as a float, and never as two numbers the client is
+   * expected to divide (doc 10 §6).
+   */
+  readonly reviewCount: number;
+  readonly averageRating: string;
   readonly availability: RankedListing['availability'];
   readonly distanceMetres: number | null;
   readonly availableRooms: number;
@@ -60,6 +70,8 @@ export function listingView(listing: RankedListing): ListingView {
     longitudeMicro: listing.point.longitudeMicro,
     coverObjectKey: listing.coverObjectKey,
     fromRateMnt: money(listing.fromRateMnt),
+    reviewCount: listing.reviewCount,
+    averageRating: formatAverage(listing.averageRatingCenti),
     availability: listing.availability,
     distanceMetres: listing.distanceMetres,
     availableRooms: listing.availableRooms,
@@ -92,8 +104,50 @@ export function detailView(detail: HotelDetail): HotelDetailView {
     longitudeMicro: detail.point.longitudeMicro,
     coverObjectKey: detail.coverObjectKey,
     fromRateMnt: money(detail.fromRateMnt),
+    reviewCount: detail.reviewCount,
+    averageRating: formatAverage(detail.averageRatingCenti),
     distanceMetres: null,
     nights: detail.nights,
     offers: detail.offers.map(offerView),
+  };
+}
+
+/** One published review, as the public page shows it (doc 10 §6). */
+export interface PublicReviewView {
+  readonly reviewId: string;
+  readonly rating: number;
+  readonly comment: string;
+  readonly displayName: string;
+  readonly edited: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly verifiedStay: true;
+  readonly reply: {
+    readonly body: string;
+    readonly edited: boolean;
+    readonly updatedAt: string;
+  } | null;
+}
+
+export function publicReviewView(review: PublicReview): PublicReviewView {
+  return {
+    reviewId: review.reviewId,
+    rating: review.rating,
+    comment: review.comment,
+    displayName: review.displayName,
+    edited: review.edited,
+    createdAt: review.createdAt.toISOString(),
+    updatedAt: review.updatedAt.toISOString(),
+    // doc 10 §3: every review on this surface came from a completed booking, so
+    // the badge is a constant rather than a field somebody could forget to set.
+    verifiedStay: true,
+    reply:
+      review.reply === null
+        ? null
+        : {
+            body: review.reply.body,
+            edited: review.reply.edited,
+            updatedAt: review.reply.updatedAt.toISOString(),
+          },
   };
 }

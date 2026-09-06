@@ -793,6 +793,48 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: 'carries hotel_id; the refund the restaurant executes on its own merchant (RC-DEC-024)',
   },
   {
+    schema: 'platform',
+    table: 'hotel_review',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the verified-stay review, one per completed booking (RV-DEC-002)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_review_edit',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; what the reviewer wrote before an edit, kept (RV-DEC-004)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_review_aggregate',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the published count, rating sum and derived average (doc 10 §6)',
+  },
+  {
+    schema: 'platform',
+    table: 'review_report',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; a Guest's report on a published review, one open per account (RV-DEC-005)",
+  },
+  {
+    schema: 'platform',
+    table: 'review_moderation_event',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the append-only hide, restore and report resolution history (RV-DEC-006)',
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_review_reply',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; the hotel's one official reply to a review (RV-DEC-007)",
+  },
+  {
+    schema: 'platform',
+    table: 'hotel_review_reply_event',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; the reply's append-only lifecycle history (doc 10 §7.4)",
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

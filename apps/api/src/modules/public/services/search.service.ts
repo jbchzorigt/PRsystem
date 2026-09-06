@@ -5,7 +5,7 @@ import type { TenantContext, UnitOfWork } from '@prsystem/db';
 import { PLATFORM_SCOPE, withTenantTransaction } from '@prsystem/db';
 import type { CategoryHoldsPort } from '../contracts/category-holds';
 import { PublicRepository } from '../repositories/public.repository';
-import type { CategoryOffer, Listing, RankedListing } from '../domain/listing';
+import type { CategoryOffer, Listing, PublicReview, RankedListing } from '../domain/listing';
 import {
   NEARBY_RADIUS_METRES,
   distanceFrom,
@@ -158,6 +158,32 @@ export class PublicSearchService {
           ),
         })),
       };
+    });
+  }
+
+  /**
+   * doc 10 §6: a hotel's published reviews, for a visitor with no session.
+   *
+   * The hotel has to be visible first, for the same reason `detail` checks:
+   * answering with the reviews of an unpublished hotel would confirm that it
+   * exists to somebody who cannot otherwise see it.
+   */
+  async reviews(
+    input: { hotelId: string; limit?: number; offset?: number },
+    request: RequestContext,
+  ): Promise<{ readonly reviews: readonly PublicReview[] }> {
+    return this.inPublicScope(request, async (uow) => {
+      const repository = new PublicRepository(uow);
+      const listing = (await repository.listings()).find(
+        (candidate) => candidate.hotelId === input.hotelId,
+      );
+      if (listing === undefined) throw new ApiError('NOT_FOUND', 'no such hotel');
+      const reviews = await repository.reviews(
+        listing.hotelId,
+        input.limit ?? 20,
+        input.offset ?? 0,
+      );
+      return { reviews };
     });
   }
 
