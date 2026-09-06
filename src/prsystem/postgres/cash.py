@@ -6,6 +6,7 @@ shift/count and financial source approval facts. There is no permissive default.
 """
 
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 
 import psycopg
@@ -46,7 +47,9 @@ class PostgresCash:
             money(command.returned_amount)
         payload = {"type": type(command).__name__, "fields": asdict(command)}
         # One owned connection means returning successfully implies COMMIT succeeded.
-        with psycopg.connect(self._dsn, connect_timeout=5) as conn:
+        # Psycopg's connection context can raise during COMMIT before close().
+        # The outer closing context also releases the connection on that path.
+        with closing(psycopg.connect(self._dsn, connect_timeout=5)) as conn, conn:
             conn.execute("SET LOCAL lock_timeout = '5s'")
             conn.execute("SET LOCAL statement_timeout = '15s'")
             unsafe = conn.execute("""SELECT r.rolsuper OR r.rolbypassrls OR EXISTS (

@@ -2,13 +2,14 @@
 
 import hashlib
 import os
+from contextlib import closing
 from importlib.resources import files
 
 import psycopg
 
 
 def migrate(dsn: str) -> None:
-    with psycopg.connect(dsn) as conn:
+    with closing(psycopg.connect(dsn)) as conn, conn:
         conn.execute("SELECT pg_advisory_xact_lock(731910028)")
         conn.execute("CREATE SCHEMA IF NOT EXISTS prsystem")
         conn.execute("""CREATE TABLE IF NOT EXISTS prsystem.schema_migrations (

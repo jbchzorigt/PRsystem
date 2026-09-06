@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import Barrier
+from unittest.mock import patch
 from uuid import uuid4
 
 from prsystem.cash import CancelTransfer, CashContext, ConfirmTransfer, ReserveTransfer, SpendCash
@@ -177,8 +178,12 @@ class PostgresCashTests(unittest.TestCase):
             conn.execute("""CREATE CONSTRAINT TRIGGER fail_cash_commit AFTER INSERT ON prsystem.cash_outbox
                 DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION prsystem.fail_cash_commit()""")
         try:
-            with self.assertRaisesRegex(psycopg.errors.RaiseException, "injected commit failure"):
+            failed_conn = psycopg.connect(self.app_dsn)
+            self.addCleanup(failed_conn.close)
+            with patch("prsystem.postgres.cash.psycopg.connect", return_value=failed_conn), self.assertRaisesRegex(
+                    psycopg.errors.RaiseException, "injected commit failure"):
                 self.adapter.execute(self.reserve, self.ctx)
+            self.assertTrue(failed_conn.closed, "Commit failure must release its connection")
             self.assertEqual(self.snapshot(), before)
         finally:
             with psycopg.connect(self.owner_dsn) as conn:
