@@ -1,7 +1,7 @@
 # Backend foundation — эхний хэрэгжүүлэлт ба дараагийн gate
 
 **Огноо:** 2026-09-06
-**Төлөв:** Domain core, PostgreSQL cash adapter, staff authentication болон cash read API хэрэгжүүлсэн; UI/operational write API/production integration хийгдээгүй.
+**Төлөв:** Domain core, PostgreSQL cash adapter, staff authentication, invitation/reset болон cash read API хэрэгжүүлсэн; UI/operational write API/бодит email/provider integration хийгдээгүй. [Нийт 6 үе шатны явц](31-development-progress.md).
 
 ## Architecture decision
 
@@ -57,7 +57,7 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 | Дараалал | Ажил | Acceptance gate |
 | --- | --- | --- |
 | 1 | Cash adapter/migration/RLS/receipt/outbox intent нэмсэн; booking persistence, provider inbox, outbox delivery үлдсэн | Cash concurrency/commit-failure rollback integration tests; дараа нь last-room, process-crash recovery, delivery retry |
-| 2 | Staff login/logout/password change, account epoch/membership revision, Hotel Admin cash read нэмсэн; invitation/reset email, full lifecycle болон бусад action policy үлдсэн | Hotel A → B deny, scoped/global revocation, auth race, throttling API tests; дараа нь invitation/takeover/action-specific permission |
+| 2 | Staff authentication, invitation/reset API, mail intent нэмсэн; бодит email delivery, role/suspension/reactivation, takeover болон бусад action policy үлдсэн | Tenant/revoke/throttling, invitation/reset replay/concurrency tests; дараа нь Primary Admin guard, takeover/action-specific permission |
 | 3 | Reception vertical slice: room, open shift, deposit, check-in, checkout, cleaning, handover | Synthetic end-to-end; old-obligation expiry completion; no new-sale bypass |
 | 4 | Online booking/payment/refund/payout adapters | Last-unit concurrency; duplicate/late callback; zero-refund exactly-once eligibility; no duplicate payout |
 | 5 | Minibar/Restaurant/Operation modules | Stock conservation, snapshot prices, task claim, refund/fulfillment state tests |

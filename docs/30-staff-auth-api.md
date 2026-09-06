@@ -1,6 +1,6 @@
 # Staff authentication ба эхний API
 
-**Огноо:** 2026-09-06. **Хамаарах шаардлага:** [staff lifecycle](19-staff-account-lifecycle.md), [action matrix](18-action-level-permission-matrix.md), LIFE-DEC-008.
+**Огноо:** 2026-09-06. **Хамаарах шаардлага:** [staff lifecycle](19-staff-account-lifecycle.md), [action matrix](18-action-level-permission-matrix.md), LIFE-DEC-008. Дараагийн нэмэлт invitation/reset API-г [32-staff-invitations-reset.md](32-staff-invitations-reset.md)-д тайлбарлав.
 
 ## Хэрэгжүүлсэн хүрээ
 
@@ -66,7 +66,7 @@ python -m pip install '.[api]'
 uvicorn prsystem.api:create_app --factory --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
-Тест fixture нь disposable database-д synthetic verified account/membership үүсгэнэ. Production default user/password, public signup эсвэл staff-ийн өмнөөс password тохируулах endpoint байхгүй. Бодит хэрэглэгч onboarding нь invitation acceptance milestone-оор холбогдоно.
+Тест fixture нь disposable database-д synthetic verified account/membership үүсгэнэ. Production default user/password, public signup эсвэл staff-ийн өмнөөс password тохируулах endpoint байхгүй. Staff account activation нь invitation acceptance API-тай холбогдсон; бодит email transport болон анхны Primary Hotel Admin-ийн paid onboarding provisioning үлдсэн.
 
 ## Шалгалт ба үлдсэн gate
 
@@ -74,7 +74,7 @@ uvicorn prsystem.api:create_app --factory --host 127.0.0.1 --port 8000 --no-prox
 
 22 staff API integration test: token hash, safe response, verified account, tenant scope, explicit Hotel Admin permission, scoped/global revoke, role change, password change, logout, idle/absolute expiry, subscription/security suspension, persisted login/IP throttle, concurrent suspension-vs-login, logout lock order, runtime grants болон unsafe owner connection rejection.
 
-Үлдсэн ажил: invitation/resend/accept ба reset-email delivery, Primary Admin хамгаалалттай staff lifecycle API, suspension takeover/reassignment queue, бүх operational action permission/shift/source validation, outbox delivery. Membership trigger нь session invalidation primitive; admin fixture-ийн SQL status update нь production staff suspension workflow биш. Rate/session row cleanup, auth failure monitoring/retention, request body/connection limits болон load/restore drills production gate хэвээр. Browser UI ороход token хадгалалт ба XSS/CSRF загварыг хамт шийднэ; token localStorage хадгалах default жишээ оруулаагүй.
+Invitation/resend/revoke/accept, password reset болон durable email intent нэмсэн. Үлдсэн ажил: бодит email transport/worker deployment, Primary Admin хамгаалалттай role/suspension/reactivation API, takeover/reassignment queue, бүх operational action permission/shift/source validation, outbox delivery. Membership trigger нь session invalidation primitive; admin fixture-ийн SQL status update нь production staff suspension workflow биш. Rate/session row cleanup, auth failure monitoring/retention, request body/connection limits болон load/restore drills production gate хэвээр. Browser UI ороход token хадгалалт ба XSS/CSRF загварыг хамт шийднэ; token localStorage хадгалах default жишээ оруулаагүй.
 
 Deployment нь HTTPS termination, тодорхой trusted proxy allowlist, request/connection limits-тэй байна. Proxy тохируулах хүртэл direct peer IP хэрэглэнэ; дурын forwarded header-д итгэхгүй. Бодит provider, MFA-required platform action эсвэл deployment хийгдээгүй.
 
