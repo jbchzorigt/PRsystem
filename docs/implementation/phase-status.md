@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 17 — Guest registry, exports, and Hotel Admin reports |
+| Current phase | 18 — Police monitoring |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -45,6 +45,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 15 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 16 state | `DONE` |
 | Phase 16 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 17 state | `DONE` |
+| Phase 17 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -74,7 +76,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 14 | Online payment, refund, commission, and settlement | `DONE` | `0015_booking_settlement` | the Phase 14 battery — counts in [Phase 14 record](#phase-14-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 15 | Restaurant | `DONE` | `0016_restaurant_ordering` | the Phase 15 battery — counts in [Phase 15 record](#phase-15-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 16 | Verified reviews | `DONE` | `0017_verified_reviews` | the Phase 16 battery — counts in [Phase 16 record](#phase-16-record) | implemented and corrected at the commits named in the record; the record and its evidence are the commit after them |
-| 17 | Guest registry, exports, and Hotel Admin reports | `NOT STARTED` | — | — | — |
+| 17 | Guest registry, exports, and Hotel Admin reports | `DONE` | `0018_registry_reporting` | the Phase 17 battery — counts in [Phase 17 record](#phase-17-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 18 | Police monitoring | `NOT STARTED` | — | — | — |
 | 19 | Platform Operation | `NOT STARTED` | — | — | — |
 | 20 | External adapters | `NOT STARTED` | — | — | — |
@@ -5260,5 +5262,158 @@ implementation commit `d5cf786`, failed `pnpm run test:migrations`: migration 00
 therefore undeclared, and the schema comparator caught exactly that. It was **stopped rather than
 recorded**, its output removed, and the run repeated in full on the corrected commit named above.
 
-Phase 16 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 17 is authorized to begin under the
+Phase 16 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 17 was authorized under the same
+standing progression authorization and is recorded below.
+
+---
+
+## Phase 17 record
+
+The guest registry, its background exports, retention and the Hotel Admin financial dashboard.
+Authorized under the [standing progression authorization](#standing-progression-authorization),
+implemented and gated on top of the Phase 16 tree. Phase 17 is `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`; Phase 18 is the current phase, authorized to begin, and has **not**
+started.
+
+**Decisions closed:** the nineteen this phase owns — `GUEST-DEC-001`…`-008`, `FIN-DEC-001`…`-004`,
+`FIN-DEC-006`…`-010`, `RC-DEC-032` and `RC-DEC-037`. With the 221 already closed, 240 of the 279
+canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0018_registry_reporting`** — six tables and four columns. `expense_category`, whose
+  reporting kind a trigger makes immutable; `retention_policy`, the append-only versioned
+  configuration; `stay_retention`, the per-stay snapshot whose expiry a CHECK derives from the
+  checkout and the days; `retention_legal_hold`; `report_export_job` with its ten-thousand-row cap,
+  its derived one-hour TTL and a storage-key shape constraint; and `report_export_grant`, whose
+  five-minute life is derived and append-only. On `platform.expense`: `expense_type`, `category_id`,
+  `supplier` and `stock_movement_id`, the last with a partial unique index so one stock receipt is
+  expensed once.
+- **The registry reads the effective check-in** (`GUEST-DEC-002`, `FIN-DEC-009`, `A-P17-1`). The
+  latest `APPROVED` row of `stay_time_correction` is coalesced over `stay.actual_check_in_at` in the
+  read itself, so an approved correction changes the next read and never rewrites an export already
+  taken. The age is derived from the guest's own date of birth at that instant and stored nowhere
+  (`GUEST-DEC-003`, `A-P17-2`).
+- **The list is a `POST`** (`GUEST-DEC-005`, `A-P17-3`). doc 12 §8 keeps the raw name search out of
+  URLs; a query string would put a guest's name in the access log, the referrer and every proxy in
+  between. Page sizes outside 20, 50 and 100 are refused rather than silently replaced, and the
+  default range is the last 30 days of effective check-ins.
+- **An export cannot be partial** (`GUEST-DEC-006`, `A-P17-5`). The count and the job creation happen
+  in one transaction under the ten-thousand-row cap, and the refusal names the cap. The workbook is
+  written by a dependency-free, byte-deterministic `.xlsx` writer, so the content hash the job
+  records means something (`A-P17-6`).
+- **The file's hour and the URL's five minutes are separate facts** (`GUEST-DEC-007`, `A-P17-4`).
+  Both are derived by CHECK constraints on different tables, and issuing a URL writes only to the
+  grant table — so re-issuing cannot extend the file, which is this phase's own gate. A completed
+  job whose hour has passed answers `EXPIRED` rather than handing out a URL to a file that is gone.
+- **Retention is a versioned policy, snapshotted at checkout** (`GUEST-DEC-008`). The stay carries
+  the policy version, the days and the derived expiry it was checked out under. A live legal hold is
+  re-read under the retention row's own lock, so a hold placed between the sweep's resolver and the
+  lock still wins (`A-P17-9`).
+- **An anonymised guest row says what it is** (`A-P17-7`). Clearing the identifiers moves the
+  identity type to `NO_DOCUMENT`, the assurance to `LOW_ASSURANCE` and the Police eligibility to
+  `NOT_ELIGIBLE_EXACT_RD`, because doc 05 §3 ties an identity type to the ciphertext that proves it.
+  Phase 08's append-only guard was extended to permit exactly that one shape and no other.
+- **The dashboard keeps money apart** (`FIN-DEC-001`, `-002`). Confirmed sales, received payments,
+  receivables, held deposits, refunds and paid operating expenses are six separate reads over three
+  modules' own contracts. A deposit is never revenue and a restaurant order is never the hotel's
+  sale.
+- **Minibar profit is the cost that was true at consumption** (`FIN-DEC-003`, `-004`, `A-P17-11`).
+  The weighted-average cost is snapshotted onto the `GUEST_CONSUMPTION` movement when it is posted;
+  the purchase appears once, as an inventory outflow, and never again as a cost of the sale.
+- **The Excel exports carry their own permissions** (`FIN-DEC-008`, `FIN-DEC-010`, `A-P17-10`). doc
+  18 §3 gives the registry export, the room Excel and the minibar Excel separate rows with different
+  packages, so the download resolves the job's kind before authorizing and the job list returns only
+  the kinds the caller could have asked for. The full dashboard and the expense categories are Hotel
+  Admin's alone.
+- **The sweeps run in the worker deployment** (`A-P17-8`). Three queues — build the queued exports,
+  expire the lapsed files, purge the due stays — each calling the very service method the API
+  exposes, on a login that holds `SELECT` and `UPDATE` on the three tables and can therefore run an
+  export job but not create one. Each finds its work through a narrow `SECURITY DEFINER` resolver
+  and settles every row inside that row's own hotel scope.
+- **Object storage is a port** (`A-P17-12`). `ObjectStoragePort` with a deterministic in-memory
+  simulator for local, CI and test; the production adapter answers `DISABLED` behind
+  `INT-STORAGE-01`, so an export outside those environments fails closed with a recorded reason
+  rather than writing a file nowhere.
+
+### Gates this phase had to pass, and what they measured
+
+- **Authorization.** Reception, Cleaner and the Restaurant Manager are refused the registry list and
+  every export; Manager, Manager Plus, Reception, Cleaner and the Restaurant Manager are refused the
+  dashboard, the expense categories and the financial exports; Manager Plus reaches the registry only
+  in the 30,000₮ package; a foreign hotel id and an unknown one are the same opaque `NOT_FOUND`; and
+  a job of another hotel is indistinguishable from one that never existed. The download is
+  re-authorized on its own, so a Reception token cannot fetch what a Hotel Admin created, and no
+  grant row is written when it tries.
+- **Integration.** A result set above ten thousand refuses to start; an expired file answers
+  `EXPIRED`; a re-issued URL leaves the file's hour untouched; the KPI cards match a golden dataset
+  built from real stays, payments, minibar consumption and expenses; and every financial export is
+  asserted to carry no guest name, registration number, lookup token or ciphertext.
+- **Concurrency.** Three simultaneous requests under one idempotency key queue one job; three
+  workers over one queued job build and store it exactly once; three sweeps expire one file once and
+  write one audit row; three purges anonymise one stay once; a hold beats a concurrent purge; and
+  three creations of one category name leave one row.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 17 in `PROGRESSED_PHASES`, the current phase
+  advanced to 18), `docs/implementation/phase-17-evidence.json`, and the drift fixtures retargeted to
+  the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.30 — the nineteen decisions `COVERED` with code
+  and test references; 240 of 279.
+- **Assumptions:** `A-P17-1`…`A-P17-12` in `assumptions-and-conflicts.md` §3.21.
+
+### External gates
+
+`EXT-08` (personal data) is **first touched by this phase and stays BLOCKED**: retention is
+implemented as versioned configuration with a snapshot and legal hold, and the written privacy
+notice, consent, controller and processor roles remain absent. The S3-compatible object storage gate
+is recorded as a non-EXT production gate owned by Phase 20 and now names its port label,
+`INT-STORAGE-01`. Otherwise unchanged: `EXT-01`, `EXT-02`, `EXT-03`, `EXT-04`, `EXT-06`, `EXT-07`,
+`EXT-11` remain BLOCKED with conformance-gated simulators; `INT-OTP-01`, `INT-MAIL-01`; the Phase 19
+offline verification surface; 17 P1 items; `DSR-01`; and selecting `GATE-SEC` as a required GitHub
+status check. **Phase 17 adds no new EXT gate.**
+
+### Evidence
+
+<!-- phase-17-evidence:begin -->
+
+Measured at implementation commit e2b7bf8f4dc637d6c214ca9a59caf872a0927549, in a clean detached
+checkout with a fresh install, a fresh Turborepo cache and forced task execution. All 28 executions
+exited 0, each on its first attempt. The two governance rows are from the final tree, which carries
+this record and the twelve new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 277 of 277 drift fixtures caught at the measured commit; 289 of 289 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 785 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,574 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 17, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 553: db 41, worker 2, api 510 |
+| `pnpm run test:concurrency` | PASS | 86 each run: db 16, api 70 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; one moderate, DSR-01 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-17-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-17-battery-log.md](phase-17-battery-log.md).
+
+Phase 17 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 18 is authorized to begin under the
 standing progression authorization and has **not** started.
