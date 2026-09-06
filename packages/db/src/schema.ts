@@ -4639,6 +4639,7 @@ export const stay = platform
       depositRequired: boolean('deposit_required').notNull(),
       durationMinutes: integer('duration_minutes'),
       fixedCheckoutMinute: integer('fixed_checkout_minute'),
+      fulfilledBookingId: uuid('fulfilled_booking_id'),
       halfHourUnits: integer('half_hour_units'),
       hotelId: uuid('hotel_id').notNull(),
       minibarApplicable: boolean('minibar_applicable')
@@ -4750,6 +4751,14 @@ export const stay = platform
         .on(table.hotelId, table.roomId)
         .where(sql`state <> 'COMPLETED'::text`),
       index('stay_room_timeline_idx').on(table.hotelId, table.roomId, table.plannedCheckoutAt),
+      foreignKey({
+        name: 'stay_booking_fkey',
+        columns: [table.hotelId, table.fulfilledBookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      uniqueIndex('stay_fulfilled_booking_uq')
+        .on(table.fulfilledBookingId)
+        .where(sql`fulfilled_booking_id IS NOT NULL`),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
@@ -7611,6 +7620,379 @@ export const hotelPhoto = platform
   )
   .enableRLS();
 
+// ---------------------------------------------------------------------
+// Phase 13 — online booking and inventory hold.
+// ---------------------------------------------------------------------
+
+/**
+ * One online booking: one category unit, one primary staying guest, whole nights
+ * only (`BK-DEC-012`). Its identity, window and booker are written once — a change
+ * is a cancellation and a new booking — and its price is a snapshot, never
+ * re-resolved (doc 09 §10).
+ */
+export const booking = platform
+  .table(
+    'booking',
+    {
+      bookerAccountId: uuid('booker_account_id').notNull(),
+      bookingId: uuid('booking_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      bookingRef: text('booking_ref').notNull(),
+      categoryId: uuid('category_id').notNull(),
+      checkInDate: date('check_in_date').notNull(),
+      checkOutDate: date('check_out_date').notNull(),
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      fulfilledStayId: uuid('fulfilled_stay_id'),
+      holdExpiresAt: timestamp('hold_expires_at', { withTimezone: true }).notNull(),
+      holdState: text('hold_state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      hotelId: uuid('hotel_id').notNull(),
+      nightCount: integer('night_count').notNull(),
+      paymentState: text('payment_state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      pricingConfigVersion: integer('pricing_config_version'),
+      rateSnapshotId: uuid('rate_snapshot_id'),
+      refundState: text('refund_state')
+        .notNull()
+        .default(sql`'NONE'::text`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'HOLDING'::text`),
+      stayingGuestName: text('staying_guest_name').notNull(),
+      stayingGuestPhoneToken: text('staying_guest_phone_token'),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+      terminalReason: text('terminal_reason'),
+      totalAmountMnt: bigint('total_amount_mnt', { mode: 'bigint' }),
+      unitRateMnt: bigint('unit_rate_mnt', { mode: 'bigint' }),
+    },
+    (table) => [
+      check(
+        'booking_amounts_non_negative',
+        sql`(((unit_rate_mnt IS NULL) OR (unit_rate_mnt >= 0)) AND ((total_amount_mnt IS NULL) OR (total_amount_mnt >= 0)))`,
+      ),
+      foreignKey({
+        name: 'booking_booker_fkey',
+        columns: [table.bookerAccountId],
+        foreignColumns: [guestAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'booking_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      check(
+        'booking_confirmed_has_snapshot',
+        sql`((state <> ALL (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) OR ((rate_snapshot_id IS NOT NULL) AND (unit_rate_mnt IS NOT NULL) AND (total_amount_mnt IS NOT NULL) AND (pricing_config_version IS NOT NULL)))`,
+      ),
+      check(
+        'booking_confirmed_has_time',
+        sql`((state = ANY (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) = (confirmed_at IS NOT NULL))`,
+      ),
+      check(
+        'booking_fulfilled_shape',
+        sql`((fulfilled_stay_id IS NOT NULL) = (state = ANY (ARRAY['CHECKED_IN'::text, 'COMPLETED'::text])))`,
+      ),
+      check(
+        'booking_guest_name_bounded',
+        sql`((length(staying_guest_name) >= 1) AND (length(staying_guest_name) <= 200))`,
+      ),
+      check(
+        'booking_guest_phone_shape',
+        sql`((staying_guest_phone_token IS NULL) OR (staying_guest_phone_token ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      check(
+        'booking_hold_state_known',
+        sql`(hold_state = ANY (ARRAY['ACTIVE'::text, 'CONSUMED'::text, 'EXPIRED'::text, 'CANCELLED'::text]))`,
+      ),
+      check(
+        'booking_hotel_cancellation_refunds',
+        sql`((state <> 'CANCELLED_HOTEL'::text) OR (payment_state <> 'PAID'::text) OR (refund_state <> 'NONE'::text))`,
+      ),
+      foreignKey({
+        name: 'booking_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('booking_identity_uq').on(table.hotelId, table.bookingId),
+      check(
+        'booking_nightly_window',
+        sql`((check_out_date > check_in_date) AND (night_count = (check_out_date - check_in_date)) AND ((night_count >= 1) AND (night_count <= 90)))`,
+      ),
+      check(
+        'booking_payment_state_known',
+        sql`(payment_state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      check('booking_ref_shape', sql`(booking_ref ~ '^[A-Z0-9]{8,12}$'::text)`),
+      check(
+        'booking_refund_needs_payment',
+        sql`((refund_state = 'NONE'::text) OR (payment_state = 'PAID'::text))`,
+      ),
+      check(
+        'booking_refund_state_known',
+        sql`(refund_state = ANY (ARRAY['NONE'::text, 'REQUIRED'::text, 'PENDING'::text, 'PARTIALLY_REFUNDED'::text, 'REFUNDED'::text, 'FAILED'::text]))`,
+      ),
+      check('booking_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'booking_state_known',
+        sql`(state = ANY (ARRAY['HOLDING'::text, 'CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text, 'EXPIRED'::text, 'CANCELLED_GUEST'::text, 'CANCELLED_HOTEL'::text, 'NO_SHOW'::text]))`,
+      ),
+      check(
+        'booking_terminal_shape',
+        sql`((state = ANY (ARRAY['EXPIRED'::text, 'CANCELLED_GUEST'::text, 'CANCELLED_HOTEL'::text, 'NO_SHOW'::text, 'COMPLETED'::text])) = (terminal_at IS NOT NULL))`,
+      ),
+      index('booking_booker_idx').on(table.bookerAccountId, table.createdAt.desc().nullsFirst()),
+      index('booking_category_window_idx').on(
+        table.hotelId,
+        table.categoryId,
+        table.checkInDate,
+        table.checkOutDate,
+      ),
+      index('booking_expiry_idx')
+        .on(table.holdExpiresAt)
+        .where(sql`hold_state = 'ACTIVE'::text`),
+      index('booking_hotel_state_idx').on(table.hotelId, table.state, table.checkInDate),
+      uniqueIndex('booking_ref_uq').on(table.bookingRef),
+      pgPolicy('public_availability_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = booking.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('own_booking_read', {
+        for: 'select',
+        using: sql`((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (booker_account_id = platform.current_account_id()))`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The nights a booking took. The occupancy arithmetic is exact because a
+ * booking is the specific nights it holds, not a range that probably overlaps.
+ */
+export const bookingNight = platform
+  .table(
+    'booking_night',
+    {
+      bookingId: uuid('booking_id').notNull(),
+      categoryId: uuid('category_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      night: date('night').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'booking_night_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'booking_night_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      primaryKey({ name: 'booking_night_pkey', columns: [table.bookingId, table.night] }),
+      index('booking_night_category_idx').on(table.hotelId, table.categoryId, table.night),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('public_availability_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = booking_night.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The capacity of a category on one night and the units taken
+ * (`BK-DEC-013`). `CHECK (units_held <= units_capacity)` is the whole
+ * anti-overbooking rule, held by the database rather than by a query that
+ * counted and then acted.
+ */
+export const categoryNightInventory = platform
+  .table(
+    'category_night_inventory',
+    {
+      categoryId: uuid('category_id').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      night: date('night').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      unitsCapacity: integer('units_capacity').notNull(),
+      unitsHeld: integer('units_held')
+        .notNull()
+        .default(sql`0`),
+      updatedAt: timestamp('updated_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+    },
+    (table) => [
+      check('category_night_inventory_capacity_non_negative', sql`(units_capacity >= 0)`),
+      foreignKey({
+        name: 'category_night_inventory_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
+      }).onDelete('restrict'),
+      primaryKey({
+        name: 'category_night_inventory_pkey',
+        columns: [table.hotelId, table.categoryId, table.night],
+      }),
+      check('category_night_inventory_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'category_night_inventory_within_capacity',
+        sql`((units_held >= 0) AND (units_held <= units_capacity))`,
+      ),
+      pgPolicy('public_availability_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = category_night_inventory.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * One attempt to pay for a booking. Exactly one is `ACTIVE` at a time, held by
+ * a partial unique index; a provider switch supersedes rather than replaces,
+ * and no session outlives the hold that authorized it (doc 09 §8).
+ */
+export const bookingPaymentAttempt = platform
+  .table(
+    'booking_payment_attempt',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      attemptId: uuid('attempt_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      bookingId: uuid('booking_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      provider: text('provider').notNull(),
+      providerInvoiceId: text('provider_invoice_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      settledReason: text('settled_reason'),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      check('booking_payment_attempt_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'booking_payment_attempt_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      check(
+        'booking_payment_attempt_provider_known',
+        sql`(provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text]))`,
+      ),
+      check('booking_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'booking_payment_attempt_settled_shape',
+        sql`((state = 'ACTIVE'::text) = (settled_at IS NULL))`,
+      ),
+      check(
+        'booking_payment_attempt_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUPERSEDED'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      index('booking_payment_attempt_booking_idx').on(
+        table.bookingId,
+        table.createdAt.desc().nullsFirst(),
+      ),
+      uniqueIndex('booking_payment_attempt_invoice_uq')
+        .on(table.provider, table.providerInvoiceId)
+        .where(sql`provider_invoice_id IS NOT NULL`),
+      uniqueIndex('booking_payment_attempt_one_active_uq')
+        .on(table.bookingId)
+        .where(sql`state = 'ACTIVE'::text`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The booking's append-only history: an expiry and a guest cancellation are
+ * different facts, and neither is recoverable from the row's state alone.
+ */
+export const bookingEvent = platform
+  .table(
+    'booking_event',
+    {
+      actorRef: text('actor_ref').notNull(),
+      bookingId: uuid('booking_id').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      eventType: text('event_type').notNull(),
+      fromState: text('from_state'),
+      hotelId: uuid('hotel_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reason: text('reason'),
+      toState: text('to_state'),
+    },
+    (table) => [
+      check(
+        'booking_event_actor_bounded',
+        sql`((length(actor_ref) >= 1) AND (length(actor_ref) <= 120))`,
+      ),
+      foreignKey({
+        name: 'booking_event_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      check(
+        'booking_event_reason_bounded',
+        sql`((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300)))`,
+      ),
+      check(
+        'booking_event_type_bounded',
+        sql`((length(event_type) >= 1) AND (length(event_type) <= 80))`,
+      ),
+      index('booking_event_booking_idx').on(table.bookingId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 /** The kernel tables this declaration covers, for the drift check. */
 export const DECLARED_TABLES = [
   idempotencyKey,
@@ -7724,4 +8106,10 @@ export const DECLARED_TABLES = [
   guestIdentityLink,
   guestAccountLinkRequest,
   hotelPhoto,
+  // Phase 13.
+  booking,
+  bookingNight,
+  categoryNightInventory,
+  bookingPaymentAttempt,
+  bookingEvent,
 ] as const;

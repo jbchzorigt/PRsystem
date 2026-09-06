@@ -15,6 +15,7 @@ import type { LifecycleResolutionPort } from '../../catalog/contracts/lifecycle-
 import type { TariffService } from '../../catalog/services/tariff.service';
 import type { ConfigurationService } from '../../minibar/services/configuration.service';
 import type { ConfirmedBookingsPort } from '../contracts/confirmed-bookings';
+import type { BookingFulfilmentPort } from '../contracts/booking-fulfilment';
 import type { PaymentAttemptsPort } from '../contracts/payment-attempts';
 import type { DepositsPort } from '../contracts/deposits';
 import type { CashLedgerPort } from '../contracts/cash-ledger';
@@ -41,6 +42,12 @@ export interface StayDependencies {
   readonly keys: KeyManagementPort;
   readonly xyp: XypIdentityPort;
   readonly bookings: ConfirmedBookingsPort;
+  /**
+   * `BK-DEC-013`: consuming the confirmed booking a check-in fulfils, in the
+   * same transaction, so the category reservation becomes the stay's occupancy
+   * atomically and is never counted twice.
+   */
+  readonly bookingFulfilment: BookingFulfilmentPort;
   /**
    * What the provider says about a payment attempt, from the module that will
    * own payments (Phase 10). Only its answer may release a locked report

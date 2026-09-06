@@ -667,7 +667,11 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
                  AND category_id NOT IN (SELECT category_id FROM platform.stay)
                  AND category_id NOT IN (SELECT category_id FROM platform.booking_fulfillment_conflict)
                  AND category_id NOT IN (SELECT category_id FROM platform.deposit_config
-                                          WHERE category_id IS NOT NULL)`,
+                                          WHERE category_id IS NOT NULL)
+                 AND category_id NOT IN (SELECT category_id FROM platform.booking)
+                 AND category_id NOT IN (SELECT category_id FROM platform.booking_night)
+                 AND category_id NOT IN (SELECT category_id
+                                           FROM platform.category_night_inventory)`,
     updateColumn: 'description',
     updateSet: `description = 'acl-probe', revision = revision + 1`,
   },
@@ -2249,6 +2253,152 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     }),
     updateColumn: 'revision',
     updateSet: `sort_order = sort_order + 1, revision = revision + 1`,
+  },
+
+  // Phase 13. A booking hangs off a category and a Guest account, and its
+  // nights hang off the booking, so each fixture creates what it needs.
+  {
+    name: 'platform.booking',
+    grants: {
+      api: ['SELECT', 'INSERT', 'UPDATE'],
+      worker: ['SELECT', 'UPDATE'],
+      police: [],
+    },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p13-' || substr(gen_random_uuid()::text, 1, 12), 120000)
+              RETURNING category_id)
+            INSERT INTO platform.booking
+              (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+               check_in_date, check_out_date, night_count, hold_expires_at)
+            SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                   c.category_id, g.account_id, 'Синтетик зочин',
+                   current_date + 30, current_date + 31, 1, now() + interval '10 minutes'
+              FROM g, c`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `terminal_reason = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.category_night_inventory',
+    grants: {
+      api: ['SELECT', 'INSERT', 'UPDATE'],
+      worker: ['SELECT', 'UPDATE'],
+      police: [],
+    },
+    insert: (hotelId) => ({
+      sql: `WITH c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p13i-' || substr(gen_random_uuid()::text, 1, 11), 120000)
+              RETURNING category_id)
+            INSERT INTO platform.category_night_inventory
+              (hotel_id, category_id, night, units_capacity, units_held)
+            SELECT $1, c.category_id, current_date + 30, 1, 0 FROM c`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `units_capacity = units_capacity + 1, revision = revision + 1`,
+  },
+  {
+    name: 'platform.booking_payment_attempt',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p13a-' || substr(gen_random_uuid()::text, 1, 11), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 50, current_date + 51, 1, now() + interval '10 minutes'
+                FROM g, c
+              RETURNING booking_id)
+            INSERT INTO platform.booking_payment_attempt
+              (hotel_id, booking_id, provider, amount_mnt, expires_at)
+            SELECT $1, b.booking_id, 'QPAY', 120000, now() + interval '10 minutes' FROM b`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'FAILED', settled_at = now(), settled_reason = 'acl-probe',
+                revision = revision + 1`,
+  },
+  {
+    name: 'platform.booking_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
+    // The worker records an expiry against a booking the API created, which is
+    // what its own grants allow it to do. The booking is invisible across the
+    // tenant boundary, so the fallback keeps the row complete and lets the
+    // policy refuse it before the foreign key is ever reached.
+    insert: (hotelId) => ({
+      sql: `INSERT INTO platform.booking_event
+              (hotel_id, booking_id, event_type, to_state, actor_ref)
+            VALUES ($1,
+                    COALESCE((SELECT b.booking_id FROM platform.booking b
+                               WHERE b.hotel_id = $1 ORDER BY b.created_at LIMIT 1),
+                             ${ABSENT_UUID}),
+                    'booking.held', 'HOLDING', 'fixture')`,
+      values: [hotelId],
+    }),
+  },
+  {
+    name: 'platform.booking_night',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p13n-' || substr(gen_random_uuid()::text, 1, 11), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 40, current_date + 41, 1, now() + interval '10 minutes'
+                FROM g, c
+              RETURNING booking_id, category_id)
+            INSERT INTO platform.booking_night (booking_id, hotel_id, category_id, night)
+            SELECT b.booking_id, $1, b.category_id, current_date + 40 FROM b`,
+      values: [hotelId],
+    }),
   },
 ];
 

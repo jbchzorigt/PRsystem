@@ -295,6 +295,26 @@ export class CheckInService extends StayServiceBase {
           request,
         );
 
+        // `BK-DEC-013`: the booking is consumed in this transaction, so the
+        // category reservation becomes this stay's occupancy atomically. A
+        // booking that stopped being fulfillable between the read above and
+        // this lock refuses the check-in rather than producing a stay no
+        // booking authorizes.
+        let fulfilledBookingId: string | undefined;
+        if (input.source === 'ONLINE') {
+          fulfilledBookingId = await this.deps.bookingFulfilment.consumeAtCheckIn(uow, {
+            bookingRef: input.bookingRef as string,
+            stayId,
+            actorRef: gate.principal.accountId,
+          });
+          if (fulfilledBookingId === undefined) {
+            throw new ApiError(
+              'CONFLICT',
+              'BOOKING_NOT_FULFILLABLE: that booking is no longer confirmed',
+            );
+          }
+        }
+
         const stays = new StayRepository(uow);
         let stay;
         try {
@@ -322,6 +342,7 @@ export class CheckInService extends StayServiceBase {
             backdateReasonCode: timing.backdate > 0 ? (input.backdateReasonCode as string) : null,
             backdateNote: timing.backdate > 0 ? (input.backdateNote ?? null) : null,
             minibarApplicable: pin.configuration?.mode === 'ON',
+            ...(fulfilledBookingId === undefined ? {} : { fulfilledBookingId }),
           });
         } catch (error) {
           if (sqlState(error) === '23505') {

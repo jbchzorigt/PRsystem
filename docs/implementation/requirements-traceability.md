@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.25 (Phase 12 — the two public discovery and Guest authentication decisions move to
-`COVERED` with code and test references; 173 of 279 `COVERED`)
+**Version:** 1.26 (Phase 13 — the seven online booking and inventory-hold decisions move to
+`COVERED` with code and test references; 180 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -208,7 +208,7 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-002 | Deposit amount 50 000–100 000₮, hotel/category configuration | 10 | COVERED | `apps/api/src/modules/billing/services/deposit.service.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
 | RC-DEC-003 | Deposit driven by booking source | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/contracts/stay-deposits.ts`, `apps/api/src/modules/stay/contracts/deposits.ts` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
 | RC-DEC-004 | Deposit channels and deduction without extra approval | 10 | COVERED | `apps/api/src/modules/billing/services/deposit.service.ts`, `apps/api/src/modules/billing/services/folio.service.ts` | `apps/api/src/modules/billing/billing.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
-| RC-DEC-005 | Online booking source is the platform's own registry | 13 | PENDING | — | — |
+| RC-DEC-005 | Online booking source is the platform's own registry | 13 | COVERED | `packages/db/migrations/0014_online_booking_inventory.sql`, `apps/api/src/modules/booking/booking.module.ts`, `apps/api/src/modules/stay/services/check-in.service.ts` | `apps/api/src/modules/booking/booking.integration.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | RC-DEC-006 | Manual POS versus integrated gateway card payment | 10 | COVERED | `apps/api/src/modules/billing/domain/money.ts`, `apps/api/src/modules/billing/services/billing-context.ts`, `packages/db/migrations/0011_folio_deposit_payment.sql` | `apps/api/src/modules/billing/domain/money.test.ts`, `apps/api/src/modules/billing/billing.integration.test.ts` |
 | RC-DEC-007 | XYP unavailable, manual entry with provenance | 08 | COVERED | `packages/ports/src/identity-verification.port.ts`, `apps/api/src/modules/stay/services/check-in.service.ts`, `packages/db/migrations/0009_stay_reception.sql` | `packages/ports/src/conformance.test.ts`, `apps/api/src/modules/stay/stay.integration.test.ts` |
 | RC-DEC-008 | Cleaning status authority by package | 09 | COVERED | `apps/api/src/modules/stay/services/cleaning-task.service.ts`, `apps/api/src/modules/stay/services/housekeeping.service.ts`, `apps/api/src/modules/stay/domain/readiness.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/stay.authorization.http.test.ts` |
@@ -303,12 +303,12 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | BK-DEC-006 | Review input rules and the 30-day window | 16 | PENDING |
 | BK-DEC-007 | Review edit and soft-delete | 16 | PENDING |
 | BK-DEC-008 | Contract-specific commission rate | 14 | PENDING |
-| BK-DEC-009 | Ten-minute payment hold | 13 | PENDING |
+| BK-DEC-009 | Ten-minute payment hold | 13 | COVERED | `packages/db/migrations/0014_online_booking_inventory.sql`, `apps/api/src/modules/booking/domain/booking.ts`, `apps/api/src/modules/booking/repositories/booking.repository.ts`, `apps/api/src/modules/booking/services/booking.service.ts`, `apps/api/src/modules/booking/services/expiry.service.ts` | `apps/api/src/modules/booking/domain/booking.test.ts`, `apps/api/src/modules/booking/booking.integration.test.ts`, `apps/api/src/modules/booking/booking.concurrency.test.ts` |
 | BK-DEC-010 | Cancellation and no-show framework | 14 | PENDING |
 | BK-DEC-011 | Gateway fee is a platform cost | 14 | PENDING |
-| BK-DEC-012 | MVP booking shape, booker versus staying guest | 13 | PENDING |
-| BK-DEC-013 | Category inventory and physical room at check-in | 13 | PENDING |
-| BK-DEC-014 | Hotel-caused fulfilment failure remedies | 13 | PENDING |
+| BK-DEC-012 | MVP booking shape, booker versus staying guest | 13 | COVERED | `packages/db/migrations/0014_online_booking_inventory.sql`, `apps/api/src/modules/booking/domain/booking.ts`, `apps/api/src/modules/booking/repositories/booking.repository.ts`, `apps/api/src/modules/booking/services/booking.service.ts`, `apps/api/src/modules/booking/http/booking.controller.ts` | `apps/api/src/modules/booking/domain/booking.test.ts`, `apps/api/src/modules/booking/booking.integration.test.ts`, `apps/api/src/modules/booking/booking.concurrency.test.ts`, `apps/api/src/modules/booking/booking.security.test.ts`, `apps/api/src/modules/booking/booking.http.test.ts` |
+| BK-DEC-013 | Category inventory and physical room at check-in | 13 | COVERED | `packages/db/migrations/0014_online_booking_inventory.sql`, `apps/api/src/modules/booking/domain/booking.ts`, `apps/api/src/modules/booking/repositories/booking.repository.ts`, `apps/api/src/modules/booking/services/booking.service.ts`, `apps/api/src/modules/booking/contracts/booking-reads.ts`, `apps/api/src/modules/stay/contracts/booking-fulfilment.ts`, `apps/api/src/modules/stay/services/check-in.service.ts` | `apps/api/src/modules/booking/domain/booking.test.ts`, `apps/api/src/modules/booking/booking.integration.test.ts`, `apps/api/src/modules/booking/booking.concurrency.test.ts`, `apps/api/src/modules/public/public.integration.test.ts` |
+| BK-DEC-014 | Hotel-caused fulfilment failure remedies | 13 | COVERED | `apps/api/src/modules/booking/domain/booking.ts`, `apps/api/src/modules/booking/services/booking.service.ts`, `packages/db/migrations/0014_online_booking_inventory.sql` | `apps/api/src/modules/booking/domain/booking.test.ts`, `apps/api/src/modules/booking/booking.integration.test.ts` |
 
 ## 8. RV-DEC — Ratings and reviews (doc 10, 7)
 
@@ -327,11 +327,11 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | ID | Subject | Phase | Status |
 | --- | --- | --- | --- |
 | PAY-DEC-001 | Contract-specific commission, no 5% default | 14 | PENDING |
-| PAY-DEC-002 | Ten-minute inventory and payment hold | 13 | PENDING |
+| PAY-DEC-002 | Ten-minute inventory and payment hold | 13 | COVERED | `packages/db/migrations/0014_online_booking_inventory.sql`, `apps/api/src/modules/booking/domain/booking.ts`, `apps/api/src/modules/booking/repositories/booking.repository.ts`, `apps/api/src/modules/booking/services/booking.service.ts`, `apps/api/src/modules/booking/services/expiry.service.ts` | `apps/api/src/modules/booking/domain/booking.test.ts`, `apps/api/src/modules/booking/booking.integration.test.ts`, `apps/api/src/modules/booking/booking.concurrency.test.ts` |
 | PAY-DEC-003 | Cancellation and no-show framework | 14 | PENDING |
 | PAY-DEC-004 | Gateway fee borne by the platform | 14 | PENDING |
 | PAY-DEC-005 | QPay and Khaan Bank gateway authority | 14 | PENDING |
-| PAY-DEC-006 | Hold expiry versus late and duplicate capture | 13 | PENDING |
+| PAY-DEC-006 | Hold expiry versus late and duplicate capture | 13 | COVERED | `packages/db/migrations/0014_online_booking_inventory.sql`, `apps/api/src/modules/booking/domain/booking.ts`, `apps/api/src/modules/booking/repositories/booking.repository.ts`, `apps/api/src/modules/booking/services/booking.service.ts`, `apps/api/src/modules/booking/services/expiry.service.ts` | `apps/api/src/modules/booking/domain/booking.test.ts`, `apps/api/src/modules/booking/booking.integration.test.ts`, `apps/api/src/modules/booking/booking.concurrency.test.ts` |
 | PAY-DEC-007 | Cancellation and no-show numeric rules | 14 | PENDING |
 | PAY-DEC-008 | Commission base and rounding | 14 | PENDING |
 | PAY-DEC-009 | Settlement lifecycle and D+1 payout | 14 | PENDING |

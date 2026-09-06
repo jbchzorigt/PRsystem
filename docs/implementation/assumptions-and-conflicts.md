@@ -777,6 +777,76 @@ recorded so a reviewer can see where a judgement was made.
   it for the length of the delivery call, and never returns it. `requirePurpose` refuses
   `ACCOUNT_LINK` from a request body for the same reason.
 
+### 3.17 Phase 13 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P13-1 — overbooking is refused by a constraint, not by a count.** `BK-DEC-013` derives
+  availability from eligible `ACTIVE` rooms minus overlapping holds, confirmed bookings and active
+  stays. A count computed in one statement and acted on in another is a race with a name, so the
+  occupancy is a row per category per night — `category_night_inventory` — carrying the capacity
+  that night and the units taken, with `CHECK (units_held <= units_capacity)`. Every path that
+  changes occupancy locks those rows **in night order**, which is what turns two guests racing the
+  last unit into one waiting for the other rather than a deadlock, and the loser is refused by
+  `23514` from the constraint itself.
+- **A-P13-2 — a stay and a booking each subtract the same unit exactly once.** `units_capacity` is
+  refreshed on every write from the rooms as they are at that instant, and it excludes rooms an
+  active stay occupies — but only stays that carry no `fulfilled_booking_id`. A walk-in therefore
+  reduces capacity; a booking holds `units_held`; and at check-in the booking's unit becomes the
+  stay's occupancy with neither number moving. That is doc 09 §5's "transferred atomically, not
+  double-counted", and it is why the check-in consumes the booking inside its own transaction
+  through `BookingFulfilmentPort` rather than afterwards.
+- **A-P13-3 — a completed booking releases nothing, because it consumed its unit.**
+  `releasesInventory` is true for every terminal state except `COMPLETED`. An expired or cancelled
+  booking gives its nights back at once, which is what the gate asks for; a booking that was slept
+  in used them. The nights are in the past by then and nothing books them again.
+- **A-P13-4 — the price is quoted at the hold and snapshotted at confirmation.**
+  `captureRateSnapshot` is keyed by the booking id and is idempotent, so the hold's quote and the
+  confirmation's snapshot are the same row: doc 09 §7 step 8 and doc 09 §10 together mean a paid
+  booking is never repriced, and the guard refuses any later change to the snapshot columns.
+- **A-P13-5 — Phase 13 records the refund obligation and settles nothing.** `PAY-DEC-006` makes a
+  late or duplicate capture a full refund obligation. The booking's `payment_state` becomes `PAID`
+  and its `refund_state` `REQUIRED`, an event and an outbox message are written, and that is all.
+  Capture, refund execution, commission and the gateway fee are Phase 14's and are deliberately
+  absent — as is `BK-DEC-014`'s "commission 0, gateway fee the platform's cost", which is a
+  settlement rule with nothing to settle yet.
+- **A-P13-6 — three reads cross the tenant boundary through resolver functions.** A booking command
+  must know which hotel a category belongs to *before* it has a tenant; a public search must
+  subtract what bookings hold with no tenant at all; and the expiry sweep must see lapsed holds
+  across every hotel. All three are `SECURITY DEFINER` functions owned by the login-less resolver
+  role Phase 05 introduced and Phase 12 reused — `hotel_of_category`, `public_category_holds` and
+  `lapsed_booking_holds` — each answering identifiers or counts and nothing else. The alternative,
+  letting a request name its own hotel, is exactly what the Guest boundary forbids.
+- **A-P13-7 — a Guest reads their own booking through an account policy, and writes through the
+  hotel's scope.** `own_booking_read` matches only under the platform sentinel and only where
+  `booker_account_id` is the authenticated account, confined the same way Phase 04 confines a member
+  reading their own membership. Commands run in the hotel's own scope with the Guest travelling as
+  the account, so a Guest never holds a scope over hotel tables. Another guest's booking answers
+  `NOT_FOUND`, identically to one that does not exist.
+- **A-P13-8 — every calendar date is bound as `YYYY-MM-DD`.** A `Date` bound to a `date` column is
+  converted through the session's timezone, so UTC midnight on the 4th is stored as the 3rd wherever
+  the server is east of Greenwich — and the night a booking took would not be the night the
+  availability query asked about. `toDateString` and `fromPgDate` are the only crossings, and the
+  defect they fix was found by the integration suite rather than reasoned about.
+- **A-P13-9 — `room.future_booking` was removed from the dependency registry.** It named
+  `platform.booking.assigned_room_id`, a column `BK-DEC-013` does not create: a booking holds a
+  category unit and reaches a room only by becoming a stay, which `room.active_stay` already blocks
+  on. The expectation was corrected rather than a column invented to satisfy it. The catalog probe
+  test that used it to prove "a relation present but unreadable is `unavailable`" now breaks and
+  restores a real relation's shape instead, because every registered relation exists once Phase 13
+  has landed.
+- **A-P13-10 — a booking that never confirmed carries no price.** The first draft of
+  `booking_confirmed_has_snapshot` required the snapshot of every state except `HOLDING`, which made
+  an expired booking unrepresentable. It now requires it of `CONFIRMED`, `CHECKED_IN` and
+  `COMPLETED` — the states that were actually confirmed — and `booking_confirmed_has_time` follows
+  the same three. Found by the integration suite.
+- **A-P13-11 — night granularity for units, buffers at assignment.** The category unit is counted
+  per night. The snapshotted cleaning buffer that separates one occupancy from the next is a
+  property of a *room*, and it is applied where a room is chosen: the Phase 08 availability rules at
+  check-in and the Phase 12 projection's own arithmetic. Counting a buffer against a category unit
+  would subtract a fraction of a night from a whole-night inventory.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

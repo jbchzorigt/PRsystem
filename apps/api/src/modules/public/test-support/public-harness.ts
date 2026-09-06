@@ -1,7 +1,7 @@
 import { SimulatedGeo } from '@prsystem/ports';
 import type { StayHarness, StayHotel } from '../../stay/test-support/stay-harness';
 import { createStayHarness } from '../../stay/test-support/stay-harness';
-import { UnprovisionedCategoryHolds } from '../contracts/category-holds';
+import { RepositoryCategoryHolds } from '../../booking/contracts/booking-reads';
 import type { PublicDependencies } from '../services/search.service';
 import { PublicSearchService } from '../services/search.service';
 
@@ -50,7 +50,9 @@ export async function createPublicHarness(suite: string): Promise<PublicHarness>
   const publicDeps: PublicDependencies = {
     pool: stay.api,
     geo,
-    bookings: new UnprovisionedCategoryHolds(),
+    // Phase 13 supplies the real one; the default refuses now that
+    // `platform.booking` exists, which is what it was written to do.
+    bookings: new RepositoryCategoryHolds(),
   };
   let sequence = 0;
 

@@ -95,6 +95,8 @@ export interface InsertStayInput {
   readonly categoryId: string;
   readonly source: StaySource;
   readonly bookingRef: string | null;
+  /** `BK-DEC-013`: the confirmed booking this stay fulfils, where there is one. */
+  readonly fulfilledBookingId?: string | null;
   readonly stayType: StayType;
   readonly actualCheckInAt: Date;
   readonly checkInRecordedAt: Date;
@@ -264,9 +266,9 @@ export class StayRepository {
           duration_minutes, night_count, fixed_checkout_minute, cleaning_buffer_minutes,
           rate_snapshot_id, unit_rate_mnt, room_charge_mnt, pricing_config_version,
           deposit_required, shift_id, checked_in_by_account_id, backdate_minutes,
-          backdate_reason_code, backdate_note, minibar_applicable)
+          backdate_reason_code, backdate_note, minibar_applicable, fulfilled_booking_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-               $19, $20, $21, $22, $23, $24, $25, $26)
+               $19, $20, $21, $22, $23, $24, $25, $26, $27::uuid)
        RETURNING ${STAY_COLUMNS}`,
       [
         input.stayId,
@@ -295,6 +297,7 @@ export class StayRepository {
         input.backdateReasonCode,
         input.backdateNote,
         input.minibarApplicable,
+        input.fulfilledBookingId ?? null,
       ],
     );
     const row = mapStay(result.rows[0]);

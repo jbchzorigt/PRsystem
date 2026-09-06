@@ -117,6 +117,17 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.public_category_offers(p_hotel_id uuid, p_start timestamp with time zone, p_end timestamp with time zone)':
     KERNEL_OWNERS.maintenanceFn,
 
+  // Phase 13. A Guest names a category; the hotel a booking belongs to is the
+  // server's to resolve, and a hotel id in a request must never choose the
+  // tenant a command runs in. One identifier in, one out.
+  'platform.hotel_of_category(p_category_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  // A public search subtracts what bookings hold, and the expiry sweep finds
+  // lapsed holds across every hotel. Both run with no tenant of their own.
+  'platform.public_category_holds(p_hotel_ids uuid[], p_nights date[])':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.lapsed_booking_holds(p_limit integer, p_now timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+
   // Phase 07. The inventory ledger's two triggers: the only path by which a
   // warehouse or room balance changes, on tables no runtime may write. They
   // belong to the same narrow definer owner for the same reason the

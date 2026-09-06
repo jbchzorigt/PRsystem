@@ -22,6 +22,13 @@ import type { GuestModuleOptions } from './modules/guest/guest.module';
 import { GuestModule } from './modules/guest/guest.module';
 import type { PublicModuleOptions } from './modules/public/public.module';
 import { PublicModule } from './modules/public/public.module';
+import type { BookingModuleOptions } from './modules/booking/booking.module';
+import { BookingModule } from './modules/booking/booking.module';
+import {
+  RepositoryCategoryHolds,
+  RepositoryConfirmedBookings,
+  RepositoryBookingFulfilment,
+} from './modules/booking/contracts/booking-reads';
 import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
 import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
 import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
@@ -89,6 +96,13 @@ export interface AppModuleOptions {
    */
   readonly public: PublicModuleOptions;
   /**
+   * The Phase 13 online booking. It owns the booking and its inventory, and it
+   * supplies the two answers the stay and public modules cannot give
+   * themselves — which is why both of their defaults refuse once
+   * `platform.booking` exists.
+   */
+  readonly booking: BookingModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -134,6 +148,10 @@ export class AppModule {
       minibar,
       deposits: options.stay.deposits ?? new BillingDeposits(),
       cash: options.stay.cash ?? new LedgerCashLedger(),
+      // Phase 13 supplies both: a check-in reads the booking it fulfils and
+      // consumes it in the same transaction (`BK-DEC-013`).
+      bookings: options.stay.bookings ?? new RepositoryConfirmedBookings(),
+      bookingFulfilment: options.stay.bookingFulfilment ?? new RepositoryBookingFulfilment(),
     });
     return {
       module: AppModule,
@@ -159,7 +177,13 @@ export class AppModule {
         }),
         FinanceModule.forRoot({ ...options.finance, iam, stay }),
         GuestModule.forRoot({ ...options.guest, iam }),
-        PublicModule.forRoot(options.public),
+        PublicModule.forRoot({
+          // The public surface subtracts what bookings hold, through the
+          // contract Phase 13 now implements.
+          bookings: new RepositoryCategoryHolds(),
+          ...options.public,
+        }),
+        BookingModule.forRoot({ ...options.booking, iam, catalog }),
       ],
     };
   }

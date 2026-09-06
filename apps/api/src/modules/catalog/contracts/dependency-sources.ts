@@ -268,16 +268,14 @@ export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
   },
 
   // ------------------------------------------------------------- Phase 13
-  {
-    id: 'room.future_booking',
-    entityKinds: ['ROOM'],
-    kind: 'operational',
-    owningPhase: '13',
-    relation: 'platform.booking',
-    column: 'assigned_room_id',
-    predicate: "state = 'CONFIRMED'",
-    detail: 'a confirmed booking is assigned to this room',
-  },
+  //
+  // There is no room-level booking source, and that is `BK-DEC-013` rather
+  // than an omission: a hold and a confirmed booking occupy one unit of a
+  // *category*, and the physical room is assigned by Reception at check-in.
+  // A booking reaches a room only by becoming a stay, which `room.active_stay`
+  // above already blocks on. The registry named a `booking.assigned_room_id`
+  // before the phase existed; the approved decision creates no such column, so
+  // the expectation was corrected here rather than a column invented to meet it.
   {
     id: 'category.future_booking',
     entityKinds: ['ROOM_CATEGORY'],

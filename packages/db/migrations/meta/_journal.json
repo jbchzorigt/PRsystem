@@ -99,6 +99,13 @@
       "when": 1757376000002,
       "tag": "0013_guest_identity_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1757376000003,
+      "tag": "0014_online_booking_inventory",
+      "breakpoints": true
     }
   ]
 }

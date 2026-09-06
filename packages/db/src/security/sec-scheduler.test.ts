@@ -1196,6 +1196,18 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'no role closure — reads the horizon of the two audit streams and raises an operational ' +
         'alert; writes nothing else and takes only a bounded threshold',
     },
+    {
+      // Phase 13. The expiry sweep has to see lapsed holds across every hotel
+      // before it can settle any of them in one, so the discovery crosses the
+      // tenant boundary the same narrow way Phase 05's wrappers do.
+      signature: 'platform.lapsed_booking_holds(p_limit integer, p_now timestamp with time zone)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only bookings whose ten-minute hold has already lapsed and ' +
+        'answers two identifiers per row. It writes nothing, and the settling it feeds happens ' +
+        "in the hotel's own scope on the booking's own lock",
+    },
     // Phase 05's three boundary-worker discovery wrappers. Each exists for the
     // same reason: the rows a worker must find live behind a tenant policy, and
     // a worker outside any tenant scope cannot see them to find out which tenant

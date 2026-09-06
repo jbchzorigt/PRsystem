@@ -117,6 +117,9 @@ export async function createApp(
       public: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
       },
+      booking: {
+        config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

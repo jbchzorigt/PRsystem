@@ -72,6 +72,7 @@ async function generate(): Promise<void> {
       finance: { pool: new Pool({ max: 1 }) },
       guest: { pool: new Pool({ max: 1 }), keys: new UnavailableKeyManagement() },
       public: { pool: new Pool({ max: 1 }) },
+      booking: { pool: new Pool({ max: 1 }) },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),

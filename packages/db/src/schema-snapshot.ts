@@ -7692,7 +7692,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       column: 'variance_mnt',
       shape: 'bigint | NULL | no default | no identity | not generated',
     },
-
     // Phase 12 — public discovery and Guest authentication.
     {
       schema: 'platform',
@@ -8089,6 +8088,362 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       table: 'hotel_photo',
       column: 'subject_type',
       shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+
+    // Phase 13 — online booking and inventory hold.
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'booker_account_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'booking_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'booking_ref',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'category_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'check_in_date',
+      shape: 'date | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'check_out_date',
+      shape: 'date | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'confirmed_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'fulfilled_stay_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'hold_expires_at',
+      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'hold_state',
+      shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'night_count',
+      shape: 'integer | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'payment_state',
+      shape: "text | NOT NULL | default 'PENDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'pricing_config_version',
+      shape: 'integer | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'rate_snapshot_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'refund_state',
+      shape: "text | NOT NULL | default 'NONE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'state',
+      shape: "text | NOT NULL | default 'HOLDING'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'staying_guest_name',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'staying_guest_phone_token',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'terminal_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'terminal_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'total_amount_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      column: 'unit_rate_mnt',
+      shape: 'bigint | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'actor_ref',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'booking_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'event_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'event_type',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'from_state',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'occurred_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      column: 'to_state',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      column: 'booking_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      column: 'category_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      column: 'night',
+      shape: 'date | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'amount_mnt',
+      shape: 'bigint | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'attempt_id',
+      shape: 'uuid | NOT NULL | default gen_random_uuid() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'booking_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'created_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'expires_at',
+      shape: 'timestamp with time zone | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'provider',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'provider_invoice_id',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'settled_at',
+      shape: 'timestamp with time zone | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'settled_reason',
+      shape: 'text | NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      column: 'state',
+      shape: "text | NOT NULL | default 'ACTIVE'::text | no identity | not generated",
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'category_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'hotel_id',
+      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'night',
+      shape: 'date | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'revision',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'units_capacity',
+      shape: 'integer | NOT NULL | no default | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'units_held',
+      shape: 'integer | NOT NULL | default 0 | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      column: 'updated_at',
+      shape: 'timestamp with time zone | NOT NULL | default now() | no identity | not generated',
+    },
+    {
+      schema: 'platform',
+      table: 'stay',
+      column: 'fulfilled_booking_id',
+      shape: 'uuid | NULL | no default | no identity | not generated',
     },
   ],
   constraints: [
@@ -15357,7 +15712,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'CHECK ((((counted_cash_mnt IS NULL) AND (expected_cash_mnt IS NULL) AND (variance_mnt IS NULL)) OR ((counted_cash_mnt IS NOT NULL) AND (expected_cash_mnt IS NOT NULL) AND (variance_mnt = (counted_cash_mnt - expected_cash_mnt)))))',
     },
-
     // Phase 12 — public discovery and Guest authentication.
     {
       schema: 'platform',
@@ -15762,6 +16116,325 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'user_account_email_required_outside_guest',
       kind: 'c',
       definition: "CHECK (((email_normalized IS NOT NULL) OR (realm = 'guest'::text)))",
+    },
+
+    // Phase 13 — online booking and inventory hold.
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_amounts_non_negative',
+      kind: 'c',
+      definition:
+        'CHECK ((((unit_rate_mnt IS NULL) OR (unit_rate_mnt >= 0)) AND ((total_amount_mnt IS NULL) OR (total_amount_mnt >= 0))))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_booker_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (booker_account_id) REFERENCES platform.guest_account(account_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_category_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, category_id) REFERENCES platform.room_category(hotel_id, category_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_confirmed_has_snapshot',
+      kind: 'c',
+      definition:
+        "CHECK (((state <> ALL (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) OR ((rate_snapshot_id IS NOT NULL) AND (unit_rate_mnt IS NOT NULL) AND (total_amount_mnt IS NOT NULL) AND (pricing_config_version IS NOT NULL))))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_confirmed_has_time',
+      kind: 'c',
+      definition:
+        "CHECK (((state = ANY (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) = (confirmed_at IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_fulfilled_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((fulfilled_stay_id IS NOT NULL) = (state = ANY (ARRAY['CHECKED_IN'::text, 'COMPLETED'::text]))))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_guest_name_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((length(staying_guest_name) >= 1) AND (length(staying_guest_name) <= 200)))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_guest_phone_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((staying_guest_phone_token IS NULL) OR (staying_guest_phone_token ~ '^[0-9a-f]{64}$'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_hold_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((hold_state = ANY (ARRAY['ACTIVE'::text, 'CONSUMED'::text, 'EXPIRED'::text, 'CANCELLED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_hotel_cancellation_refunds',
+      kind: 'c',
+      definition:
+        "CHECK (((state <> 'CANCELLED_HOTEL'::text) OR (payment_state <> 'PAID'::text) OR (refund_state <> 'NONE'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_hotel_fkey',
+      kind: 'f',
+      definition: 'FOREIGN KEY (hotel_id) REFERENCES platform.hotel(hotel_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_identity_uq',
+      kind: 'u',
+      definition: 'UNIQUE (hotel_id, booking_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_nightly_window',
+      kind: 'c',
+      definition:
+        'CHECK (((check_out_date > check_in_date) AND (night_count = (check_out_date - check_in_date)) AND ((night_count >= 1) AND (night_count <= 90))))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_payment_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((payment_state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (booking_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_ref_shape',
+      kind: 'c',
+      definition: "CHECK ((booking_ref ~ '^[A-Z0-9]{8,12}$'::text))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_refund_needs_payment',
+      kind: 'c',
+      definition: "CHECK (((refund_state = 'NONE'::text) OR (payment_state = 'PAID'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_refund_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((refund_state = ANY (ARRAY['NONE'::text, 'REQUIRED'::text, 'PENDING'::text, 'PARTIALLY_REFUNDED'::text, 'REFUNDED'::text, 'FAILED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['HOLDING'::text, 'CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text, 'EXPIRED'::text, 'CANCELLED_GUEST'::text, 'CANCELLED_HOTEL'::text, 'NO_SHOW'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_terminal_shape',
+      kind: 'c',
+      definition:
+        "CHECK (((state = ANY (ARRAY['EXPIRED'::text, 'CANCELLED_GUEST'::text, 'CANCELLED_HOTEL'::text, 'NO_SHOW'::text, 'COMPLETED'::text])) = (terminal_at IS NOT NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_actor_bounded',
+      kind: 'c',
+      definition: 'CHECK (((length(actor_ref) >= 1) AND (length(actor_ref) <= 120)))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_booking_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, booking_id) REFERENCES platform.booking(hotel_id, booking_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (event_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_reason_bounded',
+      kind: 'c',
+      definition:
+        'CHECK (((reason IS NULL) OR ((length(reason) >= 1) AND (length(reason) <= 300))))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_type_bounded',
+      kind: 'c',
+      definition: 'CHECK (((length(event_type) >= 1) AND (length(event_type) <= 80)))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'booking_night_booking_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, booking_id) REFERENCES platform.booking(hotel_id, booking_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'booking_night_category_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, category_id) REFERENCES platform.room_category(hotel_id, category_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'booking_night_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (booking_id, night)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_amount_positive',
+      kind: 'c',
+      definition: 'CHECK ((amount_mnt > 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_booking_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, booking_id) REFERENCES platform.booking(hotel_id, booking_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (attempt_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_provider_known',
+      kind: 'c',
+      definition: "CHECK ((provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_settled_shape',
+      kind: 'c',
+      definition: "CHECK (((state = 'ACTIVE'::text) = (settled_at IS NULL)))",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_state_known',
+      kind: 'c',
+      definition:
+        "CHECK ((state = ANY (ARRAY['ACTIVE'::text, 'SUPERSEDED'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text])))",
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'category_night_inventory_capacity_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((units_capacity >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'category_night_inventory_category_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, category_id) REFERENCES platform.room_category(hotel_id, category_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'category_night_inventory_pkey',
+      kind: 'p',
+      definition: 'PRIMARY KEY (hotel_id, category_id, night)',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'category_night_inventory_revision_non_negative',
+      kind: 'c',
+      definition: 'CHECK ((revision >= 0))',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'category_night_inventory_within_capacity',
+      kind: 'c',
+      definition: 'CHECK (((units_held >= 0) AND (units_held <= units_capacity)))',
+    },
+    {
+      schema: 'platform',
+      table: 'stay',
+      name: 'stay_booking_fkey',
+      kind: 'f',
+      definition:
+        'FOREIGN KEY (hotel_id, fulfilled_booking_id) REFERENCES platform.booking(hotel_id, booking_id) ON DELETE RESTRICT',
     },
   ],
   indexes: [
@@ -17712,7 +18385,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       definition:
         'CREATE INDEX reception_shift_review_idx ON platform.reception_shift USING btree (hotel_id, review_state, opened_at)',
     },
-
     // Phase 12 — public discovery and Guest authentication.
     {
       schema: 'platform',
@@ -17825,6 +18497,126 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       name: 'hotel_photo_subject_idx',
       definition:
         'CREATE INDEX hotel_photo_subject_idx ON platform.hotel_photo USING btree (hotel_id, subject_type, category_id, sort_order)',
+    },
+
+    // Phase 13 — online booking and inventory hold.
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_booker_idx',
+      definition:
+        'CREATE INDEX booking_booker_idx ON platform.booking USING btree (booker_account_id, created_at DESC)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_category_window_idx',
+      definition:
+        'CREATE INDEX booking_category_window_idx ON platform.booking USING btree (hotel_id, category_id, check_in_date, check_out_date)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_expiry_idx',
+      definition:
+        "CREATE INDEX booking_expiry_idx ON platform.booking USING btree (hold_expires_at) WHERE (hold_state = 'ACTIVE'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_hotel_state_idx',
+      definition:
+        'CREATE INDEX booking_hotel_state_idx ON platform.booking USING btree (hotel_id, state, check_in_date)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_identity_uq',
+      definition:
+        'CREATE UNIQUE INDEX booking_identity_uq ON platform.booking USING btree (hotel_id, booking_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_pkey',
+      definition: 'CREATE UNIQUE INDEX booking_pkey ON platform.booking USING btree (booking_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'booking_ref_uq',
+      definition:
+        'CREATE UNIQUE INDEX booking_ref_uq ON platform.booking USING btree (booking_ref)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_booking_idx',
+      definition:
+        'CREATE INDEX booking_event_booking_idx ON platform.booking_event USING btree (booking_id, occurred_at)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'booking_event_pkey',
+      definition:
+        'CREATE UNIQUE INDEX booking_event_pkey ON platform.booking_event USING btree (event_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'booking_night_category_idx',
+      definition:
+        'CREATE INDEX booking_night_category_idx ON platform.booking_night USING btree (hotel_id, category_id, night)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'booking_night_pkey',
+      definition:
+        'CREATE UNIQUE INDEX booking_night_pkey ON platform.booking_night USING btree (booking_id, night)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_booking_idx',
+      definition:
+        'CREATE INDEX booking_payment_attempt_booking_idx ON platform.booking_payment_attempt USING btree (booking_id, created_at DESC)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_invoice_uq',
+      definition:
+        'CREATE UNIQUE INDEX booking_payment_attempt_invoice_uq ON platform.booking_payment_attempt USING btree (provider, provider_invoice_id) WHERE (provider_invoice_id IS NOT NULL)',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_one_active_uq',
+      definition:
+        "CREATE UNIQUE INDEX booking_payment_attempt_one_active_uq ON platform.booking_payment_attempt USING btree (booking_id) WHERE (state = 'ACTIVE'::text)",
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'booking_payment_attempt_pkey',
+      definition:
+        'CREATE UNIQUE INDEX booking_payment_attempt_pkey ON platform.booking_payment_attempt USING btree (attempt_id)',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'category_night_inventory_pkey',
+      definition:
+        'CREATE UNIQUE INDEX category_night_inventory_pkey ON platform.category_night_inventory USING btree (hotel_id, category_id, night)',
+    },
+    {
+      schema: 'platform',
+      table: 'stay',
+      name: 'stay_fulfilled_booking_uq',
+      definition:
+        'CREATE UNIQUE INDEX stay_fulfilled_booking_uq ON platform.stay USING btree (fulfilled_booking_id) WHERE (fulfilled_booking_id IS NOT NULL)',
     },
   ],
   identitySequences: [
@@ -18339,11 +19131,42 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       enabled: true,
       forced: true,
     },
-
     // Phase 12 — public discovery and Guest authentication.
     {
       schema: 'platform',
       table: 'hotel_photo',
+      enabled: true,
+      forced: true,
+    },
+
+    // Phase 13 — online booking and inventory hold.
+    {
+      schema: 'platform',
+      table: 'booking',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      enabled: true,
+      forced: true,
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
       enabled: true,
       forced: true,
     },
@@ -19422,7 +20245,6 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       using: '(hotel_id = platform.current_hotel_id())',
       withCheck: '(hotel_id = platform.current_hotel_id())',
     },
-
     // Phase 12 — public discovery and Guest authentication.
     {
       schema: 'platform',
@@ -19520,6 +20342,102 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       using:
         "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = stay.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
       withCheck: null,
+    },
+
+    // Phase 13 — online booking and inventory hold.
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'own_booking_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['public'],
+      using:
+        "((platform.current_hotel_id() = '00000000-0000-0000-0000-000000000000'::uuid) AND (booker_account_id = platform.current_account_id()))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'public_availability_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = booking.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'booking',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_event',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'public_availability_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = booking_night.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'booking_night',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_payment_attempt',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'public_availability_read',
+      as: 'PERMISSIVE',
+      command: 'SELECT',
+      to: ['prsystem_maintenance_fn'],
+      using:
+        "(EXISTS ( SELECT 1\n   FROM platform.hotel_profile p\n  WHERE ((p.hotel_id = category_night_inventory.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))",
+      withCheck: null,
+    },
+    {
+      schema: 'platform',
+      table: 'category_night_inventory',
+      name: 'tenant_isolation',
+      as: 'PERMISSIVE',
+      command: 'ALL',
+      to: ['public'],
+      using: '(hotel_id = platform.current_hotel_id())',
+      withCheck: '(hotel_id = platform.current_hotel_id())',
     },
   ],
 };

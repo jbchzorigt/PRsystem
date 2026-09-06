@@ -10,6 +10,8 @@ import { TariffService } from '../catalog/services/tariff.service';
 import { ConfigurationService } from '../minibar/services/configuration.service';
 import type { ConfirmedBookingsPort } from './contracts/confirmed-bookings';
 import { UnprovisionedConfirmedBookings } from './contracts/confirmed-bookings';
+import type { BookingFulfilmentPort } from './contracts/booking-fulfilment';
+import { UnprovisionedBookingFulfilment } from './contracts/booking-fulfilment';
 import type { PaymentAttemptsPort } from './contracts/payment-attempts';
 import { UnprovisionedPaymentAttempts } from './contracts/payment-attempts';
 import type { DepositsPort } from './contracts/deposits';
@@ -79,6 +81,8 @@ export interface StayModuleOptions {
   readonly keys?: KeyManagementPort;
   readonly xyp?: XypIdentityPort;
   readonly bookings?: ConfirmedBookingsPort;
+  /** Phase 13's booking consumption. Refuses once `platform.booking` exists. */
+  readonly bookingFulfilment?: BookingFulfilmentPort;
   readonly payments?: PaymentAttemptsPort;
   readonly deposits?: DepositsPort;
   readonly cash?: CashLedgerPort;
@@ -122,6 +126,7 @@ export class StayModule {
       });
     const xyp = options.xyp ?? selectXypIdentity(requiredConfig(options.config).appEnv);
     const bookings = options.bookings ?? new UnprovisionedConfirmedBookings();
+    const bookingFulfilment = options.bookingFulfilment ?? new UnprovisionedBookingFulfilment();
     const payments = options.payments ?? new UnprovisionedPaymentAttempts();
     const deposits = options.deposits ?? new UnprovisionedDeposits();
     const cash = options.cash ?? new UnprovisionedCashLedger();
@@ -140,6 +145,7 @@ export class StayModule {
       keys,
       xyp,
       bookings,
+      bookingFulfilment,
       payments,
       deposits,
       cash,

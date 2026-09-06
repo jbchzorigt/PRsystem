@@ -1,4 +1,4 @@
-# Autonomous checkpoint — Phase 12 complete, Phase 13 authorized
+# Autonomous checkpoint — Phase 12 complete, Phase 13 in progress
 
 **Written:** 2026-09-05, at the close of Phase 12 under the standing progression authorization.
 **Status of this document:** a handoff. It records what is true in the checkout, not what was
@@ -175,10 +175,49 @@ and the Phase 05 CI ledger are frozen records of earlier trees.
 - The main-checkout reconciliation of §1 remains the one decision this checkpoint asks of the
   customer.
 
+## 8a. Phase 13 in progress — what exists in the working tree
+
+**HEAD is still the Phase 12 record `affb63c`.** Everything below is uncommitted.
+
+**The schema layer is complete and every `@prsystem/db` gate passes on it**: migrations 148, unit
+88, security 1,778, regression 51, integration 41, concurrency 16.
+
+- `packages/db/migrations/0014_online_booking_inventory.sql` (untracked) — `booking` (the MVP shape,
+  identity/window/booker written once, price a snapshot, terminal never reopened), `booking_night`,
+  `category_night_inventory` whose `CHECK (units_held <= units_capacity)` **is** the anti-overbooking
+  rule, `booking_payment_attempt` (one `ACTIVE` per booking by partial unique index),
+  `booking_event`, `stay.fulfilled_booking_id` with a partial unique index, the `own_booking_read`
+  policy that lets a Guest read their own booking and nothing else, the two
+  `public_availability_read` policies the Phase 12 projection needs, and
+  `platform.hotel_of_category(uuid)` — a `SECURITY DEFINER` resolver so a request never chooses the
+  tenant its command runs in.
+- Journal entry 14; migration counts 14 → 15 in the three suites; snapshot and Drizzle declarations
+  regenerated; `classification.ts`, `test-support/tenant-rows.ts` (five fixtures) and
+  `ownership-manifest.ts` updated; `migrations.test.ts` records Phase 13's table ownership.
+
+**The API module is written and typechecks**, not yet exercised: `booking/domain/booking.ts`,
+`repositories/booking.repository.ts`, `services/{booking-context,booking.service,expiry.service}.ts`,
+`contracts/booking-reads.ts` (both ports Phase 13 owed, plus the fulfilment write),
+`stay/contracts/booking-fulfilment.ts`, and the check-in now consumes the booking inside its own
+transaction.
+
+**One registry correction, made deliberately.** `room.future_booking` named
+`platform.booking.assigned_room_id`, a column `BK-DEC-013` does not create: a booking holds a
+category unit and reaches a room only by becoming a stay. The source was removed rather than a
+column invented to satisfy it, and the three tests that named it were retargeted — including the
+catalog probe test, which now breaks and restores a real relation's shape instead of creating a
+fake one, since every registered relation exists once Phase 13 lands.
+
+**Still to do:** the guest-facing HTTP layer, the module and its wiring into `app.module`, the
+worker's expiry job, the test suites (unit, integration, concurrency ×3, security, HTTP), then
+traceability v1.26, assumptions §3.17, the Phase 13 record, governance, the governed battery on the
+implementation commit, evidence, and the two commits.
+
 ## 9. Exact next action
 
-**Phase 13 — Online booking and inventory hold — is the current phase and is authorized to begin
-under the standing authorization.** Before editing: reread `CLAUDE.md`, this checkpoint,
+**Phase 13 — Online booking and inventory hold — is the current phase, authorized and under way.**
+Resume from §8a: write `booking/http/`, `booking.module.ts` and the `app.module` wiring, then the
+suites. Nothing already built needs redoing. Before editing: reread `CLAUDE.md`, this checkpoint,
 `phase-status.md` (current position, ledger, the Phase 11 and 12 records), `build-plan.md`
 §"Phase 13", and the requirement files that phase assigns; list its owned DEC IDs from
 `requirements-traceability.md` §2 and the family tables. Then verify `git status` matches §4.

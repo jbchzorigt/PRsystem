@@ -36,11 +36,12 @@ describe('the dependency registry', () => {
   it('names the RML-DEC-003 blockers of each kind', () => {
     const idsFor = (kind: (typeof ENTITY_KINDS)[number]): string[] =>
       sourcesFor(kind).map((s) => s.id);
-    // Room: stay, booking, task, reconciliation (stock and configuration).
+    // Room: stay, task, reconciliation (stock and configuration). No booking
+    // source: `BK-DEC-013` gives a booking a category unit, not a room, and it
+    // reaches a room only by becoming the stay `room.active_stay` blocks on.
     expect(idsFor('ROOM')).toEqual(
       expect.arrayContaining([
         'room.active_stay',
-        'room.future_booking',
         'room.cleaning_task',
         'room.minibar_stock',
         'room.minibar_configuration',

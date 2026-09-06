@@ -637,6 +637,36 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: 'carries hotel_id; the photographs a listing is not shown without (doc 09 §3.2, §5)',
   },
   {
+    schema: 'platform',
+    table: 'booking',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the online booking that occupies one category unit (BK-DEC-012, -013)',
+  },
+  {
+    schema: 'platform',
+    table: 'booking_night',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the exact nights a booking took, so releasing it releases those',
+  },
+  {
+    schema: 'platform',
+    table: 'category_night_inventory',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the capacity and units taken whose CHECK refuses overbooking (BK-DEC-013)',
+  },
+  {
+    schema: 'platform',
+    table: 'booking_payment_attempt',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; one live attempt per booking, superseded on a provider switch (doc 09 §8)',
+  },
+  {
+    schema: 'platform',
+    table: 'booking_event',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the append-only booking history an expiry and a cancellation differ in',
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

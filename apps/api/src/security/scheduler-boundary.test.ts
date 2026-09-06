@@ -371,6 +371,7 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
             },
           },
           public: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
+          booking: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           stay: {
             config: {
               databaseUrl: apiUrl,

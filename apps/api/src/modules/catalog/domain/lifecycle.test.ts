@@ -66,7 +66,7 @@ describe('RML-DEC-003 — what a deactivation request resolves to', () => {
     expect(
       deactivationOutcome([
         fact('room.active_stay', 'operational', 'clear', 0),
-        fact('room.future_booking', 'operational', 'not_yet_provisioned'),
+        fact('room.minibar_stock', 'operational', 'not_yet_provisioned'),
         fact('room.stay_history', 'historical', 'blocked', 12),
       ]),
     ).toBe('INACTIVE');

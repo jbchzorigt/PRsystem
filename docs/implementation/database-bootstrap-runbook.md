@@ -190,6 +190,7 @@ gate rather than arriving unguarded.
 | `audit.append_platform_audit_event` | Worker, API, Police | **no role closure, by design.** The shared audit wrapper takes no identity or tenant argument and derives realm, actor and hotel from the transaction context server-side. It can only append |
 | `platform.ensure_month_partitions` | Worker | **no role closure.** An allow-list of exactly the two audit streams, so it cannot become a general `CREATE TABLE` primitive, plus a bounded month count and a per-stream advisory lock |
 | `platform.check_partition_horizon` | Worker | **no role closure.** Reads the horizon of the two audit streams and raises an operational alert; writes nothing else and takes only a bounded threshold |
+| `platform.lapsed_booking_holds` | Worker | **no role closure.** Reads only bookings whose ten-minute hold has already lapsed and answers two identifiers per row. It writes nothing; the settling it feeds happens in the hotel's own scope, on the booking's own lock (`BK-DEC-009`) |
 
 `finish_worker_job` was the gap this table exists to close: it checked the realm
 and `job_identity = session_user` and validated no closure at all. Identity is

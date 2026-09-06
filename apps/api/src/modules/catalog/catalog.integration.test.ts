@@ -1043,22 +1043,23 @@ describe('hard delete (RML-DEC-005) and dependency evidence (RML-DEC-003)', () =
       manager,
       request(manager),
     );
-    // A relation the registry names for a later phase, provisioned with the
-    // wrong shape: the probe raises, and a raise is not "no rows". (Phases 08
-    // and 09 created `platform.stay` and `platform.cleaning_task` in the
-    // registered shapes; the booking of Phase 13 is still unprovisioned.)
+    // A relation the registry names, present but unreadable in the shape the
+    // probe expects: the probe raises, and a raise is not "no rows". Every
+    // registered relation exists once Phase 13 has landed, so the shape is
+    // broken here deliberately and restored below — which is a truer test of
+    // the rule than a table that was never created.
     await env.admin.query(
-      `CREATE TABLE platform.booking (hotel_id uuid NOT NULL, state text NOT NULL)`,
+      `ALTER TABLE platform.booking RENAME COLUMN category_id TO category_id_hidden`,
     );
     try {
       const deactivation = await refused(
         env.lifecycle.requestDeactivation(
           {
             hotelId,
-            kind: 'ROOM',
-            entityId: room.roomId,
+            kind: 'ROOM_CATEGORY',
+            entityId: category.categoryId,
             idempotencyKey: key(),
-            expectedRevision: await rev('ROOM', room.roomId),
+            expectedRevision: await rev('ROOM_CATEGORY', category.categoryId),
           },
           manager,
           request(manager),
@@ -1066,32 +1067,36 @@ describe('hard delete (RML-DEC-005) and dependency evidence (RML-DEC-003)', () =
       );
       expect(deactivation.code).toBe('DEPENDENCY_UNAVAILABLE');
       const view = await env.lifecycle.view(
-        { hotelId, kind: 'ROOM', entityId: room.roomId },
+        { hotelId, kind: 'ROOM_CATEGORY', entityId: category.categoryId },
         manager,
         request(manager),
       );
       expect(view.state).toBe('ACTIVE');
       expect(
         view.dependencies.filter((f) => f.state === 'unavailable').map((f) => f.sourceId),
-      ).toEqual(['room.future_booking']);
+      ).toEqual(['category.future_booking']);
       const deletion = await refused(
         env.lifecycle.hardDelete(
           {
             hotelId,
-            kind: 'ROOM',
-            entityId: room.roomId,
+            kind: 'ROOM_CATEGORY',
+            entityId: category.categoryId,
             idempotencyKey: key(),
-            expectedRevision: await rev('ROOM', room.roomId),
+            expectedRevision: await rev('ROOM_CATEGORY', category.categoryId),
           },
           manager,
           request(manager),
         ),
       );
       expect(deletion.code).toBe('DEPENDENCY_UNAVAILABLE');
-      expect(await events('ROOM', room.roomId)).toHaveLength(1);
     } finally {
-      await env.admin.query(`DROP TABLE platform.booking`);
+      // Put the relation back in the shape the registry names.
+      await env.admin.query(
+        `ALTER TABLE platform.booking RENAME COLUMN category_id_hidden TO category_id`,
+      );
     }
+    // And with the relation readable again the probe reads it: no booking
+    // holds this room, so the deactivation resolves.
     const now = await env.lifecycle.requestDeactivation(
       {
         hotelId,

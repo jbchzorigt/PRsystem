@@ -8,6 +8,7 @@ import { provisionIamDatabase } from '../../iam/test-support/iam-harness';
 import type { MinibarHarness, MinibarHotel } from '../../minibar/test-support/minibar-harness';
 import { attachMinibarHarness, key, request } from '../../minibar/test-support/minibar-harness';
 import { SimulatedConfirmedBookings } from '../contracts/confirmed-bookings';
+import { SimulatedBookingFulfilment } from '../contracts/booking-fulfilment';
 import { SimulatedPaymentAttempts } from '../contracts/payment-attempts';
 import type { DepositsPort } from '../contracts/deposits';
 import { SimulatedDeposits } from '../contracts/deposits';
@@ -50,6 +51,7 @@ export interface StayHarness {
   readonly deps: StayDependencies;
   readonly xyp: SimulatedXypIdentity;
   readonly bookings: SimulatedConfirmedBookings;
+  readonly bookingFulfilment: SimulatedBookingFulfilment;
   readonly payments: SimulatedPaymentAttempts;
   readonly deposits: SimulatedDeposits;
   readonly shifts: ShiftService;
@@ -99,6 +101,7 @@ export function attachStayHarness(
   const minibar = attachMinibarHarness(db, suite);
   const xyp = new SimulatedXypIdentity();
   const bookings = new SimulatedConfirmedBookings();
+  const bookingFulfilment = new SimulatedBookingFulfilment();
   const payments = new SimulatedPaymentAttempts();
   const simulatedDeposits = new SimulatedDeposits();
   const deposits = options.deposits ?? simulatedDeposits;
@@ -113,6 +116,7 @@ export function attachStayHarness(
     keys: new LocalKeyManagement({ appEnv: 'test', seed: `synthetic-${suite}` }),
     xyp,
     bookings,
+    bookingFulfilment,
     payments,
     deposits,
     cash: new LedgerCashLedger(),
@@ -128,6 +132,7 @@ export function attachStayHarness(
     deps,
     xyp,
     bookings,
+    bookingFulfilment,
     payments,
     deposits: simulatedDeposits,
     shifts: new ShiftService(deps),
