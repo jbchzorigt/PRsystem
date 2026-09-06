@@ -1208,6 +1208,27 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'answers two identifiers per row. It writes nothing, and the settling it feeds happens ' +
         "in the hotel's own scope on the booking's own lock",
     },
+    {
+      // Phase 14. Both jobs have the same shape as the expiry sweep: work
+      // waiting in every hotel has to be found before any of it can be done in
+      // one, and each answers identifiers and nothing else.
+      signature: 'platform.open_booking_refunds(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only refunds still REQUIRED or PENDING, confined to exactly ' +
+        'those by a policy on the owner, and answers two identifiers per row. The execution ' +
+        "happens in the hotel's own scope on the refund's own lock",
+    },
+    {
+      signature: 'platform.due_payout_batches(p_limit integer, p_now timestamp with time zone)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only payables that are ELIGIBLE or ADJUSTMENT_DUE, confined ' +
+        'by a policy on the owner, and answers a hotel and a batch date. The batch is assembled ' +
+        "in the hotel's own scope on the payables' own locks",
+    },
     // Phase 05's three boundary-worker discovery wrappers. Each exists for the
     // same reason: the rows a worker must find live behind a tenant policy, and
     // a worker outside any tenant scope cannot see them to find out which tenant

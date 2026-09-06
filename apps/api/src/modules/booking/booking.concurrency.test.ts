@@ -114,6 +114,7 @@ describe('expiry racing a paid callback (PAY-DEC-006)', () => {
         {
           attemptId: held.attempt.attemptId,
           providerInvoiceId: 'inv-race',
+          providerPaymentId: 'pay-race',
           hotelId: hotel.hotelId,
         },
         newBookingRequest(),
@@ -151,7 +152,12 @@ describe('expiry racing a paid callback (PAY-DEC-006)', () => {
     await Promise.allSettled([
       h.expiry.sweep(),
       h.bookingService.applyCapture(
-        { attemptId: held.attempt.attemptId, providerInvoiceId: 'inv-2', hotelId: hotel.hotelId },
+        {
+          attemptId: held.attempt.attemptId,
+          providerInvoiceId: 'inv-2',
+          providerPaymentId: 'pay-2',
+          hotelId: hotel.hotelId,
+        },
         newBookingRequest(),
       ),
     ]);
@@ -178,11 +184,21 @@ describe('two captures arriving together', () => {
     const held = await hold(hotel, await h.guest(), dates);
     const outcomes = await Promise.allSettled([
       h.bookingService.applyCapture(
-        { attemptId: held.attempt.attemptId, providerInvoiceId: 'inv-a', hotelId: hotel.hotelId },
+        {
+          attemptId: held.attempt.attemptId,
+          providerInvoiceId: 'inv-a',
+          providerPaymentId: 'pay-a',
+          hotelId: hotel.hotelId,
+        },
         newBookingRequest(),
       ),
       h.bookingService.applyCapture(
-        { attemptId: held.attempt.attemptId, providerInvoiceId: 'inv-b', hotelId: hotel.hotelId },
+        {
+          attemptId: held.attempt.attemptId,
+          providerInvoiceId: 'inv-b',
+          providerPaymentId: 'pay-b',
+          hotelId: hotel.hotelId,
+        },
         newBookingRequest(),
       ),
     ]);

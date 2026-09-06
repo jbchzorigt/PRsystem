@@ -23,6 +23,19 @@ export interface BookingFulfilmentPort {
     uow: UnitOfWork,
     input: { bookingRef: string; stayId: string; actorRef: string },
   ): Promise<string | undefined>;
+
+  /**
+   * Completes the booking the stay fulfilled, at the recorded checkout.
+   *
+   * doc 11 §8 makes the retained room charge payout-eligible only once the stay
+   * has completed and the actual checkout is recorded, so this runs inside the
+   * checkout's own transaction. Returns the booking's id, or `undefined` when
+   * the stay fulfilled no booking — a walk-in, which owes the platform nothing.
+   */
+  completeAtCheckout(
+    uow: UnitOfWork,
+    input: { stayId: string; actorRef: string },
+  ): Promise<string | undefined>;
 }
 
 /**
@@ -33,14 +46,30 @@ export interface BookingFulfilmentPort {
  */
 export class UnprovisionedBookingFulfilment implements BookingFulfilmentPort {
   async consumeAtCheckIn(uow: UnitOfWork): Promise<string | undefined> {
+    return this.refuseOnceProvisioned(
+      uow,
+      'a check-in must consume the booking it fulfils through a real ' +
+        'BookingFulfilmentPort (Phase 13), not this default',
+    );
+  }
+
+  async completeAtCheckout(uow: UnitOfWork): Promise<string | undefined> {
+    return this.refuseOnceProvisioned(
+      uow,
+      'a checkout must complete the booking it fulfilled through a real ' +
+        'BookingFulfilmentPort (Phase 14), not this default',
+    );
+  }
+
+  private async refuseOnceProvisioned(
+    uow: UnitOfWork,
+    message: string,
+  ): Promise<string | undefined> {
     const result = await uow.query<{ present: boolean }>(
       `SELECT to_regclass('platform.booking') IS NOT NULL AS present`,
     );
     if (result.rows[0]?.present === true) {
-      throw new Error(
-        'platform.booking exists: a check-in must consume the booking it fulfils ' +
-          'through a real BookingFulfilmentPort (Phase 13), not this default',
-      );
+      throw new Error(`platform.booking exists: ${message}`);
     }
     return undefined;
   }
@@ -49,6 +78,7 @@ export class UnprovisionedBookingFulfilment implements BookingFulfilmentPort {
 /** A deterministic in-memory implementation for the stay module's own tests. */
 export class SimulatedBookingFulfilment implements BookingFulfilmentPort {
   readonly consumed: { bookingRef: string; stayId: string }[] = [];
+  readonly completed: string[] = [];
   private refuse = false;
   private readonly ids = new Map<string, string>();
 
@@ -71,5 +101,11 @@ export class SimulatedBookingFulfilment implements BookingFulfilmentPort {
     }
     this.consumed.push({ bookingRef: input.bookingRef, stayId: input.stayId });
     return Promise.resolve(this.ids.get(input.bookingRef));
+  }
+
+  completeAtCheckout(_uow: UnitOfWork, input: { stayId: string }): Promise<string | undefined> {
+    this.completed.push(input.stayId);
+    const consumed = this.consumed.find((entry) => entry.stayId === input.stayId);
+    return Promise.resolve(consumed === undefined ? undefined : this.ids.get(consumed.bookingRef));
   }
 }

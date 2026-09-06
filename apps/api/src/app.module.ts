@@ -24,6 +24,10 @@ import type { PublicModuleOptions } from './modules/public/public.module';
 import { PublicModule } from './modules/public/public.module';
 import type { BookingModuleOptions } from './modules/booking/booking.module';
 import { BookingModule } from './modules/booking/booking.module';
+import type { SettlementModuleOptions } from './modules/settlement/settlement.module';
+import { SettlementModule } from './modules/settlement/settlement.module';
+import { RepositorySettlement } from './modules/settlement/contracts/booking-settlement';
+import { RepositoryBookingRefundAxis } from './modules/booking/contracts/refund-axis';
 import {
   RepositoryCategoryHolds,
   RepositoryConfirmedBookings,
@@ -103,6 +107,12 @@ export interface AppModuleOptions {
    */
   readonly booking: BookingModuleOptions;
   /**
+   * The Phase 14 ledger: commission, refund, payout. It has no HTTP surface —
+   * doc 18 names no permission for administering a rate or releasing a payout —
+   * so what it exposes is the booking module's contract and two jobs.
+   */
+  readonly settlement: SettlementModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -151,7 +161,9 @@ export class AppModule {
       // Phase 13 supplies both: a check-in reads the booking it fulfils and
       // consumes it in the same transaction (`BK-DEC-013`).
       bookings: options.stay.bookings ?? new RepositoryConfirmedBookings(),
-      bookingFulfilment: options.stay.bookingFulfilment ?? new RepositoryBookingFulfilment(),
+      bookingFulfilment:
+        options.stay.bookingFulfilment ??
+        new RepositoryBookingFulfilment(new RepositorySettlement()),
     });
     return {
       module: AppModule,
@@ -183,7 +195,18 @@ export class AppModule {
           bookings: new RepositoryCategoryHolds(),
           ...options.public,
         }),
-        BookingModule.forRoot({ ...options.booking, iam, catalog }),
+        // Phase 14 supplies the ledger: the booking's confirmation, cancellation
+        // and no-show reach it inside their own transactions.
+        BookingModule.forRoot({
+          settlement: new RepositorySettlement(),
+          ...options.booking,
+          iam,
+          catalog,
+        }),
+        SettlementModule.forRoot({
+          ...options.settlement,
+          bookings: options.settlement?.bookings ?? new RepositoryBookingRefundAxis(),
+        }),
       ],
     };
   }

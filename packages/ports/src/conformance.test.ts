@@ -21,6 +21,9 @@ import {
   selectPaymentGateways,
   selectPhoneVerification,
   selectXypIdentity,
+  SimulatedHotelPayout,
+  UnavailableHotelPayout,
+  selectHotelPayout,
 } from './index';
 import { greatCircleMetres } from './index';
 import type { PortContext, PortResult } from './index';
@@ -516,5 +519,59 @@ describe('GeoPort simulator', () => {
     expect(disabled.distance(centre, north).metres).toBe(1112);
     expect(greatCircleMetres(centre, centre)).toBe(0);
     expect(greatCircleMetres(centre, north)).toBe(greatCircleMetres(north, centre));
+  });
+});
+
+describe('HotelPayoutPort simulator', () => {
+  const instruction = {
+    batchRef: 'batch-000001',
+    hotelId: '00000000-0000-4000-8000-0000000000aa',
+    amountMnt: 108_000n,
+    currency: 'MNT',
+    idempotencyKey: 'payout:batch-000001',
+  } as const;
+
+  it('answers the same transfer for the same key, and never moves money twice', async () => {
+    const port = new SimulatedHotelPayout();
+    expect(port.id).toBe('hotel-payout');
+    expect(port.mode).toBe('simulator');
+    const first = ok(await port.transfer(instruction, ctx));
+    expect(first.state).toBe('PAID');
+    expect(first.bankReference).toMatch(/^sim-payout-\d{6}$/);
+    // A redriven attempt: the same key, the same answer, one transfer.
+    const again = ok(await port.transfer(instruction, ctx));
+    expect(again).toEqual(first);
+    expect(port.transfers).toHaveLength(1);
+  });
+
+  it('distinguishes a bank that declined from one that could not be reached', async () => {
+    const port = new SimulatedHotelPayout();
+    port.declineNext('BANK_CLOSED');
+    const declined = ok(await port.transfer(instruction, ctx));
+    expect(declined).toEqual({ state: 'FAILED', failureCode: 'BANK_CLOSED' });
+    // Reaching the bank and being refused is a decision; a timeout is not.
+    port.failNext({ kind: 'TIMEOUT', retryable: true });
+    const unreachable = new SimulatedHotelPayout();
+    unreachable.failNext({ kind: 'TIMEOUT', retryable: true });
+    expect(err(await unreachable.transfer(instruction, ctx))).toEqual({
+      kind: 'TIMEOUT',
+      retryable: true,
+    });
+    expect(unreachable.transfers).toHaveLength(0);
+  });
+
+  it('is disabled in production and makes no transfer at all (EXT-07)', async () => {
+    const disabled = new UnavailableHotelPayout();
+    expect(disabled.mode).toBe('adapter');
+    expect(err(await disabled.transfer(instruction, ctx))).toEqual({
+      kind: 'DISABLED',
+      gate: 'EXT-07',
+    });
+    expect(err(await disabled.execute({ kind: 'transfer', input: instruction }, ctx))).toEqual({
+      kind: 'DISABLED',
+      gate: 'EXT-07',
+    });
+    expect(selectHotelPayout('production')).toBeInstanceOf(UnavailableHotelPayout);
+    expect(selectHotelPayout('test')).toBeInstanceOf(SimulatedHotelPayout);
   });
 });

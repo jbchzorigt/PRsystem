@@ -128,6 +128,17 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.lapsed_booking_holds(p_limit integer, p_now timestamp with time zone)':
     KERNEL_OWNERS.maintenanceFn,
 
+  // Phase 14. Two job dispatchers with the same shape: a payout batch and a
+  // refund execution both have to find waiting work across every hotel before
+  // they can do any of it, and each answers identifiers and nothing else.
+  'platform.due_payout_batches(p_limit integer, p_now timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.open_booking_refunds(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+  // A provider callback names an invoice and no tenant, so the hotel it belongs
+  // to is resolved the same narrow way a category's is.
+  'platform.booking_attempt_of_invoice(p_provider text, p_invoice_id text)':
+    KERNEL_OWNERS.maintenanceFn,
+
   // Phase 07. The inventory ledger's two triggers: the only path by which a
   // warehouse or room balance changes, on tables no runtime may write. They
   // belong to the same narrow definer owner for the same reason the

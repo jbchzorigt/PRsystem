@@ -53,7 +53,12 @@ async function hold(
 
 async function confirm(attemptId: string, hotelId: string) {
   return h.bookingService.applyCapture(
-    { attemptId, providerInvoiceId: `inv-${attemptId.slice(0, 8)}`, hotelId },
+    {
+      attemptId,
+      providerInvoiceId: `inv-${attemptId.slice(0, 8)}`,
+      providerPaymentId: `pay-${attemptId.slice(0, 8)}`,
+      hotelId,
+    },
     newBookingRequest(),
   );
 }

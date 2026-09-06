@@ -46,6 +46,19 @@ export type {
   VerifiedCallback,
 } from './payment-gateway.port';
 
+// EXT-07.
+export {
+  SimulatedHotelPayout,
+  UnavailableHotelPayout,
+  selectHotelPayout,
+} from './hotel-payout.port';
+export type {
+  HotelPayoutPort,
+  PayoutCommand,
+  PayoutInstruction,
+  PayoutResult,
+} from './hotel-payout.port';
+
 // EXT-11.
 export { SimulatedEBarimt, UnavailableEBarimt, selectEBarimt } from './ebarimt.port';
 export type {

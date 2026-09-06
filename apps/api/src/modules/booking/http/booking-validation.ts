@@ -60,3 +60,11 @@ export function optionalReason(value: unknown): string | undefined {
   }
   return value;
 }
+
+/** A mandatory reason, for the actions doc 18 §3.3 requires one of. */
+export function requireReason(value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 300) {
+    throw new ApiError('VALIDATION_FAILED', 'reason is required and must be a short string');
+  }
+  return value.trim();
+}

@@ -191,6 +191,9 @@ gate rather than arriving unguarded.
 | `platform.ensure_month_partitions` | Worker | **no role closure.** An allow-list of exactly the two audit streams, so it cannot become a general `CREATE TABLE` primitive, plus a bounded month count and a per-stream advisory lock |
 | `platform.check_partition_horizon` | Worker | **no role closure.** Reads the horizon of the two audit streams and raises an operational alert; writes nothing else and takes only a bounded threshold |
 | `platform.lapsed_booking_holds` | Worker | **no role closure.** Reads only bookings whose ten-minute hold has already lapsed and answers two identifiers per row. It writes nothing; the settling it feeds happens in the hotel's own scope, on the booking's own lock (`BK-DEC-009`) |
+| `platform.open_booking_refunds` | Worker | **no role closure.** Reads only refunds still `REQUIRED` or `PENDING` — a policy on the owner confines it to exactly those — and answers two identifiers per row. The execution happens in the hotel's own scope, on the refund's own lock (doc 11 §5) |
+| `platform.due_payout_batches` | Worker, API | **no role closure.** Reads only payables that are `ELIGIBLE` or `ADJUSTMENT_DUE`, again confined by a policy on the owner, and answers a hotel and a batch date. It decides nothing: the batch is assembled in the hotel's own scope on the payables' own locks (`PAY-DEC-009`) |
+| `platform.booking_attempt_of_invoice` | API | **no role closure.** A provider callback names an invoice and no tenant, so this resolves the hotel server-side and answers three identifiers. It deliberately finds an attempt in any state, because `PAY-DEC-006` is about the callbacks that arrive after one has expired |
 
 `finish_worker_job` was the gap this table exists to close: it checked the realm
 and `job_identity = session_user` and validated no closure at all. Identity is

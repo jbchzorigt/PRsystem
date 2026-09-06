@@ -120,6 +120,9 @@ export async function createApp(
       booking: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
       },
+      settlement: {
+        config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

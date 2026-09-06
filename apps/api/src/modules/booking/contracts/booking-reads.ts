@@ -1,4 +1,6 @@
 import type { UnitOfWork } from '@prsystem/db';
+import { appendOutboxEvent } from '@prsystem/db';
+import { hotelLocalDate, instant } from '@prsystem/time';
 import type {
   ConfirmedBookingsPort,
   NextBookingFacts,
@@ -6,6 +8,10 @@ import type {
 import type { CategoryHold, CategoryHoldsPort } from '../../public/contracts/category-holds';
 import type { BookingFulfilmentPort } from '../../stay/contracts/booking-fulfilment';
 import { fromPgDate, nightsOf, toDateString } from '../domain/booking';
+import { BookingRepository } from '../repositories/booking.repository';
+import { hotelTimeZone } from '../services/booking-context';
+import type { SettlementPort } from './settlement';
+import { RepositorySettlement } from '../../settlement/contracts/booking-settlement';
 
 /**
  * What the booking module answers for the two modules that need bookings but do
@@ -141,6 +147,15 @@ function mapFacts(row: Record<string, unknown>): NextBookingFacts {
  * two, at every instant.
  */
 export class RepositoryBookingFulfilment implements BookingFulfilmentPort {
+  /**
+   * The ledger side of a checkout, from the module that owns it (Phase 14).
+   *
+   * Injected rather than reached for, so the check-in half of this contract
+   * stays a pure booking concern and the checkout half is the one place the two
+   * modules meet.
+   */
+  constructor(private readonly settlement: SettlementPort = new RepositorySettlement()) {}
+
   async consumeAtCheckIn(
     uow: UnitOfWork,
     input: { bookingRef: string; stayId: string; actorRef: string },
@@ -169,5 +184,53 @@ export class RepositoryBookingFulfilment implements BookingFulfilmentPort {
       [row.hotel_id, row.booking_id, input.actorRef],
     );
     return row.booking_id;
+  }
+
+  /**
+   * doc 11 §8: the stay completed, so the booking it fulfilled is honoured.
+   *
+   * `COMPLETED` is the one terminal state that releases no inventory — the unit
+   * was consumed by the stay rather than given back — and it is what makes the
+   * retained room charge eligible for the `D+1` payout. A stay that fulfilled
+   * no booking is a walk-in and completes nothing here.
+   */
+  async completeAtCheckout(
+    uow: UnitOfWork,
+    input: { stayId: string; actorRef: string },
+  ): Promise<string | undefined> {
+    const bookings = new BookingRepository(uow);
+    const booking = await bookings.lockByStay(input.stayId);
+    if (booking === undefined || booking.state !== 'CHECKED_IN') return undefined;
+    const now = uow.serverNow;
+    const advanced = await bookings.transition({
+      bookingId: booking.bookingId,
+      expectedRevision: booking.revision,
+      from: ['CHECKED_IN'],
+      state: 'COMPLETED',
+      terminalAt: now,
+      terminalReason: 'the stay was checked out',
+    });
+    if (!advanced) return undefined;
+    await bookings.record({
+      hotelId: booking.hotelId,
+      bookingId: booking.bookingId,
+      eventType: 'booking.completed',
+      fromState: 'CHECKED_IN',
+      toState: 'COMPLETED',
+      actorRef: input.actorRef,
+    });
+    const zone = await hotelTimeZone(uow);
+    await this.settlement.markEligible(uow, {
+      bookingId: booking.bookingId,
+      at: now,
+      localDate: hotelLocalDate(instant(now), zone),
+    });
+    await appendOutboxEvent(uow, {
+      aggregateType: 'booking',
+      aggregateId: booking.bookingId,
+      eventType: 'booking.completed',
+      payload: { bookingId: booking.bookingId, hotelId: booking.hotelId },
+    });
+    return booking.bookingId;
   }
 }

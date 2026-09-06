@@ -174,7 +174,8 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     name: 'platform.hotel',
     // Phase 05 provisions hotels through paid onboarding. No runtime holds
     // INSERT, so a runtime cannot create a tenant nobody paid for.
-    grants: { api: ['SELECT'], worker: [], police: [] },
+    // Phase 14: the payout job derives `D+1 12:00` in the hotel's own zone.
+    grants: { api: ['SELECT'], worker: ['SELECT'], police: [] },
     insert: (hotelId, n) => ({
       sql: `INSERT INTO platform.hotel (hotel_id, display_name) VALUES ($1, $2)`,
       values: [hotelId, `Fixture Hotel ${String(n)}`],
@@ -2399,6 +2400,139 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
             SELECT b.booking_id, $1, b.category_id, current_date + 40 FROM b`,
       values: [hotelId],
     }),
+  },
+
+  // Phase 14. The money a booking makes. Each fixture creates what it needs and
+  // falls back to an absent identifier where the row it wants belongs to
+  // another tenant — which is the whole point: the policy refuses the write
+  // before the foreign key is ever reached.
+  {
+    name: 'platform.hotel_commission_contract',
+    // `PAY-DEC-001` gives it no application writer at all: doc 18 names no
+    // permission for setting a hotel's rate, so both runtimes hold SELECT only.
+    grants: { api: ['SELECT'], worker: ['SELECT'], police: [] },
+    // One `ACTIVE` contract per hotel is the invariant a partial unique index
+    // holds, so the fixture seeds exactly one.
+    rowsPerTenant: 1,
+    insertableByRuntime: false,
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.hotel_commission_contract
+              (hotel_id, contract_version, party_type, commission_rate_bps,
+               cancellation_policy_version, effective_from)
+            VALUES ($1, $2, 'NEGOTIATED', 1000, 1, now() - interval '1 day')`,
+      values: [hotelId, n],
+    }),
+  },
+  {
+    name: 'platform.booking_payable',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('guest', NULL) RETURNING account_id),
+            g AS (
+              INSERT INTO platform.guest_account
+                (account_id, registered_via, phone_token, phone_token_key_version,
+                 phone_ciphertext, phone_wrapped_dek, phone_key_version, phone_verified_at)
+              SELECT a.account_id, 'PHONE_OTP',
+                     encode(digest(a.account_id::text, 'sha256'), 'hex'), 'v1',
+                     '\\x00'::bytea, '\\x00'::bytea, 'v1', now()
+                FROM a RETURNING account_id),
+            c AS (
+              INSERT INTO platform.room_category (hotel_id, name, nightly_rate_mnt)
+              VALUES ($1, 'p14p-' || substr(gen_random_uuid()::text, 1, 11), 120000)
+              RETURNING category_id),
+            b AS (
+              INSERT INTO platform.booking
+                (hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
+                 check_in_date, check_out_date, night_count, hold_expires_at)
+              SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+                     c.category_id, g.account_id, 'Синтетик зочин',
+                     current_date + 50, current_date + 51, 1, now() + interval '10 minutes'
+                FROM g, c
+              RETURNING booking_id)
+            INSERT INTO platform.booking_payable
+              (hotel_id, booking_id, contract_id, contract_version, commission_rate_bps,
+               gross_paid_mnt, retained_mnt, commission_mnt, hotel_payable_mnt)
+            SELECT $1, b.booking_id,
+                   COALESCE((SELECT k.contract_id FROM platform.hotel_commission_contract k
+                              WHERE k.hotel_id = $1 ORDER BY k.contract_version LIMIT 1),
+                            ${ABSENT_UUID}),
+                   1, 1000, 120000, 120000, 12000, 108000
+              FROM b`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `hold_reason = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.booking_ledger_event',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.booking_ledger_event
+              (hotel_id, booking_id, event_type, amount_mnt, source_ref)
+            VALUES ($1,
+                    COALESCE((SELECT b.booking_id FROM platform.booking b
+                               WHERE b.hotel_id = $1 ORDER BY b.created_at LIMIT 1),
+                             ${ABSENT_UUID}),
+                    'PAYMENT', 120000, 'fixture:' || $2::text)`,
+      values: [hotelId, n],
+    }),
+  },
+  {
+    name: 'platform.booking_refund',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.booking_refund
+              (hotel_id, booking_id, reason, amount_mnt, provider, source_ref)
+            VALUES ($1,
+                    COALESCE((SELECT b.booking_id FROM platform.booking b
+                               WHERE b.hotel_id = $1 ORDER BY b.created_at LIMIT 1),
+                             ${ABSENT_UUID}),
+                    'GUEST_CANCELLATION', 120000, 'QPAY', 'fixture:' || $2::text)`,
+      values: [hotelId, n],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'PENDING', revision = revision + 1`,
+  },
+  {
+    name: 'platform.payout_batch',
+    // The batch is a job: the API reads it for reconciliation and writes none.
+    grants: { api: ['SELECT'], worker: ['SELECT', 'INSERT', 'UPDATE'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.payout_batch
+              (hotel_id, batch_local_date, attempt_no, scheduled_at)
+            VALUES ($1, current_date + $2::integer, 1, now())`,
+      values: [hotelId, n],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'SUBMITTED', revision = revision + 1`,
+  },
+  {
+    name: 'platform.payout_batch_item',
+    grants: { api: ['SELECT'], worker: ['SELECT', 'INSERT', 'UPDATE'], police: [] },
+    // An `ADJUSTMENT` line, deliberately: the partial unique index on settled
+    // `PAYABLE` lines is doc 11 §8's "one payable, one successful payout", and
+    // a fixture that seeded two settled payable lines for one payable would be
+    // asserting against that invariant rather than alongside it.
+    insert: (hotelId, n) => ({
+      sql: `WITH b AS (
+              INSERT INTO platform.payout_batch
+                (hotel_id, batch_local_date, attempt_no, scheduled_at)
+              VALUES ($1, current_date + 200 + $2::integer, 1, now())
+              RETURNING batch_id)
+            INSERT INTO platform.payout_batch_item
+              (hotel_id, batch_id, payable_id, kind, amount_mnt)
+            SELECT $1, b.batch_id,
+                   COALESCE((SELECT p.payable_id FROM platform.booking_payable p
+                              WHERE p.hotel_id = $1 ORDER BY p.created_at LIMIT 1),
+                            ${ABSENT_UUID}),
+                   'ADJUSTMENT', -1000
+              FROM b`,
+      values: [hotelId, n],
+    }),
+    updateColumn: 'settled',
+    updateSet: `settled = true`,
   },
 ];
 

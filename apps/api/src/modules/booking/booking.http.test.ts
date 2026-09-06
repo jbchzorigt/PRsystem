@@ -178,3 +178,74 @@ describe('a signed-in Guest reaches only their own bookings', () => {
     expect(refused.status).toBe(400);
   }, 120_000);
 });
+
+describe('the provider callback is trusted for nothing (PAY-DEC-005)', () => {
+  it('needs no session, and tells an unauthenticated caller nothing', async () => {
+    // A gateway holds no session, so the route is open — and therefore answers
+    // the same for a forged callback, an unknown invoice and a wrong signature.
+    for (const payload of [
+      { providerInvoiceId: 'qpay-inv-000001' },
+      { providerInvoiceId: 'qpay-inv-000001', signature: 'not-the-signature' },
+      { providerInvoiceId: 'unknown-invoice', signature: 'sim-QPAY-unknown-invoice' },
+    ]) {
+      const response = await call('POST', '/payments/callbacks/qpay', undefined, payload);
+      expect({ payload, status: response.status, outcome: response.body['outcome'] }).toEqual({
+        payload,
+        status: 200,
+        outcome: 'rejected',
+      });
+      // And nothing about which references exist.
+      expect(Object.keys(response.body)).toEqual(['outcome']);
+    }
+  }, 120_000);
+
+  it('refuses a provider it does not implement', async () => {
+    const response = await call('POST', '/payments/callbacks/paypal', undefined, {
+      providerInvoiceId: 'x',
+    });
+    expect(response.status).toBe(400);
+  }, 120_000);
+
+  it('refuses a callback with no invoice reference at all', async () => {
+    const response = await call('POST', '/payments/callbacks/khaan', undefined, {});
+    expect(response.status).toBe(400);
+  }, 120_000);
+});
+
+describe('the hotel-staff actions of doc 18 §3.3', () => {
+  const hotelId = '00000000-0000-4000-8000-0000000000aa';
+  const bookingId = '00000000-0000-4000-8000-0000000000bb';
+
+  it('refuses an anonymous caller', async () => {
+    for (const path of [
+      `/hotels/${hotelId}/bookings/${bookingId}/no-show`,
+      `/hotels/${hotelId}/bookings/${bookingId}/hotel-cancellation`,
+    ]) {
+      const response = await call('POST', path, undefined, { reason: 'x' });
+      expect({ path, status: response.status }).toEqual({ path, status: 401 });
+    }
+  }, 120_000);
+
+  it('refuses a Guest session: a no-show is not the guest’s to declare', async () => {
+    const guest = await signedInGuest();
+    for (const path of [
+      `/hotels/${hotelId}/bookings/${bookingId}/no-show`,
+      `/hotels/${hotelId}/bookings/${bookingId}/hotel-cancellation`,
+    ]) {
+      const response = await call('POST', path, guest.token, { reason: 'x' });
+      expect({ path, status: response.status }).toEqual({ path, status: 403 });
+    }
+  }, 120_000);
+
+  it('exposes no route that marks a refund successful (doc 18 §3.3)', async () => {
+    const guest = await signedInGuest();
+    for (const path of [
+      `/hotels/${hotelId}/bookings/${bookingId}/refund`,
+      `/hotels/${hotelId}/bookings/${bookingId}/refunds`,
+      `/guest/bookings/${bookingId}/refund`,
+    ]) {
+      const response = await call('POST', path, guest.token, {});
+      expect({ path, status: response.status }).toEqual({ path, status: 404 });
+    }
+  }, 120_000);
+});

@@ -116,6 +116,33 @@ export class BookingController {
     };
   }
 
+  @Post(':bookingId/payment-attempts/:attemptId/invoice')
+  @HttpCode(201)
+  @UseGuards(SessionGuard)
+  @ApiOperation({ summary: 'Open the provider invoice for the live attempt (PAY-DEC-005)' })
+  @ApiResponse({
+    status: 412,
+    description: 'PAYMENT_UNAVAILABLE: the gateway refused or is disabled',
+  })
+  async invoice(
+    @Param('bookingId') bookingIdParam: string,
+    @Param('attemptId') attemptIdParam: string,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<Record<string, unknown>> {
+    const opened = await this.bookings.issueInvoice(
+      {
+        bookingId: requireUuid(bookingIdParam, 'bookingId'),
+        attemptId: requireUuid(attemptIdParam, 'attemptId'),
+      },
+      this.asGuest(request),
+    );
+    return {
+      attemptId: opened.attemptId,
+      provider: opened.provider,
+      ...(opened.payUrl === undefined ? {} : { payUrl: opened.payUrl }),
+    };
+  }
+
   @Post(':bookingId/cancellation')
   @HttpCode(200)
   @UseGuards(SessionGuard)
@@ -179,6 +206,9 @@ function heldView(held: HeldBooking): Record<string, unknown> {
     holdExpiresAt: held.holdExpiresAt.toISOString(),
     nightCount: held.nightCount,
     totalAmountMnt: held.totalAmountMnt.toString(),
+    // doc 11 §5: the cancellation terms are shown before the guest pays.
+    cancellationPolicyVersion: held.cancellationPolicyVersion,
+    freeCancellationUntil: held.freeCancellationUntil.toISOString(),
     attempt: {
       attemptId: held.attempt.attemptId,
       provider: held.attempt.provider,

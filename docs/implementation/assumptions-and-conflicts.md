@@ -847,6 +847,74 @@ recorded so a reviewer can see where a judgement was made.
   check-in and the Phase 12 projection's own arithmetic. Counting a buffer against a category unit
   would subtract a fraction of a night from a whole-night inventory.
 
+### 3.18 Phase 14 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P14-1 — the commission contract has no application writer.** `PAY-DEC-001` requires an
+  explicit, negotiated rate per hotel and refuses any default. doc 18 §5 names no Operation
+  permission for setting one, and a role the requirements do not grant is a role this phase will not
+  invent — so `hotel_commission_contract` grants `SELECT` to both runtime logins and nothing else,
+  and a contract reaches the platform through the restricted configuration principal, the way the
+  signed agreement it records does. What *is* implemented and gated is the operative rule: a hotel
+  with no `ACTIVE` contract cannot take an online booking payment at all. An Operation surface for
+  administering rates needs a permission doc 18 does not yet name.
+- **A-P14-2 — `planned_checkin_at` is the start of the arrival date, hotel-local.** doc 09 §12
+  refers to a confirmed booking's `planned_checkin_at`, and no approved document configures a
+  standard check-in hour. The only instant the platform actually knows is the beginning of the
+  booked arrival date in the hotel's own timezone, which is also the correct lower bound for doc 05
+  §19's backdate guard. `PAY-DEC-007`'s free-cancellation deadline is 24 hours before it, and the
+  no-show cutoff is that same date's `23:59:59`. A configured check-in hour would move the
+  cancellation deadline later and is a P1 configuration item, not an assumption to invent here.
+- **A-P14-3 — the commission base moves only when money moves.** doc 11 §3 makes the base the room
+  charge *actually retained*, and doc 11 §5 keeps the refund on its own axis until a verified
+  provider result completes it. A cancellation therefore raises the obligation and puts the payable
+  `HELD`; it does not reduce the base against money the guest has not yet received. The base shrinks
+  in exactly one place — the transaction that records the provider's confirmed refund — and the
+  differences are posted as their own ledger events rather than edited into the earlier ones.
+- **A-P14-4 — `ROUND_HALF_UP` is a database CHECK, not only a convention.**
+  `commission_mnt = (retained_mnt * commission_rate_bps + 5000) / 10000` on non-negative bigints is
+  exactly half-up, so the constraint recomputes what the application wrote. A unit test asserts the
+  two agree across the tie cases, which is what keeps them from drifting.
+- **A-P14-5 — the gateway fee cannot be deducted, because the formula has no term for it.**
+  `BK-DEC-011` and `PAY-DEC-004` make the provider fee the platform's cost. `hotel_payable_mnt =
+  retained_mnt - commission_mnt` is a CHECK with no fee term, so no application mistake can subtract
+  it from a payout; the fee appears on its own `PROVIDER_FEE` ledger line and in the platform's own
+  net result.
+- **A-P14-6 — a payout batch is opened only when it pays something.** `PAY-DEC-009` deducts a
+  negative adjustment from *the next payout*, and where there is no next payout it becomes a
+  separate receivable. A batch whose lines net to zero or less would be a transfer that never
+  happened, so none is opened: the `ADJUSTMENT_DUE` payables stand as the receivable on their own
+  rows until a later batch has something to deduct them from.
+- **A-P14-7 — the worker may read the hotel row.** The `D+1 12:00` batch is derived in the hotel's
+  own timezone and eligibility is filed under its own calendar day, neither of which the job can
+  compute without `platform.hotel`. `prsystem_worker` therefore holds `SELECT` on it, confined by
+  RLS to the tenant it is already settling.
+- **A-P14-8 — a callback names an invoice and never a tenant.** A provider holds no session and no
+  hotel, so `booking_attempt_of_invoice` resolves the hotel on the server through the same narrow
+  `SECURITY DEFINER` idiom Phase 13 uses for a category. It deliberately finds an attempt in *any*
+  state, because `PAY-DEC-006` is precisely about the callbacks that arrive after one has expired or
+  been superseded.
+- **A-P14-9 — `booking_confirmed_has_time` was an equivalence and is now an implication.** Phase 13
+  wrote it as "the state is one of `CONFIRMED`/`CHECKED_IN`/`COMPLETED` **iff** `confirmed_at` is
+  set", which no Phase 13 path could violate. The first Phase 14 path to reach it — a guest
+  cancelling a *paid* booking — did: the moment the state left the set, the constraint demanded that
+  the confirmation had never happened. Migration 0015 restates it as the implication the
+  requirements actually make, so a terminal booking keeps the instant it was confirmed at.
+- **A-P14-10 — the platform's central-account settlement stays gated.** doc 11 §12 makes the legal
+  and contractual basis for holding a third party's money an external gate. `HotelPayoutPort`
+  (EXT-07) has a disabled production adapter and a deterministic simulator, so every payout in this
+  phase is measured against the simulator and no real transfer is possible.
+- **A-P14-11 — a hotel cancellation of a real booking is now reachable.** Phase 09's overdue-conflict
+  resolution records `CANCELLED_HOTEL` on `booking_fulfillment_conflict` and, as its own comment
+  says, leaves applying it to the booking module. Phase 14 adds the `booking.cancelled_hotel`
+  command so `PAY-DEC-008`'s "commission base zero on hotel-caused cancellation" is reachable and
+  gated. Wiring the conflict resolution itself to that command is not in this phase's scope and
+  remains open.
+
+---
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

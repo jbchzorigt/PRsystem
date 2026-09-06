@@ -270,6 +270,14 @@ export class StayService extends StayServiceBase {
             readyNotBefore: readyNotBefore(now, stay.cleaningBufferMinutes).toISOString(),
           },
         });
+        // doc 11 §8: the booking this stay fulfilled is completed in the same
+        // transaction, which is what makes its retained room charge eligible
+        // for the `D+1` payout — a checkout recorded without it would leave the
+        // hotel unpaid for a stay it has already provided.
+        await this.deps.bookingFulfilment.completeAtCheckout(uow, {
+          stayId: stay.stayId,
+          actorRef: gate.principal.accountId,
+        });
         // doc 02 §3.2: the room needs cleaning; the minibar and the catalog learn
         // the stay ended, in this transaction.
         await this.housekeeping.markNeedsCleaning(uow, stay.roomId, stay.stayId, now);

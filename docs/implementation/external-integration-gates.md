@@ -37,7 +37,7 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 | EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 | 20 |
 | EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 — canonical port and simulator, geocoding gated; distance is server-side and provider-free | 20 |
-| EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 | 20 |
+| EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 — canonical port and simulator, execution gated | 20 |
 | EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 | 20 |
 | EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 | 20 |
 | EXT-10 | Police security | Human-rights and security assessment, DR, penetration test | **BLOCKED** | 18 | 20 |
@@ -199,7 +199,13 @@ payment-service confirmation before production (doc 09 §9.5, doc 11 §12).
 adjustment and payout batch — is built and tested (`PAY-DEC-008`, `PAY-DEC-009`). Only the payout
 **execution** adapter is gated. `D+1 12:00 Asia/Ulaanbaatar` batching runs against the simulator.
 
-**Consumed by.** Phase 14.
+Phase 14 implements this as `HotelPayoutPort` (`packages/ports/src/hotel-payout.port.ts`): the
+production adapter is `UnavailableHotelPayout`, which answers `DISABLED` and makes no network call,
+and `SimulatedHotelPayout` is what local, CI and every gate in this phase run against. A failed
+transfer creates a new `attempt_no` rather than rewriting the old one, so the behaviour the gate will
+eventually be measured against is already the tested one.
+
+**Consumed by.** Phase 14 — canonical port and simulator; the production adapter stays disabled.
 
 ---
 

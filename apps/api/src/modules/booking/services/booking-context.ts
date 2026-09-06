@@ -1,9 +1,18 @@
 import type { Pool } from 'pg';
+import type { SubscriptionStatePort } from '@prsystem/authz';
 import type { PaymentGateways } from '@prsystem/ports';
 import { ApiError, newCorrelationId } from '@prsystem/contracts';
 import type { TenantContext, UnitOfWork } from '@prsystem/db';
 import { PLATFORM_SCOPE, claimIdempotencyKey, withTenantTransaction } from '@prsystem/db';
 import type { TariffService } from '../../catalog/services/tariff.service';
+import type {
+  CommandActor,
+  HotelGate,
+  RequestContext as IamRequestContext,
+} from '../../iam/services/iam-context';
+import { gateHotelScope, recordAuthorizationDenial } from '../../iam/services/iam-context';
+import { AuthorizationDenied, authorizeCommand } from '../../iam/services/authorization.service';
+import type { SettlementPort } from '../contracts/settlement';
 
 /**
  * The two transaction shapes the booking module runs in (doc 09 §§7–10).
@@ -27,9 +36,21 @@ export interface BookingDependencies {
   readonly tariffs: TariffService;
   /** EXT-03 / EXT-04. Simulated outside production; disabled in it. */
   readonly payments: PaymentGateways;
+  /**
+   * The money a booking makes, from the module that owns the ledger (Phase 14).
+   * A confirmation that cannot reach it does not confirm.
+   */
+  readonly settlement: SettlementPort;
+  /**
+   * The package and subscription gate the Phase 04 pipeline evaluates for the
+   * hotel-staff commands of doc 18 §3.3 — no-show and hotel cancellation.
+   */
+  readonly subscription: SubscriptionStatePort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
+
+export type { CommandActor, HotelGate };
 
 export interface RequestContext {
   readonly correlationId: string;
@@ -50,6 +71,24 @@ export function hotelScope(hotelId: string, request: RequestContext): TenantCont
     hotelId,
     realm: 'guest',
     actorRef: request.accountId ?? 'anonymous',
+    ...(request.accountId === undefined ? {} : { accountId: request.accountId }),
+    correlationId: request.correlationId,
+  };
+}
+
+/**
+ * The hotel's own scope for a *staff* command (doc 18 §3.3).
+ *
+ * A no-show and a hotel cancellation are the hotel's actions, not the guest's,
+ * so they run in the hotel realm and are evaluated by the Phase 04 pipeline
+ * against a named permission — never by the guest-realm scope a booking command
+ * uses.
+ */
+export function staffScope(hotelId: string, request: RequestContext): TenantContext {
+  return {
+    hotelId,
+    realm: 'hotel',
+    actorRef: request.accountId ?? 'system',
     ...(request.accountId === undefined ? {} : { accountId: request.accountId }),
     correlationId: request.correlationId,
   };
@@ -96,6 +135,15 @@ export async function claim(
   }
 }
 
+/** The hotel-local time zone every hotel carries (doc 05 §6). */
+export async function hotelTimeZone(uow: UnitOfWork): Promise<string> {
+  const result = await uow.query<{ timezone: string }>(
+    `SELECT timezone FROM platform.hotel WHERE hotel_id = $1`,
+    [uow.context.hotelId],
+  );
+  return result.rows[0]?.timezone ?? 'Asia/Ulaanbaatar';
+}
+
 export function sqlState(error: unknown): string | undefined {
   if (typeof error === 'object' && error !== null && 'code' in error) {
     const code = (error as { code?: unknown }).code;
@@ -133,5 +181,50 @@ export abstract class BookingServiceBase {
     work: (uow: UnitOfWork) => Promise<T>,
   ): Promise<T> {
     return withTenantTransaction(this.deps.pool, bookerScope(request), work);
+  }
+
+  /**
+   * A hotel-staff command, gated the way every other module gates one: the
+   * Phase 04 pipeline evaluated against the named action *inside* the
+   * transaction that applies the effect, on the rows it has just locked
+   * (CLAUDE.md §4).
+   */
+  protected async runAuthorizedHotelCommand<T>(
+    actor: CommandActor,
+    target: { hotelId: string },
+    permission: string,
+    request: RequestContext,
+    work: (uow: UnitOfWork, gate: HotelGate, authorize: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    const iamRequest: IamRequestContext = { ...request, accountId: actor.principal.accountId };
+    const gate = await gateHotelScope(this.deps.pool, actor, target, iamRequest);
+    try {
+      return await withTenantTransaction(
+        this.deps.pool,
+        staffScope(target.hotelId, iamRequest),
+        (uow) =>
+          work(uow, gate, async () => {
+            await authorizeCommand({
+              uow,
+              endpointRealm: 'hotel',
+              permission,
+              principal: gate.principal,
+              target,
+              subscription: this.deps.subscription,
+              sessionId: gate.sessionId,
+              ...(gate.principal.stepUpAt === undefined
+                ? {}
+                : { stepUpAt: gate.principal.stepUpAt }),
+              targetType: 'hotel',
+              targetRef: target.hotelId,
+            });
+          }),
+      );
+    } catch (error) {
+      if (error instanceof AuthorizationDenied) {
+        await recordAuthorizationDenial(this.deps.pool, target.hotelId, iamRequest, error);
+      }
+      throw error;
+    }
   }
 }

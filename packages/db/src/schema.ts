@@ -7640,6 +7640,7 @@ export const booking = platform
         .notNull()
         .default(sql`gen_random_uuid()`),
       bookingRef: text('booking_ref').notNull(),
+      cancellationPolicyVersion: integer('cancellation_policy_version'),
       categoryId: uuid('category_id').notNull(),
       checkInDate: date('check_in_date').notNull(),
       checkOutDate: date('check_out_date').notNull(),
@@ -7647,6 +7648,7 @@ export const booking = platform
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .default(sql`now()`),
+      freeCancellationUntil: timestamp('free_cancellation_until', { withTimezone: true }),
       fulfilledStayId: uuid('fulfilled_stay_id'),
       holdExpiresAt: timestamp('hold_expires_at', { withTimezone: true }).notNull(),
       holdState: text('hold_state')
@@ -7691,12 +7693,16 @@ export const booking = platform
         foreignColumns: [roomCategory.hotelId, roomCategory.categoryId],
       }).onDelete('restrict'),
       check(
+        'booking_confirmed_has_policy',
+        sql`((state <> ALL (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) OR ((cancellation_policy_version IS NOT NULL) AND (free_cancellation_until IS NOT NULL)))`,
+      ),
+      check(
         'booking_confirmed_has_snapshot',
         sql`((state <> ALL (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) OR ((rate_snapshot_id IS NOT NULL) AND (unit_rate_mnt IS NOT NULL) AND (total_amount_mnt IS NOT NULL) AND (pricing_config_version IS NOT NULL)))`,
       ),
       check(
         'booking_confirmed_has_time',
-        sql`((state = ANY (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) = (confirmed_at IS NOT NULL))`,
+        sql`((state <> ALL (ARRAY['CONFIRMED'::text, 'CHECKED_IN'::text, 'COMPLETED'::text])) OR (confirmed_at IS NOT NULL))`,
       ),
       check(
         'booking_fulfilled_shape',
@@ -7731,6 +7737,10 @@ export const booking = platform
       check(
         'booking_payment_state_known',
         sql`(payment_state = ANY (ARRAY['PENDING'::text, 'PAID'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      check(
+        'booking_policy_version_positive',
+        sql`((cancellation_policy_version IS NULL) OR (cancellation_policy_version > 0))`,
       ),
       check('booking_ref_shape', sql`(booking_ref ~ '^[A-Z0-9]{8,12}$'::text)`),
       check(
@@ -7896,6 +7906,7 @@ export const bookingPaymentAttempt = platform
       hotelId: uuid('hotel_id').notNull(),
       provider: text('provider').notNull(),
       providerInvoiceId: text('provider_invoice_id'),
+      providerPaymentId: text('provider_payment_id'),
       revision: integer('revision')
         .notNull()
         .default(sql`0`),
@@ -7916,6 +7927,10 @@ export const bookingPaymentAttempt = platform
         'booking_payment_attempt_provider_known',
         sql`(provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text]))`,
       ),
+      check(
+        'booking_payment_attempt_payment_shape',
+        sql`((provider_payment_id IS NULL) OR ((length(provider_payment_id) >= 1) AND (length(provider_payment_id) <= 200)))`,
+      ),
       check('booking_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
       check(
         'booking_payment_attempt_settled_shape',
@@ -7935,6 +7950,14 @@ export const bookingPaymentAttempt = platform
       uniqueIndex('booking_payment_attempt_one_active_uq')
         .on(table.bookingId)
         .where(sql`state = 'ACTIVE'::text`),
+      uniqueIndex('booking_payment_attempt_payment_uq')
+        .on(table.provider, table.providerPaymentId)
+        .where(sql`provider_payment_id IS NOT NULL`),
+      pgPolicy('callback_dispatch_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(provider_invoice_id IS NOT NULL)`,
+      }),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
@@ -7985,6 +8008,516 @@ export const bookingEvent = platform
         sql`((length(event_type) >= 1) AND (length(event_type) <= 80))`,
       ),
       index('booking_event_booking_idx').on(table.bookingId, table.occurredAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The explicit, negotiated commission rate a hotel sells online under
+ * (`PAY-DEC-001`, `BK-DEC-008`). `commission_rate_bps` has no default because
+ * the decision refuses one: a hotel with no active contract takes no online
+ * payment at all.
+ */
+export const hotelCommissionContract = platform
+  .table(
+    'hotel_commission_contract',
+    {
+      cancellationPolicyVersion: integer('cancellation_policy_version').notNull(),
+      commissionRateBps: integer('commission_rate_bps').notNull(),
+      contractId: uuid('contract_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      contractVersion: integer('contract_version').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+      effectiveTo: timestamp('effective_to', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      partyType: text('party_type').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'hotel_commission_contract_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('hotel_commission_contract_identity_uq').on(table.hotelId, table.contractId),
+      check(
+        'hotel_commission_contract_party_known',
+        sql`(party_type = ANY (ARRAY['INDIVIDUAL'::text, 'ORGANISATION'::text, 'NEGOTIATED'::text]))`,
+      ),
+      check(
+        'hotel_commission_contract_rate_bounded',
+        sql`((commission_rate_bps >= 0) AND (commission_rate_bps <= 10000))`,
+      ),
+      check('hotel_commission_contract_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'hotel_commission_contract_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'SUPERSEDED'::text, 'TERMINATED'::text]))`,
+      ),
+      check(
+        'hotel_commission_contract_version_positive',
+        sql`((contract_version > 0) AND (cancellation_policy_version > 0))`,
+      ),
+      unique('hotel_commission_contract_version_uq').on(table.hotelId, table.contractVersion),
+      check(
+        'hotel_commission_contract_window',
+        sql`((effective_to IS NULL) OR (effective_to > effective_from))`,
+      ),
+      uniqueIndex('hotel_commission_contract_active_uq')
+        .on(table.hotelId)
+        .where(sql`state = 'ACTIVE'::text`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * What one booking earns the hotel, with the contract snapshot it was settled
+ * under. `retained = gross - refunded`, `commission = ROUND_HALF_UP(retained x
+ * rate)` and `payable = retained - commission` are CHECKs on the row
+ * (`PAY-DEC-008`); the provider fee is here and is a term of none of them
+ * (`BK-DEC-011`).
+ */
+export const bookingPayable = platform
+  .table(
+    'booking_payable',
+    {
+      bookingId: uuid('booking_id').notNull(),
+      commissionMnt: bigint('commission_mnt', { mode: 'bigint' }).notNull(),
+      commissionRateBps: integer('commission_rate_bps').notNull(),
+      contractId: uuid('contract_id').notNull(),
+      contractVersion: integer('contract_version').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      eligibleAt: timestamp('eligible_at', { withTimezone: true }),
+      eligibleLocalDate: date('eligible_local_date'),
+      grossPaidMnt: bigint('gross_paid_mnt', { mode: 'bigint' }).notNull(),
+      holdReason: text('hold_reason'),
+      hotelId: uuid('hotel_id').notNull(),
+      hotelPayableMnt: bigint('hotel_payable_mnt', { mode: 'bigint' }).notNull(),
+      paidOutMnt: bigint('paid_out_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      payableId: uuid('payable_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      payoutState: text('payout_state')
+        .notNull()
+        .default(sql`'NOT_ELIGIBLE'::text`),
+      providerFeeMnt: bigint('provider_fee_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      refundedMnt: bigint('refunded_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      retainedMnt: bigint('retained_mnt', { mode: 'bigint' }).notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+    },
+    (table) => [
+      check(
+        'booking_payable_adjustment_when_overpaid',
+        sql`((payout_state <> 'ADJUSTMENT_DUE'::text) OR (hotel_payable_mnt < paid_out_mnt))`,
+      ),
+      check(
+        'booking_payable_amounts_non_negative',
+        sql`((gross_paid_mnt >= 0) AND (refunded_mnt >= 0) AND (provider_fee_mnt >= 0) AND (paid_out_mnt >= 0))`,
+      ),
+      foreignKey({
+        name: 'booking_payable_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      unique('booking_payable_booking_uq').on(table.bookingId),
+      check(
+        'booking_payable_commission_rounded',
+        sql`(commission_mnt = (((retained_mnt * commission_rate_bps) + 5000) / 10000))`,
+      ),
+      foreignKey({
+        name: 'booking_payable_contract_fkey',
+        columns: [table.hotelId, table.contractId],
+        foreignColumns: [hotelCommissionContract.hotelId, hotelCommissionContract.contractId],
+      }).onDelete('restrict'),
+      check(
+        'booking_payable_eligible_shape',
+        sql`((eligible_at IS NULL) = (eligible_local_date IS NULL))`,
+      ),
+      check(
+        'booking_payable_eligible_when_due',
+        sql`((payout_state <> 'ELIGIBLE'::text) OR ((eligible_at IS NOT NULL) AND (hotel_payable_mnt > paid_out_mnt)))`,
+      ),
+      check(
+        'booking_payable_hold_reason_bounded',
+        sql`((hold_reason IS NULL) OR ((length(hold_reason) >= 1) AND (length(hold_reason) <= 200)))`,
+      ),
+      check(
+        'booking_payable_hotel_share',
+        sql`(hotel_payable_mnt = (retained_mnt - commission_mnt))`,
+      ),
+      unique('booking_payable_identity_uq').on(table.hotelId, table.payableId),
+      check(
+        'booking_payable_rate_bounded',
+        sql`((commission_rate_bps >= 0) AND (commission_rate_bps <= 10000))`,
+      ),
+      check('booking_payable_refund_within_capture', sql`(refunded_mnt <= gross_paid_mnt)`),
+      check('booking_payable_retained_base', sql`(retained_mnt = (gross_paid_mnt - refunded_mnt))`),
+      check('booking_payable_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'booking_payable_state_known',
+        sql`(payout_state = ANY (ARRAY['NOT_ELIGIBLE'::text, 'ELIGIBLE'::text, 'HELD'::text, 'BATCHED'::text, 'PAID'::text, 'FAILED'::text, 'ADJUSTMENT_DUE'::text]))`,
+      ),
+      index('booking_payable_due_idx')
+        .on(table.payoutState, table.eligibleLocalDate)
+        .where(sql`payout_state = ANY (ARRAY['ELIGIBLE'::text, 'ADJUSTMENT_DUE'::text])`),
+      pgPolicy('payout_dispatch_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(payout_state = ANY (ARRAY['ELIGIBLE'::text, 'ADJUSTMENT_DUE'::text]))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The append-only money ledger of doc 11 §9. `source_ref` is unique per event
+ * type, so a duplicated callback, a retried job or a replayed batch posts once.
+ */
+export const bookingLedgerEvent = platform
+  .table(
+    'booking_ledger_event',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      bankReference: text('bank_reference'),
+      bookingId: uuid('booking_id').notNull(),
+      currency: text('currency')
+        .notNull()
+        .default(sql`'MNT'::text`),
+      eventType: text('event_type').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      ledgerEventId: uuid('ledger_event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      payableId: uuid('payable_id'),
+      provider: text('provider'),
+      providerPaymentId: text('provider_payment_id'),
+      providerRefundId: text('provider_refund_id'),
+      recordedAt: timestamp('recorded_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      sourceRef: text('source_ref').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'booking_ledger_event_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      check('booking_ledger_event_currency_known', sql`(currency = 'MNT'::text)`),
+      foreignKey({
+        name: 'booking_ledger_event_payable_fkey',
+        columns: [table.hotelId, table.payableId],
+        foreignColumns: [bookingPayable.hotelId, bookingPayable.payableId],
+      }).onDelete('restrict'),
+      check(
+        'booking_ledger_event_provider_known',
+        sql`((provider IS NULL) OR (provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text])))`,
+      ),
+      check(
+        'booking_ledger_event_reference_bounded',
+        sql`((bank_reference IS NULL) OR ((length(bank_reference) >= 1) AND (length(bank_reference) <= 120)))`,
+      ),
+      check(
+        'booking_ledger_event_source_bounded',
+        sql`((length(source_ref) >= 1) AND (length(source_ref) <= 200))`,
+      ),
+      check(
+        'booking_ledger_event_type_known',
+        sql`(event_type = ANY (ARRAY['PAYMENT'::text, 'COMMISSION'::text, 'HOTEL_PAYABLE'::text, 'PROVIDER_FEE'::text, 'REFUND'::text, 'ADJUSTMENT'::text, 'PAYOUT'::text]))`,
+      ),
+      index('booking_ledger_event_booking_idx').on(table.bookingId, table.occurredAt),
+      uniqueIndex('booking_ledger_event_cause_uq').on(table.eventType, table.sourceRef),
+      index('booking_ledger_event_payable_idx').on(table.payableId, table.eventType),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The refund axis, which only a verified provider result moves (`PAY-DEC-007`).
+ * A refund naming a payable reduces the commission base; a refund of a late or
+ * duplicate capture names none and reduces nothing.
+ */
+export const bookingRefund = platform
+  .table(
+    'booking_refund',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      bookingId: uuid('booking_id').notNull(),
+      failureCode: text('failure_code'),
+      hotelId: uuid('hotel_id').notNull(),
+      payableId: uuid('payable_id'),
+      provider: text('provider').notNull(),
+      providerPaymentId: text('provider_payment_id'),
+      providerRefundId: text('provider_refund_id'),
+      reason: text('reason').notNull(),
+      refundId: uuid('refund_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      sourceRef: text('source_ref').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'REQUIRED'::text`),
+    },
+    (table) => [
+      check('booking_refund_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'booking_refund_booking_fkey',
+        columns: [table.hotelId, table.bookingId],
+        foreignColumns: [booking.hotelId, booking.bookingId],
+      }).onDelete('restrict'),
+      unique('booking_refund_cause_uq').on(table.bookingId, table.sourceRef),
+      check(
+        'booking_refund_completed_has_reference',
+        sql`((state <> 'REFUNDED'::text) OR (provider_refund_id IS NOT NULL))`,
+      ),
+      check(
+        'booking_refund_failure_shape',
+        sql`((failure_code IS NULL) OR ((length(failure_code) >= 1) AND (length(failure_code) <= 80)))`,
+      ),
+      foreignKey({
+        name: 'booking_refund_payable_fkey',
+        columns: [table.hotelId, table.payableId],
+        foreignColumns: [bookingPayable.hotelId, bookingPayable.payableId],
+      }).onDelete('restrict'),
+      check(
+        'booking_refund_provider_known',
+        sql`(provider = ANY (ARRAY['QPAY'::text, 'KHAAN'::text]))`,
+      ),
+      check(
+        'booking_refund_reason_known',
+        sql`(reason = ANY (ARRAY['GUEST_CANCELLATION'::text, 'LATE_CANCELLATION_BALANCE'::text, 'NO_SHOW_BALANCE'::text, 'HOTEL_CANCELLATION'::text, 'LATE_PAYMENT_AFTER_HOLD'::text, 'DUPLICATE_CAPTURE'::text]))`,
+      ),
+      check('booking_refund_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'booking_refund_settled_shape',
+        sql`((state = ANY (ARRAY['REFUNDED'::text, 'FAILED'::text])) = (settled_at IS NOT NULL))`,
+      ),
+      check(
+        'booking_refund_source_bounded',
+        sql`((length(source_ref) >= 1) AND (length(source_ref) <= 200))`,
+      ),
+      check(
+        'booking_refund_state_known',
+        sql`(state = ANY (ARRAY['REQUIRED'::text, 'PENDING'::text, 'REFUNDED'::text, 'FAILED'::text]))`,
+      ),
+      index('booking_refund_open_idx')
+        .on(table.state, table.requestedAt)
+        .where(sql`state = ANY (ARRAY['REQUIRED'::text, 'PENDING'::text])`),
+      uniqueIndex('booking_refund_provider_refund_uq')
+        .on(table.providerRefundId)
+        .where(sql`provider_refund_id IS NOT NULL`),
+      pgPolicy('refund_dispatch_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = ANY (ARRAY['REQUIRED'::text, 'PENDING'::text]))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * One `D+1 12:00 Asia/Ulaanbaatar` payout attempt (`PAY-DEC-009`). A retry is a
+ * new `attempt_no`, never an overwrite, and the totals CHECK is what makes
+ * "the batch reconciles" a property of the row.
+ */
+export const payoutBatch = platform
+  .table(
+    'payout_batch',
+    {
+      adjustmentMnt: bigint('adjustment_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      attemptNo: integer('attempt_no')
+        .notNull()
+        .default(sql`1`),
+      bankReference: text('bank_reference'),
+      batchId: uuid('batch_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      batchLocalDate: date('batch_local_date').notNull(),
+      commissionMnt: bigint('commission_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      failureCode: text('failure_code'),
+      grossPaidMnt: bigint('gross_paid_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      hotelId: uuid('hotel_id').notNull(),
+      hotelPayableMnt: bigint('hotel_payable_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      refundedMnt: bigint('refunded_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      retainedMnt: bigint('retained_mnt', { mode: 'bigint' })
+        .notNull()
+        .default(sql`0`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+      settledAt: timestamp('settled_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'OPEN'::text`),
+    },
+    (table) => [
+      check('payout_batch_adjustment_never_adds', sql`(adjustment_mnt <= 0)`),
+      check(
+        'payout_batch_amounts_non_negative',
+        sql`((gross_paid_mnt >= 0) AND (refunded_mnt >= 0) AND (retained_mnt >= 0) AND (commission_mnt >= 0))`,
+      ),
+      check('payout_batch_attempt_positive', sql`(attempt_no > 0)`),
+      unique('payout_batch_attempt_uq').on(table.hotelId, table.batchLocalDate, table.attemptNo),
+      check(
+        'payout_batch_failure_bounded',
+        sql`((failure_code IS NULL) OR ((length(failure_code) >= 1) AND (length(failure_code) <= 80)))`,
+      ),
+      foreignKey({
+        name: 'payout_batch_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('payout_batch_identity_uq').on(table.hotelId, table.batchId),
+      check(
+        'payout_batch_paid_has_reference',
+        sql`((state <> 'PAID'::text) OR (bank_reference IS NOT NULL))`,
+      ),
+      check(
+        'payout_batch_reconciles',
+        sql`(hotel_payable_mnt = ((retained_mnt - commission_mnt) + adjustment_mnt))`,
+      ),
+      check(
+        'payout_batch_reference_bounded',
+        sql`((bank_reference IS NULL) OR ((length(bank_reference) >= 1) AND (length(bank_reference) <= 120)))`,
+      ),
+      check('payout_batch_retained_base', sql`(retained_mnt = (gross_paid_mnt - refunded_mnt))`),
+      check('payout_batch_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'payout_batch_settled_shape',
+        sql`((state = ANY (ARRAY['PAID'::text, 'FAILED'::text])) = (settled_at IS NOT NULL))`,
+      ),
+      check(
+        'payout_batch_state_known',
+        sql`(state = ANY (ARRAY['OPEN'::text, 'SUBMITTED'::text, 'PAID'::text, 'FAILED'::text]))`,
+      ),
+      index('payout_batch_open_idx').on(table.hotelId, table.state, table.scheduledAt),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * The lines of a batch. The partial unique index on settled `PAYABLE` lines is
+ * doc 11 §8's "one booking payable enters exactly one successful payout".
+ */
+export const payoutBatchItem = platform
+  .table(
+    'payout_batch_item',
+    {
+      amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
+      batchId: uuid('batch_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      itemId: uuid('item_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      kind: text('kind').notNull(),
+      payableId: uuid('payable_id').notNull(),
+      settled: boolean('settled')
+        .notNull()
+        .default(sql`false`),
+    },
+    (table) => [
+      check(
+        'payout_batch_item_adjustment_negative',
+        sql`((kind <> 'ADJUSTMENT'::text) OR (amount_mnt < 0))`,
+      ),
+      foreignKey({
+        name: 'payout_batch_item_batch_fkey',
+        columns: [table.hotelId, table.batchId],
+        foreignColumns: [payoutBatch.hotelId, payoutBatch.batchId],
+      }).onDelete('restrict'),
+      check(
+        'payout_batch_item_kind_known',
+        sql`(kind = ANY (ARRAY['PAYABLE'::text, 'ADJUSTMENT'::text]))`,
+      ),
+      foreignKey({
+        name: 'payout_batch_item_payable_fkey',
+        columns: [table.hotelId, table.payableId],
+        foreignColumns: [bookingPayable.hotelId, bookingPayable.payableId],
+      }).onDelete('restrict'),
+      check(
+        'payout_batch_item_payable_positive',
+        sql`((kind <> 'PAYABLE'::text) OR (amount_mnt > 0))`,
+      ),
+      unique('payout_batch_item_uq').on(table.batchId, table.payableId, table.kind),
+      index('payout_batch_item_batch_idx').on(table.batchId),
+      uniqueIndex('payout_batch_item_settled_payable_uq')
+        .on(table.payableId)
+        .where(sql`settled AND (kind = 'PAYABLE'::text)`),
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
@@ -8112,4 +8645,11 @@ export const DECLARED_TABLES = [
   categoryNightInventory,
   bookingPaymentAttempt,
   bookingEvent,
+  // Phase 14.
+  hotelCommissionContract,
+  bookingPayable,
+  bookingLedgerEvent,
+  bookingRefund,
+  payoutBatch,
+  payoutBatchItem,
 ] as const;

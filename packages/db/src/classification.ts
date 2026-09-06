@@ -667,6 +667,42 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: 'carries hotel_id; the append-only booking history an expiry and a cancellation differ in',
   },
   {
+    schema: 'platform',
+    table: 'hotel_commission_contract',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; the hotel's own negotiated commission rate, with no platform default (PAY-DEC-001)",
+  },
+  {
+    schema: 'platform',
+    table: 'booking_payable',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; what one booking earns the hotel, with the contract snapshot it settled under',
+  },
+  {
+    schema: 'platform',
+    table: 'booking_ledger_event',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; the append-only money ledger of the hotel's own bookings (doc 11 §9)",
+  },
+  {
+    schema: 'platform',
+    table: 'booking_refund',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the refund axis, which only a verified provider result moves (PAY-DEC-007)',
+  },
+  {
+    schema: 'platform',
+    table: 'payout_batch',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; one D+1 payout attempt against the hotel's own account (PAY-DEC-009)",
+  },
+  {
+    schema: 'platform',
+    table: 'payout_batch_item',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the lines a payout attempt is made of, one settled per payable',
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

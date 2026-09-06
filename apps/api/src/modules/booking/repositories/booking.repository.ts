@@ -45,6 +45,9 @@ export interface BookingRow {
   readonly refundState: RefundState;
   readonly fulfilledStayId: string | null;
   readonly terminalReason: string | null;
+  /** doc 11 §5: the policy the guest was shown before paying. */
+  readonly cancellationPolicyVersion: number | null;
+  readonly freeCancellationUntil: Date | null;
   readonly revision: number;
 }
 
@@ -53,6 +56,8 @@ export interface AttemptRow {
   readonly bookingId: string;
   readonly provider: 'QPAY' | 'KHAAN';
   readonly providerInvoiceId: string | null;
+  /** doc 11 §4.10: the captured transaction, unique to this attempt. */
+  readonly providerPaymentId: string | null;
   readonly amountMnt: bigint;
   readonly state: AttemptState;
   readonly expiresAt: Date;
@@ -71,9 +76,9 @@ const BOOKING_COLUMNS = `booking_id, hotel_id, booking_ref, category_id, booker_
                          rate_snapshot_id, unit_rate_mnt, total_amount_mnt,
                          pricing_config_version, state, hold_expires_at, hold_state,
                          payment_state, refund_state, fulfilled_stay_id, terminal_reason,
-                         revision`;
-const ATTEMPT_COLUMNS = `attempt_id, booking_id, provider, provider_invoice_id, amount_mnt,
-                         state, expires_at, revision`;
+                         cancellation_policy_version, free_cancellation_until, revision`;
+const ATTEMPT_COLUMNS = `attempt_id, booking_id, provider, provider_invoice_id,
+                         provider_payment_id, amount_mnt, state, expires_at, revision`;
 
 export class BookingRepository {
   constructor(private readonly uow: UnitOfWork) {}
@@ -104,6 +109,16 @@ export class BookingRepository {
     return mapBooking(result.rows[0]);
   }
 
+  /** The booking a stay fulfilled, locked. `BK-DEC-013` makes it at most one. */
+  async lockByStay(stayId: string): Promise<BookingRow | undefined> {
+    const result = await this.uow.query<Record<string, unknown>>(
+      `SELECT ${BOOKING_COLUMNS} FROM platform.booking
+        WHERE fulfilled_stay_id = $1 FOR UPDATE`,
+      [stayId],
+    );
+    return mapBooking(result.rows[0]);
+  }
+
   async forBooker(bookerAccountId: string, limit: number): Promise<readonly BookingRow[]> {
     const result = await this.uow.query<Record<string, unknown>>(
       `SELECT ${BOOKING_COLUMNS} FROM platform.booking
@@ -129,13 +144,16 @@ export class BookingRepository {
     checkOutDate: Date;
     nightCount: number;
     holdExpiresAt: Date;
+    cancellationPolicyVersion: number;
+    freeCancellationUntil: Date;
   }): Promise<BookingRow> {
     const result = await this.uow.query<Record<string, unknown>>(
       `INSERT INTO platform.booking
          (booking_id, hotel_id, booking_ref, category_id, booker_account_id, staying_guest_name,
-          staying_guest_phone_token, check_in_date, check_out_date, night_count, hold_expires_at)
+          staying_guest_phone_token, check_in_date, check_out_date, night_count, hold_expires_at,
+          cancellation_policy_version, free_cancellation_until)
        VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7::text, $8::date, $9::date,
-               $10, $11::timestamptz)
+               $10, $11::timestamptz, $12::integer, $13::timestamptz)
        RETURNING ${BOOKING_COLUMNS}`,
       [
         input.bookingId,
@@ -149,6 +167,8 @@ export class BookingRepository {
         toDateString(input.checkOutDate),
         input.nightCount,
         input.holdExpiresAt,
+        input.cancellationPolicyVersion,
+        input.freeCancellationUntil,
       ],
     );
     const row = mapBooking(result.rows[0]);
@@ -411,13 +431,64 @@ export class BookingRepository {
     expectedRevision: number;
     state: Exclude<AttemptState, 'ACTIVE'>;
     reason: string;
+    /** The transaction the provider captured, written once (doc 11 §4.10). */
+    providerPaymentId?: string;
   }): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.booking_payment_attempt
           SET state = $3::text, settled_at = now(), settled_reason = $4::text,
+              provider_payment_id = coalesce($5::text, provider_payment_id),
               revision = revision + 1
         WHERE attempt_id = $1::uuid AND revision = $2 AND state = 'ACTIVE'`,
-      [input.attemptId, input.expectedRevision, input.state, input.reason],
+      [
+        input.attemptId,
+        input.expectedRevision,
+        input.state,
+        input.reason,
+        input.providerPaymentId ?? null,
+      ],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  /**
+   * Records the provider invoice an attempt was opened with.
+   *
+   * The guard freezes it once written, so a redriven invoice creation that got
+   * the same invoice back writes nothing and a *different* one is refused.
+   */
+  async setInvoice(input: {
+    attemptId: string;
+    expectedRevision: number;
+    providerInvoiceId: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.booking_payment_attempt
+          SET provider_invoice_id = $3::text, revision = revision + 1
+        WHERE attempt_id = $1::uuid AND revision = $2 AND state = 'ACTIVE'
+          AND provider_invoice_id IS NULL`,
+      [input.attemptId, input.expectedRevision, input.providerInvoiceId],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  /**
+   * Records the captured transaction on an attempt that is already settled.
+   *
+   * A late capture arrives on an `EXPIRED` or `SUPERSEDED` attempt, and doc 11
+   * §4.10 still requires the transaction id to be recorded exactly once — the
+   * partial unique index is what makes a second attempt claiming it fail.
+   */
+  async recordCapturedPayment(input: {
+    attemptId: string;
+    expectedRevision: number;
+    providerPaymentId: string;
+  }): Promise<boolean> {
+    const result = await this.uow.query(
+      `UPDATE platform.booking_payment_attempt
+          SET provider_payment_id = $3::text, revision = revision + 1
+        WHERE attempt_id = $1::uuid AND revision = $2 AND provider_payment_id IS NULL`,
+      [input.attemptId, input.expectedRevision, input.providerPaymentId],
     );
     return (result.rowCount ?? 0) === 1;
   }
@@ -515,6 +586,11 @@ function mapBooking(row: Record<string, unknown> | undefined): BookingRow | unde
     refundState: row['refund_state'] as RefundState,
     fulfilledStayId: (row['fulfilled_stay_id'] as string | null) ?? null,
     terminalReason: (row['terminal_reason'] as string | null) ?? null,
+    cancellationPolicyVersion:
+      row['cancellation_policy_version'] === null
+        ? null
+        : Number(row['cancellation_policy_version']),
+    freeCancellationUntil: (row['free_cancellation_until'] as Date | null) ?? null,
     revision: Number(row['revision']),
   };
 }
@@ -526,6 +602,7 @@ function mapAttempt(row: Record<string, unknown> | undefined): AttemptRow | unde
     bookingId: String(row['booking_id']),
     provider: row['provider'] as 'QPAY' | 'KHAAN',
     providerInvoiceId: (row['provider_invoice_id'] as string | null) ?? null,
+    providerPaymentId: (row['provider_payment_id'] as string | null) ?? null,
     amountMnt: BigInt(String(row['amount_mnt'])),
     state: row['state'] as AttemptState,
     expiresAt: row['expires_at'] as Date,
