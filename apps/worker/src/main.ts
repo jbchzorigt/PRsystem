@@ -5,9 +5,13 @@ import { selectKeyManagement } from '@prsystem/ports';
 import { createLogger, newRequestId, runWithCorrelation } from '@prsystem/telemetry';
 import { createOnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
 import type { OnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
+import { createReportingWorkerRuntime } from '@prsystem/api/reporting-worker';
+import type { ReportingWorkerRuntime } from '@prsystem/api/reporting-worker';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
 import { startOnboardingConsumers } from './jobs/onboarding';
 import type { OnboardingConsumers } from './jobs/onboarding';
+import { startReportingConsumers } from './jobs/reporting';
+import type { ReportingConsumers } from './jobs/reporting';
 import { startWorker } from './startup';
 
 async function main(): Promise<void> {
@@ -17,6 +21,7 @@ async function main(): Promise<void> {
     serviceName: `${config.OTEL_SERVICE_NAME}-worker`,
   });
   let onboarding: OnboardingConsumers | undefined;
+  let reporting: ReportingConsumers | undefined;
 
   // Startup order is enforced by startWorker: the security preconditions run to
   // completion before Redis is contacted or any consumer is constructed.
@@ -71,10 +76,32 @@ async function main(): Promise<void> {
     throw error;
   }
 
+  // The Phase 17 sweeps: the queued exports, the files whose hour has passed
+  // and the stays past their retention deadline. Opened after the Phase 05
+  // consumers and closed before them, with the same all-or-nothing rule — a
+  // failure here closes what it opened, then everything above it.
+  const reportingRuntime: ReportingWorkerRuntime = createReportingWorkerRuntime({
+    databaseUrl: config.DATABASE_URL,
+    appEnv: config.APP_ENV,
+  });
+  try {
+    reporting = await startReportingConsumers({
+      connection: connectionFromUrl(config.REDIS_URL),
+      runtime: reportingRuntime,
+      logger,
+      options: { ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }) },
+    });
+  } catch (error) {
+    await onboarding.close();
+    await started.close();
+    throw error;
+  }
+
   logger.info({ queues: Object.values(QUEUE_NAMES) }, 'worker started');
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'worker shutting down');
+    await reporting?.close();
     await onboarding?.close();
     await started.close();
     process.exit(0);

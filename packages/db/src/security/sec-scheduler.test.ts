@@ -1251,6 +1251,36 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'confined to those by a policy on the owner, and answers three identifiers per row. The ' +
         "escalation and the link pause happen in the hotel's own scope on their own locks",
     },
+    {
+      // Phase 17. The two reporting sweeps, in the same shape again: an
+      // expiring export file and a stay whose retention has run out both live
+      // behind a tenant policy, and the worker is in no tenant.
+      signature: 'platform.lapsed_export_files(p_limit integer, p_now timestamp with time zone)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only COMPLETED export jobs whose one-hour file life has ' +
+        'passed, confined to those by a policy on the owner, and answers two identifiers per ' +
+        "row. The file is deleted and the job expired in the hotel's own scope on its own lock",
+    },
+    {
+      signature: 'platform.queued_export_jobs(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only QUEUED export jobs, confined to those by a policy on ' +
+        "the owner, and answers two identifiers per row. The job is claimed in the hotel's own " +
+        'scope on its own lock, so two workers cannot run the same export twice',
+    },
+    {
+      signature: 'platform.due_retention_purges(p_limit integer, p_now timestamp with time zone)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — it reads only unanonymised retention snapshots whose deadline has ' +
+        'passed *and* that no live legal hold covers, so a held stay is never offered to the ' +
+        "job at all. The anonymisation happens in the hotel's own scope on the stay's own lock",
+    },
     // Phase 05's three boundary-worker discovery wrappers. Each exists for the
     // same reason: the rows a worker must find live behind a tenant policy, and
     // a worker outside any tenant scope cannot see them to find out which tenant

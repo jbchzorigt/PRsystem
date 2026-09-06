@@ -38,7 +38,7 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 | 20 |
 | EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 — canonical port and simulator, geocoding gated; distance is server-side and provider-free | 20 |
 | EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 — canonical port and simulator, execution gated | 20 |
-| EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 | 20 |
+| EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 — retention policy, snapshot and legal hold implemented; the written basis is still absent | 20 |
 | EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 | 20 |
 | EXT-10 | Police security | Human-rights and security assessment, DR, penetration test | **BLOCKED** | 18 | 20 |
 | EXT-11 | eBarimt | Subscription tax receipts | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
@@ -290,7 +290,7 @@ payment references, and never mark a receipt as sent before official issuance.
 | Gate | Source | Nature | Owning phase |
 | --- | --- | --- | --- |
 | Email delivery provider | `ONB-DEC-003`, `STAFF-DEC-001`, `OPS-DEC-008` | Activation, invitation, reset and eBarimt delivery all use email; provider, delivery-status semantics and TTLs are P1-15 configuration | 20 |
-| S3-compatible object storage | `GUEST-DEC-007`, doc 13 §12.3 | Private buckets, one-hour export TTL, five-minute signed URLs, encrypted temporary Police export files | 20 |
+| S3-compatible object storage (`INT-STORAGE-01`) | `GUEST-DEC-007`, doc 13 §12.3 | Private buckets, one-hour export TTL, five-minute signed URLs, encrypted temporary Police export files. Phase 17 ships the typed `ObjectStoragePort` with a deterministic simulator; the production adapter answers `DISABLED` behind this gate, so an export outside local, CI and test fails closed with a recorded reason rather than writing a file nowhere | 20 |
 | Tax and VAT treatment | P1-11 | The ledger carries tax fields; official accounting treatment awaits an accountant or tax adviser. Phase 05 stamps a `taxConfigVersion` of `p1-provisional-tax-2026-08` onto every quote and payment, so the rate a figure was computed under is recorded rather than assumed | 23 |
 | Phone one-time-password provider (`INT-OTP-01`) | `ONB-DEC-004`, doc 15 §2.1 | doc 15 requires the citizen's or representative's phone to be OTP-verified before an invoice exists, and **no OTP provider is contracted**. CallPro is EXT-05 and is an SMS *send* contract, not an OTP service, so reading it as covering this would be inventing an approved capability. Phase 05 ships the typed port and a deterministic simulator; the production adapter does not exist and the port fails closed outside local, CI and test | 20 |
 

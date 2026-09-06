@@ -4,9 +4,9 @@ import type { ConnectionOptions, WorkerOptions } from 'bullmq';
  * Queue registry.
  *
  * Phase 03 adds the two kernel queues; Phase 05 adds the three its own
- * background operations run on. The remaining domain queues — export,
- * retention, notification fan-out — arrive with the phases that own them
- * (docs/architecture/02-container-and-deployment.md §5).
+ * background operations run on; Phase 17 adds the export and retention ones.
+ * The remaining domain queues — notification fan-out — arrive with the phases
+ * that own them (docs/architecture/02-container-and-deployment.md §5).
  *
  * Every Phase 05 queue has a consumer in this deployment
  * (`jobs/onboarding.ts`): the provisioning queue takes the API's best-effort
@@ -27,6 +27,12 @@ export const QUEUE_NAMES = {
   activationDelivery: 'onboarding.activation.delivery',
   /** Issues and retries eBarimt receipts (doc 16 §4.1). */
   ebarimtIssuance: 'subscription.ebarimt.issuance',
+  /** Builds the queued background exports (doc 12 §7, `GUEST-DEC-006`). */
+  exportRun: 'reporting.export.run',
+  /** Deletes export files whose hour has passed (doc 12 §7, `GUEST-DEC-007`). */
+  exportExpiry: 'reporting.export.expiry',
+  /** Anonymises stays past their retention deadline (doc 12 §9, `GUEST-DEC-008`). */
+  retentionPurge: 'reporting.retention.purge',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

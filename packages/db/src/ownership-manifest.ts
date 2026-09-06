@@ -154,6 +154,14 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.hotel_of_published_review(p_review_id uuid)': KERNEL_OWNERS.maintenanceFn,
   'platform.hotel_of_moderatable_review(p_review_id uuid)': KERNEL_OWNERS.maintenanceFn,
   'platform.open_review_reports(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+
+  // Phase 17. Two sweeps with the shape every sweep since Phase 13 has: find
+  // the work across every hotel, answer identifiers only, and decide nothing.
+  'platform.lapsed_export_files(p_limit integer, p_now timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.due_retention_purges(p_limit integer, p_now timestamp with time zone)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.queued_export_jobs(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   'platform.lapsed_restaurant_invoices(p_limit integer, p_now timestamp with time zone)':
     KERNEL_OWNERS.maintenanceFn,
   'platform.unresolved_refund_requests(p_limit integer, p_now timestamp with time zone)':

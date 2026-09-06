@@ -127,6 +127,13 @@
       "when": 1757376000006,
       "tag": "0017_verified_reviews",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1757376000007,
+      "tag": "0018_registry_reporting",
+      "breakpoints": true
     }
   ]
 }

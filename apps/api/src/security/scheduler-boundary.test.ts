@@ -374,6 +374,7 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
           booking: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           settlement: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           review: { config: { databaseUrl: apiUrl } },
+          reporting: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           restaurant: {
             config: {
               databaseUrl: apiUrl,

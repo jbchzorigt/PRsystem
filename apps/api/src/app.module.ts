@@ -40,6 +40,14 @@ import { RestaurantModule } from './modules/restaurant/restaurant.module';
 import type { ReviewModuleOptions } from './modules/review/review.module';
 import { ReviewModule } from './modules/review/review.module';
 import { RepositoryReviewEligibility } from './modules/booking/contracts/booking-reads';
+import type { ReportingModuleOptions } from './modules/reporting/reporting.module';
+import { ReportingModule } from './modules/reporting/reporting.module';
+import { RepositoryRegistryFacts } from './modules/stay/contracts/registry-reads';
+import { RepositoryExpenseClassification } from './modules/reporting/contracts/expense-classification';
+import { RepositoryFinancialReads } from './modules/billing/contracts/financial-reads';
+import { RepositoryMinibarReads } from './modules/minibar/contracts/minibar-reads';
+import { RepositoryExpenseReads } from './modules/finance/contracts/expense-reads';
+import { RepositoryRetention } from './modules/reporting/contracts/stay-retention';
 import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
 import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
 import { RepositoryShiftLookup } from './modules/stay/contracts/shift-lookup';
@@ -131,6 +139,12 @@ export interface AppModuleOptions {
    */
   readonly review: ReviewModuleOptions;
   /**
+   * The Phase 17 guest registry, its exports, retention and the Hotel Admin
+   * financial dashboard. It owns five tables and no facts: everything it
+   * reports on reaches it through four read contracts.
+   */
+  readonly reporting: ReportingModuleOptions;
+  /**
    * A pool the application should close on shutdown.
    *
    * The subscription-state adapter is constructed before the container exists —
@@ -186,6 +200,9 @@ export class AppModule {
       // acknowledgement of every unfinished order, and the closing of the
       // stay's guest access — both inside the checkout's own transaction.
       restaurantOrders: options.stay.restaurantOrders ?? new RepositoryRestaurantOrders(),
+      // Phase 17 supplies the third: the retention terms a completed checkout
+      // snapshots, so a completed stay always carries a deadline.
+      retention: options.stay.retention ?? new RepositoryRetention(),
     });
     return {
       module: AppModule,
@@ -209,7 +226,14 @@ export class AppModule {
           iam,
           stay,
         }),
-        FinanceModule.forRoot({ ...options.finance, iam, stay }),
+        // Phase 17 classifies an expense: a category's kind decides whether a
+        // cost is an inventory purchase or an operating one (`FIN-DEC-004`).
+        FinanceModule.forRoot({
+          classification: new RepositoryExpenseClassification(),
+          ...options.finance,
+          iam,
+          stay,
+        }),
         GuestModule.forRoot({ ...options.guest, iam }),
         PublicModule.forRoot({
           // The public surface subtracts what bookings hold, through the
@@ -231,6 +255,15 @@ export class AppModule {
         ReviewModule.forRoot({
           eligibility: new RepositoryReviewEligibility(),
           ...options.review,
+          iam,
+        }),
+        // Phase 17 reads over four modules' facts and owns none of them.
+        ReportingModule.forRoot({
+          registry: new RepositoryRegistryFacts(),
+          sales: new RepositoryFinancialReads(),
+          minibar: new RepositoryMinibarReads(),
+          expenses: new RepositoryExpenseReads(),
+          ...options.reporting,
           iam,
         }),
         SettlementModule.forRoot({

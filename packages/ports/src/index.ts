@@ -141,3 +141,18 @@ export type {
   StaffNotification,
   StaffNotificationPort,
 } from './notification.port';
+
+export {
+  SimulatedObjectStorage,
+  UnavailableObjectStorage,
+  selectObjectStorage,
+} from './object-storage.port';
+export type {
+  ObjectStorageCommand,
+  ObjectStoragePort,
+  ObjectStorageResult,
+  PutObjectInput,
+  SignedUrl,
+  SignedUrlInput,
+  StoredObject,
+} from './object-storage.port';

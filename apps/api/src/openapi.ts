@@ -8,6 +8,7 @@ import {
   PaymentGatewayRegistry,
   UnavailableEBarimt,
   UnavailableKeyManagement,
+  UnavailableObjectStorage,
   UnavailableXypIdentity,
   UnavailablePaymentGateway,
   UnavailablePhoneVerification,
@@ -20,6 +21,7 @@ import { UnregisteredOpenWork } from './modules/iam/contracts/open-work.port';
 import { UnprovisionedPaymentAttempts } from './modules/stay/contracts/payment-attempts';
 import { UnprovisionedDeposits } from './modules/stay/contracts/deposits';
 import { UnprovisionedRestaurantOrders } from './modules/stay/contracts/restaurant-orders';
+import { UnprovisionedRetention } from './modules/stay/contracts/retention';
 import { UnavailableRestaurantDirectory } from './modules/iam/contracts/restaurant-directory.port';
 import { buildOpenApiDocument } from './openapi-document';
 
@@ -77,6 +79,7 @@ async function generate(): Promise<void> {
       settlement: { pool: new Pool({ max: 1 }) },
       restaurant: { pool: new Pool({ max: 1 }), keys: new UnavailableKeyManagement() },
       review: { pool: new Pool({ max: 1 }) },
+      reporting: { pool: new Pool({ max: 1 }), storage: new UnavailableObjectStorage() },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),
@@ -84,6 +87,7 @@ async function generate(): Promise<void> {
         payments: new UnprovisionedPaymentAttempts(),
         deposits: new UnprovisionedDeposits(),
         restaurantOrders: new UnprovisionedRestaurantOrders(),
+        retention: new UnprovisionedRetention(),
       },
     }),
     new FastifyAdapter(),

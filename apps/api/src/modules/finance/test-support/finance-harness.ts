@@ -3,6 +3,7 @@ import type { BillingHarness } from '../../billing/test-support/billing-harness'
 import { createBillingHarness, key, request } from '../../billing/test-support/billing-harness';
 import type { StayHotel } from '../../stay/test-support/stay-harness';
 import { RepositoryShiftLookup } from '../../stay/contracts/shift-lookup';
+import { RepositoryExpenseClassification } from '../../reporting/contracts/expense-classification';
 import type { FinanceDependencies } from '../services/finance-context';
 import { CashService } from '../services/cash.service';
 import { CashRequestService } from '../services/request.service';
@@ -40,6 +41,7 @@ export async function createFinanceHarness(suite: string): Promise<FinanceHarnes
     pool: billing.api,
     subscription: billing.deps.subscription,
     shifts: new RepositoryShiftLookup(),
+    classification: new RepositoryExpenseClassification(),
     clock: billing.now,
   };
   let sequence = 0;

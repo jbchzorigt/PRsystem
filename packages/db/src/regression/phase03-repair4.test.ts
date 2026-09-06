@@ -276,7 +276,7 @@ describe('E3 — the migration graph must be exactly right, not merely extra-fre
   it('accepts the cluster once every edge is exactly right', async () => {
     // The positive control. Without it, every refusal above could be explained
     // by a precondition that refuses unconditionally.
-    await expect(runMigrations(migrateUrl)).resolves.toMatchObject({ appliedAfter: 18 });
+    await expect(runMigrations(migrateUrl)).resolves.toMatchObject({ appliedAfter: 19 });
     expect(await runPreconditionSql()).toBeUndefined();
   });
 });

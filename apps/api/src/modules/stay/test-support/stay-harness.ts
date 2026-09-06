@@ -14,6 +14,8 @@ import type { DepositsPort } from '../contracts/deposits';
 import { SimulatedDeposits } from '../contracts/deposits';
 import type { RestaurantOrdersPort } from '../contracts/restaurant-orders';
 import { SimulatedRestaurantOrders } from '../contracts/restaurant-orders';
+import type { RetentionPort } from '../contracts/retention';
+import { SimulatedRetention } from '../contracts/retention';
 import type { GuestIdentityInput } from '../domain/identity';
 import { CheckInService } from '../services/check-in.service';
 import { CheckoutService } from '../services/checkout.service';
@@ -57,6 +59,7 @@ export interface StayHarness {
   readonly payments: SimulatedPaymentAttempts;
   readonly deposits: SimulatedDeposits;
   readonly restaurantOrders: SimulatedRestaurantOrders;
+  readonly retention: SimulatedRetention;
   readonly shifts: ShiftService;
   readonly housekeeping: HousekeepingService;
   readonly checkIns: CheckInService;
@@ -95,6 +98,7 @@ export interface StayHarnessOptions {
   /** Phase 10 supplies its own implementation so a check-in opens a real folio. */
   readonly deposits?: DepositsPort;
   readonly restaurantOrders?: RestaurantOrdersPort;
+  readonly retention?: RetentionPort;
 }
 
 export function attachStayHarness(
@@ -110,7 +114,9 @@ export function attachStayHarness(
   const simulatedDeposits = new SimulatedDeposits();
   const deposits = options.deposits ?? simulatedDeposits;
   const simulatedRestaurantOrders = new SimulatedRestaurantOrders();
+  const simulatedRetention = new SimulatedRetention();
   const restaurantOrders = options.restaurantOrders ?? simulatedRestaurantOrders;
+  const retention = options.retention ?? simulatedRetention;
   let offsetMs = 0;
   const clock = (): Date => new Date(Date.now() + offsetMs);
   const deps: StayDependencies = {
@@ -126,6 +132,7 @@ export function attachStayHarness(
     payments,
     deposits,
     restaurantOrders,
+    retention,
     cash: new LedgerCashLedger(),
     clock,
   };
@@ -143,6 +150,7 @@ export function attachStayHarness(
     payments,
     deposits: simulatedDeposits,
     restaurantOrders: simulatedRestaurantOrders,
+    retention: simulatedRetention,
     shifts: new ShiftService(deps),
     housekeeping: new HousekeepingService(deps),
     checkIns: new CheckInService(deps),

@@ -22,8 +22,11 @@ import {
   selectPhoneVerification,
   selectXypIdentity,
   SimulatedHotelPayout,
+  SimulatedObjectStorage,
   UnavailableHotelPayout,
+  UnavailableObjectStorage,
   selectHotelPayout,
+  selectObjectStorage,
 } from './index';
 import { greatCircleMetres } from './index';
 import type { PortContext, PortResult } from './index';
@@ -573,5 +576,69 @@ describe('HotelPayoutPort simulator', () => {
     });
     expect(selectHotelPayout('production')).toBeInstanceOf(UnavailableHotelPayout);
     expect(selectHotelPayout('test')).toBeInstanceOf(SimulatedHotelPayout);
+  });
+});
+
+describe('ObjectStoragePort simulator', () => {
+  const key = 'exports/00000000-0000-4000-8000-0000000000aa/0123456789abcdef0123456789abcdef.xlsx';
+  const body = new TextEncoder().encode('a synthetic workbook');
+
+  it('stores bytes under a key, hashes them, and signs a URL for exactly what it was asked', async () => {
+    const port = new SimulatedObjectStorage();
+    expect(port.id).toBe('object-storage');
+    expect(port.mode).toBe('simulator');
+    const stored = ok(await port.put({ key, body, contentType: 'application/vnd.ms-excel' }));
+    expect(stored.key).toBe(key);
+    expect(stored.byteLength).toBe(body.byteLength);
+    expect(stored.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(port.bodyOf(key)).toEqual(body);
+
+    // doc 12 §7: the caller states the five minutes; the port invents none.
+    const signed = ok(await port.signedUrl({ key, expiresInSeconds: 300 }));
+    expect(signed.expiresInSeconds).toBe(300);
+    expect(signed.url).toContain(key);
+    // A second URL is a second URL — the object is untouched by signing it.
+    const again = ok(await port.signedUrl({ key, expiresInSeconds: 300 }));
+    expect(again.url).not.toBe(signed.url);
+    expect(port.has(key)).toBe(true);
+  });
+
+  it('cannot sign a key that is gone, which is what an expired export looks like', async () => {
+    const port = new SimulatedObjectStorage();
+    ok(await port.put({ key, body, contentType: 'application/vnd.ms-excel' }));
+    expect(ok(await port.remove(key))).toEqual({ deleted: true });
+    expect(port.has(key)).toBe(false);
+    expect(err(await port.signedUrl({ key, expiresInSeconds: 300 }))).toEqual({
+      kind: 'REJECTED',
+      providerCode: 'NoSuchKey',
+    });
+    // Removing what is already gone is not an error, and not a second delete.
+    expect(ok(await port.remove(key))).toEqual({ deleted: false });
+  });
+
+  it('distinguishes a transport failure from a refusal, and stores nothing on one', async () => {
+    const port = new SimulatedObjectStorage();
+    port.failNext({ kind: 'TIMEOUT', retryable: true });
+    expect(err(await port.put({ key, body, contentType: 'application/vnd.ms-excel' }))).toEqual({
+      kind: 'TIMEOUT',
+      retryable: true,
+    });
+    expect(port.size).toBe(0);
+  });
+
+  it('is disabled in production and writes nothing at all', async () => {
+    const disabled = new UnavailableObjectStorage();
+    expect(disabled.mode).toBe('adapter');
+    const expected = { kind: 'DISABLED', gate: 'INT-STORAGE-01' };
+    expect(err(await disabled.put({ key, body, contentType: 'application/vnd.ms-excel' }))).toEqual(
+      expected,
+    );
+    expect(err(await disabled.signedUrl({ key, expiresInSeconds: 300 }))).toEqual(expected);
+    expect(err(await disabled.remove(key))).toEqual(expected);
+    expect(
+      err(await disabled.execute({ kind: 'put', input: { key, body, contentType: 'x' } }, ctx)),
+    ).toEqual(expected);
+    expect(selectObjectStorage('production')).toBeInstanceOf(UnavailableObjectStorage);
+    expect(selectObjectStorage('test')).toBeInstanceOf(SimulatedObjectStorage);
   });
 });

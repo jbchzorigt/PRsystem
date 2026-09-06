@@ -5,6 +5,8 @@ import type { SubscriptionStatePort } from '@prsystem/authz';
 import { SUBSCRIPTION_STATE } from '../iam/iam.tokens';
 import type { ShiftLookupPort } from '../stay/contracts/shift-lookup';
 import { RepositoryShiftLookup } from '../stay/contracts/shift-lookup';
+import type { ExpenseClassificationPort } from './contracts/expense-classification';
+import { UnprovisionedExpenseClassification } from './contracts/expense-classification';
 import { CashController } from './http/cash.controller';
 import { ExpenseController } from './http/expense.controller';
 import { CashService } from './services/cash.service';
@@ -32,6 +34,8 @@ export interface FinanceModuleOptions {
   readonly stay?: DynamicModule;
   readonly pool?: Pool;
   readonly shifts?: ShiftLookupPort;
+  /** Phase 17's expense categories. Unprovisioned until that module supplies it. */
+  readonly classification?: ExpenseClassificationPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }
@@ -63,10 +67,12 @@ export class FinanceModule {
     const ownsPool = options.pool === undefined;
     const clock = options.clock;
     const shifts = options.shifts ?? new RepositoryShiftLookup();
+    const classification = options.classification ?? new UnprovisionedExpenseClassification();
     const deps = (subscription: SubscriptionStatePort): FinanceDependencies => ({
       pool,
       subscription,
       shifts,
+      classification,
       ...(clock === undefined ? {} : { clock }),
     });
     const inject = [SUBSCRIPTION_STATE];

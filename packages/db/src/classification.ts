@@ -835,6 +835,42 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     why: "carries hotel_id; the reply's append-only lifecycle history (doc 10 §7.4)",
   },
   {
+    schema: 'platform',
+    table: 'expense_category',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; the hotel's expense categories and their reporting kind (FIN-DEC-004)",
+  },
+  {
+    schema: 'platform',
+    table: 'retention_policy',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the versioned guest-data retention policy a checkout snapshots (GUEST-DEC-008)',
+  },
+  {
+    schema: 'platform',
+    table: 'stay_retention',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; one completed stay's retention snapshot and its anonymisation",
+  },
+  {
+    schema: 'platform',
+    table: 'retention_legal_hold',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the hold that suspends a purge, with its authority and reason',
+  },
+  {
+    schema: 'platform',
+    table: 'report_export_job',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; a background export with its immutable filter snapshot (GUEST-DEC-006)',
+  },
+  {
+    schema: 'platform',
+    table: 'report_export_grant',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; one signed download URL, append-only (GUEST-DEC-007)',
+  },
+  {
     schema: 'audit',
     table: 'platform_event',
     classification: 'PLATFORM_AUDIT',

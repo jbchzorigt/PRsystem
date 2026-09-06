@@ -31,6 +31,25 @@ export class ExpenseService extends FinanceServiceBase {
     super(deps);
   }
 
+  /**
+   * The category's kind, or a refusal.
+   *
+   * A category that does not exist for this hotel, or one that was
+   * deactivated, classifies nothing — and an expense that named it must be
+   * refused rather than quietly recorded as operating, which would put an
+   * inventory purchase into the operating line the dashboard reports.
+   */
+  private async classify(
+    uow: UnitOfWork,
+    categoryId: string,
+  ): Promise<'INVENTORY_PURCHASE' | 'OPERATING'> {
+    const kind = await this.deps.classification.kindOf(uow, categoryId);
+    if (kind === undefined) {
+      throw new ApiError('VALIDATION_FAILED', 'no such active expense category');
+    }
+    return kind;
+  }
+
   async expenses(
     target: { hotelId: string },
     actor: CommandActor,
@@ -57,6 +76,13 @@ export class ExpenseService extends FinanceServiceBase {
       description: string;
       amountMnt: bigint;
       method: ExpenseMethod;
+      /**
+       * An expense category of this hotel (doc 23 §4.4). Its kind decides
+       * whether this is an inventory purchase or an operating cost; with no
+       * category the expense is operating, which is what every expense before
+       * Phase 17 was.
+       */
+      categoryId?: string;
     },
     actor: CommandActor,
     request: RequestContext,
@@ -75,6 +101,8 @@ export class ExpenseService extends FinanceServiceBase {
         await authorize();
         const amount = requireAmount(input.amountMnt, 'an expense');
         const description = requireReason(input.description, 'an expense');
+        const expenseType =
+          input.categoryId === undefined ? 'OPERATING' : await this.classify(uow, input.categoryId);
         const row = await new FinanceRepository(uow).createExpense({
           category: input.category,
           description,
@@ -83,6 +111,8 @@ export class ExpenseService extends FinanceServiceBase {
           accountId: gate.principal.accountId,
           at: serverNow(this.deps, uow),
           submit: true,
+          expenseType,
+          ...(input.categoryId === undefined ? {} : { categoryId: input.categoryId }),
         });
         await recordPlatformAudit(uow, {
           action: 'finance.expense.submit',

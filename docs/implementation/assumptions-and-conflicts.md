@@ -1034,6 +1034,67 @@ recorded so a reviewer can see where a judgement was made.
   account that owns the row are the whole gate — so this phase invented no permission row to sit
   above them.
 
+### 3.21 Phase 17 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P17-1 — the registry's check-in time is the latest approved correction, resolved in SQL.**
+  doc 12 §3 and `FIN-DEC-009` require the *effective* time. The read coalesces the newest `APPROVED`
+  row of `stay_time_correction` over `stay.actual_check_in_at` rather than trusting a denormalised
+  column, so a correction approved after an export was run changes the next read and nothing else —
+  the export already taken keeps the filter and the rows it was built from.
+- **A-P17-2 — the age is derived from the date of birth at the effective check-in, and stored
+  nowhere.** `GUEST-DEC-003` asks for an age as of the stay. Storing it would create a second fact to
+  keep true; deriving it on read from the guest's own date of birth cannot drift. A guest with no
+  recorded date of birth shows no age rather than a zero.
+- **A-P17-3 — the registry list is a `POST`.** doc 12 §8 keeps the raw name search out of URLs. A
+  `GET` with a query string puts a guest's name in the access log, the referrer and any proxy in
+  between, so the read is a command-shaped request that writes only its audit row.
+- **A-P17-4 — the export's file hour and the URL's five minutes are separate columns, and both are
+  derived by CHECK constraints.** `GUEST-DEC-007` gives the file one hour and a link five minutes.
+  Issuing a link writes only to the grant table, so re-issuing cannot extend the file — the database
+  recomputes `expires_at = ready_at + 1 hour` and refuses any other value.
+- **A-P17-5 — the row cap is measured and enforced in the same transaction that queues the job.**
+  `GUEST-DEC-006` forbids a partial file. Counting first and creating the job under the same
+  transaction means a filter that had already grown past ten thousand cannot be queued, and the
+  refusal names the cap so the caller narrows the filter rather than retrying.
+- **A-P17-6 — the workbook writer is in-repository and byte-deterministic.** The job records a
+  content hash, which is only meaningful if the same rows produce the same bytes. The writer stores
+  entries uncompressed with a fixed 1980 timestamp and no shared-string table; it adds no dependency
+  to a governed lockfile, and every value in it is a string the server already formatted, so no
+  spreadsheet number format can round a money value a second time.
+- **A-P17-7 — an anonymised guest row becomes a `NO_DOCUMENT` identity.** `GUEST-DEC-008` requires
+  the identifiers to go. doc 05 §3's constraints tie an identity type to the ciphertext that proves
+  it, so clearing the ciphertext moves the type, the assurance and the provenance with it, and a row
+  with no registration number is marked not Police-matchable — which is what the eligibility column
+  already means. The Phase 08 append-only guard was extended to permit exactly this one shape and no
+  other: names to `Устгасан`, the date of birth to `1900-01-01`, every identifier column null, and
+  everything else unchanged.
+- **A-P17-8 — the purge and the file sweep run in the worker, through the same service methods the
+  API exposes.** The worker's login holds `SELECT` and `UPDATE` on the three tables and nothing else:
+  it can run an export job and expire a file, and it cannot create either. Each sweep finds its work
+  through a narrow `SECURITY DEFINER` resolver and settles each row inside that row's own hotel
+  scope, so a sweep is not a way to read across tenants.
+- **A-P17-9 — a live legal hold is re-read under the retention row's lock.** doc 12 §9 makes a hold
+  absolute. The resolver that lists due stays already excludes held ones, but a hold placed between
+  the resolver and the lock must still win, so the hold is read again inside the transaction that
+  would purge.
+- **A-P17-10 — each export kind carries its own named permission, and the job list is filtered by
+  it.** doc 18 §3 gives the registry export, the room Excel and the minibar Excel separate rows with
+  different packages. The download resolves the job's kind first and then authorizes, and the job
+  list returns only the kinds the caller could have asked for — a row carries its kind and its row
+  count, which is the shape of the data behind it.
+- **A-P17-11 — the minibar COGS is the weighted-average cost snapshotted onto the consumption
+  movement.** `FIN-DEC-003` requires a weighted average and `FIN-DEC-004` forbids deducting a
+  purchase twice. The cost is captured when the consumption is posted, so the dashboard reads what
+  the stock was worth at that moment; the purchase itself appears only as an inventory outflow, never
+  again as an expense of the sale.
+- **A-P17-12 — object storage is a typed port with a deterministic simulator, and the production
+  adapter is disabled.** No S3-compatible bucket, credential or bucket policy is approved, so the
+  production adapter answers `DISABLED` behind `INT-STORAGE-01` and an export fails closed with a
+  recorded reason rather than writing a file nowhere (CLAUDE.md §9).
+
 ---
 
 ## 4. P1 configuration register

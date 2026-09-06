@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.29 (Phase 16 — the eleven verified-review, moderation and official-reply decisions
-move to `COVERED` with code and test references; 221 of 279 `COVERED`)
+**Version:** 1.30 (Phase 17 — the eight guest-registry, nine financial-reporting and two reception
+decisions move to `COVERED` with code and test references; 240 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -235,12 +235,12 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-029 | Checkout handoff option per order | 15 | COVERED | `packages/db/migrations/0016_restaurant_ordering.sql`, `apps/api/src/modules/restaurant/domain/restaurant.ts`, `apps/api/src/modules/restaurant/services/order.service.ts`, `apps/api/src/modules/restaurant/http/restaurant-order.controller.ts` | `apps/api/src/modules/restaurant/domain/restaurant.test.ts`, `apps/api/src/modules/restaurant/restaurant.integration.test.ts`, `apps/api/src/modules/restaurant/restaurant.http.test.ts` |
 | RC-DEC-030 | Restaurant acceptance 5/10-minute SLA | 15 | COVERED | `packages/db/migrations/0016_restaurant_ordering.sql`, `apps/api/src/modules/restaurant/domain/restaurant.ts`, `apps/api/src/modules/restaurant/services/order.service.ts` | `apps/api/src/modules/restaurant/domain/restaurant.test.ts`, `apps/api/src/modules/restaurant/restaurant.integration.test.ts` |
 | RC-DEC-031 | Refund request resolution SLA | 15 | COVERED | `packages/db/migrations/0016_restaurant_ordering.sql`, `apps/api/src/modules/restaurant/domain/restaurant.ts`, `apps/api/src/modules/restaurant/services/refund.service.ts` | `apps/api/src/modules/restaurant/domain/restaurant.test.ts`, `apps/api/src/modules/restaurant/restaurant.integration.test.ts`, `apps/api/src/modules/restaurant/restaurant.concurrency.test.ts` |
-| RC-DEC-032 | Guest list and Excel export columns | 17 | PENDING | — | — |
+| RC-DEC-032 | Guest list and Excel export columns | 17 | COVERED | `apps/api/src/modules/reporting/services/registry.service.ts`, `apps/api/src/modules/reporting/services/export.service.ts`, `apps/api/src/modules/stay/contracts/registry-reads.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
 | RC-DEC-033 | One primary guest per stay | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/repositories/stay.repository.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
 | RC-DEC-034 | Primary guest Police match boundary | 18 | PENDING | — | — |
 | RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | COVERED | `apps/api/src/modules/stay/services/report.service.ts`, `apps/api/src/modules/stay/services/dispute.service.ts`, `apps/api/src/modules/stay/services/payment-lock.service.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/domain/checkout.test.ts` |
 | RC-DEC-036 | Minibar stock, cost and shortage override | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
-| RC-DEC-037 | Hotel Admin financial reporting | 17 | PENDING | — | — |
+| RC-DEC-037 | Hotel Admin financial reporting | 17 | COVERED | `apps/api/src/modules/reporting/services/dashboard.service.ts`, `apps/api/src/modules/reporting/http/finance.controller.ts`, `packages/authz/src/actions.ts` | `apps/api/src/modules/reporting/reporting.security.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
 | RC-DEC-038 | Cash drawer and physical cash ledger | 11 | COVERED | `packages/db/migrations/0012_shift_cash_expense.sql`, `apps/api/src/modules/finance/repositories/finance.repository.ts`, `apps/api/src/modules/billing/contracts/cash-postings.ts`, `apps/api/src/modules/finance/contracts/billing-cash.ts` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.concurrency.test.ts` |
 | RC-DEC-039 | Minibar selling price snapshot | 09 | COVERED | `apps/api/src/modules/stay/services/report.service.ts`, `apps/api/src/modules/stay/domain/checkout.ts`, `packages/db/migrations/0010_cleaner_checkout.sql` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/domain/checkout.test.ts` |
 | RC-DEC-040 | Room and minibar entity lifecycle | 06 | COVERED | `packages/db/migrations/0007_hotel_catalog.sql`, `apps/api/src/modules/catalog/services/lifecycle.service.ts`, `apps/api/src/modules/catalog/http/lifecycle.controller.ts`, `apps/api/src/modules/catalog/contracts/dependency-sources.ts` | `apps/api/src/modules/catalog/catalog.integration.test.ts`, `apps/api/src/modules/catalog/catalog.authorization.http.test.ts`, `apps/api/src/modules/catalog/catalog.concurrency.test.ts` |
@@ -338,16 +338,16 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 10. GUEST-DEC — Guest registry (doc 12, 8)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| GUEST-DEC-001 | Admin and Manager guest registry access | 17 | PENDING |
-| GUEST-DEC-002 | Six approved columns | 17 | PENDING |
-| GUEST-DEC-003 | Date-of-birth derived age snapshot | 17 | PENDING |
-| GUEST-DEC-004 | Primary guest only | 17 | PENDING |
-| GUEST-DEC-005 | Filters and server-side pagination | 17 | PENDING |
-| GUEST-DEC-006 | Ten-thousand-row background Excel job | 17 | PENDING |
-| GUEST-DEC-007 | Private temporary export file | 17 | PENDING |
-| GUEST-DEC-008 | 365-day retention and legal hold | 17 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| GUEST-DEC-001 | Admin and Manager guest registry access | 17 | COVERED | `packages/authz/src/actions.ts`, `apps/api/src/modules/reporting/services/reporting-context.ts`, `apps/api/src/modules/reporting/services/registry.service.ts`, `apps/api/src/modules/reporting/http/registry.controller.ts` | `apps/api/src/modules/reporting/reporting.security.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| GUEST-DEC-002 | Six approved columns | 17 | COVERED | `apps/api/src/modules/stay/contracts/registry-reads.ts`, `apps/api/src/modules/reporting/services/registry.service.ts`, `apps/api/src/modules/reporting/http/registry.controller.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.security.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
+| GUEST-DEC-003 | Date-of-birth derived age snapshot | 17 | COVERED | `apps/api/src/modules/reporting/domain/reporting.ts`, `apps/api/src/modules/stay/contracts/registry-reads.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| GUEST-DEC-004 | Primary guest only | 17 | COVERED | `apps/api/src/modules/stay/contracts/registry-reads.ts`, `apps/api/src/modules/reporting/contracts/registry-facts.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| GUEST-DEC-005 | Filters and server-side pagination | 17 | COVERED | `apps/api/src/modules/reporting/domain/reporting.ts`, `apps/api/src/modules/reporting/services/registry.service.ts`, `apps/api/src/modules/reporting/http/reporting-validation.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
+| GUEST-DEC-006 | Ten-thousand-row background Excel job | 17 | COVERED | `packages/db/migrations/0018_registry_reporting.sql`, `apps/api/src/modules/reporting/services/export.service.ts`, `apps/api/src/modules/reporting/services/workbook.ts`, `apps/api/src/modules/reporting/worker/reporting-worker.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.concurrency.test.ts`, `apps/worker/src/jobs/reporting.test.ts` |
+| GUEST-DEC-007 | Private temporary export file | 17 | COVERED | `packages/db/migrations/0018_registry_reporting.sql`, `apps/api/src/modules/reporting/services/export.service.ts`, `packages/ports/src/object-storage.port.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.concurrency.test.ts`, `packages/ports/src/conformance.test.ts` |
+| GUEST-DEC-008 | 365-day retention and legal hold | 17 | COVERED | `packages/db/migrations/0018_registry_reporting.sql`, `apps/api/src/modules/reporting/services/retention.service.ts`, `apps/api/src/modules/reporting/contracts/stay-retention.ts`, `apps/api/src/modules/stay/contracts/retention.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.concurrency.test.ts`, `apps/api/src/modules/reporting/reporting.security.test.ts` |
 
 ## 11. POL-DEC — Police monitoring (doc 13, 22)
 
@@ -517,16 +517,16 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 | ID | Subject | Phase | Status | Code | Tests |
 | --- | --- | --- | --- | --- | --- |
-| FIN-DEC-001 | Sales and received money kept separate | 17 | PENDING | — | — |
-| FIN-DEC-002 | Deposit and Restaurant exclusion | 17 | PENDING | — | — |
-| FIN-DEC-003 | Minibar weighted-average COGS | 17 | PENDING | — | — |
-| FIN-DEC-004 | No double deduction of inventory purchase | 17 | PENDING | — | — |
+| FIN-DEC-001 | Sales and received money kept separate | 17 | COVERED | `apps/api/src/modules/billing/contracts/financial-reads.ts`, `apps/api/src/modules/reporting/services/dashboard.service.ts`, `apps/api/src/modules/reporting/domain/reporting.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| FIN-DEC-002 | Deposit and Restaurant exclusion | 17 | COVERED | `apps/api/src/modules/billing/contracts/financial-reads.ts`, `apps/api/src/modules/reporting/services/dashboard.service.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| FIN-DEC-003 | Minibar weighted-average COGS | 17 | COVERED | `apps/api/src/modules/minibar/contracts/minibar-reads.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts`, `apps/api/src/modules/reporting/domain/reporting.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/minibar/minibar.integration.test.ts` |
+| FIN-DEC-004 | No double deduction of inventory purchase | 17 | COVERED | `packages/db/migrations/0018_registry_reporting.sql`, `apps/api/src/modules/finance/contracts/expense-reads.ts`, `apps/api/src/modules/reporting/services/dashboard.service.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts` |
 | FIN-DEC-005 | Expense submission, approval and payment execution | 11 | COVERED | `apps/api/src/modules/finance/services/expense.service.ts`, `apps/api/src/modules/finance/domain/cash.ts`, `packages/db/migrations/0012_shift_cash_expense.sql` | `apps/api/src/modules/finance/finance.integration.test.ts`, `apps/api/src/modules/finance/finance.authorization.http.test.ts`, `apps/api/src/modules/finance/domain/cash.test.ts` |
-| FIN-DEC-006 | Seven-day, month and custom ranges | 17 | PENDING | — | — |
-| FIN-DEC-007 | Top-five rooms | 17 | PENDING | — | — |
-| FIN-DEC-008 | Four financial Excel exports | 17 | PENDING | — | — |
-| FIN-DEC-009 | Effective-date correction | 17 | PENDING | — | — |
-| FIN-DEC-010 | Full financial access for Hotel Admin only | 17 | PENDING | — | — |
+| FIN-DEC-006 | Seven-day, month and custom ranges | 17 | COVERED | `apps/api/src/modules/reporting/domain/reporting.ts`, `apps/api/src/modules/reporting/services/dashboard.service.ts`, `apps/api/src/modules/reporting/http/reporting-validation.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
+| FIN-DEC-007 | Top-five rooms | 17 | COVERED | `apps/api/src/modules/reporting/domain/reporting.ts`, `apps/api/src/modules/reporting/services/dashboard.service.ts`, `apps/api/src/modules/billing/contracts/financial-reads.ts` | `apps/api/src/modules/reporting/domain/reporting.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| FIN-DEC-008 | Four financial Excel exports | 17 | COVERED | `packages/db/migrations/0018_registry_reporting.sql`, `apps/api/src/modules/reporting/services/export.service.ts`, `apps/api/src/modules/reporting/services/workbook.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.security.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
+| FIN-DEC-009 | Effective-date correction | 17 | COVERED | `apps/api/src/modules/stay/contracts/registry-reads.ts`, `apps/api/src/modules/billing/contracts/financial-reads.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts` |
+| FIN-DEC-010 | Full financial access for Hotel Admin only | 17 | COVERED | `packages/authz/src/actions.ts`, `apps/api/src/modules/reporting/services/reporting-context.ts`, `apps/api/src/modules/reporting/http/finance.controller.ts` | `apps/api/src/modules/reporting/reporting.security.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts` |
 
 ## 22. CASH-DEC — Cash drawer ledger (doc 24, 10)
 

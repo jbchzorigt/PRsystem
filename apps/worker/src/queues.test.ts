@@ -54,7 +54,7 @@ describe('workerOptions', () => {
 });
 
 describe('QUEUE_NAMES', () => {
-  it('registers the kernel queues and the four Phase 05 operations', () => {
+  it('registers the kernel queues, the four Phase 05 operations and the three Phase 17 sweeps', () => {
     // An exact list, not a subset: a queue that appears without being declared
     // here is a background operation nobody reviewed.
     expect(Object.values(QUEUE_NAMES)).toEqual([
@@ -65,6 +65,9 @@ describe('QUEUE_NAMES', () => {
       'subscription.upgrade.boundary',
       'onboarding.activation.delivery',
       'subscription.ebarimt.issuance',
+      'reporting.export.run',
+      'reporting.export.expiry',
+      'reporting.retention.purge',
     ]);
   });
 

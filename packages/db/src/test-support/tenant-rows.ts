@@ -2236,8 +2236,10 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
     insert: (hotelId) => ({
       sql: `INSERT INTO platform.expense
-              (hotel_id, category, description, amount_mnt, method, created_by_account_id)
-            VALUES ($1, 'Fixture', 'fixture', 25000, 'CARD_POS', gen_random_uuid())`,
+              (hotel_id, category, expense_type, description, amount_mnt, method,
+               created_by_account_id)
+            VALUES ($1, 'Fixture', 'OPERATING', 'fixture', 25000, 'CARD_POS',
+                    gen_random_uuid())`,
       values: [hotelId],
     }),
     updateColumn: 'revision',
@@ -3099,6 +3101,113 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     }),
     updateColumn: 'revision',
     updateSet: `edited = true, revision = revision + 1`,
+  },
+  {
+    name: 'platform.expense_category',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized, email_verified_at)
+              VALUES ('hotel', $3, now()) RETURNING account_id)
+            INSERT INTO platform.expense_category (hotel_id, name, kind, created_by_account_id)
+            SELECT $1, $2, 'OPERATING', a.account_id FROM a`,
+      values: [
+        hotelId,
+        `p17-category-${String(n)}`,
+        `p17-cat-${String(n)}-${hotelId.slice(0, 8)}@fixture.test`,
+      ],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'INACTIVE', deactivated_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.retention_policy',
+    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT'], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `INSERT INTO platform.retention_policy
+              (hotel_id, version, retention_days, effective_at, owner, legal_basis)
+            VALUES ($1, $2, 365, now(), 'fixture owner', 'fixture legal basis')`,
+      values: [hotelId, n],
+    }),
+  },
+  {
+    name: 'platform.stay_retention',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    // One row per stay, and the fixture's stay is the tenant's own — so the
+    // count is what the stay fixture produced rather than a fixed number.
+    rowsPerTenant: 1,
+    insert: (hotelId) => ({
+      sql: `WITH p AS (
+              INSERT INTO platform.retention_policy
+                (hotel_id, version, retention_days, effective_at, owner, legal_basis)
+              VALUES ($1, 9000, 365, now(), 'fixture owner', 'fixture legal basis')
+              ON CONFLICT (hotel_id, version) DO NOTHING)
+            INSERT INTO platform.stay_retention
+              (stay_id, hotel_id, retention_policy_version, retention_days, checkout_at,
+               retention_expires_at)
+            SELECT s.stay_id, $1, 9000, 365, now(), now() + interval '365 days'
+              FROM (SELECT stay_id FROM platform.stay
+                     WHERE hotel_id = $1 ORDER BY stay_id LIMIT 1) s
+            ON CONFLICT (stay_id) DO UPDATE SET revision = platform.stay_retention.revision + 1`,
+      values: [hotelId],
+    }),
+    updateColumn: 'revision',
+    updateSet: `anonymized_at = now(), anonymized_reason = 'acl-probe',
+                revision = revision + 1`,
+  },
+  {
+    name: 'platform.retention_legal_hold',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized, email_verified_at)
+              VALUES ('hotel', $2, now()) RETURNING account_id)
+            INSERT INTO platform.retention_legal_hold
+              (hotel_id, reason, authority_reference, imposed_by_account_id)
+            SELECT $1, 'a fixture hold, long enough to pass', 'FIXTURE-1', a.account_id FROM a`,
+      values: [hotelId, `p17-hold-${String(Math.floor(Math.random() * 1e9))}@fixture.test`],
+    }),
+    updateColumn: 'revision',
+    updateSet: `released_at = now(), released_by_account_id = imposed_by_account_id,
+                released_reason = 'acl-probe', revision = revision + 1`,
+  },
+  {
+    name: 'platform.report_export_job',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'UPDATE'], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized, email_verified_at)
+              VALUES ('hotel', $2, now()) RETURNING account_id)
+            INSERT INTO platform.report_export_job
+              (hotel_id, kind, filters, timezone, policy_version, requested_by_account_id)
+            SELECT $1, 'GUEST_REGISTRY', '{"from":"2026-01-01"}'::jsonb, 'Asia/Ulaanbaatar',
+                   1, a.account_id
+              FROM a`,
+      values: [hotelId, `p17-export-${String(Math.floor(Math.random() * 1e9))}@fixture.test`],
+    }),
+    updateColumn: 'revision',
+    updateSet: `state = 'RUNNING', started_at = now(), revision = revision + 1`,
+  },
+  {
+    name: 'platform.report_export_grant',
+    grants: { api: ['SELECT', 'INSERT'], worker: [], police: [] },
+    insert: (hotelId) => ({
+      sql: `WITH a AS (
+              INSERT INTO platform.user_account (realm, email_normalized, email_verified_at)
+              VALUES ('hotel', $2, now()) RETURNING account_id),
+            j AS (
+              INSERT INTO platform.report_export_job
+                (hotel_id, kind, filters, timezone, policy_version, requested_by_account_id)
+              SELECT $1, 'ROOM_SALES', '{"from":"2026-01-01"}'::jsonb, 'Asia/Ulaanbaatar',
+                     1, a.account_id
+                FROM a RETURNING job_id, hotel_id, requested_by_account_id)
+            INSERT INTO platform.report_export_grant
+              (hotel_id, job_id, issued_by_account_id, issued_at, expires_at)
+            SELECT j.hotel_id, j.job_id, j.requested_by_account_id, now(),
+                   now() + interval '5 minutes'
+              FROM j`,
+      values: [hotelId, `p17-grant-${String(Math.floor(Math.random() * 1e9))}@fixture.test`],
+    }),
   },
   {
     name: 'platform.hotel_review_reply_event',

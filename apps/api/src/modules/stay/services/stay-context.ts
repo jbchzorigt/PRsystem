@@ -19,6 +19,7 @@ import type { BookingFulfilmentPort } from '../contracts/booking-fulfilment';
 import type { PaymentAttemptsPort } from '../contracts/payment-attempts';
 import type { DepositsPort } from '../contracts/deposits';
 import type { RestaurantOrdersPort } from '../contracts/restaurant-orders';
+import type { RetentionPort } from '../contracts/retention';
 import type { CashLedgerPort } from '../contracts/cash-ledger';
 
 /**
@@ -74,6 +75,12 @@ export interface StayDependencies {
    * (`RC-DEC-028`, `RC-DEC-029`, doc 08 §§7, 17–19).
    */
   readonly restaurantOrders: RestaurantOrdersPort;
+  /**
+   * `GUEST-DEC-008`: the retention terms a completed checkout snapshots, from
+   * the module that owns them (Phase 17). Written in the checkout's own
+   * transaction, so a completed stay always carries a deadline.
+   */
+  readonly retention: RetentionPort;
   /**
    * The server's now for a command. Absent in production, where every command
    * reads the transaction's own server time; a test supplies one to move the

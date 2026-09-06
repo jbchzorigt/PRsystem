@@ -363,6 +363,14 @@ export class ConfigurationService extends MinibarServiceBase {
    * doc 04 §8: the guest's consumption leaves the room's stock when the report
    * that priced it settles. It is the one movement type the ledger calls a
    * sale, and it carries the stay it belongs to.
+   *
+   * doc 22 §4 and `FIN-DEC-003`: it also carries the **cost**. The hotel's
+   * weighted average is snapshotted onto the movement at the moment of the
+   * sale, because that is the number doc 23 §3.1's COGS is computed from — and
+   * a report that read today's average instead would reprice a sale that
+   * happened months ago, which doc 23 §12 forbids in as many words. A product
+   * whose warehouse has never been costed carries no snapshot rather than a
+   * zero: an unknown cost is not free.
    */
   async postGuestConsumption(
     uow: UnitOfWork,
@@ -376,6 +384,7 @@ export class ConfigurationService extends MinibarServiceBase {
     },
   ): Promise<string> {
     const inventory = new InventoryRepository(uow);
+    const stock = await inventory.warehouseStock(input.productId);
     const movement = await inventory.appendMovement({
       productId: input.productId,
       movementType: 'GUEST_CONSUMPTION',
@@ -384,6 +393,7 @@ export class ConfigurationService extends MinibarServiceBase {
       quantity: input.quantity,
       stayId: input.stayId,
       taskId: input.versionId,
+      ...(stock.avgCostMnt === null ? {} : { unitCostMnt: stock.avgCostMnt }),
       actorAccountId: input.actorAccountId,
     });
     return movement.movementId;

@@ -601,12 +601,15 @@ export class FinanceRepository {
     accountId: string;
     at: Date;
     submit: boolean;
+    /** doc 23 §4.4: an inventory purchase is not an operating cost. */
+    expenseType: 'INVENTORY_PURCHASE' | 'OPERATING';
+    categoryId?: string;
   }): Promise<ExpenseRow> {
     const result = await this.uow.query<Record<string, unknown>>(
       `INSERT INTO platform.expense
          (hotel_id, category, description, amount_mnt, method, state, submitted_at,
-          created_by_account_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          created_by_account_id, created_at, expense_type, category_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid)
        RETURNING ${EXPENSE_COLUMNS}`,
       [
         this.hotelId,
@@ -618,6 +621,8 @@ export class FinanceRepository {
         input.submit ? input.at : null,
         input.accountId,
         input.at,
+        input.expenseType,
+        input.categoryId ?? null,
       ],
     );
     return mapExpense(result.rows[0]) as ExpenseRow;

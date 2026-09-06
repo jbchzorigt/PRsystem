@@ -134,6 +134,9 @@ export async function createApp(
       review: {
         config: { databaseUrl: config.DATABASE_URL },
       },
+      reporting: {
+        config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+      },
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

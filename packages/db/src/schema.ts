@@ -7162,12 +7162,78 @@ export const cashRequest = platform
  * The expense lifecycle. An approval moves no money; only a cash execution
  * writes a drawer movement (`FIN-DEC-005`, `CASH-DEC-005`).
  */
+/**
+ * Phase 17, declared here rather than with the rest of its phase.
+ *
+ * `expense` carries a foreign key to it, and a Drizzle table's key targets are
+ * evaluated when the table is created — so the referenced table has to exist
+ * first. The phase comment above the Phase 17 block explains what it is for.
+ */
+export const expenseCategory = platform
+  .table(
+    'expense_category',
+    {
+      categoryId: uuid('category_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      deactivatedAt: timestamp('deactivated_at', { withTimezone: true }),
+      hotelId: uuid('hotel_id').notNull(),
+      kind: text('kind').notNull(),
+      name: text('name').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'expense_category_created_by_fkey',
+        columns: [table.createdByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'expense_category_deactivated_shape',
+        sql`((state = 'INACTIVE'::text) = (deactivated_at IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'expense_category_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('expense_category_identity_uq').on(table.hotelId, table.categoryId),
+      check(
+        'expense_category_kind_known',
+        sql`(kind = ANY (ARRAY['INVENTORY_PURCHASE'::text, 'OPERATING'::text]))`,
+      ),
+      check('expense_category_name_bounded', sql`((length(name) >= 1) AND (length(name) <= 80))`),
+      unique('expense_category_name_uq').on(table.hotelId, table.name),
+      check('expense_category_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'expense_category_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 export const expense = platform
   .table(
     'expense',
     {
       amountMnt: bigint('amount_mnt', { mode: 'bigint' }).notNull(),
       category: text('category').notNull(),
+      categoryId: uuid('category_id'),
       createdAt: timestamp('created_at', { withTimezone: true })
         .notNull()
         .default(sql`now()`),
@@ -7194,13 +7260,41 @@ export const expense = platform
         .notNull()
         .default(sql`false`),
       shiftId: uuid('shift_id'),
+      expenseType: text('expense_type').notNull(),
       state: text('state')
         .notNull()
         .default(sql`'DRAFT'::text`),
+      stockMovementId: uuid('stock_movement_id'),
       submittedAt: timestamp('submitted_at', { withTimezone: true }),
+      supplier: text('supplier'),
     },
     (table) => [
       check('expense_amount_positive', sql`(amount_mnt > 0)`),
+      foreignKey({
+        name: 'expense_category_fkey',
+        columns: [table.hotelId, table.categoryId],
+        foreignColumns: [expenseCategory.hotelId, expenseCategory.categoryId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'expense_stock_movement_fkey',
+        columns: [table.stockMovementId],
+        foreignColumns: [inventoryMovement.movementId],
+      }).onDelete('restrict'),
+      check(
+        'expense_stock_movement_kind',
+        sql`((stock_movement_id IS NULL) OR (expense_type = 'INVENTORY_PURCHASE'::text))`,
+      ),
+      check(
+        'expense_supplier_bounded',
+        sql`((supplier IS NULL) OR ((length(supplier) >= 1) AND (length(supplier) <= 200)))`,
+      ),
+      check(
+        'expense_type_known',
+        sql`(expense_type = ANY (ARRAY['INVENTORY_PURCHASE'::text, 'OPERATING'::text]))`,
+      ),
+      uniqueIndex('expense_stock_movement_uq')
+        .on(table.stockMovementId)
+        .where(sql`stock_movement_id IS NOT NULL`),
       check(
         'expense_cash_payment_shape',
         sql`((state <> 'PAID'::text) OR (method <> 'CASH'::text) OR ((movement_id IS NOT NULL) AND (shift_id IS NOT NULL) AND (location_id IS NOT NULL)))`,
@@ -10162,6 +10256,351 @@ export const hotelReviewReplyEvent = platform
   )
   .enableRLS();
 
+/**
+ * Phase 17 — the guest registry's exports, retention, and expense kinds.
+ *
+ * doc 12 and doc 23. Almost no facts: the registry and the dashboard are reads
+ * over rows earlier phases wrote. What is here is the machinery around them —
+ * an export job carrying an immutable filter snapshot and a ten-thousand-row
+ * CHECK, a file whose one hour is a derived column no download grant can
+ * touch, a retention snapshot written once at checkout, the legal hold that
+ * suspends it, and the expense kind that keeps an inventory purchase from
+ * being deducted twice.
+ */
+export const retentionPolicy = platform
+  .table(
+    'retention_policy',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      legalBasis: text('legal_basis').notNull(),
+      owner: text('owner').notNull(),
+      policyId: uuid('policy_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      retentionDays: integer('retention_days').notNull(),
+      retroactive: boolean('retroactive')
+        .notNull()
+        .default(sql`false`),
+      version: integer('version').notNull(),
+    },
+    (table) => [
+      check(
+        'retention_policy_basis_bounded',
+        sql`((length(legal_basis) >= 1) AND (length(legal_basis) <= 500))`,
+      ),
+      check(
+        'retention_policy_days_bounded',
+        sql`((retention_days >= 1) AND (retention_days <= 3650))`,
+      ),
+      foreignKey({
+        name: 'retention_policy_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      check(
+        'retention_policy_owner_bounded',
+        sql`((length(owner) >= 1) AND (length(owner) <= 200))`,
+      ),
+      check('retention_policy_version_positive', sql`(version >= 1)`),
+      unique('retention_policy_version_uq').on(table.hotelId, table.version),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const stayRetention = platform
+  .table(
+    'stay_retention',
+    {
+      anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+      anonymizedReason: text('anonymized_reason'),
+      checkoutAt: timestamp('checkout_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      retentionDays: integer('retention_days').notNull(),
+      retentionExpiresAt: timestamp('retention_expires_at', { withTimezone: true }).notNull(),
+      retentionPolicyVersion: integer('retention_policy_version').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      stayId: uuid('stay_id').primaryKey().notNull(),
+    },
+    (table) => [
+      check(
+        'stay_retention_anonymized_shape',
+        sql`((anonymized_at IS NULL) = (anonymized_reason IS NULL))`,
+      ),
+      check(
+        'stay_retention_days_bounded',
+        sql`((retention_days >= 1) AND (retention_days <= 3650))`,
+      ),
+      check(
+        'stay_retention_expiry_derived',
+        sql`(retention_expires_at = (checkout_at + make_interval(days => retention_days)))`,
+      ),
+      unique('stay_retention_identity_uq').on(table.hotelId, table.stayId),
+      foreignKey({
+        name: 'stay_retention_policy_fkey',
+        columns: [table.hotelId, table.retentionPolicyVersion],
+        foreignColumns: [retentionPolicy.hotelId, retentionPolicy.version],
+      }).onDelete('restrict'),
+      check('stay_retention_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'stay_retention_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      index('stay_retention_due_idx')
+        .on(table.retentionExpiresAt)
+        .where(sql`anonymized_at IS NULL`),
+      pgPolicy('retention_sweep_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(anonymized_at IS NULL)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const retentionLegalHold = platform
+  .table(
+    'retention_legal_hold',
+    {
+      authorityReference: text('authority_reference').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      endsAt: timestamp('ends_at', { withTimezone: true }),
+      holdId: uuid('hold_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      imposedByAccountId: uuid('imposed_by_account_id').notNull(),
+      reason: text('reason').notNull(),
+      releasedAt: timestamp('released_at', { withTimezone: true }),
+      releasedByAccountId: uuid('released_by_account_id'),
+      releasedReason: text('released_reason'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      startsAt: timestamp('starts_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      stayId: uuid('stay_id'),
+    },
+    (table) => [
+      check(
+        'retention_legal_hold_authority_bounded',
+        sql`((length(authority_reference) >= 1) AND (length(authority_reference) <= 200))`,
+      ),
+      foreignKey({
+        name: 'retention_legal_hold_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'retention_legal_hold_imposed_by_fkey',
+        columns: [table.imposedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'retention_legal_hold_reason_bounded',
+        sql`((length(reason) >= 10) AND (length(reason) <= 500))`,
+      ),
+      foreignKey({
+        name: 'retention_legal_hold_released_by_fkey',
+        columns: [table.releasedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'retention_legal_hold_released_shape',
+        sql`(num_nulls(released_at, released_by_account_id, released_reason) = ANY (ARRAY[0, 3]))`,
+      ),
+      check('retention_legal_hold_revision_non_negative', sql`(revision >= 0)`),
+      foreignKey({
+        name: 'retention_legal_hold_stay_fkey',
+        columns: [table.hotelId, table.stayId],
+        foreignColumns: [stay.hotelId, stay.stayId],
+      }).onDelete('restrict'),
+      check('retention_legal_hold_window', sql`((ends_at IS NULL) OR (ends_at > starts_at))`),
+      index('retention_legal_hold_live_idx')
+        .on(table.hotelId, table.stayId)
+        .where(sql`released_at IS NULL`),
+      pgPolicy('retention_hold_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(released_at IS NULL)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const reportExportJob = platform
+  .table(
+    'report_export_job',
+    {
+      contentHash: text('content_hash'),
+      expiredAt: timestamp('expired_at', { withTimezone: true }),
+      expiresAt: timestamp('expires_at', { withTimezone: true }),
+      failedAt: timestamp('failed_at', { withTimezone: true }),
+      failureReason: text('failure_reason'),
+      filters: jsonb('filters').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      jobId: uuid('job_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      kind: text('kind').notNull(),
+      policyVersion: integer('policy_version').notNull(),
+      readyAt: timestamp('ready_at', { withTimezone: true }),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      rowCount: integer('row_count'),
+      startedAt: timestamp('started_at', { withTimezone: true }),
+      state: text('state')
+        .notNull()
+        .default(sql`'QUEUED'::text`),
+      storageKey: text('storage_key'),
+      timezone: text('timezone').notNull(),
+    },
+    (table) => [
+      check(
+        'report_export_job_completed_shape',
+        sql`((state = ANY (ARRAY['COMPLETED'::text, 'EXPIRED'::text])) = ((ready_at IS NOT NULL) AND (row_count IS NOT NULL) AND (content_hash IS NOT NULL)))`,
+      ),
+      check(
+        'report_export_job_expired_shape',
+        sql`((state = 'EXPIRED'::text) = (expired_at IS NOT NULL))`,
+      ),
+      check(
+        'report_export_job_failed_shape',
+        sql`((state = 'FAILED'::text) = ((failed_at IS NOT NULL) AND (failure_reason IS NOT NULL)))`,
+      ),
+      check(
+        'report_export_job_failure_bounded',
+        sql`((failure_reason IS NULL) OR ((length(failure_reason) >= 1) AND (length(failure_reason) <= 500)))`,
+      ),
+      check(
+        'report_export_job_hash_shape',
+        sql`((content_hash IS NULL) OR (content_hash ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      foreignKey({
+        name: 'report_export_job_hotel_fkey',
+        columns: [table.hotelId],
+        foreignColumns: [hotel.hotelId],
+      }).onDelete('restrict'),
+      unique('report_export_job_identity_uq').on(table.hotelId, table.jobId),
+      check(
+        'report_export_job_kind_known',
+        sql`(kind = ANY (ARRAY['GUEST_REGISTRY'::text, 'ROOM_SALES'::text, 'MINIBAR_SALES'::text, 'EXPENSE'::text, 'PAYMENT_BREAKDOWN'::text]))`,
+      ),
+      check('report_export_job_policy_version_positive', sql`(policy_version >= 1)`),
+      foreignKey({
+        name: 'report_export_job_requested_by_fkey',
+        columns: [table.requestedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check('report_export_job_revision_non_negative', sql`(revision >= 0)`),
+      check('report_export_job_row_cap', sql`((row_count IS NULL) OR (row_count <= 10000))`),
+      check('report_export_job_rows_non_negative', sql`((row_count IS NULL) OR (row_count >= 0))`),
+      check(
+        'report_export_job_state_known',
+        sql`(state = ANY (ARRAY['QUEUED'::text, 'RUNNING'::text, 'COMPLETED'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      check(
+        'report_export_job_storage_key_shape',
+        sql`((storage_key IS NULL) OR (storage_key ~ '^exports/[0-9a-f-]{36}/[0-9a-f]{32}\\.xlsx$'::text))`,
+      ),
+      check(
+        'report_export_job_storage_shape',
+        sql`((state = 'COMPLETED'::text) = (storage_key IS NOT NULL))`,
+      ),
+      check(
+        'report_export_job_timezone_bounded',
+        sql`((length(timezone) >= 1) AND (length(timezone) <= 64))`,
+      ),
+      check(
+        'report_export_job_ttl_derived',
+        sql`(((ready_at IS NULL) AND (expires_at IS NULL)) OR (expires_at = (ready_at + '01:00:00'::interval)))`,
+      ),
+      index('report_export_job_due_idx')
+        .on(table.expiresAt)
+        .where(sql`state = 'COMPLETED'::text`),
+      index('report_export_job_hotel_idx').on(table.hotelId, table.requestedAt.desc().nullsFirst()),
+      pgPolicy('export_sweep_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = ANY (ARRAY['QUEUED'::text, 'COMPLETED'::text]))`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const reportExportGrant = platform
+  .table(
+    'report_export_grant',
+    {
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      grantId: uuid('grant_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      hotelId: uuid('hotel_id').notNull(),
+      issuedAt: timestamp('issued_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      issuedByAccountId: uuid('issued_by_account_id').notNull(),
+      jobId: uuid('job_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'report_export_grant_issued_by_fkey',
+        columns: [table.issuedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'report_export_grant_job_fkey',
+        columns: [table.hotelId, table.jobId],
+        foreignColumns: [reportExportJob.hotelId, reportExportJob.jobId],
+      }).onDelete('restrict'),
+      check(
+        'report_export_grant_ttl_derived',
+        sql`(expires_at = (issued_at + '00:05:00'::interval))`,
+      ),
+      index('report_export_grant_job_idx').on(table.jobId, table.issuedAt.desc().nullsFirst()),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 export const DECLARED_TABLES = [
   idempotencyKey,
   outboxEvent,
@@ -10311,4 +10750,11 @@ export const DECLARED_TABLES = [
   reviewModerationEvent,
   hotelReviewReply,
   hotelReviewReplyEvent,
+  // Phase 17.
+  expenseCategory,
+  retentionPolicy,
+  stayRetention,
+  retentionLegalHold,
+  reportExportJob,
+  reportExportGrant,
 ] as const;

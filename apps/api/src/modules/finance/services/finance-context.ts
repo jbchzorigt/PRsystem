@@ -12,6 +12,7 @@ import type {
 import { gateHotelScope, recordAuthorizationDenial } from '../../iam/services/iam-context';
 import { AuthorizationDenied, authorizeCommand } from '../../iam/services/authorization.service';
 import type { ShiftLookupPort } from '../../stay/contracts/shift-lookup';
+import type { ExpenseClassificationPort } from '../contracts/expense-classification';
 
 /**
  * The one transaction shape the finance module runs in.
@@ -34,6 +35,12 @@ export interface FinanceDependencies {
    * never touches the shift table itself (CLAUDE.md §3).
    */
   readonly shifts: ShiftLookupPort;
+  /**
+   * What kind of cost an expense is, from the module that owns the categories
+   * (Phase 17). Unprovisioned until that module is wired, which is why an
+   * expense with no category is the operating cost it has always been.
+   */
+  readonly classification: ExpenseClassificationPort;
   /** Tests only: the server's now. Production reads the transaction's time. */
   readonly clock?: () => Date;
 }

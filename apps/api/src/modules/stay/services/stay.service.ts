@@ -312,6 +312,14 @@ export class StayService extends StayServiceBase {
         // transaction, so the next occupant of the room inherits neither a live
         // session nor a code that still works. Nothing about the orders
         // themselves moves — a checkout cancels nothing and refunds nothing.
+        // `GUEST-DEC-008`: the retention countdown starts here, with the policy
+        // version and the day count snapshotted — doc 12 §9 says an active stay
+        // has no deadline, and a completed one always has one.
+        await this.deps.retention.recordCheckout(uow, {
+          hotelId: input.hotelId,
+          stayId: stay.stayId,
+          checkoutAt: now,
+        });
         await this.deps.restaurantOrders.closeGuestAccess(uow, stay.stayId, now);
         await this.deps.minibar.advanceScheduled(uow, stay.roomId, 'stay.checked_out');
         await this.deps.lifecycle.finalizeIfClear(uow, 'ROOM', stay.roomId, {
