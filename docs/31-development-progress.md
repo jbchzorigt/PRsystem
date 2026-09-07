@@ -4,7 +4,9 @@
 
 ## Одоогийн Reception acceptance
 
-3/6-р шатны зургаан багцын код холбогдсон; эцсийн CI баталгаажуулалт хүлээгдэж байна.
+**3/6-р шат: Reception-ийн 6/6 implementation багц mock boundary-тай баталгаажсан.**
+[Эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34118207412):
+source `759d886b`, 413 backend тест skip-гүй; browser/API-contract/design/token шалгалтууд амжилттай.
 Booking/Minibar/Restaurant producer болон гадаад үйлчилгээний mock заагийг
 [43-р acceptance баримт](43-reception-stage3-acceptance.md)-д тодорхойлов.
 Доорх v0.8–v0.11 тоолол, тестийн хүснэгтүүд нь өмнөх milestone-ийн түүх болно.
@@ -17,7 +19,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
-| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | Зургаан багцын implementation холбогдсон; [эцсийн acceptance/CI](43-reception-stage3-acceptance.md) хүлээгдэж байна |
+| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 413 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |

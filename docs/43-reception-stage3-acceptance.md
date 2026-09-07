@@ -1,5 +1,7 @@
 # Reception — 3/6-р шатны acceptance
 
+**Төлөв: 3/6-р шатны 6/6 implementation багц mock boundary-тай баталгаажсан.**
+
 2026-09-07. Энэ баримт 38-р баримтын зургаан багцын одоогийн implementation-ийг нэгтгэнэ.
 Бизнесийн батлагдсан дүрэм docs/02,03,05,18,20,21,24,26-д хэвээр байна.
 
@@ -35,7 +37,16 @@ Mock өгөгдөл production санхүүгийн нотолгоо болох�
 
 ## Баталгаажуулалт
 
-Source e20648e: local 413 тест илэрсэн, 60 ажилласан, PostgreSQL-dependent 353 skip.
-Local token check болон premium strict audit: алдаагүй.
-PostgreSQL 17 болон browser/API-contract/design CI-ийн эцсийн үр дүнг хүлээж байна.
-CI баталгаажаагүй үед зургаан багцыг release-ready гэж тайлагнахгүй.
+Source `759d886bf50348f856ac4ea4ee72a842baed51f7` дээр
+[эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34118207412):
+**413 backend тест skip-гүй, 281.042 секундэд амжилттай**. Chromium staff/Reception/
+guest entry, API request-model contract, design lint болон token check бүгд давсан.
+Өмнөх 364 тесттэй milestone-оос 49 тест нэмэгдсэн.
+Local: 60 тест ажилласан, PostgreSQL-dependent 353 skip; үүнийг CI-ийн бүрэн
+дүнтэй сольж тайлагнаагүй. Local token check болон premium strict audit алдаагүй.
+
+Энэ milestone нь дээр тодорхойлсон Reception implementation acceptance юм.
+Бодит provider болон дараагийн module-ийн production acceptance биш.
+Subscription-expired completion API нь exact pre-lock source хамгаалалттай;
+одоогийн console overview нь active/grace subscription шаарддаг. Expired hotel-ийн
+бүрэн recovery дэлгэц болон stage-2 live acceptance нь тусдаа үлдсэн ажил.

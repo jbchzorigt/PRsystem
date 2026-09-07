@@ -2,7 +2,17 @@
 
 Hotel operations, online booking, subscription, restaurant болон тусгаарлагдсан Police portal-ийн систем.
 
-Одоогийн ажил: **6 үндсэн үе шатны 3-р шат — Reception**. Staff lifecycle, takeover/continuation, onboarding/renewal, Platform MFA болон email link хуудсуудын суурь дээр room/category, тарифын тохиргоо ба анхны касс/ээлжийн нээлт, canonical cleaning readiness, immutable walk-in check-in, шифрлэсэн зочны мэдээлэл, cash deposit/payment/allocation/refund ledger нэмэгдсэн. Хэрэглэгчийн шийдвэрээр бэлэн болоогүй SMS/payment/email provider-ийг **development mock** горимоор орлуулж дараагийн хөгжүүлэлт рүү шилжсэн. [Явц](docs/31-development-progress.md), [mock ажиллуулах](docs/37-development-mocks.md), [Reception API](docs/38-reception-foundation.md), [walk-in check-in](docs/39-walkin-check-in.md), [guest cash finance](docs/40-guest-cash-finance.md). Production cash check-in нь зөв deposit тохиргоо, хүлээн авсан cash declaration болон identity vault-тай ажиллана; funding-гүй check-in хаалттай. Provider/POS integration үлдсэн; өмнөх төлбөргүй mock stay-г real finance рүү adopt хийхгүй. Бодит provider acceptance/deployment болон MVP-ийн үлдсэн урсгалууд дуусаагүй.
+Одоогийн milestone: **3/6-р шат — Reception**. Өрөө/тариф, анхны ээлж,
+funded check-in, booking adapter, guest QR/session, санхүүгийн ledger/correction/refund,
+checkout/cleaning/lifecycle, handover болон `/reception` дэлгэц холбогдсон.
+[Зургаан багцын acceptance ба тестийн дүн](docs/43-reception-stage3-acceptance.md),
+[явц](docs/31-development-progress.md), [mock ажиллуулах](docs/37-development-mocks.md).
+
+Бодит гадаад үйлчилгээ хэрэглэгчийн шийдвэрээр **development mock** хэвээр.
+Booking marketplace, full Minibar/Restaurant module болон Police/production readiness
+нь дараагийн 4–6-р шат. Mock нотолгоо production санхүүгийн бүртгэл болохгүй.
+Production cash check-in нь configured deposit, physical receipt болон identity vault
+шаардана. Бодит provider acceptance/deployment нь тусдаа release gate.
 
 - [Шаардлагын baseline ба P1/EXT](docs/00-mvp-open-decisions.md)
 - [Зөвшөөрсөн засвар, action/command contract](docs/27-approved-risk-controls.md)
