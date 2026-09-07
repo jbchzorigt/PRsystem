@@ -86,7 +86,9 @@ class GuestPayments(GuestFinance):
             ShiftService._book(conn,tenant)
             before = self.lock(conn,tenant,stay,revision,active=True)
             shift = StayService._shift(conn,tenant,actor)
-            charge_row = conn.execute('SELECT amount_mnt,paid_mnt FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,charge)).fetchone()
+            from prsystem.reception_dependencies import ReceptionDependencies
+            ReceptionDependencies.payment_guard(conn,tenant,stay,charge)
+            charge_row = conn.execute('SELECT amount_mnt+coalesce((SELECT sum(a.amount_mnt) FROM prsystem.guest_charge_adjustment a WHERE a.tenant_id=c.tenant_id AND a.charge_id=c.id),0),paid_mnt FROM prsystem.guest_charge c WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,charge)).fetchone()
             if not charge_row:raise DomainError('WORK_SOURCE_NOT_FOUND')
             if conn.execute("SELECT 1 FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND charge_id=%s AND state='PENDING'",(tenant,charge)).fetchone():
                 raise DomainError('PAYMENT_ALREADY_PENDING')

@@ -119,12 +119,12 @@ class RoomService(CleaningService):
             self._reader(conn,bearer,tenant)
             rows=conn.execute('''SELECT r.id,r.number,r.floor,r.category_id,c.name,r.status,r.cleaning_state,r.revision,
                 r.hourly_price,r.nightly_price,c.hourly_price,c.nightly_price,c.revision,
-                h.hourly_price,h.nightly_price,h.revision,r.tenant_id,c.cleaning_buffer_minutes,c.status
+                h.hourly_price,h.nightly_price,h.revision,r.tenant_id,c.cleaning_buffer_minutes,c.status,r.minibar_mode
                 FROM prsystem.room r JOIN prsystem.room_category c ON (c.tenant_id,c.id)=(r.tenant_id,r.category_id)
                 LEFT JOIN prsystem.room_hotel_settings h ON h.tenant_id=r.tenant_id
                 WHERE r.tenant_id=%s AND r.id>%s ORDER BY r.id LIMIT %s''',(tenant,after,limit)).fetchall()
             return [dict(room_id=r[0],number=r[1],floor=r[2],category_id=r[3],category_name=r[4],status=r[5],
-                         cleaning_state=r[6],revision=r[7],minibar_mode='OFF',tariffs=self.effective_prices(r),
+                         cleaning_state=r[6],revision=r[7],minibar_mode=r[19],tariffs=self.effective_prices(r),
                          cleaning_buffer_minutes=r[17],category_status=r[18]) for r in rows]
 
     def list_categories(self,bearer,tenant,limit=100,after=''):

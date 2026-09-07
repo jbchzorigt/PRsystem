@@ -141,7 +141,9 @@ class GuestFinance(RoomService):
 
     @staticmethod
     def charge(conn,tenant,stay,charge,amount,*,excluding_intent=None):
-        row=conn.execute('SELECT amount_mnt,paid_mnt FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,charge)).fetchone()
+        from prsystem.reception_dependencies import ReceptionDependencies
+        ReceptionDependencies.payment_guard(conn,tenant,stay,charge)
+        row=conn.execute('SELECT amount_mnt+coalesce((SELECT sum(a.amount_mnt) FROM prsystem.guest_charge_adjustment a WHERE a.tenant_id=c.tenant_id AND a.charge_id=c.id),0),paid_mnt FROM prsystem.guest_charge c WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,charge)).fetchone()
         if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
         held=conn.execute("SELECT coalesce(sum(amount_mnt),0) FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND charge_id=%s AND state='PENDING' AND id IS DISTINCT FROM %s",(tenant,charge,excluding_intent)).fetchone()[0]
         if amount>row[0]-row[1]-held:raise DomainError('CHARGE_OVERPAYMENT')
@@ -297,8 +299,8 @@ class GuestFinance(RoomService):
             self.read_actor(conn,bearer,tenant,stay)
             ShiftService._book(conn,tenant)
             balance=self.lock(conn,tenant,stay,allow_frozen=True)
-            totals=conn.execute('SELECT coalesce(sum(amount_mnt),0),coalesce(sum(paid_mnt),0) FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()
-            charges=conn.execute('SELECT id,kind,amount_mnt,paid_mnt FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
+            totals=conn.execute('SELECT coalesce(sum(amount_mnt+coalesce((SELECT sum(a.amount_mnt) FROM prsystem.guest_charge_adjustment a WHERE a.tenant_id=c.tenant_id AND a.charge_id=c.id),0)),0),coalesce(sum(paid_mnt),0) FROM prsystem.guest_charge c WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()
+            charges=conn.execute('SELECT id,kind,amount_mnt+coalesce((SELECT sum(a.amount_mnt) FROM prsystem.guest_charge_adjustment a WHERE a.tenant_id=c.tenant_id AND a.charge_id=c.id),0),paid_mnt FROM prsystem.guest_charge c WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
             receipts=conn.execute('SELECT id,purpose,channel,amount_mnt,allocated,refund_reserved,refunded,reversed FROM prsystem.guest_receipt WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
             refunds=conn.execute('SELECT id,receipt_id,amount_mnt,state FROM prsystem.guest_refund WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
             corrections=conn.execute('''SELECT id,receipt_id,replacement_amount_mnt,state,requester_id,reason,decider_id,decision_reason,requested_at,decided_at

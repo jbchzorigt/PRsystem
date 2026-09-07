@@ -57,7 +57,7 @@ class RoutedRefundTests(GuestFinanceCase):
         return self.assert_status(response,200)['access_token']
 
     def case(self,refund,token,resolve=False,key='case'):
-        body=dict(idempotency_key=key)
+        body=dict(idempotency_key=self.platform_id+key)
         if resolve:body['reason']='Authoritative provider evidence reviewed'
         return self.client.post(f'/platform/hotels/{self.tenant}/refunds/{refund}/'+('resolve' if resolve else 'claim'),headers=self.headers(token),json=body)
 

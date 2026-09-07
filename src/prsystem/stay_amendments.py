@@ -20,6 +20,7 @@ class StayAmendments(GuestFinance):
             s.cleaning_buffer_minutes,s.snapshot,s.state FROM prsystem.stay s JOIN prsystem.reception_shift sh
             ON(sh.tenant_id,sh.id)=(s.tenant_id,s.shift_id) WHERE s.tenant_id=%s AND s.id=%s FOR UPDATE OF s''',(tenant,stay)).fetchone()
         if row[6]!='ACTIVE':raise DomainError('WORK_NOT_OPEN')
+        if conn.execute('SELECT 1 FROM prsystem.reception_checkout_intent WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone():raise DomainError('WORK_NOT_OPEN')
         return row
 
     @staticmethod

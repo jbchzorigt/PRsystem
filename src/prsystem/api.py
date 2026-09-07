@@ -39,6 +39,7 @@ from prsystem.handover import HandoverService
 from prsystem.reception_booking import ReceptionBooking
 from prsystem.checkin_funding import CheckinFunding
 from prsystem.routed_refunds import RoutedRefunds
+from prsystem.reception_dependencies import ReceptionDependencies
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -363,6 +364,45 @@ class FinancialCorrectionInput(InvitationChange):
     reason: str=Field(min_length=1,max_length=1000)
 
 
+class MinibarFixtureItem(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    product_id: str=Field(min_length=1,max_length=100)
+    name: str=Field(min_length=1,max_length=200)
+    unit_price: int=Field(gt=0,le=2**63-1)
+    opening_quantity: int=Field(gt=0,le=1000)
+
+
+class MinibarFixture(InvitationChange):
+    items: list[MinibarFixtureItem]=Field(max_length=50)
+
+
+class MinibarReportInput(InvitationChange):
+    used: dict[str,int]=Field(max_length=50)
+    no_consumption: bool=False
+    exception_reason: str|None=Field(default=None,min_length=1,max_length=1000)
+
+
+class MinibarReview(ReasonCommand):
+    action: Literal['RETURN','DISPUTE','UPHOLD','WAIVE']
+
+
+class RestaurantOrderFixture(ReasonCommand):
+    restaurant_name: str=Field(min_length=1,max_length=200)
+    contact_phone: str=Field(min_length=1,max_length=30)
+    state: Literal['PAID_PENDING','ACCEPTED','PREPARING','READY','DONE','REFUNDED']
+
+
+class RestaurantCheckoutChoice(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    order_id: str=Field(min_length=1,max_length=128)
+    choice: Literal['RECEPTION_PICKUP','GUEST_PICKUP','REFUND_REQUEST']
+
+
+class CheckoutInput(InvitationChange):
+    restaurant_choices: list[RestaurantCheckoutChoice]=Field(default_factory=list,max_length=100)
+    guest_informed: bool=False
+
+
 class RoomCleaningRequest(InvitationChange):
     assignee_id: str = Field(min_length=1,max_length=128)
 
@@ -536,6 +576,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
     routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
+    reception_dependencies=ReceptionDependencies(service,stays.vault,runtime_mode)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.11.0")
@@ -591,6 +632,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'INVALID_LIFECYCLE_TRANSITION':409,'LIFECYCLE_BLOCKED':409})
         stay_errors.update({'HANDOVER_PENDING':409,'RECOUNT_REQUIRED':409})
         stay_errors.update({'REFUND_APPROVAL_REQUIRED':409,'REFUND_RELEASE_NOT_PROVEN':409})
+        stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -672,6 +714,30 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get('/hotels/{tenant_id}/room-categories/{category_id}/deposit-settings')
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
+
+    @app.put('/hotels/{tenant_id}/mock/rooms/{room_id}/minibar')
+    def configure_mock_minibar(tenant_id: str,room_id: str,body: MinibarFixture,secret: Annotated[str,Depends(token)]):
+        return reception_dependencies.configure(secret,tenant_id,room_id,[x.model_dump() for x in body.items],body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout/initiate')
+    def initiate_checkout(tenant_id: str,stay_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return reception_dependencies.begin(secret,tenant_id,stay_id,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/checkout/preview')
+    def preview_checkout(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)]):
+        return reception_dependencies.preview(secret,tenant_id,stay_id)
+
+    @app.post('/hotels/{tenant_id}/mock/stays/{stay_id}/minibar-report',status_code=201)
+    def mock_minibar_report(tenant_id: str,stay_id: str,body: MinibarReportInput,secret: Annotated[str,Depends(token)]):
+        return reception_dependencies.report(secret,tenant_id,stay_id,body.used,body.no_consumption,body.expected_revision,body.idempotency_key,body.exception_reason)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-review')
+    def review_minibar(tenant_id: str,stay_id: str,body: MinibarReview,secret: Annotated[str,Depends(token)]):
+        return reception_dependencies.review(secret,tenant_id,stay_id,body.action,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/mock/stays/{stay_id}/restaurant-orders',status_code=201)
+    def mock_restaurant_order(tenant_id: str,stay_id: str,body: RestaurantOrderFixture,secret: Annotated[str,Depends(token)]):
+        return reception_dependencies.order(secret,tenant_id,stay_id,body.restaurant_name,body.contact_phone,body.state,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/financial-corrections',status_code=201)
     def request_financial_correction(tenant_id: str,stay_id: str,body: FinancialCorrectionInput,secret: Annotated[str,Depends(token)]):
@@ -806,8 +872,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         return checkout.cleaning_queue(secret,tenant_id,limit,after)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout')
-    def checkout_stay(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
-        return checkout.close(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key)
+    def checkout_stay(tenant_id: str,stay_id: str,body: CheckoutInput,secret: Annotated[str,Depends(token)]):
+        return checkout.close(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key,[x.model_dump() for x in body.restaurant_choices],body.guest_informed)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout-cleaning/manager-complete')
     def manager_checkout_clean(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):

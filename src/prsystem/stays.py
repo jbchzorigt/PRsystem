@@ -117,7 +117,7 @@ class StayService(RoomService):
                 WHERE r.tenant_id=%s AND r.id=%s''', (tenant, data['room_id'])).fetchone()
             if not row:
                 raise DomainError('WORK_SOURCE_NOT_FOUND')
-            if (row[5], row[6], row[18], row[21]) != ('ACTIVE', 'CLEAN', 'ACTIVE', 'OFF'):
+            if (row[5], row[6], row[18]) != ('ACTIVE', 'CLEAN', 'ACTIVE'):
                 raise DomainError('ROOM_NOT_READY')
             shift = self._shift(conn, tenant, actor)
             recorded = conn.execute('SELECT clock_timestamp()').fetchone()[0]
@@ -129,6 +129,8 @@ class StayService(RoomService):
             except (ValueError, AttributeError) as exc:
                 raise DomainError('INVALID_REQUEST') from exc
             actual = actual_time(recorded, shift[1], requested, data.get('backdate_reason'))
+            from prsystem.reception_dependencies import ReceptionDependencies
+            minibar=ReceptionDependencies.opening(conn,tenant,row[0],row[21],actual,self.runtime_mode)
             booking=None
             if booking_id:
                 from prsystem.mock_providers import require_development_database
@@ -168,7 +170,8 @@ class StayService(RoomService):
             stay = secrets.token_hex(16)
             snapshot = dict(room_id=row[0], room_number=row[1], room_revision=row[7], category_id=row[3], category_name=row[4],
                             category_revision=row[12], hotel_settings_revision=row[15], price=price, checkout_time=str(row[20]),
-                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', financial_integration=finance.mode if cash_deposit is not None or booking or funding_id else 'DEFERRED_MOCK', cleaning_buffer_minutes=buffer, deposit_mnt=deposit_amount)
+                            timezone='Asia/Ulaanbaatar', minibar_mode=row[21], financial_integration=finance.mode if cash_deposit is not None or booking or funding_id else 'DEFERRED_MOCK', cleaning_buffer_minutes=buffer, deposit_mnt=deposit_amount)
+            if minibar:snapshot['minibar_snapshot']=minibar
             if booking:snapshot.update(booking_id=booking_id,booking_snapshot=booking[6],planned_checkin_at=booking[3].isoformat(),deposit_exemption='MOCK_PLATFORM_CONFIRMED_PAID')
             if deposit_snapshot is not None:
                 snapshot['deposit_configuration']=deposit_snapshot

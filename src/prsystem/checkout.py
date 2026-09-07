@@ -14,8 +14,9 @@ from prsystem.postgres.connection import transaction
 
 
 class CheckoutService(GuestFinance):
-    def close(self,bearer,tenant,stay,revision,key):
+    def close(self,bearer,tenant,stay,revision,key,choices=None,guest_informed=False):
         command=dict(action='CHECKOUT_STAY',stay_id=stay,revision=revision)
+        if choices or guest_informed:command.update(restaurant_choices=choices,guest_informed=guest_informed)
         with transaction(self.auth.dsn) as conn:
             actor=self.actor(conn,bearer,tenant,stay,action=Action.CHECKOUT)
             replay=self._receipt(conn,tenant,key,actor,command)
@@ -25,13 +26,15 @@ class CheckoutService(GuestFinance):
             source=conn.execute('SELECT room_id,planned_checkout_at,cleaning_buffer_minutes FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()
             if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
             room=conn.execute('SELECT revision,status,minibar_mode,category_id FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,source[0])).fetchone()
-            if not room or room[1] not in {'ACTIVE','RETIRING'} or room[2]!='OFF':raise DomainError('CHECKOUT_SOURCE_NOT_READY')
+            if not room or room[1] not in {'ACTIVE','RETIRING'} or (room[2]!='OFF' and self.mode=='CASH_LEDGER'):raise DomainError('CHECKOUT_SOURCE_NOT_READY')
             before=self.lock(conn,tenant,stay,revision,active=True)
             if conn.execute("SELECT 1 FROM prsystem.stay_time_amendment WHERE tenant_id=%s AND stay_id=%s AND state='PENDING'",(tenant,stay)).fetchone():raise DomainError('AMENDMENT_PENDING')
             shift=StayService._shift(conn,tenant,actor)
+            from prsystem.reception_dependencies import ReceptionDependencies
+            ReceptionDependencies.final(conn,tenant,stay,actor,choices or [],guest_informed,'production' if self.mode=='CASH_LEDGER' else 'test')
             if before['refund_reserved'] or self.balance(before)['available']:
                 raise DomainError('CHECKOUT_FINANCE_PENDING')
-            if conn.execute('SELECT 1 FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s AND paid_mnt<>amount_mnt',(tenant,stay)).fetchone():
+            if conn.execute('SELECT 1 FROM prsystem.guest_charge c WHERE tenant_id=%s AND stay_id=%s AND paid_mnt<>amount_mnt+coalesce((SELECT sum(a.amount_mnt) FROM prsystem.guest_charge_adjustment a WHERE a.tenant_id=c.tenant_id AND a.charge_id=c.id),0)',(tenant,stay)).fetchone():
                 raise DomainError('CHECKOUT_FINANCE_PENDING')
             if conn.execute("SELECT 1 FROM prsystem.guest_correction WHERE tenant_id=%s AND stay_id=%s AND state='PENDING'",(tenant,stay)).fetchone() or conn.execute("SELECT 1 FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND stay_id=%s AND state='PENDING'",(tenant,stay)).fetchone():
                 raise DomainError('CHECKOUT_FINANCE_PENDING')
@@ -50,8 +53,12 @@ class CheckoutService(GuestFinance):
                     (tenant_id,id,room_id,configuration_id,configuration_version,source_kind,source_reference,snapshot)
                     VALUES (%s,%s,%s,%s,%s,'CHECKOUT',%s,%s)''',
                     (tenant,cleaning_source,source[0],source[0],room[0]+1,'checkout:'+stay,
-                     Jsonb(dict(stay_id=stay,minibar_mode='OFF',category_id=room[3],room_revision=room[0]+1,actual_checkout_at=now.isoformat(),cleaning_buffer_minutes=source[2]))))
+                     Jsonb(dict(stay_id=stay,minibar_mode=room[2],category_id=room[3],room_revision=room[0]+1,actual_checkout_at=now.isoformat(),cleaning_buffer_minutes=source[2]))))
                 conn.execute("INSERT INTO prsystem.cleaning_action (tenant_id,source_id,id,kind,quantity) VALUES (%s,%s,%s,'CLEAN',1)",(tenant,cleaning_source,action))
+                if room[2]=='MOCK_ON':
+                    report=conn.execute('SELECT items FROM prsystem.reception_minibar_report WHERE tenant_id=%s AND stay_id=%s ORDER BY revision DESC LIMIT 1',(tenant,stay)).fetchone()
+                    for item in report[0]:
+                        if item['used_quantity']:conn.execute("INSERT INTO prsystem.cleaning_action(tenant_id,source_id,id,kind,product_id,quantity) VALUES(%s,%s,%s,'REFILL',%s,%s)",(tenant,cleaning_source,secrets.token_hex(16),'mock:'+source[0]+':'+item['product_id'],item['used_quantity']))
                 conn.execute('INSERT INTO prsystem.room_cleaning_request (tenant_id,source_id,room_id) VALUES (%s,%s,%s)',(tenant,cleaning_source,source[0]))
             balance=self.save(conn,tenant,stay,before,before,actor,'STAY_CHECKED_OUT',stay,dict(room_id=source[0],cleaning_source_id=cleaning_source),now)
             conn.execute('INSERT INTO prsystem.stay_checkout VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,365,%s)',
