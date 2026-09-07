@@ -32,6 +32,8 @@ from prsystem.guest_finance import GuestFinance
 from prsystem.guest_corrections import GuestCorrections
 from prsystem.guest_payments import GuestPayments
 from prsystem.checkout import CheckoutService
+from prsystem.guest_access import GuestAccess
+from prsystem.stay_amendments import StayAmendments
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -95,6 +97,26 @@ class PhysicalOpening(BaseModel):
     model_config = ConfigDict(extra='forbid',strict=True)
     actual: int = Field(ge=0,le=2**63-1)
     idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class GuestRedeem(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    qr_token: SecretStr=Field(min_length=20,max_length=128)
+    code: SecretStr=Field(min_length=4,max_length=6)
+
+
+class TimeAmendment(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    actual_checkin_at: str=Field(min_length=20,max_length=50)
+    reason: str=Field(min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
+class AmendmentDecision(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    approve: bool
+    reason: str=Field(min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
 
 
 class HotelStaySettings(BaseModel):
@@ -415,6 +437,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
     checkout = CheckoutService(service, stays.vault, runtime_mode)
+    guest_access = GuestAccess(service, stays.vault, runtime_mode)
+    amendments = StayAmendments(service, stays.vault, runtime_mode)
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
@@ -468,6 +492,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({code:409 for code in ('CORRECTION_SOURCE_IN_USE','CORRECTION_HAS_NO_CHANGE','CORRECTION_PENDING','CORRECTION_TERMINAL','CORRECTION_SOURCE_CHANGED')})
         stay_errors.update({'INVALID_TRANSACTION_TIME':422,'PAYMENT_REFERENCE_USED':409,'GUEST_PROVIDER_UNAVAILABLE':503})
         stay_errors.update({'CHECKOUT_SOURCE_NOT_READY':409,'CHECKOUT_FINANCE_PENDING':409})
+        stay_errors.update({'INVALID_GUEST_ACCESS':401,'GUEST_ACCESS_LIMIT':409,'AMENDMENT_PENDING':409})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -549,6 +574,38 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get('/hotels/{tenant_id}/room-categories/{category_id}/deposit-settings')
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
+
+    @app.post('/guest/access')
+    def redeem_guest_access(body: GuestRedeem):
+        return guest_access.redeem(body.qr_token.get_secret_value(),body.code.get_secret_value())
+
+    @app.get('/guest/session')
+    def guest_session(secret: Annotated[str,Depends(token)]):
+        return guest_access.session(secret)
+
+    @app.post('/hotels/{tenant_id}/rooms/{room_id}/guest-qr')
+    def rotate_guest_qr(tenant_id: str,room_id: str,body: MembershipChange,secret: Annotated[str,Depends(token)]):
+        return guest_access.qr(secret,tenant_id,room_id,body.expected_revision,body.idempotency_key,body.reason)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/guest-codes',status_code=201)
+    def issue_guest_code(tenant_id: str,stay_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return guest_access.codes(secret,tenant_id,stay_id,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/guest-access/revoke')
+    def revoke_guest_access(tenant_id: str,stay_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return guest_access.codes(secret,tenant_id,stay_id,body.idempotency_key,revoke=True)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/time-amendments')
+    def list_time_amendments(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)]):
+        return amendments.history(secret,tenant_id,stay_id)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/time-amendments',status_code=201)
+    def request_time_amendment(tenant_id: str,stay_id: str,body: TimeAmendment,secret: Annotated[str,Depends(token)]):
+        return amendments.request(secret,tenant_id,stay_id,body.actual_checkin_at,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/time-amendments/{amendment_id}/decision')
+    def decide_time_amendment(tenant_id: str,stay_id: str,amendment_id: str,body: AmendmentDecision,secret: Annotated[str,Depends(token)]):
+        return amendments.decide(secret,tenant_id,stay_id,amendment_id,body.approve,body.reason,body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/cleaning/checkouts')
     def checkout_cleaning_queue(tenant_id: str,secret: Annotated[str,Depends(token)],limit: int=Query(default=50,ge=1,le=100),after: str=Query(default='',max_length=128)):

@@ -22,6 +22,7 @@ class WalkInCase(ReceptionCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
+                'GRANT SELECT ON prsystem.stay_time_amendment TO {}',
                 'GRANT SELECT,INSERT ON prsystem.stay,prsystem.stay_guest_identity,prsystem.stay_guest_code,prsystem.room_cleaning_request TO {}',
                 'GRANT INSERT ON prsystem.identity_match_outbox,prsystem.cleaning_source,prsystem.cleaning_action TO {}',
                 'GRANT SELECT ON prsystem.room_reservation TO {}',

@@ -23,6 +23,11 @@ class GuestFinanceCase(WalkInCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                'GRANT SELECT,INSERT ON prsystem.room_guest_qr,prsystem.guest_session,prsystem.stay_time_amendment TO {}',
+                'GRANT UPDATE(token_hash,envelope,revision,failures,blocked_until) ON prsystem.room_guest_qr TO {}',
+                'GRANT UPDATE(revoked_at) ON prsystem.guest_session TO {}',
+                'GRANT UPDATE(consumed_at) ON prsystem.stay_guest_code TO {}',
+                'GRANT UPDATE(state,decider_id,decided_at,decision_reason,self_approved) ON prsystem.stay_time_amendment TO {}',
                 'GRANT SELECT,INSERT ON prsystem.deposit_hotel_settings,prsystem.deposit_category_settings,prsystem.guest_finance,prsystem.guest_charge,prsystem.guest_receipt,prsystem.guest_allocation,prsystem.guest_refund,prsystem.guest_finance_event,prsystem.shift_obligation TO {}',
                 'GRANT UPDATE (amount_mnt,revision) ON prsystem.deposit_hotel_settings,prsystem.deposit_category_settings TO {}',
                 'GRANT UPDATE (revision,received,reversed,allocated,refund_reserved,refunded) ON prsystem.guest_finance TO {}',
@@ -80,4 +85,3 @@ class GuestFinanceCase(WalkInCase):
     def drawer(self):
         with psycopg.connect(self.owner_dsn) as conn:
             return conn.execute('SELECT posted,reserved FROM prsystem.cash_drawer WHERE tenant_id=%s AND shift_id=%s',(self.tenant,self.shift)).fetchone()
-

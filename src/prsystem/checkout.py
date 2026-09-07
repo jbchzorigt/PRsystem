@@ -27,6 +27,7 @@ class CheckoutService(GuestFinance):
             room=conn.execute('SELECT revision,status,minibar_mode,category_id FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,source[0])).fetchone()
             if not room or room[1] not in {'ACTIVE','RETIRING'} or room[2]!='OFF':raise DomainError('CHECKOUT_SOURCE_NOT_READY')
             before=self.lock(conn,tenant,stay,revision,active=True)
+            if conn.execute("SELECT 1 FROM prsystem.stay_time_amendment WHERE tenant_id=%s AND stay_id=%s AND state='PENDING'",(tenant,stay)).fetchone():raise DomainError('AMENDMENT_PENDING')
             shift=StayService._shift(conn,tenant,actor)
             if before['refund_reserved'] or self.balance(before)['available']:
                 raise DomainError('CHECKOUT_FINANCE_PENDING')
@@ -40,6 +41,7 @@ class CheckoutService(GuestFinance):
             conn.execute("UPDATE prsystem.stay SET state='CLOSED',actual_checkout_at=%s WHERE tenant_id=%s AND id=%s",(now,tenant,stay))
             conn.execute("UPDATE prsystem.room SET cleaning_state='DIRTY',revision=revision+1 WHERE tenant_id=%s AND id=%s",(tenant,source[0]))
             conn.execute('UPDATE prsystem.stay_guest_code SET revoked_at=coalesce(revoked_at,%s) WHERE tenant_id=%s AND stay_id=%s',(now,tenant,stay))
+            conn.execute('UPDATE prsystem.guest_session SET revoked_at=coalesce(revoked_at,%s) WHERE tenant_id=%s AND stay_id=%s',(now,tenant,stay))
             package=conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]
             cleaning_source=action=None
             if package>=25000:

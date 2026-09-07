@@ -60,8 +60,9 @@ class StayService(RoomService):
 
     @staticmethod
     def _available(conn, tenant, room, actual, end, buffer_minutes):
-        history = conn.execute('''SELECT state,actual_checkin_at,actual_checkout_at,cleaning_buffer_minutes
-            FROM prsystem.stay WHERE tenant_id=%s AND room_id=%s''', (tenant, room)).fetchall()
+        history = conn.execute('''SELECT state,coalesce((SELECT a.actual_checkin_at FROM prsystem.stay_time_amendment a
+            WHERE a.tenant_id=s.tenant_id AND a.stay_id=s.id AND a.state='APPROVED' ORDER BY a.decided_at DESC,a.id DESC LIMIT 1),actual_checkin_at),actual_checkout_at,cleaning_buffer_minutes
+            FROM prsystem.stay s WHERE tenant_id=%s AND room_id=%s''', (tenant, room)).fetchall()
         for state, start, checkout, buffer in history:
             # An overdue, unchecked-out stay remains occupied indefinitely.
             if state == 'ACTIVE' or overlaps(actual, end, start, checkout, buffer_minutes, buffer):
@@ -177,7 +178,8 @@ class StayService(RoomService):
     def list_active(self, bearer, tenant, limit=100, after=''):
         with transaction(self.auth.dsn) as conn:
             self._reader(conn, bearer, tenant)
-            rows = conn.execute("""SELECT id,room_id,kind,actual_checkin_at,planned_checkout_at,amount_mnt,
-                clock_timestamp()>planned_checkout_at AS overdue FROM prsystem.stay
+            rows = conn.execute("""SELECT id,room_id,kind,coalesce((SELECT a.actual_checkin_at FROM prsystem.stay_time_amendment a
+                WHERE a.tenant_id=s.tenant_id AND a.stay_id=s.id AND a.state='APPROVED' ORDER BY a.decided_at DESC,a.id DESC LIMIT 1),actual_checkin_at),planned_checkout_at,amount_mnt,
+                clock_timestamp()>planned_checkout_at AS overdue FROM prsystem.stay s
                 WHERE tenant_id=%s AND state='ACTIVE' AND id>%s ORDER BY id LIMIT %s""", (tenant, after, limit)).fetchall()
             return [dict(zip(('stay_id','room_id','kind','actual_checkin_at','planned_checkout_at','amount_mnt','overdue'), row)) for row in rows]
