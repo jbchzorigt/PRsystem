@@ -30,6 +30,7 @@ from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
 from prsystem.guest_corrections import GuestCorrections
+from prsystem.guest_payments import GuestPayments
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -180,6 +181,24 @@ class GuestCashReceipt(CashConfirmation):
     charge_id: str | None = Field(default=None,min_length=1,max_length=128)
     expected_revision: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class EmptyInput(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+
+
+class ManualPosPayment(InvitationChange):
+    charge_id: str = Field(min_length=1,max_length=128)
+    amount_mnt: int = Field(gt=0,le=2**63-1)
+    reference: str = Field(min_length=1,max_length=200)
+    terminal_id: str = Field(min_length=1,max_length=100)
+    transacted_at: str = Field(min_length=20,max_length=40)
+
+
+class GuestPaymentIntent(InvitationChange):
+    charge_id: str = Field(min_length=1,max_length=128)
+    amount_mnt: int = Field(gt=0,le=2**63-1)
+    provider: Literal['QPAY','KHAAN']
 
 
 class CashCorrectionRequest(InvitationChange):
@@ -395,6 +414,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
+    guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.10.0")
@@ -444,6 +464,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors['STAY_FINANCE_UNAVAILABLE'] = 503
         stay_errors.update({code:409 for code in ('DEPOSIT_REQUIREMENT_NOT_MET','FINANCIAL_SOURCE_NOT_READY','FINANCIAL_AGGREGATE_FROZEN','DEPOSIT_BALANCE_CONFLICT','INSUFFICIENT_DEPOSIT','CHARGE_OVERPAYMENT','INVALID_FINANCIAL_SOURCE','ORIGINAL_CASH_DRAWER_REQUIRED','REFUND_TERMINAL','CASH_SOURCE_CONFLICT','INSUFFICIENT_CASH')})
         stay_errors.update({code:409 for code in ('CORRECTION_SOURCE_IN_USE','CORRECTION_HAS_NO_CHANGE','CORRECTION_PENDING','CORRECTION_TERMINAL','CORRECTION_SOURCE_CHANGED')})
+        stay_errors.update({'INVALID_TRANSACTION_TIME':422,'PAYMENT_REFERENCE_USED':409,'GUEST_PROVIDER_UNAVAILABLE':503})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -533,6 +554,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-receipts',status_code=201)
     def guest_cash_receipt(tenant_id: str,stay_id: str,body: GuestCashReceipt,secret: Annotated[str,Depends(token)]):
         return guest_finance.receive(secret,tenant_id,stay_id,body.purpose,body.amount_mnt,body.charge_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/pos-payments',status_code=201)
+    def guest_pos_payment(tenant_id: str,stay_id: str,body: ManualPosPayment,secret: Annotated[str,Depends(token)]):
+        return guest_payments.pos(secret,tenant_id,stay_id,body.charge_id,body.amount_mnt,body.reference,body.terminal_id,body.transacted_at,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/payment-intents',status_code=201)
+    def guest_payment_intent(tenant_id: str,stay_id: str,body: GuestPaymentIntent,secret: Annotated[str,Depends(token)]):
+        return guest_payments.intent(secret,tenant_id,stay_id,body.charge_id,body.amount_mnt,body.provider,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/payment-intents/{intent_id}/reconcile')
+    def guest_payment_reconcile(tenant_id: str,stay_id: str,intent_id: str,body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return guest_payments.reconcile(secret,tenant_id,stay_id,intent_id)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-corrections',status_code=201)
     def request_cash_correction(tenant_id: str,stay_id: str,body: CashCorrectionRequest,secret: Annotated[str,Depends(token)]):

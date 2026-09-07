@@ -134,23 +134,25 @@ class GuestFinance(RoomService):
 
     @staticmethod
     def load_receipt(conn,tenant,stay,receipt):
-        row=conn.execute('''SELECT amount_mnt,allocated,refund_reserved,refunded,reversed,purpose,drawer_id FROM prsystem.guest_receipt
+        row=conn.execute('''SELECT amount_mnt,allocated,refund_reserved,refunded,reversed,purpose,drawer_id,channel FROM prsystem.guest_receipt
             WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE''',(tenant,stay,receipt)).fetchone()
         if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
         return row
 
     @staticmethod
-    def charge(conn,tenant,stay,charge,amount):
+    def charge(conn,tenant,stay,charge,amount,*,excluding_intent=None):
         row=conn.execute('SELECT amount_mnt,paid_mnt FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,charge)).fetchone()
         if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
-        if amount>row[0]-row[1]:raise DomainError('CHARGE_OVERPAYMENT')
+        held=conn.execute("SELECT coalesce(sum(amount_mnt),0) FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND charge_id=%s AND state='PENDING' AND id IS DISTINCT FROM %s",(tenant,charge,excluding_intent)).fetchone()[0]
+        if amount>row[0]-row[1]-held:raise DomainError('CHARGE_OVERPAYMENT')
         conn.execute('UPDATE prsystem.guest_charge SET paid_mnt=paid_mnt+%s WHERE tenant_id=%s AND id=%s',(amount,tenant,charge))
 
-    def record_receipt(self,conn,tenant,stay,actor,shift,amount,purpose,now,*,post_cash=True):
+    def record_receipt(self,conn,tenant,stay,actor,shift,amount,purpose,now,*,post_cash=True,channel='CASH'):
+        if channel not in {'CASH','MANUAL_POS','QPAY','KHAAN'} or (post_cash and channel!='CASH'):raise DomainError('INVALID_REQUEST')
         money(amount,positive=True)
         receipt=secrets.token_hex(16)
         conn.execute('''INSERT INTO prsystem.guest_receipt (tenant_id,stay_id,id,purpose,channel,amount_mnt,actor_id,shift_id,drawer_id,recorded_at)
-            VALUES (%s,%s,%s,%s,'CASH',%s,%s,%s,%s,%s)''',(tenant,stay,receipt,purpose,amount,actor,shift[0],shift[2],now))
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',(tenant,stay,receipt,purpose,channel,amount,actor,shift[0],shift[2],now))
         if post_cash:
             self.cash(conn,tenant,actor,shift[0],shift[2],'GUEST_DEPOSIT_RECEIVED' if purpose=='DEPOSIT' else 'GUEST_PAYMENT_RECEIVED',receipt,amount,0,now)
         return receipt
@@ -222,6 +224,7 @@ class GuestFinance(RoomService):
             self.no_pending_correction(conn,tenant,receipt)
             funding=self.load_receipt(conn,tenant,stay,receipt)
             if funding[5]!='DEPOSIT':raise DomainError('INVALID_FINANCIAL_SOURCE')
+            if funding[7]!='CASH':raise DomainError('INVALID_FINANCIAL_SOURCE')
             if funding[6]!=shift[2]:raise DomainError('ORIGINAL_CASH_DRAWER_REQUIRED')
             require_available(amount,self.receipt_balance(funding));require_available(amount,self.balance(before)['available'])
             refund=secrets.token_hex(16);now=conn.execute('SELECT clock_timestamp()').fetchone()[0]

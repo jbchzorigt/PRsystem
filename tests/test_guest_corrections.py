@@ -153,7 +153,7 @@ class GuestCorrectionTests(GuestFinanceCase):
             conn.execute(sql.SQL("CREATE FUNCTION prsystem.{}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit rejected'; END; $$").format(sql.Identifier(trigger)))
             conn.execute(sql.SQL("CREATE CONSTRAINT TRIGGER {} AFTER INSERT ON prsystem.guest_receipt_reversal DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.{}()").format(sql.Identifier(trigger),sql.Literal(self.tenant),sql.Identifier(trigger)))
         try:
-            with self.assertRaises(psycopg.Error):self.decide(correction)
+            self.assert_status(self.decide(correction),503)
             self.assertEqual(self.drawer(),(60000,0))
             self.assertEqual(self.statement().json()['balance']['revision'],2)
             with psycopg.connect(self.owner_dsn) as conn:

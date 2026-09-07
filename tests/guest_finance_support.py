@@ -34,6 +34,8 @@ class GuestFinanceCase(WalkInCase):
                 'GRANT UPDATE (snapshot) ON prsystem.stay TO {}',
                 'GRANT SELECT,INSERT ON prsystem.guest_correction,prsystem.guest_receipt_reversal,prsystem.guest_allocation_reversal TO {}',
                 'GRANT UPDATE (state,decider_id,decision_reason,decided_at) ON prsystem.guest_correction TO {}',
+                'GRANT SELECT,INSERT ON prsystem.guest_payment_intent,prsystem.guest_payment_evidence,prsystem.billing_capture TO {}',
+                'GRANT UPDATE (invoice_id,state,last_provider_state,receipt_id) ON prsystem.guest_payment_intent TO {}',
             ):conn.execute(sql.SQL(grant).format(sql.Identifier(cls.role)))
 
     def setUp(self):
