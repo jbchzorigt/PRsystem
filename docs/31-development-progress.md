@@ -9,7 +9,7 @@
 | № | Үе шат | Одоогийн төлөв |
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
-| **2** | **Нэвтрэлт, ажилтны эрх ба lifecycle** | **Идэвхтэй:** auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity болон takeover queue claim нэмэгдсэн; бодит takeover execution, email холболт үлдсэн |
+| **2** | **Нэвтрэлт, ажилтны эрх ба lifecycle** | **Идэвхтэй:** auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | 3 | Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover | Эхлээгүй; cash/domain суурийг ашиглана |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
@@ -21,17 +21,17 @@
 
 | № | Ажил | Төлөв |
 | --- | --- | --- |
-| 1 | Бодит email transport/worker | Хэсэгчлэн: TLS SMTP, lease/retry/dead letter код болон тест нэмсэн; SMTP/sender, HTTPS page, deployment ба бодит хүргэлт хүлээгдэж байна |
-| 2 | Paid onboarding → Primary Admin | Үлдсэн: OTP/ownership proof, authoritative provider payment, durable provisioning/activation |
+| 1 | Бодит email transport/worker | Хэсэгчлэн: TLS SMTP worker + дөрвөн link UI бэлэн; SMTP/sender, HTTPS deployment ба бодит хүргэлт үлдсэн |
+| 2 | Paid onboarding → Primary Admin | Хэсэгчлэн: OTP/stored-owner proof ports, paid provisioning/activation, bounded worker бэлэн; бодит SMS/QPay/Khaan adapter, tax/eBarimt болон screening integration үлдсэн |
 | **3** | **Hotel Admin reset email хүсэлт** | **Дууссан:** canonical recipient, current scope/revision, idempotency, audit; бодит хүргэлт №1-ээс хамаарна |
 | **4** | **Unverified suspended invite recovery** | **Дууссан:** ижил membership → PENDING, шинэ нэг удаагийн invite, mandatory reason, хуучин link/session revoke |
-| 5 | Reception takeover execution | Үлдсэн: source/shift lifecycle, replacement, count/variance, pending item terminalization, close/new shift |
-| 6 | Cleaner reassignment/continuation | Үлдсэн: бодит task/stock/room reference, assignment version, immutable movement ба remaining-action guard |
-| 7 | Hotel/account/package-related recovery | Хэсэгчлэн: эрхгүй claimant-ийг current Manager авах API бэлэн; tenant lock-ийн billing/Platform recovery холболт үлдсэн |
+| 5 | Reception takeover execution | Хэсэгчлэн: shift/takeover, replacement recovery, count/variance, transfer terminalization, close/new shift/review API бэлэн; opening/payment producers, reconciliation delivery ба expiry-locked close integration үлдсэн |
+| 6 | Cleaner reassignment/continuation | Хэсэгчлэн: source/task/stock, versioned reassignment, immutable continuation ба remaining-action guard бэлэн; canonical room/config/product/readiness/guest-charge producer integration үлдсэн |
+| 7 | Hotel/account/package-related recovery | Хэсэгчлэн: claimant/replacement recovery, Platform MFA security resume, paid renewal/floor бэлэн; enrollment/provider deployment, offline account-email recovery procedure болон billing integration үлдсэн |
 | **8** | **Denied-action security audit** | **Дууссан:** 401/403 denial нь rollback-аас тусдаа хадгалагдана; raw request/secret агуулахгүй |
 | **9** | **Restaurant invitation/access realm** | **Дууссан:** restaurant identity/link, creator permission, тусдаа membership/session/invitation, lifecycle; 26 шинэ тест CI дээр амжилттай |
 
-**4 дууссан + 2 хэсэгчлэн + 3 үлдсэн = 9.** Дуусаагүй код/интеграцийг blocker гэсэн нэрээр дууссан гэж тооцохгүй. SMTP credential хэрэгтэй хэсгээс гадна өөр хэрэгжүүлэх ажил байгаа; бүх үлдсэн ажил гадаад тохиргооноос блоклогдоогүй.
+**4 бүрэн дууссан + 5 хэсэгчлэн хэрэгжсэн = 9.** Дуусаагүй код/интеграцийг blocker гэсэн нэрээр дууссан гэж тооцохгүй. Энэ удаа бүх таван багцад серверийн код нэмсэн. Гэхдээ source producer/integration code болон provider deployment-ийг unit test/mock амжилтаар дууссан гэж тооцохгүй. Бүх үлдэгдэл зөвхөн credential биш. Дэлгэрэнгүй: [implementation ба integration gates](36-staff-execution-and-onboarding.md).
 
 [Recovery/worker contract ба minimum grants](34-staff-recovery-mail-worker.md). [Membership/queue boundary](33-membership-work.md).
 
@@ -48,8 +48,17 @@
 | SMTP transport | 4 |
 | Mail worker PostgreSQL | 7 |
 | Restaurant identity/access | 26 |
-| **Нийт** | **164** |
+| Cleaner execution | 13 |
+| Reception takeover execution/recovery | 12 |
+| TOTP RFC vectors | 2 |
+| Platform MFA/security recovery | 8 |
+| Billing calendar/price | 3 |
+| Paid onboarding/provisioning/API | 18 |
+| Subscription renewal | 8 |
+| **Нийт** | **228** |
 
-API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 134 тестийг skip хийнэ; 30 domain тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
+API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 193 тестийг skip хийнэ; 35 dependency-free тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
 
-№9-ийн contract: [Restaurant identity](35-restaurant-identity.md). Дараагийн хэрэгжүүлэлт: №5–6-ийн operational source/shift/task суурь; №1-ийн HTTPS acceptance UI болон SMTP deployment; №2/7-ийн payment/ownership/Platform recovery. Явцын update **«Үе шат 2/6 · Үлдсэн 9 багцаас X/9 дууссан»** гэсэн тогтмол хэмжүүрийг ашиглана.
+[225 тесттэй recovery/renewal CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34075905357) амжилттай; final HTTP/packaging coverage нэмсэн 228 тестийн commit CI-г шалгаж байна. Chromium CI нь дөрвөн purpose route, 204 success, давхар submit, password reveal, field/status focus, error/retry, 320px layout болон storage isolation-ийг шалгана.
+
+№9-ийн contract: [Restaurant identity](35-restaurant-identity.md). Дараагийн ажил: docs/36 дахь canonical source producers, provider adapters/acceptance, deployment болон offline recovery policy gate. Явцын update **«Үе шат 2/6 · Үлдсэн 9 багцаас X/9 дууссан»** гэсэн тогтмол хэмжүүрийг ашиглана.

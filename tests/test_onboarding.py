@@ -196,3 +196,34 @@ class OnboardingTests(StaffApiCase):
         self.assertEqual(self.flow.provision(app)['state'],'PROVISIONED')
         with psycopg.connect(self.owner_dsn) as conn:
             self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.subscription_owner WHERE identifier=%s',(self.data['owner_identifier'].upper(),)).fetchone()[0],1)
+
+    def test_http_onboarding_challenge_invoice_status_and_no_forged_evidence(self):
+        with TestClient(create_app(self.app_dsn,self.settings,token_key=self.token_key,phone_gateway=self.phone,payment_gateways={'QPAY':self.gateway}),client=(uuid4().hex,12345)) as client:
+            r=client.post('/onboarding/applications',json=dict(self.data,paid=True));self.assertEqual(r.status_code,422);self.assertEqual(r.json(),{'code':'INVALID_REQUEST'})
+            r=client.post('/onboarding/applications',json=self.data);self.assertEqual(r.status_code,201,r.text)
+            app=r.json()['application_id'];headers=self.headers(r.json()['access_token'])
+            self.assertEqual(client.post(f'/onboarding/{app}/phone/request',headers=headers).status_code,202)
+            self.assertEqual(client.post(f'/onboarding/{app}/phone/verify',headers=headers,json={'code':'123456'}).status_code,200)
+            invoice=client.post(f'/onboarding/{app}/invoice/QPAY',headers=headers);self.assertEqual(invoice.status_code,200,invoice.text)
+            self.assertEqual(client.get(f'/onboarding/{app}',headers=headers).json()['state'],'PENDING_PAYMENT')
+            self.assertEqual(client.get(f'/onboarding/{app}',headers=self.headers(self.access)).status_code,401)
+
+    def test_html_pages_are_packaged_private_and_script_restricted(self):
+        for route in ['/staff/accept','/staff/reset','/staff/restaurant-accept','/staff/activate']:
+            response=self.client.get(route)
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertIn('text/html',response.headers['content-type'])
+            self.assertEqual(response.headers['cache-control'],'no-store')
+            self.assertIn("frame-ancestors 'none'",response.headers['content-security-policy'])
+            self.assertIn('lang="mn"',response.text)
+        self.assertEqual(self.client.get('/staff/assets/staff.js').status_code,200)
+        self.assertEqual(self.client.get('/staff/assets/unexpected.js').status_code,422)
+
+    def test_activation_http_is_purpose_isolated_from_staff_invitation(self):
+        self.paid();tenant=self.flow.provision(self.app)['tenant_id']
+        with psycopg.connect(self.owner_dsn) as conn:link=conn.execute("SELECT id FROM prsystem.staff_link WHERE tenant_id=%s AND purpose='ADMIN_ACTIVATION'",(tenant,)).fetchone()[0]
+        token=self.links.prepare_delivery(link).token
+        payload=dict(token=token,password=self.password)
+        self.assertEqual(self.client.post('/auth/invitations/accept',json=payload).status_code,400)
+        self.assertEqual(self.client.post('/auth/admin/activate',json=payload).status_code,200)
+        self.assertEqual(self.client.post('/auth/admin/activate',json=payload).status_code,400)

@@ -79,7 +79,7 @@ Radio buttons retain native shape and keyboard behavior.
 
 ## Components
 
-The three link routes share `staff.html`, `staff.js` and `staff.css`.
+The four link routes share `staff.html`, `staff.js` and `staff.css`.
 Form, field errors, password reveal, submit locking and status focus are shared.
 Buttons have visible hover, active, focus and disabled states; submit geometry
 stays constant while busy. No icons, dialogs, toasts, tables or date/select popup.
@@ -94,5 +94,5 @@ links, wrong password, rate limits and uncertain network completion.
 
 - Keep existing-account passwords unchanged when accepting invitations.
 - Keep password and link secrets out of URLs after parsing, storage and logging.
-- Keep all three forms on the same validation and feedback implementation.
+- Keep all four forms on the same validation and feedback implementation.
 - Do not add a fake dashboard destination or automatic sign-in.

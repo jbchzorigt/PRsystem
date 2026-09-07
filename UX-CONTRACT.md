@@ -5,7 +5,7 @@ docs/30, docs/32, docs/34 and docs/35; this file records UI consequences only.
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 | --- | --- | --- | --- | --- |
-| Form | static/staff.html + staff.js | docs/32, docs/35, API LinkPassword | hotel invite, restaurant invite, reset | tests/browser/staff.cjs |
+| Form | static/staff.html + staff.js | docs/32, docs/35, API LinkPassword | hotel invite, restaurant invite, reset, Primary Admin activation | tests/browser/staff.cjs |
 | Scrollbar | static/staff.css | DESIGN.md | global, forced colors | tests/browser/staff.cjs |
 | Feedback | staff.js say | API error codes | inline status/error | tests/browser/staff.cjs |
 

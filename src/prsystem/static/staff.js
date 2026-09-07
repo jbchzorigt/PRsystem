@@ -114,5 +114,8 @@
       byId('reveal').setAttribute('aria-pressed', 'false');
     }
   });
+  addEventListener('pageshow', event => {
+    if (event.persisted && !secret) say('Email дэх холбоосоо дахин нээнэ үү. Энэ хуудсанд нууц утгыг хадгалдаггүй.', true);
+  });
   addEventListener('pagehide', () => { secret = ''; password.value = ''; form.hidden = true; });
 })();

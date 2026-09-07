@@ -2,7 +2,7 @@
 
 Hotel operations, online booking, subscription, restaurant болон тусгаарлагдсан Police portal-ийн систем.
 
-Одоогийн ажил: **6 үндсэн үе шатны 2-р шат — staff identity/lifecycle**. Domain core, PostgreSQL cash persistence, staff authentication, invitation/reset API, membership role/status API, takeover queue claim болон email delivery intent хэрэгжсэн. Үлдсэн 9 багцаас 4 дууссан; Restaurant staff identity/invitation/access нэмэгдсэн. TLS mail worker код нэмэгдсэн; бодит хүргэлт, UI, operational write API болон provider integration үлдсэн. [Явцын хүснэгт](docs/31-development-progress.md).
+Одоогийн ажил: **6 үндсэн үе шатны 2-р шат — staff identity/lifecycle**. Нэвтрэлт, invitation/reset, membership lifecycle, Restaurant identity дээр нэмээд Reception takeover, Cleaner continuation, Platform MFA recovery, paid onboarding/provisioning болон renewal-ийн серверийн хэрэгжилт нэмэгдсэн. Email-ийн дөрвөн веб хуудас бэлэн. Бодит provider transport, operational source producer болон production deployment бүрэн холбогдоогүй; **MVP бүрэн дуусаагүй**. [Явцын хүснэгт](docs/31-development-progress.md), [шинэ implementation ба үлдсэн integration gate](docs/36-staff-execution-and-onboarding.md).
 
 - [Шаардлагын baseline ба P1/EXT](docs/00-mvp-open-decisions.md)
 - [Зөвшөөрсөн засвар, action/command contract](docs/27-approved-risk-controls.md)
@@ -43,6 +43,10 @@ python -m unittest discover -s tests -v
 | `prsystem.restaurant_identity` | Creator/Manager Plus registration ба invitation, тусдаа Restaurant membership/session |
 | `prsystem.membership` | Primary хамгаалалттай role/status, scope session revoke, atomic exception queue/claim |
 | `prsystem.staff_lifecycle` | Canonical invitation, resend/revoke/accept, reset, secret-free email intent |
+
+| `prsystem.cleaning`, `prsystem.shifts` | Immutable source/task continuation, physical count, takeover transfer/close/review |
+| `prsystem.platform`, `prsystem.mfa` | Тусдаа Platform realm, TOTP replay guard, recent MFA ба security recovery |
+| `prsystem.onboarding`, `prsystem.billing`, `prsystem.renewal` | Phone/owner proof port, paid provisioning, calendar renewal, floor/entitlement |
 
 Module input нь server-аас баталгаажсан фактууд байна. Authorization boolean, tenant/root холбоос, cash count эсвэл provider status-ийг browser request-ээс шууд дамжуулж болохгүй. PostgreSQL adapter cash projection, transfer, journal, receipt, outbox-ийг нэг transaction-д хадгална. Cash write endpoint гаргахаас өмнө бодит expense/refund source approval/posting, shift lifecycle болон command-specific authorization-ийг холбоно.
 

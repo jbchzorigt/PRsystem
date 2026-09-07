@@ -220,7 +220,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     shifts = ShiftService(service)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
-    app = FastAPI(title="PRsystem staff API", version="0.6.0")
+    app = FastAPI(title="PRsystem staff API", version="0.7.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
