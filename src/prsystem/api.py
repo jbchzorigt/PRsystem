@@ -588,7 +588,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     reception_dependencies=ReceptionDependencies(service,stays.vault,runtime_mode)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
-    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.11.0")
+    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.12.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):

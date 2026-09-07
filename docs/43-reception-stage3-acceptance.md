@@ -47,6 +47,9 @@ Local: 60 тест ажилласан, PostgreSQL-dependent 353 skip; үүний
 
 Энэ milestone нь дээр тодорхойлсон Reception implementation acceptance юм.
 Бодит provider болон дараагийн module-ийн production acceptance биш.
-Subscription-expired completion API нь exact pre-lock source хамгаалалттай;
-одоогийн console overview нь active/grace subscription шаарддаг. Expired hotel-ийн
-бүрэн recovery дэлгэц болон stage-2 live acceptance нь тусдаа үлдсэн ажил.
+Subscription-expired completion API болон console overview нь persisted pre-lock
+stay/shift бүрийг authorize хийж зөвхөн гүйцээх ажлыг харуулна. Шинэ check-in,
+funding, booking болон configuration хаалттай. Stage-2 live acceptance тусдаа хэвээр.
+API, санхүү, QR болон mock boundary-ийн дэлгэрэнгүй: [integration contract](44-reception-integration-contract.md).
+
+v0.12.0 completion overview болон browser assertion-ийн нэмэлт баталгаажуулалт хүлээгдэж байна.

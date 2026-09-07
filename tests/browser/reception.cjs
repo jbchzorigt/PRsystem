@@ -6,7 +6,7 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
  const browser=await chromium.launch({headless:true});
  try{
   const page=await browser.newPage({viewport:{width:1280,height:900}}),origin=`http://127.0.0.1:${server.address().port}`;
-  let requests=[],failure=false,created=false,allocated=false,paid=false,closed=false,mode='RECEPTION';const problems=[];page.on('pageerror',e=>problems.push(e.message));
+  let requests=[],failure=false,created=false,allocated=false,paid=false,closed=false,expired=false,mode='RECEPTION';const problems=[];page.on('pageerror',e=>problems.push(e.message));
   const room={room_id:'room-1',number:'101',floor:'1',category_id:'category-1',category_name:'Стандарт',status:'ACTIVE',cleaning_state:'CLEAN',revision:1,minibar_mode:'OFF',tariffs:{}};
   const stay={stay_id:'stay-1',room_id:'room-1',kind:'NIGHTLY',actual_checkin_at:'2026-09-07T01:00:00Z',planned_checkout_at:'2026-09-08T04:00:00Z',amount_mnt:80000};
   const overview=()=>({account_id:'worker',roles:[mode],package_mnt:30000,mode:'MOCK_CASH_LEDGER',limit:50,staff:[{account_id:'worker',email:'worker@example.com',roles:['RECEPTION']},{account_id:'receiver',email:'receiver@example.com',roles:['RECEPTION']}],drawers:[{drawer_id:'drawer-1',name:'Үндсэн касс',unused:false}],shifts:[{shift_id:'shift-1',owner_id:'worker',drawer_id:'drawer-1',state:'OPEN',opened_at:'2026-09-07T00:00:00Z',review_state:'NOT_SUBMITTED'}],funding:[],custodies:[],qrs:[],inspections:[],cleaning:[]});
@@ -15,7 +15,7 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
    const url=new URL(route.request().url()),tail=url.pathname.replace('/hotels/test-hotel/',''),body=route.request().postDataJSON();requests.push({tail,body,method:route.request().method()});
    if(body)await new Promise(r=>setTimeout(r,150));
    let data={};
-   if(tail==='operations')data=overview();
+   if(tail==='operations'){data=overview();if(expired)Object.assign(data,{completion_only:true,rooms:[room],stays:[stay]});}
    else if(tail==='rooms')data=[room];else if(tail==='room-categories')data=[{category_id:'category-1',name:'Стандарт',status:'ACTIVE',revision:1}];
    else if(tail==='stays/active')data=created&&!closed?[stay]:[];else if(tail==='bookings'||(tail==='handovers'&&!body)||tail==='cleaning/checkouts')data=[];
    else if(tail==='stays/check-in'){
@@ -44,6 +44,13 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   await page.setViewportSize({width:320,height:650});await page.emulateMedia({reducedMotion:'reduce'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.getByRole('link',{name:'Өрөөнүүд',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#content').getAttribute('aria-busy')==='false');
   fs.mkdirSync('artifacts',{recursive:true});await page.screenshot({path:'artifacts/reception-mobile.png',fullPage:true});
   await page.setViewportSize({width:1280,height:900});await page.screenshot({path:'artifacts/reception-desktop.png',fullPage:true});
+  expired=true;const beforeExpired=requests.length;await login();
+  assert.equal(await page.getByRole('button',{name:'Walk-in зочин бүртгэх',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'POS / банкны барьцаа бэлтгэх',exact:true}).count(),0);
+  assert.match(await page.locator('#status').textContent(),/Багцын хугацаа дууссан/);
+  assert.equal(requests.slice(beforeExpired).some(r=>['rooms','room-categories','stays/active','bookings'].includes(r.tail)),false);
+  await page.getByRole('link',{name:'Өрөөнүүд',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#content').getAttribute('aria-busy')==='false');
+  assert.match(await page.locator('#content').textContent(),/101/);
   fs.writeFileSync('artifacts/reception-requests.json',JSON.stringify(requests));
   await page.route('**/guest/access',async route=>{const body=route.request().postDataJSON();assert.equal(body.qr_token,'q'.repeat(43));assert.equal(body.code,'123456');await route.fulfill({json:{access_token:'guest-session'}});});
   await page.route('**/guest/session',route=>route.fulfill({json:{room_number:'101',planned_checkout_at:'2026-09-08T04:00:00Z'}}));
