@@ -211,7 +211,7 @@ class MembershipService(StaffCommands):
             return result
 
     @classmethod
-    def register_open_work(cls, conn, tenant, owner, kind, source_id):
+    def register_open_work(cls, conn, tenant, owner, kind, source_id, *, checkout_stay=None):
         """Internal source adapter only, inside the source creation transaction.
 
         Call before source row locks; all involved accounts must be locked in
@@ -231,7 +231,22 @@ class MembershipService(StaffCommands):
             WHERE tenant_id = %s FOR SHARE""", (tenant,)).fetchone()
         role = "RECEPTION" if kind == "SHIFT" else "CLEANER"
         facts = AccessFacts(tenant, True, True, True, role in member[1], kind == "SHIFT" or hotel[0] >= 25000, True, True, hotel[2])
-        decision = subscription_gate(Action.CONFIGURE, facts, hotel[1], conn.execute("SELECT clock_timestamp()").fetchone()[0])
+        action, obligation = Action.CONFIGURE, None
+        if checkout_stay is not None:
+            if kind != 'CLEANING_TASK':raise DomainError('INVALID_WORK_KIND')
+            # A trusted adapter may register completion work only when this exact
+            # task/owner/source is linked to an immutable, already closed stay.
+            source = conn.execute("""SELECT s.check_in_recorded_at FROM prsystem.stay_checkout c
+                JOIN prsystem.stay s ON (s.tenant_id,s.id)=(c.tenant_id,c.stay_id)
+                JOIN prsystem.cleaning_source cs ON (cs.tenant_id,cs.id)=(c.tenant_id,c.cleaning_source_id)
+                JOIN prsystem.cleaning_task t ON (t.tenant_id,t.source_id)=(cs.tenant_id,cs.id)
+                WHERE c.tenant_id=%s AND c.stay_id=%s AND t.id=%s AND t.assignee_id=%s
+                AND t.state='OPEN' AND s.state='CLOSED' AND cs.source_kind='CHECKOUT'
+                AND cs.source_reference='checkout:'||c.stay_id""",(tenant,checkout_stay,source_id,owner)).fetchone()
+            if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            from prsystem.subscription import Obligation, RootKind
+            action, obligation = Action.CHECKOUT_REPORT, Obligation(tenant,checkout_stay,RootKind.STAY,source[0],True)
+        decision = subscription_gate(action, facts, hotel[1], conn.execute("SELECT clock_timestamp()").fetchone()[0], obligation)
         if not decision.allowed:
             raise DomainError(decision.code)
         previous = conn.execute("""SELECT id, owner_id, state FROM prsystem.staff_open_work

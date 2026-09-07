@@ -78,7 +78,7 @@ class CheckoutService(GuestFinance):
             if conn.execute('SELECT 1 FROM prsystem.cleaning_task WHERE tenant_id=%s AND source_id=%s',(tenant,checkout[1])).fetchone():raise DomainError('WORK_SOURCE_CONFLICT')
             task=secrets.token_hex(16)
             conn.execute('INSERT INTO prsystem.cleaning_task (tenant_id,id,source_id,assignee_id) VALUES (%s,%s,%s,%s)',(tenant,task,checkout[1],actor))
-            self.register_open_work(conn,tenant,actor,'CLEANING_TASK',task)
+            self.register_open_work(conn,tenant,actor,'CLEANING_TASK',task,checkout_stay=stay)
             action=conn.execute("SELECT id FROM prsystem.cleaning_action WHERE tenant_id=%s AND source_id=%s AND kind='CLEAN'",(tenant,checkout[1])).fetchone()[0]
             result=dict(task_id=task,source_id=checkout[1],room_id=checkout[0],action_id=action,assignment_version=0)
             self.event(conn,tenant,actor,'CHECKOUT_CLEANING_CLAIMED',stay,result)

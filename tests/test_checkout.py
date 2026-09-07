@@ -29,7 +29,7 @@ class CheckoutTests(GuestFinanceCase):
     def test_settled_checkout_preserves_price_end_and_cash_and_revokes_codes(self):
         self.start();self.settle();before=self.drawer();result=self.assert_status(self.close(),200)
         self.assertEqual(self.close().json(),result)
-        self.assertEqual(result['planned_checkout_at'],self.stay['planned_checkout_at'])
+        self.assertEqual(datetime.fromisoformat(result['planned_checkout_at']),datetime.fromisoformat(self.stay['planned_checkout_at']))
         self.assertEqual(self.drawer(),before)
         self.assertEqual(result['cleaning_state'],'DIRTY')
         self.assertEqual(datetime.fromisoformat(result['earliest_ready_at'])-datetime.fromisoformat(result['actual_checkout_at']),timedelta(minutes=30))
