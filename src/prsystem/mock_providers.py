@@ -115,12 +115,22 @@ class MockPaymentGateway:
             row = conn.execute('SELECT state FROM mock_invoice WHERE provider=? AND attempt=?', (self.provider, attempt_id)).fetchone()
             if not row:
                 raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if row['state'] == 'VOIDED':raise DomainError('REFUND_TERMINAL')
             if row['state'] == 'SUCCEEDED':
                 if state != 'SUCCEEDED':
                     raise DomainError('PAYMENT_ALREADY_PAID')
                 return
             conn.execute('UPDATE mock_invoice SET state=?,confirmed=? WHERE provider=? AND attempt=?',
                          (state, self.store.clock() if state == 'SUCCEEDED' else None, self.provider, attempt_id))
+
+    def void_invoice(self,attempt_id):
+        """Authoritative mock cancellation serializes with simulated capture."""
+        with self.store.connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row=conn.execute('SELECT state FROM mock_invoice WHERE provider=? AND attempt=?',(self.provider,attempt_id)).fetchone()
+            if not row:return
+            if row['state']=='SUCCEEDED':raise DomainError('PAYMENT_ALREADY_PAID')
+            conn.execute("UPDATE mock_invoice SET state='VOIDED' WHERE provider=? AND attempt=?",(self.provider,attempt_id))
 
     def payment(self, attempt_id, invoice_id):
         with self.store.connect() as conn:

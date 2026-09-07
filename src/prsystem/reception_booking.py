@@ -27,7 +27,7 @@ class ReceptionBooking(StayService):
                 JOIN prsystem.room_hotel_settings h ON h.tenant_id=r.tenant_id WHERE r.tenant_id=%s AND r.id=%s FOR UPDATE OF r''',(tenant,room)).fetchone()
             if not row or row[1:3]!=('ACTIVE','ACTIVE'):raise DomainError('ROOM_NOT_READY')
             offset=3 if kind=='HOURLY' else 4
-            price=next((row[n] for n in (offset,offset+2,offset+4) if row[n] is not None),None)
+            price=next((row[n] for n in (offset+2,offset+4) if row[n] is not None),None)
             if price is None:raise DomainError('STAY_SETTINGS_REQUIRED')
             end,amount=stay_terms(kind,units,arrival,arrival,price,row[9])
             self._available(conn,tenant,room,arrival,end,row[10])

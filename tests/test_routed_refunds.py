@@ -52,8 +52,8 @@ class RoutedRefundTests(GuestFinanceCase):
 
     def platform_token(self,permission=True):
         with psycopg.connect(self.owner_dsn) as conn:
-            conn.execute('INSERT INTO prsystem.platform_account(id,email,password_hash,permissions,mfa_key_ref) VALUES(%s,%s,%s,%s,%s)',(self.platform_id,self.platform_id+'@example.test',self.password_hash,['DEPOSIT_REFUND_RECONCILE'] if permission else [],self.platform_id))
-        response=self.client.post('/platform/auth/login',json=dict(email=self.platform_id+'@example.test',password=self.password,code=totp(self.mfa_key,int(datetime.now(timezone.utc).timestamp())//30)))
+            conn.execute('INSERT INTO prsystem.platform_account(id,email,password_hash,permissions,mfa_key_ref) VALUES(%s,%s,%s,%s,%s)',(self.platform_id,self.platform_id+'@example.com',self.password_hash,['DEPOSIT_REFUND_RECONCILE'] if permission else [],self.platform_id))
+        response=self.client.post('/platform/auth/login',json=dict(email=self.platform_id+'@example.com',password=self.password,code=totp(self.mfa_key,int(datetime.now(timezone.utc).timestamp())//30)))
         return self.assert_status(response,200)['access_token']
 
     def case(self,refund,token,resolve=False,key='case'):

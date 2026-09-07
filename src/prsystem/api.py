@@ -348,6 +348,21 @@ class ReasonCommand(BaseModel):
     idempotency_key: str=Field(min_length=1,max_length=128)
 
 
+class CorrectionProof(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    reference: str=Field(min_length=1,max_length=200)
+    terminal_id: str=Field(min_length=1,max_length=100)
+    transacted_at: str=Field(min_length=20,max_length=40)
+
+
+class FinancialCorrectionInput(InvitationChange):
+    receipt_id: str=Field(min_length=1,max_length=128)
+    replacement_amount_mnt: int=Field(ge=0,le=2**63-1)
+    replacement_channel: Literal['CASH','MANUAL_POS','QPAY','KHAAN']
+    proof: CorrectionProof|None=None
+    reason: str=Field(min_length=1,max_length=1000)
+
+
 class RoomCleaningRequest(InvitationChange):
     assignee_id: str = Field(min_length=1,max_length=128)
 
@@ -517,7 +532,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     checkout = CheckoutService(service, stays.vault, runtime_mode)
     guest_access = GuestAccess(service, stays.vault, runtime_mode)
     amendments = StayAmendments(service, stays.vault, runtime_mode)
-    guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
+    guest_corrections = GuestCorrections(service, stays.vault, runtime_mode,payment_gateways)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
     routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
@@ -657,6 +672,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get('/hotels/{tenant_id}/room-categories/{category_id}/deposit-settings')
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/financial-corrections',status_code=201)
+    def request_financial_correction(tenant_id: str,stay_id: str,body: FinancialCorrectionInput,secret: Annotated[str,Depends(token)]):
+        return guest_corrections.request(secret,tenant_id,stay_id,body.receipt_id,body.replacement_amount_mnt,body.reason,body.expected_revision,body.idempotency_key,body.replacement_channel,body.proof.model_dump() if body.proof else None)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/financial-corrections/{correction_id}/invoice')
+    def financial_correction_invoice(tenant_id: str,stay_id: str,correction_id: str,body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return guest_corrections.invoice(secret,tenant_id,stay_id,correction_id)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/financial-corrections/{correction_id}/decision')
+    def decide_financial_correction(tenant_id: str,stay_id: str,correction_id: str,body: CashCorrectionDecision,secret: Annotated[str,Depends(token)]):
+        return guest_corrections.decide(secret,tenant_id,stay_id,correction_id,body.approve,body.reason,body.expected_revision,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/refunds',status_code=201)
     def reserve_routed_refund(tenant_id: str,stay_id: str,body: RoutedRefundInput,secret: Annotated[str,Depends(token)]):

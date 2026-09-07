@@ -141,6 +141,9 @@ class RoutedRefunds(GuestPayments):
                 if created:
                     conn.execute('UPDATE prsystem.guest_finance SET frozen=true WHERE tenant_id=%s AND stay_id=%s',(tenant,stay))
                     self.save(conn,tenant,stay,before,dict(before,frozen=True),actor,'LATE_REFUND_SUCCESS',refund,dict(amount_mnt=row[1]),now)
+                else:
+                    case=conn.execute('SELECT state FROM prsystem.late_refund_case WHERE tenant_id=%s AND refund_id=%s',(tenant,refund)).fetchone()
+                    if case[0] not in {'OPEN','RECONCILING'}:return dict(refund_id=refund,state=case[0],frozen=before['frozen'])
                 return dict(refund_id=refund,state='LATE_REFUND_SUCCESS',frozen=True)
             if row[3]=='COMPLETED':return dict(refund_id=refund,state='COMPLETED')
             if before['frozen']:raise DomainError('FINANCIAL_AGGREGATE_FROZEN')
