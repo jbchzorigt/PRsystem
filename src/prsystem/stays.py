@@ -17,9 +17,13 @@ from prsystem.postgres.connection import transaction
 
 
 class StayService(RoomService):
-    def __init__(self, auth, vault=None):
+    def __init__(self, auth, vault=None, *, mock_finance=False, runtime_mode='production'):
         super().__init__(auth)
         self.vault = vault
+        if mock_finance:
+            from prsystem.mock_providers import require_development_database
+            require_development_database(auth.dsn, runtime_mode)
+        self.mock_finance = mock_finance
 
     def _actor(self, conn, bearer, tenant):
         self._actors(conn, bearer, tenant)
@@ -81,6 +85,10 @@ class StayService(RoomService):
             actor = self._actor(conn, bearer, tenant)
             if self.vault is None:
                 raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
+            # Deposit capture/allocation is package four. Until it exists, no
+            # production ACTIVE stay may bypass the required financial gate.
+            if not self.mock_finance:
+                raise DomainError('STAY_FINANCE_UNAVAILABLE')
             command = dict(action='WALK_IN_CHECK_IN', fingerprint=self.vault.fingerprint('check-in-command', [tenant, data]))
             replay = self._receipt(conn, tenant, key, actor, command)
             if replay is not None:
@@ -112,6 +120,8 @@ class StayService(RoomService):
             price = self.effective_prices(row)[data['kind'].lower()]
             if price is None or row[20] is None:
                 raise DomainError('STAY_SETTINGS_REQUIRED')
+            if not 50000 <= row[19] <= 100000:
+                raise DomainError('STAY_DEPOSIT_SETTINGS_REQUIRED')
             end, amount = stay_terms(data['kind'], data['duration_units'], actual, recorded, price['unit_price'], row[20])
             proof = self._readiness(conn, tenant, row[0], row[3], actual, recorded)
             self._available(conn, tenant, row[0], actual, end, row[17])
@@ -119,7 +129,7 @@ class StayService(RoomService):
             stay = secrets.token_hex(16)
             snapshot = dict(room_id=row[0], room_number=row[1], room_revision=row[7], category_id=row[3], category_name=row[4],
                             category_revision=row[12], hotel_settings_revision=row[15], price=price, checkout_time=str(row[20]),
-                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', cleaning_buffer_minutes=row[17], deposit_mnt=row[19])
+                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', financial_integration='DEFERRED_MOCK', cleaning_buffer_minutes=row[17], deposit_mnt=row[19])
             reason = self.vault.seal(data['backdate_reason'], tenant, stay, 'backdate-reason') if data.get('backdate_reason') else None
             conn.execute('''INSERT INTO prsystem.stay (tenant_id,id,room_id,shift_id,actor_id,kind,duration_units,
                 actual_checkin_at,check_in_recorded_at,planned_checkout_at,backdate_reason_envelope,

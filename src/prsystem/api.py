@@ -309,11 +309,13 @@ class RestaurantLink(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False) -> FastAPI:
     if runtime_mode not in {'production','development','test'}:
         raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
-    mocked = any(getattr(port, 'is_mock', False) for port in [phone_gateway, *(payment_gateways or {}).values()])
+    if type(mock_stay_finance) is not bool:
+        raise ValueError('mock_stay_finance must be boolean')
+    mocked = mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, *(payment_gateways or {}).values()])
     if mocked:
         from prsystem.mock_providers import require_development_database
         require_development_database(service.dsn, runtime_mode)
@@ -328,7 +330,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     openings = OpeningService(service)
     rooms = RoomService(service)
     readiness = ReadinessService(service)
-    stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment())
+    stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.9.0")
@@ -372,9 +374,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         code = str(exc)
-        stay_errors = {code:409 for code in ('ROOM_NOT_READY','ROOM_OCCUPIED','RESERVATION_CONFLICT','HISTORICAL_READINESS_REQUIRED','OPEN_SHIFT_REQUIRED','STAY_SETTINGS_REQUIRED','CLEANING_NOT_STARTED','WORK_SOURCE_CONFLICT')}
+        stay_errors = {code:409 for code in ('ROOM_NOT_READY','ROOM_OCCUPIED','RESERVATION_CONFLICT','HISTORICAL_READINESS_REQUIRED','OPEN_SHIFT_REQUIRED','STAY_SETTINGS_REQUIRED','STAY_DEPOSIT_SETTINGS_REQUIRED','CLEANING_NOT_STARTED','WORK_SOURCE_CONFLICT')}
         stay_errors.update({code:422 for code in ('INVALID_GUEST_IDENTITY','GUARDIAN_REQUIRED','ACTUAL_TIME_OUT_OF_RANGE','INVALID_STAY_DURATION','STAY_ALREADY_ENDED','TIMEZONE_REQUIRED')})
         stay_errors['IDENTITY_VAULT_UNAVAILABLE'] = 503
+        stay_errors['STAY_FINANCE_UNAVAILABLE'] = 503
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,

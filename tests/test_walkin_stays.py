@@ -34,11 +34,11 @@ class WalkInStayTests(ReceptionCase):
         super().setUp()
         self.vault=IdentityVault({'v1':b'a'*32},'v1',b'b'*32)
         self.client.close()
-        self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault),client=(self.peer,12345))
+        self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',mock_stay_finance=True),client=(self.peer,12345))
         self.addCleanup(self.client.close)
         self.shift=self.open_shift(self.worker_token,'front')
         self.assert_status(self.client.put(f'/hotels/{self.tenant}/rooms/settings',headers=self.headers(self.manager_token),json=dict(hourly_price=10001,nightly_price=80000,checkout_time='12:00',expected_revision=0,idempotency_key='settings')),200)
-        response=self.client.post(f'/hotels/{self.tenant}/room-categories',headers=self.headers(self.manager_token),json=dict(name='Standard',cleaning_buffer_minutes=30,deposit=10000,idempotency_key='category'))
+        response=self.client.post(f'/hotels/{self.tenant}/room-categories',headers=self.headers(self.manager_token),json=dict(name='Standard',cleaning_buffer_minutes=30,deposit=50000,idempotency_key='category'))
         self.category=self.assert_status(response,201)['category_id']
         response=self.client.post(f'/hotels/{self.tenant}/rooms',headers=self.headers(self.manager_token),json=dict(number='101',floor='1',category_id=self.category,idempotency_key='room'))
         self.room=self.assert_status(response,201)['room_id']
@@ -226,3 +226,23 @@ class WalkInStayTests(ReceptionCase):
         self.assertEqual(replay['stay_id'],result['stay_id']);self.assertIsNone(replay['guest_access_code'])
         self.suspend()
         self.assertEqual(self.checkin().status_code,401)
+
+    def test_production_financial_gate_cannot_be_bypassed_by_mock_flag(self):
+        with self.assertRaises(ValueError):
+            create_app(self.app_dsn,self.settings,identity_vault=self.vault,mock_stay_finance=True)
+        self.ready()
+        with TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault)) as client:
+            old=self.client;self.client=client
+            try:self.assert_status(self.checkin(),503)
+            finally:self.client=old
+        response=self.checkin()
+        result=self.assert_status(response,201)
+        self.assertEqual(response.headers['X-PRsystem-Mode'],'MOCK_ONLY')
+        self.assertEqual(result['snapshot']['financial_integration'],'DEFERRED_MOCK')
+        self.assertEqual(result['deposit_mnt'],50000)
+
+    def test_checkin_does_not_adopt_out_of_range_catalog_deposit(self):
+        self.ready()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.room_category SET deposit=0 WHERE tenant_id=%s',(self.tenant,))
+        self.assertEqual(self.checkin().json()['code'],'STAY_DEPOSIT_SETTINGS_REQUIRED')

@@ -29,7 +29,7 @@ def create_app():
         raise ValueError('Development key must have at least 32 bytes')
     derive = lambda purpose: hmac.new(key, purpose, hashlib.sha256).digest()
     vault = IdentityVault({'dev-v1': derive(b'dev-identity-encryption')}, 'dev-v1', derive(b'dev-identity-lookup'))
-    return staff_app(dsn, runtime_mode='development', identity_vault=vault, phone_gateway=MockPhoneGateway(store),
+    return staff_app(dsn, runtime_mode='development', identity_vault=vault, mock_stay_finance=True, phone_gateway=MockPhoneGateway(store),
                      payment_gateways={name: MockPaymentGateway(store, name) for name in ('QPAY', 'KHAAN')})
 
 

@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
-| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening, walk-in check-in, canonical cleaning/readiness ба encrypted guest identity хэрэгжүүлсэн; [6 implementation багцаас 2 бүрэн, 3-р багц хэсэгчлэн](38-reception-foundation.md) |
+| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening, development-mock walk-in check-in, canonical cleaning/readiness ба encrypted guest identity хэрэгжүүлсэн; [6 implementation багцаас 2 бүрэн, 3-р багц хэсэгчлэн](38-reception-foundation.md) |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
@@ -26,7 +26,7 @@
 | **3** | **Hotel Admin reset email хүсэлт** | **Дууссан:** canonical recipient, current scope/revision, idempotency, audit; бодит хүргэлт №1-ээс хамаарна |
 | **4** | **Unverified suspended invite recovery** | **Дууссан:** ижил membership → PENDING, шинэ нэг удаагийн invite, mandatory reason, хуучин link/session revoke |
 | 5 | Reception takeover execution | Хэсэгчлэн: shift/takeover, replacement recovery, count/variance, transfer terminalization, close/new shift/review API бэлэн; expiry-locked close бэлэн; configured float/initial opening producer нэмэгдсэн; payment producers болон reconciliation delivery үлдсэн |
-| 6 | Cleaner reassignment/continuation | Хэсэгчлэн: source/task/stock, versioned reassignment, immutable continuation ба remaining-action guard бэлэн; canonical room/config/product/readiness/guest-charge producer integration үлдсэн |
+| 6 | Cleaner reassignment/continuation | Хэсэгчлэн: source/task/stock, versioned reassignment, immutable continuation ба remaining-action guard бэлэн; canonical room cleaning/readiness producer нэмэгдсэн; checkout/config/product/guest-charge integration үлдсэн |
 | 7 | Hotel/account/package-related recovery | Хэсэгчлэн: claimant/replacement recovery, Platform MFA security resume, paid renewal/floor бэлэн; enrollment/provider deployment, offline account-email recovery procedure болон billing integration үлдсэн |
 | **8** | **Denied-action security audit** | **Дууссан:** 401/403 denial нь rollback-аас тусдаа хадгалагдана; raw request/secret агуулахгүй |
 | **9** | **Restaurant invitation/access realm** | **Дууссан:** restaurant identity/link, creator permission, тусдаа membership/session/invitation, lifecycle; 26 шинэ тест CI дээр амжилттай |
@@ -60,13 +60,15 @@
 | Room catalog/tariffs | 9 |
 | Stay duration/manual identity domain | 12 |
 | Identity authenticated encryption | 4 |
-| Walk-in check-in/readiness PostgreSQL | 17 |
-| **Нийт** | **297** |
+| Walk-in check-in/readiness PostgreSQL | 19 |
+| **Нийт** | **299** |
 
-Одоогийн local run: 297 discovered, crypto extra байгаа тул 58 executed, PostgreSQL-dependent 239 skipped. API/crypto extra байхгүй үед 54 dependency-free тест ажиллаж, бусад 243 skip хийнэ. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
+Одоогийн local run: 299 discovered, crypto extra байгаа тул 58 executed, PostgreSQL-dependent 241 skipped. API/crypto extra байхгүй үед 54 dependency-free тест ажиллаж, бусад 245 skip хийнэ. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
 
 [v0.7.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34077680285) (`dce6585`) дээр **237 backend тест skip-гүй**, Chromium browser tests, design lint болон token check бүгд амжилттай. Тэр milestone-д 73 backend тест нэмэгдсэн. Chromium CI нь дөрвөн purpose route, 204 success, давхар submit, password reveal, field/status focus, error/retry, 320px layout болон storage isolation-ийг шалгана.
 
 [v0.8.0 CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34084343027) (`336a14e`) дээр **264 backend тест skip-гүй**, Chromium browser болон design/token checks амжилттай. Энэ continuation нь mock providers, бодит onboarding integration, initial float/shift opening, room catalog/tariffs-ийн **27 шинэ тест** нэмсэн.
 
 №9-ийн contract: [Restaurant identity](35-restaurant-identity.md). [Reception багц 3/6-ийн walk-in implementation](39-walkin-check-in.md) нэмэгдсэн. Online booking ба guest QR/session integration үлдсэн; дараагийн үндсэн ажил нь багц 4-ийн guest financial ledger/deposit/payment allocation/refund. Mock ажиллуулах заавар: [37-development-mocks.md](37-development-mocks.md). Явцын update **«Үе шат 3/6 · Reception-ийн 6 багцаас 2 бүрэн, 3-р багц хэсэгчлэн»** гэсэн хэмжүүрийг ашиглана; 2-р шатны анхны 9 багцын release acceptance тооллыг дээр өөрчлөлгүй хадгалав.
+
+Walk-in financial gate: production check-in нь document 20-ийн шаардлагатай deposit satisfaction service холбогдох хүртэл 503. Development factory дахь explicit mock л `DEFERRED_MOCK` snapshot-тай simulation stay үүсгэнэ; payment/deposit received гэж бичихгүй. Энэ нь хэрэглэгчийн API service-үүдийг mock-оор орлуулж үргэлжлүүлэх шийдвэрийн хүрээнд байна.

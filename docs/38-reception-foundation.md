@@ -10,7 +10,7 @@ Reception module-ийн эхний хоёр багцыг хэрэгжүүлэв.
 | --- | --- | --- |
 | 1 | Room/category суурь бүртгэл, тарифын тохиргоо, Reception read API | Хэрэгжүүлсэн |
 | 2 | Admin configured float → анхны Reception shift opening | Хэрэгжүүлсэн |
-| 3 | Stay interval/readiness, immutable snapshot, check-in | Хэсэгчлэн: [walk-in, canonical cleaning readiness, encrypted identity бэлэн](39-walkin-check-in.md); online booking/guest access integration үлдсэн |
+| 3 | Stay interval/readiness, immutable snapshot, check-in | Хэсэгчлэн: [development-mock walk-in, canonical cleaning readiness, encrypted identity бэлэн](39-walkin-check-in.md); online booking/guest access integration үлдсэн |
 | 4 | Guest charge/payment/deposit, allocation/refund, cash source posting | Үлдсэн |
 | 5 | Checkout, cleaning source/readiness, room/category lifecycle | Үлдсэн |
 | 6 | Ердийн handover/self-close, operational screens ба end-to-end урсгал | Үлдсэн |
@@ -111,3 +111,5 @@ source `336a14e`, **264 backend тест skip-гүй**, browser/design/token che
 ## v0.9.0 continuation
 
 [Walk-in check-in contract](39-walkin-check-in.md) нь initial opening ба room catalog-ийг real stay transaction-тай холбов. Үндсэн зургаан багцын 1–2 бүрэн, 3 хэсэгчлэн; 4–6 үлдсэн. Online booking quotation/confirmed source болон guest QR/session integration-ийг дууссан гэж тооцоогүй. Дараагийн үндсэн хэрэгжүүлэлт: багц 4-ийн guest financial ledger, deposit/payment allocation/refund.
+
+Production check-in нь package 4-ийн deposit satisfaction integration хүртэл fail-closed; development mock нь paid evidence үүсгэхгүй. Барьцааны required amount 50,000–100,000₮-ийн guard-тай.
