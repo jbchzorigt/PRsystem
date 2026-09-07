@@ -2,6 +2,13 @@
 
 **Шинэчилсэн:** 2026-09-07. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
+## Одоогийн Reception acceptance
+
+3/6-р шатны зургаан багцын код холбогдсон; эцсийн CI баталгаажуулалт хүлээгдэж байна.
+Booking/Minibar/Restaurant producer болон гадаад үйлчилгээний mock заагийг
+[43-р acceptance баримт](43-reception-stage3-acceptance.md)-д тодорхойлов.
+Доорх v0.8–v0.11 тоолол, тестийн хүснэгтүүд нь өмнөх milestone-ийн түүх болно.
+
 ## Нийт 6 үндсэн үе шат
 
 Дугаар нь [backend backlog](28-backend-foundation.md)-ийн дараалал. **Одоогийн төв ажил: 3/6-р үе шат — Reception.** Энэ нь төслийн 50% дууссан гэсэн хэмжүүр биш. 2026-09-07-нд хэрэглэгч бодит API service-үүдийг mock болгоод дараагийн ажил руу шилжихийг зөвшөөрсөн; provider acceptance нь хойшлуулсан release gate байна. Хөндлөн суурийн ажлууд дараагийн module-тай хамт гүйцээгдэнэ; нийт жижиг task-ийн эцсийн тоог зохиож тогтоогоогүй.
@@ -10,7 +17,7 @@
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
-| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening, walk-in check-in, canonical cleaning/readiness, encrypted identity болон cash deposit/payment/allocation/refund, cash correction, POS/provider mock, checkout/cleaning хэрэгжүүлсэн; [6 implementation багцаас 2 бүрэн, 3–5-р багц хэсэгчлэн](38-reception-foundation.md) |
+| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | Зургаан багцын implementation холбогдсон; [эцсийн acceptance/CI](43-reception-stage3-acceptance.md) хүлээгдэж байна |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
