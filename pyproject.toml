@@ -15,6 +15,7 @@ api = ["psycopg[binary]==3.3.5", "fastapi==0.141.1", "uvicorn==0.52.4", "argon2-
 test = ["httpx2==2.12.0"]
 
 [tool.setuptools.package-data]
+"prsystem" = ["static/*.html", "static/*.css", "static/*.js"]
 "prsystem.postgres" = ["migrations/*.sql"]
 
 [tool.setuptools.packages.find]

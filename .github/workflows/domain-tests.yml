@@ -46,3 +46,18 @@ jobs:
         env:
           PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: python -m unittest discover -s tests -v
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install browser test runner
+        run: npm install --no-save --package-lock=false playwright@1.62.1
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify shared staff forms
+        run: node tests/browser/staff.cjs
+      - name: Check design tokens
+        run: python scripts/export_ui_tokens.py --check
+      - name: Lint design contract
+        run: npx --yes -p @google/design.md designmd lint DESIGN.md

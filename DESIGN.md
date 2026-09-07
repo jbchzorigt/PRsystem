@@ -1,0 +1,98 @@
+---
+version: alpha
+name: PRsystem staff access
+description: Mongolian hotel staff invitation and password recovery forms.
+colors:
+  primary: "#215d73"
+  primary-hover: "#164559"
+  paper: "#f2f6f8"
+  surface: "#ffffff"
+  ink: "#172d38"
+  muted: "#4e6470"
+  line: "#b7c7cf"
+  danger: "#a32638"
+  focus: "#944908"
+typography:
+  body:
+    fontFamily: '"Segoe UI", "Noto Sans", Arial, sans-serif'
+    fontSize: "1rem"
+    lineHeight: "1.6"
+  display:
+    fontFamily: '"Trebuchet MS", "Segoe UI", Arial, sans-serif'
+rounded:
+  DEFAULT: "0.5rem"
+spacing:
+  space: "1rem"
+  measure: "34rem"
+components:
+  primary-button:
+    backgroundColor: "{colors.primary}"
+    color: "{colors.surface}"
+  field:
+    backgroundColor: "{colors.surface}"
+    color: "{colors.ink}"
+---
+
+# PRsystem design system
+
+## Overview
+
+Product register for Mongolian hotel and restaurant staff using emailed access
+links on their phone or desk computer. Business authority: docs/19 and docs/30–35.
+The visual reference is a reception desk's labeled key sleeve: one narrow petrol
+blue rail identifies the access form, with generous room for Cyrillic labels.
+No dashboard statistics, photography, marketing claims or decorative animation.
+Mongolian is the only current UI locale; no Japanese market assumption.
+
+This file owns tokens (Model A). `scripts/export_ui_tokens.py` generates the
+`:root` prefix of `src/prsystem/static/staff.css`; the rest of that shared sheet
+consumes variables. No per-route theme. CI checks token drift.
+
+## Colors
+
+Light paper page, white form, dark ink for text, muted blue for supporting text.
+Primary and primary-hover own actions. Danger always accompanies error text;
+focus is a distinct three-pixel ring. The rail has no semantic meaning by itself.
+No dark theme currently; forced colors retains native system controls.
+
+## Typography
+
+Display stack is restrained to brand and heading. Body stack supports Cyrillic,
+including Ө and Ү, without network fonts. Text is never truncated. Body 16px,
+line height 1.6; helper text 14px. Inputs inherit body metrics.
+
+## Layout
+
+One 34rem maximum-width form, natural document scrolling, 1rem base spacing.
+At 600px the form margins and padding contract; all controls remain reachable
+at 320px width and 200% zoom. No fixed viewport height. Helper, validation and
+status regions reserve space. Scrollbar styling applies globally.
+
+## Elevation & Depth
+
+A border separates the white form from paper. No shadows or blur.
+
+## Shapes
+
+Half-rem control/form corners. A narrow full-height rail is the only signature.
+Radio buttons retain native shape and keyboard behavior.
+
+## Components
+
+The three link routes share `staff.html`, `staff.js` and `staff.css`.
+Form, field errors, password reveal, submit locking and status focus are shared.
+Buttons have visible hover, active, focus and disabled states; submit geometry
+stays constant while busy. No icons, dialogs, toasts, tables or date/select popup.
+Native radio controls explicitly own account-type choice. The server decides
+whether an account exists; this choice never changes authorization.
+
+No motion beyond native interaction. Reduced-motion baseline is explicit.
+Mongolian copy names actual actions. Failure guidance distinguishes invalid
+links, wrong password, rate limits and uncertain network completion.
+
+## Do's and Don'ts
+
+- Keep existing-account passwords unchanged when accepting invitations.
+- Keep password and link secrets out of URLs after parsing, storage and logging.
+- Keep all three forms on the same validation and feedback implementation.
+- Do not add a fake dashboard destination or automatic sign-in.

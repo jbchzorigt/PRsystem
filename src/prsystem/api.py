@@ -2,12 +2,13 @@
 
 import os
 import base64
+from pathlib import Path
 from typing import Annotated, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from starlette.concurrency import run_in_threadpool
@@ -191,6 +192,21 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(psycopg.Error)
     async def database_error(request, exc):
         return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
+
+    static_root = Path(__file__).with_name("static")
+
+    @app.get("/staff/accept", include_in_schema=False)
+    @app.get("/staff/reset", include_in_schema=False)
+    @app.get("/staff/restaurant-accept", include_in_schema=False)
+    def staff_page():
+        return FileResponse(static_root / "staff.html", headers={
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "X-Frame-Options": "DENY",
+        })
+
+    @app.get("/staff/assets/{asset}", include_in_schema=False)
+    def staff_asset(asset: Literal["staff.css", "staff.js"]):
+        return FileResponse(static_root / asset)
 
     @app.get("/health")
     def health():

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="mn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ажилтны эрх · PRsystem</title>
+  <link rel="stylesheet" href="/staff/assets/staff.css">
+  <script src="/staff/assets/staff.js" defer></script>
+</head>
+<body>
+  <header><span class="brand">PR<span class="brand-mark">system</span></span><span>Ажилтны эрх</span></header>
+  <main>
+    <div class="rail" aria-hidden="true"></div>
+    <section aria-labelledby="title">
+      <p class="eyebrow" id="scope">Зочид буудлын систем</p>
+      <h1 id="title">Холбоосыг шалгаж байна</h1>
+      <p id="intro">Түр хүлээнэ үү.</p>
+      <noscript>Энэ хуудсыг ашиглахын тулд JavaScript-ийг идэвхжүүлж, email дэх холбоосоо дахин нээнэ үү.</noscript>
+      <form id="form" novalidate hidden>
+        <fieldset id="account-kind">
+          <legend>Та PRsystem-д бүртгэлтэй юу?</legend>
+          <label class="choice"><input type="radio" name="kind" value="existing" checked> Бүртгэлтэй, одоогийн нууц үгээ ашиглана</label>
+          <label class="choice"><input type="radio" name="kind" value="new"> Анх удаа, нууц үг үүсгэнэ</label>
+        </fieldset>
+        <label for="password" id="password-label">Нууц үг</label>
+        <div class="password-row">
+          <input id="password" name="password" type="password" autocomplete="current-password" maxlength="128" aria-describedby="password-help field-error" required>
+          <button type="button" id="reveal" disabled class="secondary" aria-controls="password" aria-pressed="false">Харуулах</button>
+        </div>
+        <p id="password-help" class="help"></p>
+        <p id="field-error" class="error" aria-live="polite"></p>
+        <button type="submit" id="submit" class="primary">Урилга зөвшөөрөх</button>
+      </form>
+      <p id="feedback" role="status" tabindex="-1"></p>
+      <p class="footnote">Нууц үг болон email дэх холбоосоо бусдад дамжуулахгүй байгаарай.</p>
+    </section>
+  </main>
+  <footer>PRsystem · Зочид буудлын өдөр тутмын ажиллагаа</footer>
+</body>
+</html>
