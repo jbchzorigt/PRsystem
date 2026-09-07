@@ -23,6 +23,7 @@ from prsystem.cleaning import CleaningService
 from prsystem.shifts import ShiftService
 from prsystem.platform import PlatformService
 from prsystem.onboarding import OnboardingService
+from prsystem.renewal import RenewalService
 
 
 class Login(BaseModel):
@@ -95,6 +96,14 @@ class OnboardingApplication(BaseModel):
 class OnboardingOTP(BaseModel):
     model_config = ConfigDict(extra="forbid",strict=True)
     code: SecretStr = Field(min_length=4,max_length=8)
+
+
+class RenewalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid",strict=True)
+    package_mnt: int
+    months: int
+    provider: Literal["QPAY","KHAAN"]
+    idempotency_key: str = Field(min_length=1,max_length=128)
 
 
 class AccountProof(BaseModel):
@@ -207,6 +216,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     memberships = MembershipService(service)
     cleaning = CleaningService(service)
     onboarding = OnboardingService(service,lifecycle,phone_gateway=phone_gateway,payment_gateways=payment_gateways)
+    renewals = RenewalService(service,payment_gateways)
     shifts = ShiftService(service)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
@@ -249,7 +259,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         code = str(exc)
-        status = {"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
+        status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
                   "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
@@ -376,6 +386,30 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/platform/onboarding/{application_id}/retry",status_code=202)
     def onboarding_retry(application_id: str,body: SecurityRecovery,secret: Annotated[str,Depends(token)]):
         return onboarding.manual_retry(platform_service(),secret,application_id,body.idempotency_key,body.reason,body.reference)
+
+    @app.post("/onboarding/{application_id}/owner/request",status_code=202)
+    def onboarding_owner_request(application_id: str,request: Request,secret: Annotated[str,Depends(token)]):
+        return onboarding.request_owner(application_id,secret,peer(request))
+
+    @app.post("/onboarding/{application_id}/owner/verify")
+    def onboarding_owner_verify(application_id: str,body: OnboardingOTP,request: Request,secret: Annotated[str,Depends(token)]):
+        return onboarding.verify_owner(application_id,secret,body.code.get_secret_value(),peer(request))
+
+    @app.post("/hotels/{tenant_id}/subscription/renewals",status_code=202)
+    def renewal_invoice(tenant_id: str,body: RenewalRequest,secret: Annotated[str,Depends(token)]):
+        return renewals.invoice(secret,tenant_id,body.package_mnt,body.months,body.provider,body.idempotency_key)
+
+    @app.get("/hotels/{tenant_id}/subscription/renewals/{renewal_id}")
+    def renewal_status(tenant_id: str,renewal_id: str,secret: Annotated[str,Depends(token)]):
+        return renewals.status(secret,tenant_id,renewal_id)
+
+    @app.get("/onboarding/{application_id}")
+    def onboarding_status(application_id: str,secret: Annotated[str,Depends(token)]):
+        return onboarding.status(application_id,secret)
+
+    @app.post("/hotels/{tenant_id}/takeovers/{takeover_id}/recover-replacement")
+    def takeover_replacement_recover(tenant_id: str,takeover_id: str,body: WorkReplacement,secret: Annotated[str,Depends(token)]):
+        return shifts.recover_replacement(secret,tenant_id,takeover_id,body.replacement_id,body.expected_revision,body.idempotency_key,body.reason)
 
     @app.get("/health")
     def health():

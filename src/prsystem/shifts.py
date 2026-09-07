@@ -26,6 +26,7 @@ class ShiftService(CleaningService):
             raise DomainError('ACCOUNT_NOT_ACTIVE_VERIFIED')
         decision=subscription_gate(Action.CONFIGURE,AccessFacts(tenant,True,True,True,'RECEPTION' in row[1],True,True,True,row[5]),row[4],conn.execute('SELECT clock_timestamp()').fetchone()[0])
         if not decision.allowed: raise DomainError(decision.code)
+        return row[1]
 
     @staticmethod
     def _book(conn,tenant):
@@ -41,10 +42,10 @@ class ShiftService(CleaningService):
         Adopts only the current posted opening projection; cannot fabricate an
         opening amount. The upstream opening adapter owns initial float policy.
         """
-        cls._lock_accounts(conn,{owner}); cls._reception(conn,tenant,owner); cls._book(conn,tenant)
+        cls._lock_accounts(conn,{owner}); roles=cls._reception(conn,tenant,owner); cls._book(conn,tenant)
         row=conn.execute('SELECT shift_id,posted,reserved FROM prsystem.cash_drawer WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,drawer)).fetchone()
         if not row or row[2]: raise DomainError('WORK_SOURCE_CONFLICT')
-        conn.execute('INSERT INTO prsystem.reception_shift (tenant_id,id,owner_id,drawer_id,opening_actual) VALUES (%s,%s,%s,%s,%s)',(tenant,row[0],owner,drawer,row[1]))
+        conn.execute('INSERT INTO prsystem.reception_shift (tenant_id,id,owner_id,drawer_id,opening_actual,owner_roles) VALUES (%s,%s,%s,%s,%s,%s)',(tenant,row[0],owner,drawer,row[1],roles))
         cls.register_open_work(conn,tenant,owner,'SHIFT',row[0])
         return row[0]
 
@@ -125,15 +126,16 @@ class ShiftService(CleaningService):
             drawer=conn.execute('SELECT posted,reserved,shift_id FROM prsystem.cash_drawer WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,row[3])).fetchone()
             if drawer!=(count[1],0,row[0]): raise DomainError('STALE_CASH_COUNT')
             if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,actor)).fetchone(): raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
-            original_roles=conn.execute('SELECT roles FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=%s',(tenant,row[6])).fetchone()[0]
-            review='ADMIN_REQUIRED' if {'MANAGER','MANAGER_PLUS'} & set(original_roles) else 'MANAGER_REQUIRED'
+            original_roles=conn.execute('SELECT owner_roles FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s',(tenant,row[0])).fetchone()[0]
+            review='ADMIN_REQUIRED' if {'MANAGER','MANAGER_PLUS','UNKNOWN'} & set(original_roles) else 'MANAGER_REQUIRED'
             new_shift=secrets.token_hex(16)
             conn.execute("UPDATE prsystem.reception_shift SET state='CLOSED',closed_at=clock_timestamp(),review_state=%s WHERE tenant_id=%s AND id=%s",(review,tenant,row[0]))
             conn.execute("UPDATE prsystem.staff_open_work SET state='CLOSED' WHERE tenant_id=%s AND kind='SHIFT' AND source_id=%s",(tenant,row[0]))
             # A new opening snapshot is not income. Prior expected/actual and
             # variance remain immutable in shift_cash_count and review history.
             conn.execute('UPDATE prsystem.cash_drawer SET shift_id=%s,posted=%s WHERE tenant_id=%s AND id=%s',(new_shift,count[2],tenant,row[3]))
-            conn.execute('INSERT INTO prsystem.reception_shift (tenant_id,id,owner_id,drawer_id,opening_actual) VALUES (%s,%s,%s,%s,%s)',(tenant,new_shift,actor,row[3],count[2]))
+            roles=conn.execute('SELECT roles FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=%s',(tenant,actor)).fetchone()[0]
+            conn.execute('INSERT INTO prsystem.reception_shift (tenant_id,id,owner_id,drawer_id,opening_actual,owner_roles) VALUES (%s,%s,%s,%s,%s,%s)',(tenant,new_shift,actor,row[3],count[2],roles))
             self.register_open_work(conn,tenant,actor,'SHIFT',new_shift)
             conn.execute('UPDATE prsystem.shift_takeover SET completed_at=clock_timestamp(),new_shift_id=%s WHERE tenant_id=%s AND id=%s',(new_shift,tenant,takeover))
             conn.execute('UPDATE prsystem.cash_book SET revision=revision+1 WHERE tenant_id=%s',(tenant,))
@@ -221,3 +223,31 @@ class ShiftService(CleaningService):
             conn.execute('UPDATE prsystem.reception_shift SET review_state=%s WHERE tenant_id=%s AND id=%s',(result['review_state'],tenant,shift_id))
             self.event(conn,tenant,actor,'SHIFT_REVIEWED',shift_id,dict(result,reason=reason))
             self._save_receipt(conn,tenant,key,actor,command,result); return result
+
+    def recover_replacement(self,bearer,tenant,takeover,replacement,revision,key,reason):
+        if not isinstance(reason,str) or not reason.strip() or len(reason)>1000:raise DomainError('INVALID_REASON')
+        command=dict(action='RECOVER_TAKEOVER_REPLACEMENT',takeover=takeover,replacement=replacement,revision=revision,reason=reason)
+        with transaction(self.auth.dsn) as conn:
+            session=conn.execute('SELECT account_id FROM prsystem.staff_session WHERE token_hash=%s',(digest(bearer),)).fetchone()
+            snapshot=conn.execute('SELECT replacement_id FROM prsystem.shift_takeover WHERE tenant_id=%s AND id=%s',(tenant,takeover)).fetchone()
+            if not session:raise DomainError('UNAUTHENTICATED')
+            if not snapshot:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            self._lock_accounts(conn,{session[0],snapshot[0],replacement})
+            actor=self._queue_actor(conn,bearer,tenant);self._reception(conn,tenant,replacement)
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            self._book(conn,tenant)
+            row=conn.execute('''SELECT t.replacement_id,e.claimant_id,e.revision,t.shift_id,e.id
+                FROM prsystem.shift_takeover t JOIN prsystem.staff_work_exception e ON (e.tenant_id,e.id)=(t.tenant_id,t.exception_id)
+                WHERE t.tenant_id=%s AND t.id=%s AND t.completed_at IS NULL FOR UPDATE OF t,e''',(tenant,takeover)).fetchone()
+            if not row or row[0]!=snapshot[0] or type(revision) is not int or row[2]!=revision:raise DomainError('REVISION_CONFLICT')
+            if row[1]!=actor:raise DomainError('EXCEPTION_NOT_CLAIMED')
+            previous=conn.execute('''SELECT a.status,a.verified_at,m.status,m.roles FROM prsystem.staff_account a
+                JOIN prsystem.staff_membership m ON m.account_id=a.id WHERE a.id=%s AND m.tenant_id=%s FOR SHARE OF m''',(row[0],tenant)).fetchone()
+            if previous and previous[0]=='ACTIVE' and previous[1] is not None and previous[2]=='ACTIVE' and 'RECEPTION' in previous[3]:raise DomainError('REPLACEMENT_STILL_ELIGIBLE')
+            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,replacement)).fetchone():raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
+            conn.execute('UPDATE prsystem.shift_takeover SET replacement_id=%s WHERE tenant_id=%s AND id=%s',(replacement,tenant,takeover))
+            conn.execute('UPDATE prsystem.staff_work_exception SET revision=revision+1 WHERE tenant_id=%s AND id=%s',(tenant,row[4]))
+            result=dict(takeover_id=takeover,replacement_id=replacement,revision=revision+1)
+            self.event(conn,tenant,actor,'TAKEOVER_REPLACEMENT_RECOVERED',row[3],dict(result,previous_replacement=row[0],reason=reason))
+            self._save_receipt(conn,tenant,key,actor,command,result);return result

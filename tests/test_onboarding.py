@@ -16,7 +16,7 @@ if ADMIN_DSN:
     from prsystem.api import create_app
 
 class FakePhone:
-    def request(self,phone,challenge):self.challenge=challenge
+    def request(self,phone,challenge):self.challenge=challenge;self.destination=phone
     def verify(self,challenge,code):return challenge==self.challenge and code=='123456'
 
 class FakeGateway:
@@ -37,9 +37,12 @@ class OnboardingTests(StaffApiCase):
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
                 'GRANT SELECT,INSERT ON prsystem.onboarding_application,prsystem.onboarding_attempt,prsystem.onboarding_payment,prsystem.subscription_owner,prsystem.hotel_subscription,prsystem.onboarding_job,prsystem.onboarding_event TO {}',
+                'GRANT INSERT ON prsystem.billing_capture TO {}',
+                'GRANT SELECT,INSERT ON prsystem.onboarding_owner_proof TO {}',
+                'GRANT UPDATE (challenge_id,verified_at) ON prsystem.onboarding_owner_proof TO {}',
                 'GRANT UPDATE (phone_challenge,phone_verified_at,proof_account_id,state,paid_attempt_id,tenant_id) ON prsystem.onboarding_application TO {}',
                 'GRANT UPDATE (invoice_id,state) ON prsystem.onboarding_attempt TO {}',
-                'GRANT UPDATE (attempts,next_attempt_at,completed_at,last_error_code) ON prsystem.onboarding_job TO {}',
+                'GRANT UPDATE (attempts,next_attempt_at,completed_at,last_error_code,lease_token,lease_until) ON prsystem.onboarding_job TO {}',
                 'GRANT INSERT (id,email,password_hash,display_name) ON prsystem.staff_account TO {}',
                 'GRANT UPDATE (verified_at) ON prsystem.staff_account TO {}',
                 'GRANT INSERT ON prsystem.hotel_access,prsystem.staff_membership,prsystem.cash_book,prsystem.cash_drawer,prsystem.cash_shift_reference TO {}',
@@ -166,3 +169,30 @@ class OnboardingTests(StaffApiCase):
         flow=OnboardingService(self.auth,self.links)
         with self.assertRaisesRegex(DomainError,'ONBOARDING_UNAVAILABLE'):flow.request_phone(self.app,self.access,self.peer)
         with self.assertRaisesRegex(DomainError,'ONBOARDING_UNAVAILABLE'):flow.invoice(self.app,self.access,'QPAY')
+
+    def test_worker_lease_prevents_parallel_provision_and_exhausted_crash_retry(self):
+        self.paid()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.onboarding_job SET lease_token='other-worker',lease_until=now()+interval '1 minute',attempts=1 WHERE application_id=%s",(self.app,))
+        self.assertEqual(self.flow.run_job(self.app)['state'],'WAITING')
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.onboarding_job SET lease_until=now()-interval '1 second',attempts=5 WHERE application_id=%s",(self.app,))
+            conn.execute("UPDATE prsystem.onboarding_application SET state='PROVISIONING' WHERE id=%s",(self.app,))
+        self.flow.once()
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT state FROM prsystem.onboarding_application WHERE id=%s',(self.app,)).fetchone()[0],'PROVISIONING_FAILED')
+            self.assertIsNone(conn.execute('SELECT id FROM prsystem.staff_account WHERE email=%s',(self.data['email'],)).fetchone())
+
+    def test_owner_challenge_uses_stored_contact_and_preserves_owner_account(self):
+        self.paid();self.flow.provision(self.app)
+        old_phone=self.data['phone']
+        data=dict(self.data,email=uuid4().hex+'@example.com',phone='+97688112233')
+        other=self.flow.create(data,self.peer);app,access=other['application_id'],other['access_token']
+        self.flow.request_phone(app,access,self.peer);self.flow.verify_phone(app,access,'123456',self.peer)
+        self.assertEqual(self.flow.invoice(app,access,'QPAY')['state'],'OWNER_VERIFICATION_REQUIRED')
+        self.flow.request_owner(app,access,self.peer);self.assertEqual(self.phone.destination,old_phone)
+        self.flow.verify_owner(app,access,'123456',self.peer)
+        attempt=self.flow.invoice(app,access,'QPAY')['attempt_id'];self.flow.reconcile(attempt)
+        self.assertEqual(self.flow.provision(app)['state'],'PROVISIONED')
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.subscription_owner WHERE identifier=%s',(self.data['owner_identifier'].upper(),)).fetchone()[0],1)

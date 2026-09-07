@@ -26,7 +26,7 @@ class ShiftTakeoverTests(OperationalCase):
                 'GRANT SELECT ON prsystem.shift_obligation TO {}',
                 'GRANT UPDATE (state) ON prsystem.shift_obligation TO {}',
                 'GRANT UPDATE (state,closed_at,review_state) ON prsystem.reception_shift TO {}',
-                'GRANT UPDATE (completed_at,new_shift_id) ON prsystem.shift_takeover TO {}',
+                'GRANT UPDATE (completed_at,new_shift_id,replacement_id) ON prsystem.shift_takeover TO {}',
                 'GRANT UPDATE (shift_id,posted,reserved) ON prsystem.cash_drawer TO {}',
                 'GRANT UPDATE (revision) ON prsystem.cash_book TO {}',
                 'GRANT UPDATE (state) ON prsystem.cash_transfer TO {}',
@@ -145,3 +145,14 @@ class ShiftTakeoverTests(OperationalCase):
         result=self.flow.transfer(self.replacement_token,self.tenant,self.takeover,'transfer','RETURN',10000,'return')
         self.assertEqual(result['status'],'CANCELLED')
         self.assertEqual(self.count().json()['expected'],100000)
+
+    def test_ineligible_replacement_recovery_requires_fresh_actor_count(self):
+        self.prepare();old_count=self.count().json()['count_id']
+        candidate,token=self.add_staff(['RECEPTION'])
+        with self.assertRaisesRegex(DomainError,'REPLACEMENT_STILL_ELIGIBLE'):
+            self.flow.recover_replacement(self.manager_token,self.tenant,self.takeover,candidate,1,'recover','Replacement unavailable')
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.staff_membership SET status='SUSPENDED' WHERE tenant_id=%s AND account_id=%s",(self.tenant,self.replacement))
+        result=self.flow.recover_replacement(self.manager_token,self.tenant,self.takeover,candidate,1,'recover','Replacement unavailable')
+        self.assertEqual(result['revision'],2)
+        self.assertEqual(self.close(old_count,token=token).json()['code'],'STALE_CASH_COUNT')
+        new=self.count(key='new',token=token).json()['count_id'];self.assertEqual(self.close(new,token=token).status_code,200)
