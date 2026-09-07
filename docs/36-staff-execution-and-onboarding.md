@@ -195,7 +195,8 @@ instance/DSN хэрэглэж дээрх boundary-г хадгална.
 
 ## 8. Шалгалт ба deployment-д үлдсэн зүйл
 
-Domain + PostgreSQL suite, дөрвөн form-ийн Chromium interaction suite,
+[Эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34076421615):
+228 backend тест skip-гүй амжилттай. Дөрвөн form-ийн Chromium interaction suite,
 DESIGN.md lint, token drift check, strict static UI audit ашигласан.
 PostgreSQL tests нь restricted runtime roles болон real transactions дээр ажиллана.
 Browser tests нь fake HTTP response state matrix; real endpoint rules-ийг PostgreSQL
