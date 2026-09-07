@@ -12,19 +12,20 @@ from prsystem.common import DomainError, money
 from prsystem.cleaning import CleaningService
 from prsystem.postgres.cash import PostgresCash
 from prsystem.postgres.connection import transaction
-from prsystem.subscription import AccessFacts, Action, subscription_gate
+from prsystem.obligations import exception_shift_root, shift_root, transfer_root
+from prsystem.subscription import AccessFacts, Action, Obligation, RootKind, subscription_gate
 
 
 class ShiftService(CleaningService):
     @staticmethod
-    def _reception(conn,tenant,account):
+    def _reception(conn,tenant,account, *, action=Action.CONFIGURE, obligation=None):
         row=conn.execute('''SELECT m.status,m.roles,a.status,a.verified_at,h.expires_at,h.security_suspended
             FROM prsystem.staff_membership m JOIN prsystem.staff_account a ON a.id=m.account_id
             JOIN prsystem.hotel_access h ON h.tenant_id=m.tenant_id
             WHERE m.tenant_id=%s AND m.account_id=%s FOR SHARE OF m,h''',(tenant,account)).fetchone()
         if not row or row[0]!='ACTIVE' or row[2]!='ACTIVE' or row[3] is None:
             raise DomainError('ACCOUNT_NOT_ACTIVE_VERIFIED')
-        decision=subscription_gate(Action.CONFIGURE,AccessFacts(tenant,True,True,True,'RECEPTION' in row[1],True,True,True,row[5]),row[4],conn.execute('SELECT clock_timestamp()').fetchone()[0])
+        decision=subscription_gate(action,AccessFacts(tenant,True,True,True,'RECEPTION' in row[1],True,True,True,row[5]),row[4],conn.execute('SELECT clock_timestamp()').fetchone()[0],obligation)
         if not decision.allowed: raise DomainError(decision.code)
         return row[1]
 
@@ -54,7 +55,8 @@ class ShiftService(CleaningService):
         command=dict(action='PREPARE_TAKEOVER',exception=exception,revision=revision,replacement=replacement,reason=reason)
         with transaction(self.auth.dsn) as conn:
             self._actors(conn,bearer,tenant,replacement)
-            actor=self._queue_actor(conn,bearer,tenant); self._reception(conn,tenant,replacement)
+            actor=self._queue_actor(conn,bearer,tenant,exception_id=exception)
+            self._reception(conn,tenant,replacement,action=Action.SHIFT_CLOSE,obligation=exception_shift_root(conn,tenant,exception))
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None: return replay
             self._book(conn,tenant)
@@ -78,7 +80,10 @@ class ShiftService(CleaningService):
     def _replacement(self,conn,bearer,tenant,takeover):
         self._actors(conn,bearer,tenant)
         principal,_=self.auth._authenticate(conn,bearer,tenant)
-        actor=principal['account_id']; self._reception(conn,tenant,actor)
+        actor=principal['account_id']
+        source=conn.execute('SELECT shift_id FROM prsystem.shift_takeover WHERE tenant_id=%s AND id=%s',(tenant,takeover)).fetchone()
+        if not source: raise DomainError('FORBIDDEN')
+        self._reception(conn,tenant,actor,action=Action.SHIFT_CLOSE,obligation=shift_root(conn,tenant,source[0]))
         revision=self._book(conn,tenant)
         row=conn.execute('''SELECT t.shift_id,t.replacement_id,t.completed_at,s.drawer_id,s.state,e.created_at,s.owner_id
             FROM prsystem.shift_takeover t JOIN prsystem.reception_shift s ON (s.tenant_id,s.id)=(t.tenant_id,t.shift_id)
@@ -128,18 +133,23 @@ class ShiftService(CleaningService):
             if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,actor)).fetchone(): raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
             original_roles=conn.execute('SELECT owner_roles FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s',(tenant,row[0])).fetchone()[0]
             review='ADMIN_REQUIRED' if {'MANAGER','MANAGER_PLUS','UNKNOWN'} & set(original_roles) else 'MANAGER_REQUIRED'
-            new_shift=secrets.token_hex(16)
+            expires=conn.execute('SELECT expires_at FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]
+            # Closing a pre-lock obligation never re-enables sales. With all
+            # pending work terminal there is no continuation shift to open.
+            new_shift=secrets.token_hex(16) if now<expires+timedelta(hours=48) else None
             conn.execute("UPDATE prsystem.reception_shift SET state='CLOSED',closed_at=clock_timestamp(),review_state=%s WHERE tenant_id=%s AND id=%s",(review,tenant,row[0]))
             conn.execute("UPDATE prsystem.staff_open_work SET state='CLOSED' WHERE tenant_id=%s AND kind='SHIFT' AND source_id=%s",(tenant,row[0]))
             # A new opening snapshot is not income. Prior expected/actual and
             # variance remain immutable in shift_cash_count and review history.
-            conn.execute('UPDATE prsystem.cash_drawer SET shift_id=%s,posted=%s WHERE tenant_id=%s AND id=%s',(new_shift,count[2],tenant,row[3]))
-            roles=conn.execute('SELECT roles FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=%s',(tenant,actor)).fetchone()[0]
-            conn.execute('INSERT INTO prsystem.reception_shift (tenant_id,id,owner_id,drawer_id,opening_actual,owner_roles) VALUES (%s,%s,%s,%s,%s,%s)',(tenant,new_shift,actor,row[3],count[2],roles))
-            self.register_open_work(conn,tenant,actor,'SHIFT',new_shift)
+            conn.execute('UPDATE prsystem.cash_drawer SET shift_id=%s,posted=%s WHERE tenant_id=%s AND id=%s',(new_shift or row[0],count[2],tenant,row[3]))
+            if new_shift:
+                roles=conn.execute('SELECT roles FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=%s',(tenant,actor)).fetchone()[0]
+                conn.execute('INSERT INTO prsystem.reception_shift (tenant_id,id,owner_id,drawer_id,opening_actual,owner_roles) VALUES (%s,%s,%s,%s,%s,%s)',(tenant,new_shift,actor,row[3],count[2],roles))
+                self.register_open_work(conn,tenant,actor,'SHIFT',new_shift)
             conn.execute('UPDATE prsystem.shift_takeover SET completed_at=clock_timestamp(),new_shift_id=%s WHERE tenant_id=%s AND id=%s',(new_shift,tenant,takeover))
             conn.execute('UPDATE prsystem.cash_book SET revision=revision+1 WHERE tenant_id=%s',(tenant,))
-            result=dict(old_shift_id=row[0],new_shift_id=new_shift,opening_actual=count[2],variance=count[3],review_state=review)
+            result=dict(old_shift_id=row[0],new_shift_id=new_shift,opening_actual=count[2] if new_shift else None,
+                        closing_actual=count[2],variance=count[3],review_state=review)
             self.event(conn,tenant,actor,'TAKEOVER_CLOSED',row[0],dict(result,count_id=count_id,takeover_id=takeover))
             self._save_receipt(conn,tenant,key,actor,command,result); return result
 
@@ -152,6 +162,11 @@ class ShiftService(CleaningService):
             if row[2] or row[4]!='OPEN': raise DomainError('WORK_NOT_OPEN')
             item=conn.execute('SELECT shift_id,state,created_at FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s FOR SHARE',(tenant,obligation)).fetchone()
             if not item or item[0]!=row[0] or item[1]!='PENDING' or item[2]>=row[5]: raise DomainError('OBLIGATION_NOT_ELIGIBLE')
+            # Human request to reconcile an old payment is not the privileged
+            # system reconciliation itself. Both shift and payment must predate
+            # the lock; a new payment cannot borrow the old shift's timestamp.
+            self._reception(conn,tenant,actor,action=Action.DETAIL,
+                obligation=Obligation(tenant,obligation,RootKind.PAYMENT,item[2],True))
             conn.execute('INSERT INTO prsystem.shift_reconcile_intent (tenant_id,obligation_id,takeover_id,requested_by) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING',(tenant,obligation,takeover,actor))
             result=dict(status='QUEUED',obligation_id=obligation)
             self.event(conn,tenant,actor,'TAKEOVER_RECONCILE_REQUESTED',row[0],dict(result,takeover_id=takeover))
@@ -169,6 +184,7 @@ class ShiftService(CleaningService):
             transfer=conn.execute('SELECT source_shift_id,destination_shift_id,state FROM prsystem.cash_transfer WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,transfer_id)).fetchone()
             reserved=conn.execute("SELECT recorded_at FROM prsystem.cash_event WHERE tenant_id=%s AND reference=%s AND kind='TRANSFER_RESERVED'",(tenant,transfer_id)).fetchone()
             if not transfer or transfer[2]!='PENDING' or not reserved or reserved[0]>=row[5] or transfer[0 if action=='RETURN' else 1]!=row[0]: raise DomainError('OBLIGATION_NOT_ELIGIBLE')
+            self._reception(conn,tenant,actor,action=Action.TRANSFER_FINISH,obligation=transfer_root(conn,tenant,transfer_id))
             cancel=conn.execute('SELECT reason FROM prsystem.transfer_cancel_request WHERE tenant_id=%s AND transfer_id=%s',(tenant,transfer_id)).fetchone() if action=='RETURN' else None
             if action=='RETURN' and not cancel: raise DomainError('MANAGER_CANCEL_REQUIRED')
             cash_command=ConfirmTransfer(transfer_id,actual) if action=='RECEIVE' else CancelTransfer(transfer_id,actual,cancel[0])
@@ -186,7 +202,9 @@ class ShiftService(CleaningService):
         command=dict(action='TRANSFER_CANCEL_REQUEST',transfer_id=transfer_id,reason=reason)
         with transaction(self.auth.dsn) as conn:
             self._actors(conn,bearer,tenant)
-            actor=self._queue_actor(conn,bearer,tenant)
+            # Root proof is immutable; transfer state and initiator are checked
+            # under the book lock below before any cancellation request is saved.
+            actor=self._queue_actor(conn,bearer,tenant,action=Action.TRANSFER_FINISH,obligation=transfer_root(conn,tenant,transfer_id))
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None: return replay
             self._book(conn,tenant)
@@ -208,7 +226,7 @@ class ShiftService(CleaningService):
             hotel=conn.execute('SELECT package_mnt,expires_at,security_suspended FROM prsystem.hotel_access WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()
             roles=principal['roles']
             if 'HOTEL_ADMIN' not in roles and not self._manager(roles,hotel[0]): raise DomainError('FORBIDDEN')
-            decision_gate=subscription_gate(Action.CONFIGURE,AccessFacts(tenant,True,True,True,True,True,True,True,hotel[2]),hotel[1],conn.execute('SELECT clock_timestamp()').fetchone()[0])
+            decision_gate=subscription_gate(Action.SHIFT_CLOSE,AccessFacts(tenant,True,True,True,True,True,True,True,hotel[2]),hotel[1],conn.execute('SELECT clock_timestamp()').fetchone()[0],shift_root(conn,tenant,shift_id))
             if not decision_gate.allowed: raise DomainError(decision_gate.code)
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None: return replay
@@ -229,11 +247,12 @@ class ShiftService(CleaningService):
         command=dict(action='RECOVER_TAKEOVER_REPLACEMENT',takeover=takeover,replacement=replacement,revision=revision,reason=reason)
         with transaction(self.auth.dsn) as conn:
             session=conn.execute('SELECT account_id FROM prsystem.staff_session WHERE token_hash=%s',(digest(bearer),)).fetchone()
-            snapshot=conn.execute('SELECT replacement_id FROM prsystem.shift_takeover WHERE tenant_id=%s AND id=%s',(tenant,takeover)).fetchone()
+            snapshot=conn.execute('SELECT replacement_id,exception_id,shift_id FROM prsystem.shift_takeover WHERE tenant_id=%s AND id=%s',(tenant,takeover)).fetchone()
             if not session:raise DomainError('UNAUTHENTICATED')
             if not snapshot:raise DomainError('WORK_SOURCE_NOT_FOUND')
             self._lock_accounts(conn,{session[0],snapshot[0],replacement})
-            actor=self._queue_actor(conn,bearer,tenant);self._reception(conn,tenant,replacement)
+            actor=self._queue_actor(conn,bearer,tenant,exception_id=snapshot[1])
+            self._reception(conn,tenant,replacement,action=Action.SHIFT_CLOSE,obligation=shift_root(conn,tenant,snapshot[2]))
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             self._book(conn,tenant)

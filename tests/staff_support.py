@@ -30,7 +30,7 @@ class StaffApiCase(PostgresCase):
                 "REVOKE UPDATE (posted, reserved) ON prsystem.cash_drawer FROM {}",
                 "REVOKE UPDATE (state) ON prsystem.cash_transfer FROM {}",
                 "GRANT SELECT ON prsystem.staff_account, prsystem.hotel_access, prsystem.staff_membership, "
-                "prsystem.staff_session, prsystem.auth_rate_bucket, prsystem.restaurant_membership TO {}",
+                "prsystem.staff_session, prsystem.auth_rate_bucket, prsystem.restaurant_membership, prsystem.reception_shift TO {}",
                 "GRANT INSERT ON prsystem.staff_session, prsystem.auth_rate_bucket, prsystem.auth_event TO {}",
                 "GRANT INSERT ON prsystem.staff_denied_event TO {}",
                 "GRANT UPDATE (password_hash, auth_epoch) ON prsystem.staff_account TO {}",

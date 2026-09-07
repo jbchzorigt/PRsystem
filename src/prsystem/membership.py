@@ -8,6 +8,7 @@ from prsystem.auth import digest
 from prsystem.common import DomainError, identifier
 from prsystem.postgres.connection import transaction
 from prsystem.staff_commands import StaffCommands
+from prsystem.obligations import exception_shift_root
 from prsystem.subscription import AccessFacts, Action, subscription_gate
 
 
@@ -108,31 +109,45 @@ class MembershipService(StaffCommands):
             self._save_receipt(conn, tenant, key, actor, command, result)
             return result
 
-    def _queue_actor(self, conn, bearer, tenant):
+    def _queue_actor(self, conn, bearer, tenant, *, exception_id=None, action=Action.CONFIGURE, obligation=None):
         principal, _ = self.auth._authenticate(conn, bearer, tenant)
         hotel = conn.execute("""SELECT package_mnt, expires_at, security_suspended FROM prsystem.hotel_access
             WHERE tenant_id = %s FOR SHARE""", (tenant,)).fetchone()
         facts = AccessFacts(tenant, True, True, True, self._manager(principal["roles"], hotel[0]), True, True, True, hotel[2])
-        # No existing-obligation bypass until operational sources can prove it.
-        decision = subscription_gate(Action.CONFIGURE, facts, hotel[1], conn.execute("SELECT clock_timestamp()").fetchone()[0])
+        if exception_id is not None:
+            obligation = exception_shift_root(conn, tenant, exception_id)
+            action = Action.SHIFT_CLOSE if obligation else Action.CONFIGURE
+        decision = subscription_gate(action, facts, hotel[1], conn.execute("SELECT clock_timestamp()").fetchone()[0], obligation)
         if not decision.allowed:
             raise DomainError(decision.code)
         return principal["account_id"]
 
     def exceptions(self, bearer, tenant, limit=100, after=""):
         with transaction(self.auth.dsn) as conn:
-            self._queue_actor(conn, bearer, tenant)
+            locked = False
+            try:
+                self._queue_actor(conn, bearer, tenant)
+            except DomainError as exc:
+                if str(exc) != "SUBSCRIPTION_EXPIRED":
+                    raise
+                # Authentication, current Manager role/package and hotel security
+                # passed. Return only exact remaining pre-lock shift work.
+                locked = True
             rows = conn.execute("""SELECT e.id, e.reason, e.claimant_id, e.revision, w.kind, w.source_id, w.owner_id,
                 w.assignment_version FROM prsystem.staff_work_exception e JOIN prsystem.staff_open_work w
                 ON (w.tenant_id, w.id) = (e.tenant_id, e.work_id) WHERE e.tenant_id = %s AND w.state = 'BLOCKED'
-                AND e.id > %s ORDER BY e.id LIMIT %s""", (tenant, after, limit)).fetchall()
+                AND (NOT %s OR (w.kind='SHIFT' AND EXISTS (
+                    SELECT 1 FROM prsystem.reception_shift s JOIN prsystem.hotel_access h ON h.tenant_id=s.tenant_id
+                    WHERE s.tenant_id=w.tenant_id AND s.id=w.source_id AND s.state='OPEN'
+                    AND s.opened_at<h.expires_at+interval '48 hours')))
+                AND e.id > %s ORDER BY e.id LIMIT %s""", (tenant, locked, after, limit)).fetchall()
             return [{"id": r[0], "reason": r[1], "claimant_id": r[2], "revision": r[3], "kind": r[4],
                      "source_id": r[5], "original_owner_id": r[6], "assignment_version": r[7]} for r in rows]
 
     def claim(self, bearer, tenant, exception_id, revision, key):
         command = {"action": "CLAIM_WORK", "exception_id": exception_id, "revision": revision}
         with transaction(self.auth.dsn) as conn:
-            actor = self._queue_actor(conn, bearer, tenant)
+            actor = self._queue_actor(conn, bearer, tenant, exception_id=exception_id)
             replay = self._receipt(conn, tenant, key, actor, command)
             if replay is not None:
                 return replay
@@ -166,7 +181,7 @@ class MembershipService(StaffCommands):
                                     (tenant, exception_id)).fetchone()
             previous = snapshot[0] if snapshot else None
             self._lock_accounts(conn, {session[0], previous} - {None})
-            actor = self._queue_actor(conn, bearer, tenant)
+            actor = self._queue_actor(conn, bearer, tenant, exception_id=exception_id)
             replay = self._receipt(conn, tenant, key, actor, command)
             if replay is not None:
                 return replay

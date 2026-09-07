@@ -156,3 +156,95 @@ class ShiftTakeoverTests(OperationalCase):
         self.assertEqual(result['revision'],2)
         self.assertEqual(self.close(old_count,token=token).json()['code'],'STALE_CASH_COUNT')
         new=self.count(key='new',token=token).json()['count_id'];self.assertEqual(self.close(new,token=token).status_code,200)
+
+    def expire(self, boundary=None):
+        with psycopg.connect(self.owner_dsn) as conn:
+            if boundary == 'shift':
+                lock=conn.execute('SELECT opened_at FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s',(self.tenant,self.shift)).fetchone()[0]
+            elif boundary == 'transfer':
+                lock=conn.execute("SELECT recorded_at FROM prsystem.cash_event WHERE tenant_id=%s AND kind='TRANSFER_RESERVED'",(self.tenant,)).fetchone()[0]
+            else:
+                lock=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+            conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours' WHERE tenant_id=%s",(lock,self.tenant))
+
+    def test_expired_queue_claim_takeover_closes_without_new_shift_or_income(self):
+        self.exception=self.suspend();self.expire()
+        queue=self.client.get(f'/hotels/{self.tenant}/staff-work/exceptions',headers=self.headers(self.manager_token))
+        self.assertEqual(queue.status_code,200,queue.text)
+        self.assertEqual([r['id'] for r in queue.json()],[self.exception])
+        self.claim(self.exception)
+        prepared=self.flow.prepare(self.manager_token,self.tenant,self.exception,1,self.replacement,'prepare','Close existing work')
+        self.takeover=prepared['takeover_id']
+        counted=self.count();self.assertEqual(counted.status_code,200,counted.text)
+        result=self.close(counted.json()['count_id']);self.assertEqual(result.status_code,200,result.text)
+        self.assertIsNone(result.json()['new_shift_id']);self.assertIsNone(result.json()['opening_actual'])
+        self.assertEqual(result.json()['closing_actual'],98000)
+        self.assertEqual(self.close(counted.json()['count_id']).json(),result.json())
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM prsystem.reception_shift WHERE tenant_id=%s AND state='OPEN'",(self.tenant,)).fetchone()[0],0)
+            self.assertEqual(conn.execute('SELECT shift_id,posted FROM prsystem.cash_drawer WHERE tenant_id=%s',(self.tenant,)).fetchone(),(self.shift,98000))
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.cash_event WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+        self.assertEqual(self.flow.review(self.manager_token,self.tenant,self.shift,'APPROVE','review','Variance investigated')['review_state'],'APPROVED')
+        with self.assertRaisesRegex(DomainError,'SUBSCRIPTION_EXPIRED'):
+            with transaction(self.app_dsn) as conn:self.flow.register_shift(conn,self.tenant,self.replacement,'a')
+        with self.assertRaisesRegex(DomainError,'WORK_NOT_OPEN'):
+            PostgresCash(self.app_dsn,authorize=lambda *_:True).execute(SpendCash('a',1,'late','expense'),CashContext(self.tenant,self.replacement,'late',1,datetime.now(timezone.utc),True,self.shift))
+
+    def test_exact_lock_timestamp_is_not_an_existing_shift(self):
+        self.prepare();self.expire('shift')
+        self.assertEqual(self.count().json()['code'],'SUBSCRIPTION_EXPIRED')
+        queue=self.client.get(f'/hotels/{self.tenant}/staff-work/exceptions',headers=self.headers(self.manager_token))
+        self.assertEqual(queue.status_code,200,queue.text);self.assertEqual(queue.json(),[])
+        with self.assertRaisesRegex(DomainError,'SUBSCRIPTION_EXPIRED'):
+            self.flow.prepare(self.manager_token,self.tenant,self.exception,1,self.replacement,'prepare','Staff unavailable')
+
+    def test_expiry_completion_does_not_bypass_hotel_security_or_reception_role(self):
+        self.prepare();self.expire()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET security_suspended=true WHERE tenant_id=%s',(self.tenant,))
+        self.assertEqual(self.count().json()['code'],'SECURITY_SUSPENDED')
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET security_suspended=false WHERE tenant_id=%s',(self.tenant,))
+        self.assertEqual(self.count(token=self.manager_token).status_code,403)
+        self.assertEqual(self.count().status_code,200)
+
+    def test_expired_original_transfer_can_be_returned_then_closed(self):
+        self.seed_transfer('RETURN');self.prepare();self.expire()
+        self.assertEqual(self.count().json()['code'],'PENDING_SHIFT_OBLIGATIONS')
+        self.flow.cancel_request(self.manager_token,self.tenant,'transfer','cancel','Return existing transfer')
+        self.assertEqual(self.flow.transfer(self.replacement_token,self.tenant,self.takeover,'transfer','RETURN',10000,'return')['status'],'CANCELLED')
+        result=self.close(self.count().json()['count_id'])
+        self.assertEqual(result.status_code,200,result.text);self.assertIsNone(result.json()['new_shift_id'])
+
+    def test_old_shift_cannot_authorize_transfer_created_at_lock(self):
+        self.seed_transfer('RECEIVE');self.prepare();self.expire('transfer')
+        with self.assertRaisesRegex(DomainError,'SUBSCRIPTION_EXPIRED'):
+            self.flow.transfer(self.replacement_token,self.tenant,self.takeover,'transfer','RECEIVE',10000,'receive')
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT state FROM prsystem.cash_transfer WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],'PENDING')
+
+    def test_expiry_reconciliation_requires_original_payment_root(self):
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("INSERT INTO prsystem.shift_obligation (tenant_id,id,shift_id,provider_reference) VALUES (%s,'old',%s,'old-provider')",(self.tenant,self.shift))
+            lock=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+            conn.execute("INSERT INTO prsystem.shift_obligation (tenant_id,id,shift_id,provider_reference) VALUES (%s,'new',%s,'new-provider')",(self.tenant,self.shift))
+        self.prepare()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours' WHERE tenant_id=%s",(lock,self.tenant))
+        self.assertEqual(self.flow.reconcile(self.replacement_token,self.tenant,self.takeover,'old','old')['status'],'QUEUED')
+        with self.assertRaisesRegex(DomainError,'SUBSCRIPTION_EXPIRED'):
+            self.flow.reconcile(self.replacement_token,self.tenant,self.takeover,'new','new')
+
+    def test_expired_replacement_recovery_still_requires_new_count(self):
+        self.prepare();old_count=self.count().json()['count_id'];candidate,token=self.add_staff(['RECEPTION'])
+        self.expire()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.staff_membership SET status='SUSPENDED' WHERE tenant_id=%s AND account_id=%s",(self.tenant,self.replacement))
+        self.flow.recover_replacement(self.manager_token,self.tenant,self.takeover,candidate,1,'recover','Unavailable replacement')
+        self.assertEqual(self.close(old_count,token=token).json()['code'],'STALE_CASH_COUNT')
+        result=self.close(self.count(key='fresh',token=token).json()['count_id'],token=token)
+        self.assertEqual(result.status_code,200,result.text);self.assertIsNone(result.json()['new_shift_id'])
+
+    def test_recorded_shift_time_and_terminal_close_cannot_be_rewritten(self):
+        with self.assertRaises(psycopg.Error):
+            with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.reception_shift SET opened_at=opened_at-interval '1 day' WHERE tenant_id=%s",(self.tenant,))
+        self.prepare();self.expire();result=self.close(self.count().json()['count_id'])
+        self.assertEqual(result.status_code,200,result.text)
+        with self.assertRaises(psycopg.Error):
+            with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.reception_shift SET state='OPEN',closed_at=NULL WHERE tenant_id=%s AND id=%s",(self.tenant,self.shift))
