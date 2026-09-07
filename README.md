@@ -2,7 +2,7 @@
 
 Hotel operations, online booking, subscription, restaurant болон тусгаарлагдсан Police portal-ийн систем.
 
-Одоогийн ажил: **6 үндсэн үе шатны 2-р шат — staff identity/lifecycle**. Domain core, PostgreSQL cash persistence, staff authentication, invitation/reset API, membership role/status API, takeover queue claim болон email delivery intent хэрэгжсэн. Үлдсэн 9 багцаас 3 дууссан. TLS mail worker код нэмэгдсэн; бодит хүргэлт, UI, operational write API болон provider integration үлдсэн. [Явцын хүснэгт](docs/31-development-progress.md).
+Одоогийн ажил: **6 үндсэн үе шатны 2-р шат — staff identity/lifecycle**. Domain core, PostgreSQL cash persistence, staff authentication, invitation/reset API, membership role/status API, takeover queue claim болон email delivery intent хэрэгжсэн. Үлдсэн 9 багцаас 4 дууссан; Restaurant staff identity/invitation/access нэмэгдсэн. TLS mail worker код нэмэгдсэн; бодит хүргэлт, UI, operational write API болон provider integration үлдсэн. [Явцын хүснэгт](docs/31-development-progress.md).
 
 - [Шаардлагын baseline ба P1/EXT](docs/00-mvp-open-decisions.md)
 - [Зөвшөөрсөн засвар, action/command contract](docs/27-approved-risk-controls.md)

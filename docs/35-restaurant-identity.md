@@ -96,3 +96,5 @@ GRANT SELECT ON prsystem.restaurant_membership TO prsystem_mail;
 26 шинэ integration тест: pending registration, ownership/package/realm checks, canonical account, strict form/schedule, token purpose/expiry, resend/revoke/recovery, per-restaurant and global revocation, multi-hotel links, cross-scope denial, email boundary, concurrent registration/accept/mutation, deferred commit rollback ба minimum-grant/DB constraint tests. Өмнөх Hotel/cash/recovery/worker тестүүдийг хамтад нь ажиллуулна.
 
 №9 нь Restaurant **staff identity/invitation/access** багцын acceptance. Restaurant activation, меню/үнэ/хуваарийн evaluator, order/claim/reassignment, QPay/refund болон guest UI дууссан гэсэн үг биш; эдгээр нь үндсэн roadmap-ийн 5-р үе шатанд үлдсэн.
+
+[Эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) implementation commit `ee774883d7fe3e495dfd3575ff6f7f76aaa03338` дээр нийт **164 тестийг skip-гүй амжилттай** ажиллуулсан. №9 identity багц дууссан; нийт үлдсэн 9 багцаас 4 дууссан.
