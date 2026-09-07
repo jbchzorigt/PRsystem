@@ -79,3 +79,5 @@ Invitation/resend/revoke/accept, password reset болон durable email intent 
 Deployment нь HTTPS termination, тодорхой trusted proxy allowlist, request/connection limits-тэй байна. Proxy тохируулах хүртэл direct peer IP хэрэглэнэ; дурын forwarded header-д итгэхгүй. Бодит provider, MFA-required platform action эсвэл deployment хийгдээгүй.
 
 Implementation references: [Argon2 password hashing](https://argon2-cffi.readthedocs.io/en/stable/howto.html), [FastAPI HTTP bearer security](https://fastapi.tiangolo.com/reference/security/).
+
+401/403 security audit нь [recovery contract](34-staff-recovery-mail-worker.md)-ийн `GRANT INSERT ON prsystem.staff_denied_event` шаарддаг. Audit хадгалж чадахгүй бол API 503 буцаана.

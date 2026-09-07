@@ -80,3 +80,5 @@ Primary Admin paid provisioning, Hotel Admin-аас staff reset email эхлүү
 Reference: [OWASP password recovery guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html).
 
 Role/status mutation, scope session revoke, Primary хамгаалалт ба queue claim нь [дараагийн багцад](33-membership-work.md) нэмэгдсэн.
+
+2026-09-07: Admin reset хүсэлт, unverified invite recovery, denied-action audit болон TLS mail worker [34-р contract](34-staff-recovery-mail-worker.md)-д нэмэгдсэн. Worker transport код нь бодит delivery/deployment acceptance-ийг орлохгүй.

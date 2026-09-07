@@ -71,7 +71,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
     memberships = MembershipService(service)
-    app = FastAPI(title="PRsystem staff API", version="0.4.0")
+    app = FastAPI(title="PRsystem staff API", version="0.5.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):

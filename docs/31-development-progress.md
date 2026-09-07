@@ -1,6 +1,6 @@
 # Хөгжүүлэлтийн явц
 
-**Шинэчилсэн:** 2026-09-06. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
+**Шинэчилсэн:** 2026-09-07. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
 ## Нийт 6 үндсэн үе шат
 
@@ -15,16 +15,25 @@
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-## Энэ удаагийн 4 багц ажил — 4/4
+## 2-р шатны үлдсэн 9 багц — 3/9 дууссан
 
-| № | Багц | Үр дүн |
+Энэ тогтмол дугаарлалт нь 2026-09-06-нд хэрэглэгчид тайлбарласан үлдсэн 9 багц. Өмнөх 4/4 нь өмнөх implementation багцын явц байсан. Доорх тоо нь төслийн completion хувь биш.
+
+| № | Ажил | Төлөв |
 | --- | --- | --- |
-| 1 | Membership/Primary/takeover canonical дүрэм | Дууссан |
-| 2 | Migration, service, API | Дууссан: role/status, scope revoke, atomic queue, Manager claim |
-| 3 | Integration тест | Дууссан: 25 шинэ тест; нийт 113 тест бодит PostgreSQL CI дээр амжилттай |
-| 4 | Баримт, CI, branch/PR | Дууссан: contract/grants/явц болон Draft PR шинэчлэгдсэн |
+| 1 | Бодит email transport/worker | Хэсэгчлэн: TLS SMTP, lease/retry/dead letter код болон тест нэмсэн; SMTP/sender, HTTPS page, deployment ба бодит хүргэлт хүлээгдэж байна |
+| 2 | Paid onboarding → Primary Admin | Үлдсэн: OTP/ownership proof, authoritative provider payment, durable provisioning/activation |
+| **3** | **Hotel Admin reset email хүсэлт** | **Дууссан:** canonical recipient, current scope/revision, idempotency, audit; бодит хүргэлт №1-ээс хамаарна |
+| **4** | **Unverified suspended invite recovery** | **Дууссан:** ижил membership → PENDING, шинэ нэг удаагийн invite, mandatory reason, хуучин link/session revoke |
+| 5 | Reception takeover execution | Үлдсэн: source/shift lifecycle, replacement, count/variance, pending item terminalization, close/new shift |
+| 6 | Cleaner reassignment/continuation | Үлдсэн: бодит task/stock/room reference, assignment version, immutable movement ба remaining-action guard |
+| 7 | Hotel/account/package-related recovery | Хэсэгчлэн: эрхгүй claimant-ийг current Manager авах API бэлэн; tenant lock-ийн billing/Platform recovery холболт үлдсэн |
+| **8** | **Denied-action security audit** | **Дууссан:** 401/403 denial нь rollback-аас тусдаа хадгалагдана; raw request/secret агуулахгүй |
+| 9 | Restaurant invitation/access realm | Үлдсэн: restaurant identity, hotel–restaurant ownership холбоос, тусдаа membership/session/invitation scope |
 
-Claim нь касс тоолох, ээлж хаах эсвэл Cleaner ажлыг өөр хүнд шилжүүлсэн гэсэн үг биш. Source adapter-ууд, replacement/physical takeover, paid onboarding болон бодит email deployment үлдсэн. [Хэрэгжүүлэлтийн хязгаар ба contract](33-membership-work.md).
+**3 дууссан + 2 хэсэгчлэн + 4 үлдсэн = 9.** Дуусаагүй код/интеграцийг blocker гэсэн нэрээр дууссан гэж тооцохгүй. SMTP credential хэрэгтэй хэсгээс гадна өөр хэрэгжүүлэх ажил байгаа; бүх үлдсэн ажил гадаад тохиргооноос блоклогдоогүй.
+
+[Recovery/worker contract ба minimum grants](34-staff-recovery-mail-worker.md). [Membership/queue boundary](33-membership-work.md).
 
 ## Тестийн бүрэлдэхүүн
 
@@ -35,8 +44,11 @@ Claim нь касс тоолох, ээлж хаах эсвэл Cleaner ажлы�
 | Staff authentication API | 22 |
 | Invitation/reset/email boundary | 22 |
 | Membership/queue API | 25 |
-| **Нийт** | **113** |
+| Recovery/security audit | 14 |
+| SMTP transport | 4 |
+| Mail worker PostgreSQL | 7 |
+| **Нийт** | **138** |
 
-`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 83 integration тестийг skip хийнэ; 30 domain тест ажиллана. [PostgreSQL 17 CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34015694845) бүх 113 тестийг skip-гүй амжилттай ажиллуулсан.
+API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 108 тестийг skip хийнэ; 30 domain тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан.
 
-Дараагийн ажил: actual source/shift integration, replacement selection, physical takeover/cleaning continuation, email delivery болон invite recovery. Явцын update мөн `үе шат N/6` болон тухайн багцын дууссан/нийт тоог харуулна.
+Дараагийн хэрэгжүүлэлт: №9-ийн тусдаа Restaurant identity, №5–6-ийн operational source/shift/task суурь; №1-ийн HTTPS acceptance UI болон SMTP deployment; №2/7-ийн payment/ownership/Platform recovery. Явцын update **«Үе шат 2/6 · Үлдсэн 9 багцаас X/9 дууссан»** гэсэн тогтмол хэмжүүрийг ашиглана.
