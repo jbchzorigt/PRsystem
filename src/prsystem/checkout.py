@@ -106,3 +106,26 @@ class CheckoutService(GuestFinance):
                 AND (NOT %s OR s.check_in_recorded_at<h.expires_at+interval '48 hours')
                 ORDER BY c.stay_id LIMIT %s""",(tenant,after,actor,expired,limit)).fetchall()
             return [dict(zip(('stay_id','room_id','source_id','task_id','assignment_version','action_id'),r)) for r in rows]
+
+    def manager_clean(self,bearer,tenant,stay,revision,key):
+        command=dict(action='MANAGER_CHECKOUT_CLEAN',stay_id=stay,room_revision=revision)
+        with transaction(self.auth.dsn) as conn:
+            actor=self.actor(conn,bearer,tenant,stay,manager=True,action=Action.CHECKOUT_REPORT)
+            if conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]!=20000:
+                raise DomainError('FORBIDDEN')
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            self._catalog_lock(conn,tenant)
+            checkout=conn.execute('SELECT room_id,cleaning_source_id FROM prsystem.stay_checkout WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()
+            if not checkout or checkout[1] is not None:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            room=conn.execute('SELECT revision,status,cleaning_state,minibar_mode FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,checkout[0])).fetchone()
+            if type(revision) is not int or room[0]!=revision:raise DomainError('REVISION_CONFLICT')
+            latest=conn.execute('SELECT id,state FROM prsystem.stay WHERE tenant_id=%s AND room_id=%s ORDER BY check_in_recorded_at DESC,id DESC LIMIT 1',(tenant,checkout[0])).fetchone()
+            if latest!=(stay,'CLOSED') or room[1] not in {'ACTIVE','RETIRING'} or room[2:]!=('DIRTY','OFF'):
+                raise DomainError('WORK_SOURCE_CONFLICT')
+            if conn.execute("SELECT 1 FROM prsystem.room_cleaning_request WHERE tenant_id=%s AND room_id=%s AND state='OPEN'",(tenant,checkout[0])).fetchone():raise DomainError('WORK_SOURCE_CONFLICT')
+            conn.execute("UPDATE prsystem.room SET cleaning_state='CLEAN',revision=revision+1 WHERE tenant_id=%s AND id=%s",(tenant,checkout[0]))
+            result=dict(stay_id=stay,room_id=checkout[0],cleaning_state='CLEAN',room_revision=revision+1)
+            self.event(conn,tenant,actor,'MANAGER_CHECKOUT_CLEANED',stay,result)
+            self._save_receipt(conn,tenant,key,actor,command,result)
+            return result

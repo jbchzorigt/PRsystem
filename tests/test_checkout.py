@@ -123,3 +123,17 @@ class CheckoutTests(GuestFinanceCase):
         self.assertEqual(own[0]['task_id'],task['task_id'])
         self.assertEqual(self.client.get(url,headers=self.headers(self.replacement_token)).json(),[])
         self.assert_status(self.client.get(url,headers=self.headers(self.admin)),403)
+
+    def test_twenty_thousand_manager_cleans_exact_checkout_after_subscription_lock(self):
+        self.start();self.settle()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.hotel_access SET package_mnt=20000,expires_at=%s::timestamptz-interval '48 hours'+interval '1 millisecond' WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+        closed=self.assert_status(self.close(),200)
+        self.assertIsNone(closed['cleaning_source_id'])
+        body=dict(expected_revision=closed['room_revision'],idempotency_key='manager-clean-checkout')
+        self.assert_status(self.command('checkout-cleaning/manager-complete',body,self.admin),403)
+        self.assert_status(self.command('checkout-cleaning/manager-complete',body,self.worker_token),403)
+        result=self.assert_status(self.command('checkout-cleaning/manager-complete',body,self.manager_token),200)
+        self.assertEqual(result['cleaning_state'],'CLEAN')
+        self.assertEqual(self.command('checkout-cleaning/manager-complete',body,self.manager_token).json(),result)
+        self.assertEqual(self.drawer(),(80000,0))

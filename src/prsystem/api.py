@@ -558,6 +558,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def checkout_stay(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
         return checkout.close(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key)
 
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout-cleaning/manager-complete')
+    def manager_checkout_clean(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
+        return checkout.manager_clean(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key)
+
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout-cleaning/claim',status_code=201)
     def claim_checkout_cleaning(tenant_id: str,stay_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
         return checkout.claim_cleaning(secret,tenant_id,stay_id,body.idempotency_key)

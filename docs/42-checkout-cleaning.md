@@ -8,6 +8,7 @@ ordinary handover/UI тусдаа үлдсэн ажил хэвээр.
 | Method / path | Contract |
 | --- | --- |
 | POST `/hotels/{hotel}/stays/{stay}/checkout` | Current Reception + own OPEN shift; expected finance revision, idempotency key |
+| POST `/hotels/{hotel}/stays/{stay}/checkout-cleaning/manager-complete` | 20k Manager; exact latest checkout source, expected room revision, idempotency key |
 | GET `/hotels/{hotel}/cleaning/checkouts` | Current Cleaner; unclaimed болон өөрт assigned checkout cleaning, bounded keyset list |
 | POST `/hotels/{hotel}/stays/{stay}/checkout-cleaning/claim` | Current Cleaner + idempotency key; нэг source нэг atomic claimant |
 | POST `/hotels/{hotel}/cleaning/tasks/{task}/start` | Existing assigned Cleaner/version gate; room DIRTY → CLEANING |
@@ -44,9 +45,11 @@ subscription expiry-гийн нарийн allowlist хэрэглэнэ. Security
 current role/package шалгалтыг алгасахгүй. Existing initial/configuration
 cleaning source энэ completion root-ийг зээлж ашиглахгүй.
 
-20k package-д Cleaner source үүсгэхгүй. Room DIRTY хэвээр; existing Manager
-`/rooms/{room}/manager-clean` flow ашиглана. Тэр setup endpoint-ийн expired
-hotel completion болон lifecycle integration нь дараагийн gate хэвээр.
+20k package-д Cleaner source үүсгэхгүй. Manager exact latest checkout-ийн
+`/checkout-cleaning/manager-complete` endpoint-оор room revision-ийг шалган
+DIRTY → CLEAN болгоно. Энэ нь pre-lock stay completion-д ажиллана. Хуучин
+checkout ID-г шинэ stay/room cleaning-ийн root болгон зээлж ашиглахгүй;
+setup-ийн `/rooms/{room}/manager-clean` expiry gate өөрчлөгдөөгүй.
 
 `earliest_ready_at` нь actual checkout + original cleaning buffer-ийн доод
 хязгаар. Үүнээс гадна actual CLEAN, room/category ACTIVE болон interval conflict
@@ -69,7 +72,7 @@ SELECT ба stay-ийн tenant/id/check_in_recorded_at SELECT шаардлага
 cleaning source/action/task/work grants хэвээр. Exact runtime fixture нь
 `tests/guest_finance_support.py`.
 
-`tests/test_checkout.py`: 9 PostgreSQL/API tests — atomic checkout, cash/price/end
+`tests/test_checkout.py`: 10 PostgreSQL/API tests — atomic checkout, cash/price/end
 unchanged, retention/code revocation, financial guards, exact cleaning source,
 claim concurrency/queue scope, original-root expiry completion, buffer,
 rollback болон immutable history.
