@@ -20,6 +20,7 @@ from prsystem.membership import MembershipService
 from prsystem.security_audit import record_denial
 from prsystem.restaurant_identity import RestaurantIdentity
 from prsystem.cleaning import CleaningService
+from prsystem.shifts import ShiftService
 
 
 class Login(BaseModel):
@@ -65,6 +66,18 @@ class RoleChange(MembershipChange):
 
 class WorkReplacement(MembershipChange):
     replacement_id: str = Field(min_length=1, max_length=128)
+
+
+class CashCount(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    actual: int = Field(ge=0,le=9223372036854775807)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class TakeoverClose(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    count_id: str = Field(min_length=1,max_length=128)
+    idempotency_key: str = Field(min_length=1,max_length=128)
 
 
 class CleaningPost(InvitationChange):
@@ -140,6 +153,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
     memberships = MembershipService(service)
     cleaning = CleaningService(service)
+    shifts = ShiftService(service)
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem staff API", version="0.6.0")
     bearer = HTTPBearer(auto_error=False)
@@ -179,6 +193,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
                   "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
                   "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
+                  "TAKEOVER_ALREADY_PREPARED":409,"REPLACEMENT_HAS_OPEN_SHIFT":409,"STALE_CASH_COUNT":409,"PENDING_SHIFT_OBLIGATIONS":409,
                   "WORK_SOURCE_NOT_FOUND":404,"WORK_NOT_OPEN":409,"REMAINING_ACTION_EXCEEDED":409,"INSUFFICIENT_STOCK":409,
                   "EXCEPTION_NOT_CLAIMED": 409, "CLAIMANT_STILL_ELIGIBLE": 409,
                   "VERIFIED_ACCOUNT_REQUIRES_REACTIVATION": 409,
@@ -228,6 +243,34 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/hotels/{tenant_id}/cleaning/tasks/{task_id}/post")
     def cleaning_post(tenant_id: str, task_id: str, body: CleaningPost, secret: Annotated[str, Depends(token)]):
         return cleaning.post(secret,tenant_id,task_id,body.expected_revision,body.action_id,body.quantity,body.idempotency_key,body.actual_count)
+
+    @app.post("/hotels/{tenant_id}/staff-work/exceptions/{exception_id}/takeover")
+    def takeover_prepare(tenant_id: str,exception_id: str,body: WorkReplacement,secret: Annotated[str,Depends(token)]):
+        return shifts.prepare(secret,tenant_id,exception_id,body.expected_revision,body.replacement_id,body.idempotency_key,body.reason)
+
+    @app.post("/hotels/{tenant_id}/takeovers/{takeover_id}/count")
+    def takeover_count(tenant_id: str,takeover_id: str,body: CashCount,secret: Annotated[str,Depends(token)]):
+        return shifts.count(secret,tenant_id,takeover_id,body.actual,body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/takeovers/{takeover_id}/close")
+    def takeover_close(tenant_id: str,takeover_id: str,body: TakeoverClose,secret: Annotated[str,Depends(token)]):
+        return shifts.close(secret,tenant_id,takeover_id,body.count_id,body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/takeovers/{takeover_id}/payments/{obligation_id}/reconcile",status_code=202)
+    def takeover_reconcile(tenant_id: str,takeover_id: str,obligation_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return shifts.reconcile(secret,tenant_id,takeover_id,obligation_id,body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/takeovers/{takeover_id}/transfers/{transfer_id}/{action}")
+    def takeover_transfer(tenant_id: str,takeover_id: str,transfer_id: str,action: Literal["receive","return"],body: CashCount,secret: Annotated[str,Depends(token)]):
+        return shifts.transfer(secret,tenant_id,takeover_id,transfer_id,action.upper(),body.actual,body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/cash/transfers/{transfer_id}/cancel-request")
+    def transfer_cancel_request(tenant_id: str,transfer_id: str,body: MembershipChange,secret: Annotated[str,Depends(token)]):
+        return shifts.cancel_request(secret,tenant_id,transfer_id,body.idempotency_key,body.reason)
+
+    @app.post("/hotels/{tenant_id}/shifts/{shift_id}/review/{decision}")
+    def shift_review(tenant_id: str,shift_id: str,decision: Literal["approve","dispute"],body: MembershipChange,secret: Annotated[str,Depends(token)]):
+        return shifts.review(secret,tenant_id,shift_id,decision.upper(),body.idempotency_key,body.reason)
 
     @app.get("/health")
     def health():

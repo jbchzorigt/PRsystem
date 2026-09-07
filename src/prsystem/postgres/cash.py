@@ -66,6 +66,13 @@ class PostgresCash:
                 raise DomainError("CASH_BOOK_NOT_FOUND")
             if self._authorize(conn, command, ctx) is not True:
                 raise DomainError("FORBIDDEN")
+            if isinstance(command, (ReserveTransfer, SpendCash)):
+                drawer_ids = [command.drawer_id] if isinstance(command, SpendCash) else [command.source_id, command.destination_id]
+                blocked = conn.execute("""SELECT 1 FROM prsystem.cash_drawer d
+                    JOIN prsystem.staff_open_work w ON w.tenant_id=d.tenant_id AND w.source_id=d.shift_id AND w.kind='SHIFT'
+                    WHERE d.tenant_id=%s AND d.id=ANY(%s) AND w.state<>'OPEN'""", (ctx.tenant_id,drawer_ids)).fetchone()
+                if blocked:
+                    raise DomainError("WORK_NOT_OPEN")
             receipt = conn.execute("""SELECT actor_id, command, revision
                 FROM prsystem.cash_receipt WHERE tenant_id = %s AND key = %s""",
                 (ctx.tenant_id, ctx.idempotency_key)).fetchone()
