@@ -1,5 +1,7 @@
 # Membership mutation ба үлдсэн ажлын queue
 
+**Түүхэн checkpoint:** Энэ баримтын source/FK, claim-only болон recovery үлдэгдлийн тайлбар нь migration 004 үеийн хүрээ. Дараах хэрэгжилтээр шинэчлэгдсэн: [recovery/worker](34-staff-recovery-mail-worker.md), [Restaurant](35-restaurant-identity.md), [takeover/continuation/onboarding](36-staff-execution-and-onboarding.md). Одоогийн acceptance төлөв: [явц](31-development-progress.md).
+
 Энэ багц [STAFF-DEC-004/007/008](19-staff-account-lifecycle.md)-ийн hotel membership өөрчлөлт, үлдсэн ажлыг бүртгэх болон Manager claim хийх хэсгийг хэрэгжүүлнэ. **Бодит shift takeover/cleaner reassignment дуусаагүй.** `004_membership_work.sql` нь өмнөх migration-уудыг өөрчлөхгүй.
 
 ## API contract

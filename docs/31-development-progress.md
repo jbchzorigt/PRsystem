@@ -49,16 +49,16 @@
 | Mail worker PostgreSQL | 7 |
 | Restaurant identity/access | 26 |
 | Cleaner execution | 13 |
-| Reception takeover execution/recovery | 12 |
+| Reception takeover execution/recovery/expiry | 21 |
 | TOTP RFC vectors | 2 |
 | Platform MFA/security recovery | 8 |
 | Billing calendar/price | 3 |
 | Paid onboarding/provisioning/API | 18 |
 | Subscription renewal | 8 |
-| **Нийт** | **228** |
+| **Нийт** | **237** |
 
-API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 193 тестийг skip хийнэ; 35 dependency-free тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
+API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 202 тестийг skip хийнэ; 35 dependency-free тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
 
-[v0.7.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34076421615) (`6bb5e70`) дээр **228 backend тест skip-гүй**, Chromium browser tests, design lint болон token check бүгд амжилттай. Энэ turn-д 64 backend тест нэмэгдсэн. Chromium CI нь дөрвөн purpose route, 204 success, давхар submit, password reveal, field/status focus, error/retry, 320px layout болон storage isolation-ийг шалгана.
+[v0.7.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34077680285) (`dce6585`) дээр **237 backend тест skip-гүй**, Chromium browser tests, design lint болон token check бүгд амжилттай. Энэ turn-д 73 backend тест нэмэгдсэн. Chromium CI нь дөрвөн purpose route, 204 success, давхар submit, password reveal, field/status focus, error/retry, 320px layout болон storage isolation-ийг шалгана.
 
 №9-ийн contract: [Restaurant identity](35-restaurant-identity.md). Дараагийн ажил: docs/36 дахь canonical source producers, provider adapters/acceptance, deployment болон offline recovery policy gate. Явцын update **«Үе шат 2/6 · Үлдсэн 9 багцаас X/9 дууссан»** гэсэн тогтмол хэмжүүрийг ашиглана.

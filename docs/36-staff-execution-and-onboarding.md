@@ -46,7 +46,8 @@ browser arbitrary opening/owner fact илгээдэг endpoint байхгүй. H
    expected/actual/variance history өөрчлөгдөхгүй; review тусдаа үргэлжилнэ.
 8. Original owner-ийн opening үеийн role snapshot Manager бол Admin review;
    migration-аас өмнөх snapshot-гүй shift-ийг UNKNOWN гэж хадгалж conservative
-   Admin review шаардана. Өмнөх role-ийг өнөөгийн role-оор зохиож нөхөхгүй.
+   Admin review шаардана. DISPUTED болсон ч opening role snapshot-аас үүссэн Admin
+   шаардлага буурахгүй. Өмнөх role-ийг өнөөгийн role-оор зохиож нөхөхгүй.
 9. Selected replacement эрхгүй болсон бол current claimant active шинэ Reception
    сонгож болно. Previous replacement/count history үлдэнэ; шинэ actor шинэ count хийнэ.
 
@@ -210,8 +211,8 @@ instance/DSN хэрэглэж дээрх boundary-г хадгална.
 
 ## 8. Шалгалт ба deployment-д үлдсэн зүйл
 
-[Эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34076421615):
-228 backend тест skip-гүй амжилттай. Дөрвөн form-ийн Chromium interaction suite,
+[Эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34077680285) (`dce6585`):
+237 backend тест skip-гүй амжилттай. Дөрвөн form-ийн Chromium interaction suite,
 DESIGN.md lint, token drift check, strict static UI audit ашигласан.
 PostgreSQL tests нь restricted runtime roles болон real transactions дээр ажиллана.
 Browser tests нь fake HTTP response state matrix; real endpoint rules-ийг PostgreSQL

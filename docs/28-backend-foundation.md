@@ -1,11 +1,11 @@
 # Backend foundation — эхний хэрэгжүүлэлт ба дараагийн gate
 
-**Огноо:** 2026-09-06
-**Төлөв:** Domain core, PostgreSQL cash adapter, staff authentication, invitation/reset болон cash read API хэрэгжүүлсэн; UI/operational write API/бодит email/provider integration хийгдээгүй. [Нийт 6 үе шатны явц](31-development-progress.md).
+**Шинэчилсэн:** 2026-09-07
+**Төлөв:** Domain core, PostgreSQL cash, staff lifecycle, Reception/Cleaner execution, paid onboarding/renewal, Platform MFA, SMTP worker болон email link UI хэрэгжүүлсэн. Canonical operational source producer, бодит SMS/payment adapter болон deployment үлдсэн. [Нийт 6 үе шатны явц](31-development-progress.md).
 
 ## Architecture decision
 
-Нэг backend application дотор domain module-уудаа заагласан modular monolith ашиглана. Python 3.12+ domain core runtime dependency-гүй: subscription expiry policy, cash reservation state transition, settlement assessment/commission/batch time. PostgreSQL adapter optional dependency; staff transport нь FastAPI, password hashing нь Argon2id. Domain module-ууд HTTP framework-аас хамаарахгүй. Frontend сонголт хараахан хийгдээгүй.
+Нэг backend application дотор domain module-уудаа заагласан modular monolith ашиглана. Python 3.12+ domain core runtime dependency-гүй: subscription expiry policy, cash reservation state transition, settlement assessment/commission/batch time. PostgreSQL adapter optional dependency; staff transport нь FastAPI, password hashing нь Argon2id. Domain module-ууд HTTP framework-аас хамаарахгүй. Staff email-link form нь shared HTML/CSS/JavaScript ашиглана; үндсэн operational UI-ийн framework сонголт хараахан хийгдээгүй.
 
 Production persistence target нь PostgreSQL; worker нь provider event inbox, transactional outbox, reconciliation болон export delivery ажиллуулна. Police нь commercial/hotel scope-оос тусдаа service identity, API boundary, key/access policy-тай байна. Final hosting/physical database isolation нь EXT-10-ын нөхцөлөөс хамаарна. Cash migration болон CI-ийн disposable PostgreSQL service нэмсэн; production database/credential/deployment үүсгээгүй.
 
@@ -57,7 +57,7 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 | Дараалал | Ажил | Acceptance gate |
 | --- | --- | --- |
 | 1 | Cash adapter/migration/RLS/receipt/outbox intent нэмсэн; booking persistence, provider inbox, outbox delivery үлдсэн | Cash concurrency/commit-failure rollback integration tests; дараа нь last-room, process-crash recovery, delivery retry |
-| 2 | Hotel/Restaurant staff identity, invitation/reset/recovery, protected membership mutation, queue claim, audit, mail worker нэмсэн; бодит email delivery, takeover execution болон бусад action policy үлдсэн | Tenant/revoke/throttling, invitation/reset, Primary guard, mutation/claim concurrency ба rollback tests; дараа нь source takeover/action-specific permission |
+| 2 | Hotel/Restaurant staff identity, invitation/reset/recovery, protected membership mutation, queue claim, audit, mail worker нэмсэн; takeover/continuation, expiry completion, Platform MFA болон paid onboarding/renewal нэмсэн; бодит delivery, provider болон source integration үлдсэн | Tenant/revoke/throttling, invitation/reset, Primary guard, mutation/claim concurrency ба rollback tests; takeover/continuation/expiry, MFA болон provisioning/renewal tests; дараа нь live provider/source acceptance |
 | 3 | Reception vertical slice: room, open shift, deposit, check-in, checkout, cleaning, handover | Synthetic end-to-end; old-obligation expiry completion; no new-sale bypass |
 | 4 | Online booking/payment/refund/payout adapters | Last-unit concurrency; duplicate/late callback; zero-refund exactly-once eligibility; no duplicate payout |
 | 5 | Minibar/Restaurant/Operation modules | Stock conservation, snapshot prices, task claim, refund/fulfillment state tests |
