@@ -49,3 +49,16 @@ class OperationsTests(GuestFinanceCase):
         self.assertEqual(r.headers['cache-control'],'no-store')
         for asset in ('reception.js','reception.css'):
             self.assertEqual(self.client.get('/staff/assets/'+asset).status_code,200)
+
+    def test_expired_overview_exposes_only_prelock_completion_sources(self):
+        import psycopg
+        self.start()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours'+interval '1 millisecond' WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+        data=self.assert_status(self.get('operations'),200)
+        self.assertTrue(data['completion_only']);self.assertEqual(data['stays'][0]['stay_id'],self.stay['stay_id'])
+        self.assertNotIn('settings',data);self.assertEqual(data['funding'],[])
+        self.assert_status(self.get(f'shifts/{self.shift}/report'),200)
+        self.assertEqual(self.checkin(idempotency_key='new-expired-stay').json()['code'],'SUBSCRIPTION_EXPIRED')
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET security_suspended=true WHERE tenant_id=%s',(self.tenant,))
+        self.assert_status(self.get('operations'),403)
