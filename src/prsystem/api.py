@@ -31,6 +31,7 @@ from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
 from prsystem.guest_corrections import GuestCorrections
 from prsystem.guest_payments import GuestPayments
+from prsystem.checkout import CheckoutService
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -413,11 +414,12 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     readiness = ReadinessService(service)
     stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
+    checkout = CheckoutService(service, stays.vault, runtime_mode)
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
-    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.10.0")
+    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.11.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -465,6 +467,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({code:409 for code in ('DEPOSIT_REQUIREMENT_NOT_MET','FINANCIAL_SOURCE_NOT_READY','FINANCIAL_AGGREGATE_FROZEN','DEPOSIT_BALANCE_CONFLICT','INSUFFICIENT_DEPOSIT','CHARGE_OVERPAYMENT','INVALID_FINANCIAL_SOURCE','ORIGINAL_CASH_DRAWER_REQUIRED','REFUND_TERMINAL','CASH_SOURCE_CONFLICT','INSUFFICIENT_CASH')})
         stay_errors.update({code:409 for code in ('CORRECTION_SOURCE_IN_USE','CORRECTION_HAS_NO_CHANGE','CORRECTION_PENDING','CORRECTION_TERMINAL','CORRECTION_SOURCE_CHANGED')})
         stay_errors.update({'INVALID_TRANSACTION_TIME':422,'PAYMENT_REFERENCE_USED':409,'GUEST_PROVIDER_UNAVAILABLE':503})
+        stay_errors.update({'CHECKOUT_SOURCE_NOT_READY':409,'CHECKOUT_FINANCE_PENDING':409})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -547,9 +550,25 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
 
+    @app.get('/hotels/{tenant_id}/cleaning/checkouts')
+    def checkout_cleaning_queue(tenant_id: str,secret: Annotated[str,Depends(token)],limit: int=Query(default=50,ge=1,le=100),after: str=Query(default='',max_length=128)):
+        return checkout.cleaning_queue(secret,tenant_id,limit,after)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout')
+    def checkout_stay(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
+        return checkout.close(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/checkout-cleaning/claim',status_code=201)
+    def claim_checkout_cleaning(tenant_id: str,stay_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return checkout.claim_cleaning(secret,tenant_id,stay_id,body.idempotency_key)
+
     @app.get('/hotels/{tenant_id}/stays/{stay_id}/finance')
     def guest_finance_statement(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.statement(secret,tenant_id,stay_id)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/finance/events')
+    def guest_finance_events(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)],after_revision: int=Query(default=0,ge=0),through_revision: int|None=Query(default=None,ge=0),limit: int=Query(default=50,ge=1,le=100)):
+        return guest_finance.timeline(secret,tenant_id,stay_id,after_revision,through_revision,limit)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-receipts',status_code=201)
     def guest_cash_receipt(tenant_id: str,stay_id: str,body: GuestCashReceipt,secret: Annotated[str,Depends(token)]):

@@ -26,17 +26,28 @@ class CleaningService(MembershipService):
         self._lock_accounts(conn, {row[0], target} - {None})
 
     @staticmethod
-    def _cleaner(conn, tenant, target):
+    def _cleaner(conn, tenant, target, *, action=Action.CONFIGURE, obligation=None):
         row = conn.execute("""SELECT m.status,m.roles,a.status,a.verified_at,h.package_mnt,h.expires_at,h.security_suspended
             FROM prsystem.staff_membership m JOIN prsystem.staff_account a ON a.id=m.account_id
             JOIN prsystem.hotel_access h ON h.tenant_id=m.tenant_id
             WHERE m.tenant_id=%s AND m.account_id=%s FOR SHARE OF m,h""", (tenant,target)).fetchone()
         if not row or row[0] != 'ACTIVE' or row[2] != 'ACTIVE' or row[3] is None:
             raise DomainError('ACCOUNT_NOT_ACTIVE_VERIFIED')
-        decision = subscription_gate(Action.CONFIGURE, AccessFacts(tenant,True,True,True,
-            'CLEANER' in row[1],row[4]>=25000,True,True,row[6]),row[5],conn.execute('SELECT clock_timestamp()').fetchone()[0])
+        decision = subscription_gate(action, AccessFacts(tenant,True,True,True,
+            'CLEANER' in row[1],row[4]>=25000,True,True,row[6]),row[5],conn.execute('SELECT clock_timestamp()').fetchone()[0],obligation)
         if not decision.allowed:
             raise DomainError(decision.code)
+
+    def task_cleaner(self,conn,tenant,actor,task):
+        source=conn.execute('''SELECT s.source_kind,s.source_reference,s.id FROM prsystem.cleaning_source s
+            JOIN prsystem.cleaning_task t ON (t.tenant_id,t.source_id)=(s.tenant_id,s.id)
+            WHERE t.tenant_id=%s AND t.id=%s''',(tenant,task)).fetchone()
+        if source and source[0]=='CHECKOUT' and source[1].startswith('checkout:'):
+            from prsystem.guest_finance import GuestFinance
+            stay=source[1][9:]
+            if not conn.execute('SELECT 1 FROM prsystem.stay_checkout WHERE tenant_id=%s AND stay_id=%s AND cleaning_source_id=%s',(tenant,stay,source[2])).fetchone():raise DomainError('WORK_SOURCE_NOT_FOUND')
+            self._cleaner(conn,tenant,actor,action=Action.CHECKOUT_REPORT,obligation=GuestFinance.root(conn,tenant,stay))
+        else:self._cleaner(conn,tenant,actor)
 
     @classmethod
     def assign_source(cls, conn, tenant, source, assignee):
@@ -111,7 +122,7 @@ class CleaningService(MembershipService):
             self._actors(conn,bearer,tenant)
             principal,_=self.auth._authenticate(conn,bearer,tenant)
             actor=principal['account_id']
-            self._cleaner(conn,tenant,actor)
+            self.task_cleaner(conn,tenant,actor,task_id)
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None: return replay
             source=conn.execute('SELECT source_id FROM prsystem.cleaning_task WHERE tenant_id=%s AND id=%s', (tenant,task_id)).fetchone()

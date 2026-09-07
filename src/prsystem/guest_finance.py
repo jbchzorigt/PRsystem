@@ -272,19 +272,46 @@ class GuestFinance(RoomService):
             result=dict(refund_id=refund,state=state,balance=balance)
             self._save_receipt(conn,tenant,key,actor,command,result);return result
 
+    def read_actor(self,conn,bearer,tenant,stay):
+        self._actors(conn,bearer,tenant)
+        principal,_=self.auth._authenticate(conn,bearer,tenant)
+        package=conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()[0]
+        return self.actor(conn,bearer,tenant,stay,manager=self._manager(principal['roles'],package),action=Action.DETAIL)
+
+    def timeline(self,bearer,tenant,stay,after=0,through=None,limit=50):
+        if type(after) is not int or after<0 or type(limit) is not int or not 1<=limit<=100 or (through is not None and (type(through) is not int or through<0)):
+            raise DomainError('INVALID_REQUEST')
+        with transaction(self.auth.dsn) as conn:
+            self.read_actor(conn,bearer,tenant,stay)
+            ShiftService._book(conn,tenant)
+            balance=self.lock(conn,tenant,stay,allow_frozen=True)
+            watermark=min(through,balance['revision']) if through is not None else balance['revision']
+            rows=conn.execute('''SELECT revision,kind,source_id,actor_id,details,recorded_at FROM prsystem.guest_finance_event
+                WHERE tenant_id=%s AND stay_id=%s AND revision>%s AND revision<=%s ORDER BY revision LIMIT %s''',(tenant,stay,after,watermark,limit+1)).fetchall()
+            items=[dict(zip(('revision','kind','source_id','actor_id','details','recorded_at'),r)) for r in rows[:limit]]
+            return dict(items=items,through_revision=watermark,next_after_revision=items[-1]['revision'] if len(rows)>limit else None)
+
     def statement(self,bearer,tenant,stay):
         with transaction(self.auth.dsn) as conn:
-            self._actors(conn,bearer,tenant)
-            principal,_=self.auth._authenticate(conn,bearer,tenant)
-            package=conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()[0]
-            self.actor(conn,bearer,tenant,stay,manager=self._manager(principal['roles'],package),action=Action.DETAIL)
+            self.read_actor(conn,bearer,tenant,stay)
             ShiftService._book(conn,tenant)
             balance=self.lock(conn,tenant,stay,allow_frozen=True)
             totals=conn.execute('SELECT coalesce(sum(amount_mnt),0),coalesce(sum(paid_mnt),0) FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()
             charges=conn.execute('SELECT id,kind,amount_mnt,paid_mnt FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
             receipts=conn.execute('SELECT id,purpose,channel,amount_mnt,allocated,refund_reserved,refunded,reversed FROM prsystem.guest_receipt WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
             refunds=conn.execute('SELECT id,receipt_id,amount_mnt,state FROM prsystem.guest_refund WHERE tenant_id=%s AND stay_id=%s ORDER BY id LIMIT 100',(tenant,stay)).fetchall()
-            return dict(balance=self.balance(balance),charge_total_mnt=int(totals[0]),charge_paid_mnt=int(totals[1]),charge_unpaid_mnt=int(totals[0]-totals[1]),item_limit=100,
+            corrections=conn.execute('''SELECT id,receipt_id,replacement_amount_mnt,state,requester_id,reason,decider_id,decision_reason,requested_at,decided_at
+                FROM prsystem.guest_correction WHERE tenant_id=%s AND stay_id=%s ORDER BY requested_at,id LIMIT 100''',(tenant,stay)).fetchall()
+            reversals=conn.execute('''SELECT id,correction_id,receipt_id,replacement_receipt_id,amount_mnt,recorded_at
+                FROM prsystem.guest_receipt_reversal WHERE tenant_id=%s AND stay_id=%s ORDER BY recorded_at,id LIMIT 100''',(tenant,stay)).fetchall()
+            intents=conn.execute('''SELECT id,charge_id,provider,amount_mnt,state,last_provider_state,invoice_id,receipt_id
+                FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND stay_id=%s ORDER BY recorded_at,id LIMIT 100''',(tenant,stay)).fetchall()
+            pending=conn.execute('''SELECT coalesce(sum(amount_mnt),0) FROM prsystem.guest_payment_intent
+                WHERE tenant_id=%s AND stay_id=%s AND state='PENDING' ''',(tenant,stay)).fetchone()[0]
+            return dict(balance=self.balance(balance),charge_total_mnt=int(totals[0]),charge_paid_mnt=int(totals[1]),charge_unpaid_mnt=int(totals[0]-totals[1]),pending_payment_mnt=int(pending),item_limit=100,
+                        corrections=[dict(zip(('id','receipt_id','replacement_amount_mnt','state','requester_id','reason','decider_id','decision_reason','requested_at','decided_at'),r)) for r in corrections],
+                        reversals=[dict(zip(('id','correction_id','receipt_id','replacement_receipt_id','amount_mnt','recorded_at'),r)) for r in reversals],
+                        payment_intents=[dict(zip(('id','charge_id','provider','amount_mnt','state','last_provider_state','invoice_id','receipt_id'),r)) for r in intents],
                         charges=[dict(zip(('id','kind','amount_mnt','paid_mnt'),r)) for r in charges],
                         receipts=[dict(zip(('id','purpose','channel','amount_mnt','allocated','refund_reserved','refunded','reversed'),r)) for r in receipts],
                         refunds=[dict(zip(('id','receipt_id','amount_mnt','state'),r)) for r in refunds])

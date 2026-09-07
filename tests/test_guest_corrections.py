@@ -185,3 +185,20 @@ class GuestCorrectionTests(GuestFinanceCase):
         self.assert_status(self.decide(correction),403)
         self.assert_status(self.decide(correction,approve=False,key='reject'),200)
         self.assertEqual(self.drawer(),(60000,0))
+
+    def test_finance_timeline_has_stable_watermark_and_linked_correction_history(self):
+        self.start();correction=self.assert_status(self.request(),201)['correction_id']
+        url=f'/hotels/{self.tenant}/stays/{self.stay["stay_id"]}/finance/events'
+        first=self.assert_status(self.client.get(url+'?limit=1',headers=self.headers(self.worker_token)),200)
+        self.assertEqual(first['through_revision'],2)
+        self.assertEqual(first['next_after_revision'],1)
+        self.assert_status(self.decide(correction),200)
+        second=self.assert_status(self.client.get(url+'?limit=1&after_revision=1&through_revision=2',headers=self.headers(self.manager_token)),200)
+        self.assertEqual([r['kind'] for r in second['items']],['CASH_CORRECTION_REQUESTED'])
+        self.assertIsNone(second['next_after_revision'])
+        latest=self.assert_status(self.client.get(url+'?after_revision=2',headers=self.headers(self.manager_token)),200)
+        self.assertEqual(latest['items'][0]['details']['after']['available'],50000)
+        report=self.statement().json()
+        self.assertEqual(report['corrections'][0]['state'],'EXECUTED')
+        self.assertEqual(report['reversals'][0]['correction_id'],correction)
+        self.assert_status(self.client.get(url,headers=self.headers(self.admin)),403)
