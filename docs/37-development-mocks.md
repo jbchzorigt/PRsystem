@@ -97,3 +97,9 @@ production factory mock reject болон тусдаа DB namespace guard мөн
 
 [v0.8.0 PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34084343027)
 дээр mock suites болон нийт 264 backend тест skip-гүй амжилттай.
+
+## v0.9.0: mock walk-in check-in
+
+Development factory нь тусгаарлагдсан DB дээр `mock_stay_finance=True`-г идэвхжүүлж, stable LINK_KEY-ээс identity encryption/lookup-д зориулсан тусдаа development key үүсгэнэ. Canonical room cleaning/readiness → own open shift → walk-in check-in-г туршина. Барьцааны category amount 50,000–100,000₮ байх шаардлагатай. Stay snapshot `financial_integration=DEFERRED_MOCK`, response `MOCK_ONLY`; payment/deposit авсан ledger/cash event үүсэхгүй. Production factory нь mock flag-ийг зөвшөөрөхгүй, deposit satisfaction service бэлэн болтол check-in 503 байна.
+
+XYP-гүй үед manual primary guest entry ашиглана; XYP_VERIFIED болон Police match result зохиохгүй. Initial guest code issuance нэмэгдсэн ч QR/session consumer дараагийн integration-д орно. API/grants/key болон 299 тестийн CI: [39-walkin-check-in.md](39-walkin-check-in.md).
