@@ -103,3 +103,12 @@ production factory mock reject болон тусдаа DB namespace guard мөн
 Development factory нь тусгаарлагдсан DB дээр `mock_stay_finance=True`-г идэвхжүүлж, stable LINK_KEY-ээс identity encryption/lookup-д зориулсан тусдаа development key үүсгэнэ. Canonical room cleaning/readiness → own open shift → walk-in check-in-г туршина. Барьцааны category amount 50,000–100,000₮ байх шаардлагатай. Stay snapshot `financial_integration=DEFERRED_MOCK`, response `MOCK_ONLY`; payment/deposit авсан ledger/cash event үүсэхгүй. Production factory нь mock flag-ийг зөвшөөрөхгүй, funding-гүй check-in 503 хэвээр. v0.10 нь explicit CASH declaration-тай бол ledger-ийг development-д `MOCK_CASH_LEDGER`, production-д `CASH_LEDGER` source-оор бүртгэнэ; [40-guest-cash-finance.md](40-guest-cash-finance.md)-ийг үзнэ.
 
 XYP-гүй үед manual primary guest entry ашиглана; XYP_VERIFIED болон Police match result зохиохгүй. Initial guest code issuance нэмэгдсэн ч QR/session consumer дараагийн integration-д орно. API/grants/key болон 299 тестийн CI: [39-walkin-check-in.md](39-walkin-check-in.md).
+
+
+Guest payment mock v0.11: existing MOCK_CASH_LEDGER stay-ийн charge-д
+`/payment-intents` үүсгээд `/payment-intents/{intent}/reconcile` руу `{}` илгээнэ.
+Эхний reconcile durable mock invoice үүсгэнэ. Existing local `payment QPAY|KHAAN
+{intent} SUCCEEDED` command-ын дараа дахин reconcile хийвэл нэг receipt/allocation
+post болно. HTTP-ээр success/status/evidence өгөх боломжгүй. `FAILED`, `EXPIRED`,
+`UNKNOWN` нь charge/shift hold-ийг суллахгүй. Энэ нь guest deposit/refund mock
+биш; [contract](41-guest-corrections-and-provider-mocks.md)-ийн scope-г мөрдөнө.

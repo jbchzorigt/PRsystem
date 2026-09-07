@@ -76,3 +76,6 @@ cleaning source/action/task/work grants хэвээр. Exact runtime fixture нь
 unchanged, retention/code revocation, financial guards, exact cleaning source,
 claim concurrency/queue scope, original-root expiry completion, buffer,
 rollback болон immutable history.
+
+
+Эцсийн баталгаа: source `a3baa18`, [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34107290114), **364 backend тест skip-гүй, 228.772 секунд**. Chromium/browser, design болон token checks амжилттай. Browser suite нь өмнөх staff link form-уудыг шалгана; шинэ Reception operational UI хараахан хэрэгжээгүй.

@@ -117,3 +117,6 @@ Exact fixture: `tests/guest_finance_support.py`. History UPDATE/DELETE grant
 request/approval/reconcile, original source/tenant/role, pending source-spend
 block, commit rollback, immutable SQL history, shared capture, lost response,
 provider evidence, no cash effect болон timeline watermark хамрагдсан.
+
+
+Эцсийн баталгаа: source `a3baa18`, [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34107290114), **364 backend тест skip-гүй, 228.772 секунд**. Chromium/browser, design болон token checks амжилттай. Browser suite нь өмнөх staff link form-уудыг шалгана; шинэ Reception operational UI хараахан хэрэгжээгүй.

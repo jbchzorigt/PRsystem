@@ -11,8 +11,8 @@ Reception module-ийн эхний хоёр багцыг хэрэгжүүлэв.
 | 1 | Room/category суурь бүртгэл, тарифын тохиргоо, Reception read API | Хэрэгжүүлсэн |
 | 2 | Admin configured float → анхны Reception shift opening | Хэрэгжүүлсэн |
 | 3 | Stay interval/readiness, immutable snapshot, check-in | Хэсэгчлэн: [development-mock walk-in, canonical cleaning readiness, encrypted identity бэлэн](39-walkin-check-in.md); online booking/guest access integration үлдсэн |
-| 4 | Guest charge/payment/deposit, allocation/refund, cash source posting | Хэсэгчлэн: [cash deposit/payment/allocation/refund ба source posting](40-guest-cash-finance.md) хэрэгжсэн; provider/POS, alternate-channel, correction үлдсэн |
-| 5 | Checkout, cleaning source/readiness, room/category lifecycle | Үлдсэн |
+| 4 | Guest charge/payment/deposit, allocation/refund, cash source posting | Хэсэгчлэн: [cash deposit/payment/allocation/refund ба source posting](40-guest-cash-finance.md) хэрэгжсэн; [cash correction, POS болон provider charge-payment mock](41-guest-corrections-and-provider-mocks.md) нэмэгдсэн; provider deposit/refund, alternate-channel, non-cash correction үлдсэн |
+| 5 | Checkout, cleaning source/readiness, room/category lifecycle | Хэсэгчлэн: [settled minibar-OFF checkout, cleaning claim/completion](42-checkout-cleaning.md) нэмэгдсэн; lifecycle болон minibar-enabled flow үлдсэн |
 | 6 | Ердийн handover/self-close, operational screens ба end-to-end урсгал | Үлдсэн |
 
 Эдгээр нь 2-р шатны өмнөх 9 багцаас тусдаа, энэ milestone-оос эхэлсэн Reception
@@ -115,3 +115,9 @@ source `336a14e`, **264 backend тест skip-гүй**, browser/design/token che
 v0.10 cash integration: production cash check-in нь authoritative deposit configuration ба receipt-тай ажиллана. Funding-гүй check-in fail-closed; development mock source-г live finance рүү adopt хийхгүй. Барьцааны required amount 50,000–100,000₮-ийн guard-тай.
 
 Одоогийн тоолол: **2 бүрэн, 3 ба 4-р багц хэсэгчлэн, 5–6 үлдсэн**. Багц 4-ийн cash acceptance болон дараагийн provider/correction contract: [40-guest-cash-finance.md](40-guest-cash-finance.md).
+
+
+v0.11-ийн одоогийн тоолол: **2 бүрэн + 3 хэсэгчлэн (3–5) + 1 үлдсэн (6) = 6**.
+Correction/POS/provider charge-payment mock, timeline болон checkout cleaning нь
+нэг branch дээр холбогдсон; online/guest access, үлдсэн refund/lifecycle/handover/UI
+тусдаа pending acceptance хэвээр.

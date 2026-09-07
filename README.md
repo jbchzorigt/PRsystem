@@ -65,4 +65,4 @@ Migration нь `PRSYSTEM_MIGRATION_DSN` хэрэглэнэ. Runtime grants, staf
 
 Domain-only ажиллуулахад PostgreSQL тестүүд skip хийнэ. CI-ийн тусдаа `postgres` job бодит PostgreSQL 17 дээр бүх тестийг ажиллуулна; local ажиллуулах заавар [энд](docs/29-postgres-cash.md).
 
-Guest finance v0.11: [cash correction, POS болон provider mock contract](docs/41-guest-corrections-and-provider-mocks.md).
+Guest finance v0.11: [cash correction, POS болон provider mock contract](docs/41-guest-corrections-and-provider-mocks.md), [checkout/cleaning](docs/42-checkout-cleaning.md).
