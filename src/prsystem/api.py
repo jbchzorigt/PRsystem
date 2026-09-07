@@ -635,6 +635,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'HANDOVER_PENDING':409,'RECOUNT_REQUIRED':409})
         stay_errors.update({'REFUND_APPROVAL_REQUIRED':409,'REFUND_RELEASE_NOT_PROVEN':409})
         stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
+        stay_errors.update({'PAYMENT_ALREADY_PAID':409,'PAYMENT_VOID_REQUIRES_CANCELLATION':409,'PHYSICAL_COUNT_REQUIRED':409})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -792,6 +793,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/platform/hotels/{tenant_id}/refunds/{refund_id}/resolve')
     def resolve_late_refund(tenant_id: str,refund_id: str,body: ReasonCommand,secret: Annotated[str,Depends(token)]):
         return routed_refunds.resolve_case(platform_service(),secret,tenant_id,refund_id,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/payment-intents/{intent_id}/cancel')
+    def cancel_guest_intent(tenant_id: str,stay_id: str,intent_id: str,body: MembershipChange,secret: Annotated[str,Depends(token)]):
+        return guest_payments.cancel(secret,tenant_id,stay_id,intent_id,body.expected_revision,body.idempotency_key,body.reason)
+
+    @app.post('/hotels/{tenant_id}/check-in-funding/{funding_id}/cancel')
+    def cancel_funding(tenant_id: str,funding_id: str,body: ReasonCommand,secret: Annotated[str,Depends(token)]):
+        return checkin_funding.cancel(secret,tenant_id,funding_id,body.idempotency_key,body.reason)
 
     @app.post('/hotels/{tenant_id}/check-in-funding',status_code=201)
     def prepare_checkin_funding(tenant_id: str,body: CheckinFundingInput,secret: Annotated[str,Depends(token)]):

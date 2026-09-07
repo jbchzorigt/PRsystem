@@ -117,14 +117,14 @@ class GuestPayments(GuestFinance):
                 FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND stay_id=%s AND id=%s''',(tenant,stay,intent)).fetchone()
             if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
             gateway = self.gateway(row[0])
-            if row[4]=='APPLIED':return dict(intent_id=intent,state='APPLIED',receipt_id=row[5],invoice_id=row[3])
+            if row[4] in {'APPLIED','CANCELLED'}:return dict(intent_id=intent,state=row[4],receipt_id=row[5],invoice_id=row[3])
         try:
             invoice = row[3] or gateway.create_invoice(intent,row[2],'MNT')
             if not isinstance(invoice,str) or not 1<=len(invoice)<=200:raise DomainError('PROVIDER_EVIDENCE_INVALID')
             evidence = gateway.payment(intent,invoice)
         except (OSError,TimeoutError):
             return dict(intent_id=intent,state='PENDING',provider_state='UNKNOWN',invoice_id=row[3])
-        if not isinstance(evidence,dict) or evidence.get('status') not in {'PENDING','FAILED','EXPIRED','SUCCEEDED'}:
+        if not isinstance(evidence,dict) or evidence.get('status') not in {'PENDING','FAILED','EXPIRED','SUCCEEDED','VOIDED'}:
             raise DomainError('PROVIDER_EVIDENCE_INVALID')
         with transaction(self.auth.dsn) as conn:
             actor = self.actor(conn,bearer,tenant,stay)
@@ -132,11 +132,12 @@ class GuestPayments(GuestFinance):
             before = self.lock(conn,tenant,stay)
             current = conn.execute('''SELECT charge_id,actor_id,shift_id,drawer_id,recorded_at,state,receipt_id,invoice_id
                 FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE''',(tenant,stay,intent)).fetchone()
-            if current[5]=='APPLIED':return dict(intent_id=intent,state='APPLIED',receipt_id=current[6],invoice_id=current[7])
+            if current[5] in {'APPLIED','CANCELLED'}:return dict(intent_id=intent,state=current[5],receipt_id=current[6],invoice_id=current[7])
             if current[7] is not None and current[7]!=invoice:raise DomainError('PROVIDER_EVIDENCE_INVALID')
             if evidence.get('merchant_id')!=row[1] or gateway.merchant_id!=row[1] or evidence.get('invoice_id')!=invoice or type(evidence.get('amount')) is not int or evidence['amount']!=row[2] or evidence.get('currency')!='MNT':
                 raise DomainError('PROVIDER_EVIDENCE_INVALID')
             state = evidence['status']
+            if state=='VOIDED':raise DomainError('PAYMENT_VOID_REQUIRES_CANCELLATION')
             if state!='SUCCEEDED':
                 conn.execute('UPDATE prsystem.guest_payment_intent SET invoice_id=%s,last_provider_state=%s WHERE tenant_id=%s AND id=%s',(invoice,state,tenant,intent))
                 return dict(intent_id=intent,state='PENDING',provider_state=state,invoice_id=invoice)
@@ -155,3 +156,29 @@ class GuestPayments(GuestFinance):
             conn.execute("UPDATE prsystem.guest_payment_intent SET invoice_id=%s,last_provider_state='SUCCEEDED',state='APPLIED',receipt_id=%s WHERE tenant_id=%s AND id=%s",(invoice,result['receipt_id'],tenant,intent))
             conn.execute("UPDATE prsystem.shift_obligation SET state='SUCCEEDED' WHERE tenant_id=%s AND id=%s",(tenant,intent))
             return dict(intent_id=intent,state='APPLIED',receipt_id=result['receipt_id'],invoice_id=invoice)
+
+    def cancel(self,bearer,tenant,stay,intent,revision,key,reason):
+        reason=self._text(reason,1000)
+        command=dict(action='CANCEL_GUEST_INVOICE',stay=stay,intent=intent,revision=revision,reason=reason)
+        with transaction(self.auth.dsn) as conn:
+            actor=self.actor(conn,bearer,tenant,stay)
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            ShiftService._book(conn,tenant);before=self.lock(conn,tenant,stay,revision)
+            row=conn.execute('SELECT provider,merchant_id,amount_mnt,actor_id,state FROM prsystem.guest_payment_intent WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,intent)).fetchone()
+            if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if row[3]!=actor:raise DomainError('FORBIDDEN')
+            if row[4]!='PENDING':raise DomainError('PAYMENT_ALREADY_PAID')
+            gateway=self.gateway(row[0])
+            if gateway.merchant_id!=row[1]:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+            # Creation first also makes a missing invoice terminal: a concurrent
+            # reconcile cannot create a fresh payable invoice after cancellation.
+            invoice=gateway.create_invoice(intent,row[2],'MNT');gateway.void_invoice(intent)
+            evidence=gateway.payment(intent,invoice)
+            if evidence.get('status')!='VOIDED':raise DomainError('PROVIDER_EVIDENCE_INVALID')
+            conn.execute("UPDATE prsystem.guest_payment_intent SET state='CANCELLED',last_provider_state='VOIDED',invoice_id=%s WHERE tenant_id=%s AND id=%s",(invoice,tenant,intent))
+            conn.execute("UPDATE prsystem.shift_obligation SET state='FAILED' WHERE tenant_id=%s AND id=%s",(tenant,intent))
+            now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+            balance=self.save(conn,tenant,stay,before,before,actor,'GUEST_INVOICE_VOIDED',intent,dict(reason=reason),now)
+            result=dict(intent_id=intent,state='CANCELLED',balance=balance)
+            self._save_receipt(conn,tenant,key,actor,command,result);return result

@@ -176,3 +176,27 @@ class GuestPaymentTests(GuestFinanceCase):
         with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET security_suspended=true WHERE tenant_id=%s',(self.tenant,))
         self.assertEqual(self.reconcile(intent).json()['code'],'SECURITY_SUSPENDED')
         self.assertEqual(self.drawer(),(60000,0))
+
+    def test_pending_cancellation_voids_provider_releases_capacity_and_cannot_capture_later(self):
+        self.mocked();self.start()
+        intent=self.assert_status(self.intent(),201)['intent_id']
+        revision=self.statement().json()['balance']['revision']
+        body=dict(expected_revision=revision,idempotency_key='void',reason='Guest chooses cash instead')
+        result=self.assert_status(self.command(f'payment-intents/{intent}/cancel',body),200)
+        self.assertEqual(result['state'],'CANCELLED')
+        self.assertEqual(self.command(f'payment-intents/{intent}/cancel',body).json(),result)
+        self.assertEqual(self.reconcile(intent).json()['state'],'CANCELLED')
+        with self.assertRaises(Exception):self.gateways['QPAY'].set_status(intent,'SUCCEEDED')
+        self.assertEqual(self.statement().json()['pending_payment_mnt'],0)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT state FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s',(self.tenant,intent)).fetchone()[0],'FAILED')
+        self.assert_status(self.intent(revision=result['balance']['revision'],key='new'),201)
+
+    def test_captured_provider_invoice_cannot_be_cancelled_before_reconcile(self):
+        self.mocked();self.start()
+        intent=self.assert_status(self.intent(),201)['intent_id']
+        self.reconcile(intent);self.gateways['QPAY'].set_status(intent,'SUCCEEDED')
+        revision=self.statement().json()['balance']['revision']
+        response=self.command(f'payment-intents/{intent}/cancel',dict(expected_revision=revision,idempotency_key='void',reason='Guest changes mind'))
+        self.assertEqual(response.json()['code'],'PAYMENT_ALREADY_PAID')
+        self.assertEqual(self.reconcile(intent).json()['state'],'APPLIED')

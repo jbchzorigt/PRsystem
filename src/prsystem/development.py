@@ -62,8 +62,9 @@ def tick(store, dsn, key, limit=25):
 def main():
     parser = argparse.ArgumentParser(description='MOCK ONLY: inspect local delivery or simulate a payment; no external requests.')
     sub = parser.add_subparsers(dest='command', required=True)
-    read = sub.add_parser('inspect'); read.add_argument('kind', choices=['phone', 'invoice', 'mail'])
+    read = sub.add_parser('inspect'); read.add_argument('kind', choices=['phone', 'invoice', 'mail','refund'])
     pay = sub.add_parser('payment'); pay.add_argument('provider', choices=['QPAY', 'KHAAN']); pay.add_argument('attempt'); pay.add_argument('state', choices=['PENDING', 'FAILED', 'EXPIRED', 'SUCCEEDED'])
+    refund = sub.add_parser('refund'); refund.add_argument('provider',choices=['QPAY','KHAAN']); refund.add_argument('request'); refund.add_argument('state',choices=['PENDING','UNKNOWN','FAILED','FINAL_FAILED','VOIDED','NOT_PROCESSED','SUCCEEDED','CORRECTED_NOT_SUCCESS'])
     worker = sub.add_parser('tick'); worker.add_argument('--limit', type=int, default=25)
     args = parser.parse_args()
     try:
@@ -73,6 +74,9 @@ def main():
         elif args.command == 'payment':
             MockPaymentGateway(store, args.provider).set_status(args.attempt, args.state)
             result = {'mode': 'MOCK_ONLY', 'state': args.state}
+        elif args.command == 'refund':
+            MockPaymentGateway(store,args.provider).set_refund_status(args.request,args.state)
+            result={'mode':'MOCK_ONLY','state':args.state}
         else:
             dsn = os.environ['PRSYSTEM_DEV_WORKER_DSN']
             key = base64.b64decode(os.environ['PRSYSTEM_LINK_KEY'], altchars=b'-_', validate=True)

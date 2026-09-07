@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: PRsystem staff access
-description: Mongolian hotel staff invitation and password recovery forms.
+name: PRsystem staff operations
+description: Mongolian hotel staff access and Reception operations.
 colors:
   primary: "#215d73"
   primary-hover: "#164559"
@@ -96,3 +96,17 @@ links, wrong password, rate limits and uncertain network completion.
 - Keep password and link secrets out of URLs after parsing, storage and logging.
 - Keep all four forms on the same validation and feedback implementation.
 - Do not add a fake dashboard destination or automatic sign-in.
+
+
+## Reception console extension
+
+Reception is a working console at `/reception`: four principal destinations
+for check-in, rooms, payments and Restaurant; shift, Manager and Cleaner tools
+are role-specific. This extends the existing product register. The petrol rail,
+colors, typography and focus treatment remain canonical. The console occupies
+72rem; forms retain a readable 38rem measure. Sparse operational rows allow
+room/state comparison and wrap on phones. No decorative statistics are added.
+Native select/date controls deliberately retain platform-owned popup behavior.
+The app-owned discard dialog uses the native modal primitive. Table regions
+scroll horizontally; the document remains the sole vertical page scroller.
+UX-CONTRACT.md records command, permission, privacy and failure behavior.

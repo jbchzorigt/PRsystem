@@ -79,3 +79,25 @@ class CheckinFunding(GuestPayments):
             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',(tenant,stay,receipt,*evidence[:3],evidence[9],evidence[3],evidence[4],funding))
         conn.execute("UPDATE prsystem.checkin_funding SET state='APPLIED',stay_id=%s,receipt_id=%s WHERE tenant_id=%s AND id=%s",(stay,receipt,tenant,funding))
         conn.execute("UPDATE prsystem.shift_obligation SET state='SUCCEEDED' WHERE tenant_id=%s AND id=%s",(tenant,funding))
+
+    def cancel(self,bearer,tenant,funding,key,reason):
+        reason=self._text(reason,1000)
+        command=dict(action='CANCEL_PENDING_CHECKIN_FUNDING',funding=funding,reason=reason)
+        with transaction(self.auth.dsn) as conn:
+            actor=StayService._actor(self,conn,bearer,tenant)
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            ShiftService._book(conn,tenant)
+            row=conn.execute('SELECT channel,merchant_id,amount_mnt,actor_id,state FROM prsystem.checkin_funding WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,funding)).fetchone()
+            if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if row[3]!=actor:raise DomainError('FORBIDDEN')
+            if row[4]!='PENDING':raise DomainError('PAYMENT_ALREADY_PAID')
+            gateway=self.gateway(row[0])
+            if gateway.merchant_id!=row[1]:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+            invoice=gateway.create_invoice(funding,row[2],'MNT');gateway.void_invoice(funding)
+            if gateway.payment(funding,invoice).get('status')!='VOIDED':raise DomainError('PROVIDER_EVIDENCE_INVALID')
+            conn.execute("UPDATE prsystem.checkin_funding SET state='CANCELLED',invoice_id=%s WHERE tenant_id=%s AND id=%s",(invoice,tenant,funding))
+            conn.execute("UPDATE prsystem.shift_obligation SET state='FAILED' WHERE tenant_id=%s AND id=%s",(tenant,funding))
+            self.event(conn,tenant,actor,'PENDING_CHECKIN_FUNDING_VOIDED',funding,dict(reason=reason))
+            result=dict(funding_id=funding,state='CANCELLED')
+            self._save_receipt(conn,tenant,key,actor,command,result);return result

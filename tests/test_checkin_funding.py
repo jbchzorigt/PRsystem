@@ -57,3 +57,16 @@ class CheckinFundingTests(GuestFinanceCase):
         funding=self.assert_status(self.funding(),201)['funding_id']
         self.assert_status(self.configure(70000,revision=1),200)
         self.assertEqual(self.checkin(funding_id=funding).json()['code'],'DEPOSIT_REQUIREMENT_NOT_MET')
+
+    def test_pending_funding_can_be_voided_without_creating_a_stay(self):
+        directory=TemporaryDirectory();self.addCleanup(directory.cleanup)
+        store=MockStore(directory.name+'/providers.sqlite3',environment='test');gateway=MockPaymentGateway(store,'QPAY')
+        self.client.close();self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways={'QPAY':gateway}));self.addCleanup(self.client.close)
+        funding=self.assert_status(self.funding(channel='QPAY'),201)['funding_id']
+        response=self.client.post(f'/hotels/{self.tenant}/check-in-funding/{funding}/cancel',headers=self.headers(self.worker_token),json=dict(idempotency_key='cancel',reason='Guest leaves before payment'))
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.reconcile(funding).json()['state'],'CANCELLED')
+        with self.assertRaises(Exception):gateway.set_status(funding,'SUCCEEDED')
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.stay WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+            self.assertEqual(conn.execute('SELECT state FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s',(self.tenant,funding)).fetchone()[0],'FAILED')

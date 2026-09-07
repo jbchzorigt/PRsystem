@@ -8,9 +8,8 @@
   "requiredCapabilities": [
     "Form",
     "Scrollbar",
-    "Select",
+    "Select/Listbox",
     "Date",
-    "Dialog",
     "CRUD"
   ],
   "requiredCommands": [

@@ -8,6 +8,11 @@ docs/30, docs/32, docs/34 and docs/35; this file records UI consequences only.
 | Form | static/staff.html + staff.js | docs/32, docs/35, API LinkPassword | hotel invite, restaurant invite, reset, Primary Admin activation | tests/browser/staff.cjs |
 | Scrollbar | static/staff.css | DESIGN.md | global, forced colors | tests/browser/staff.cjs |
 | Feedback | staff.js say | API error codes | inline status/error | tests/browser/staff.cjs |
+| Select/Listbox | reception.js select | API enum fields | native platform popup | tests/browser/reception.cjs |
+| Date | reception.js field | docs/05, hotel +08:00 | native date and datetime-local | tests/browser/reception.cjs |
+| Dialog | reception.js guard + reception.html discard | dirty form state | native modal, safe initial focus | tests/browser/reception.cjs |
+| CRUD | reception.js form + command | docs/18,20,24,26 and strict API models | pessimistic source commands | tests/browser/reception.cjs |
+
 
 All pages are public link entry points. The server validates purpose, one-use
 state, expiry, membership revision, scope and current permissions. There is no
@@ -44,7 +49,7 @@ Source policies: docs/02,03,05,18,20,21,24,26,38–42.
 | Capability | Canonical owner | Contract |
 | --- | --- | --- |
 | Form | reception.js `form` | novalidate, inline errors, first-error focus, stable key per unchanged retry, pending lock, password masking |
-| Select | reception.js `select` | native select; platform popup geometry and locale accepted |
+| Select/Listbox | reception.js `select` | native select; platform popup geometry and locale accepted |
 | Date | reception.js `field` | native date/datetime-local; platform popup accepted, typed input available; business instants explicitly Asia/Ulaanbaatar +08:00 |
 | Dialog | reception.html `discard` + reception.js `guard` | native modal dialog, inert background, Escape, safe initial focus, return to trigger |
 | CRUD | reception.js command/forms | pessimistic server confirmation, CAS, errors retain input; no optimistic financial success |
