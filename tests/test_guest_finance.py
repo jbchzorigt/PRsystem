@@ -263,7 +263,7 @@ class GuestFinanceTests(WalkInCase):
 
     def test_deferred_commit_failure_never_reports_received_cash(self):
         with psycopg.connect(self.owner_dsn) as conn:
-            conn.execute("CREATE FUNCTION prsystem.fail_guest_finance_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'guest finance commit fixture'; END $$")
+            conn.execute("CREATE FUNCTION prsystem.fail_guest_finance_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'guest finance commit fixture'; END; $$")
             conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_guest_finance_commit AFTER INSERT ON prsystem.guest_finance_event DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_guest_finance_commit()').format(sql.Literal(self.tenant)))
         self.assert_status(self.checkin(deposit=dict(channel='CASH',amount_mnt=60000,received=True)),503)
         self.assertEqual(self.drawer(),(0,0))
@@ -272,3 +272,17 @@ class GuestFinanceTests(WalkInCase):
             conn.execute('DROP TRIGGER fail_guest_finance_commit ON prsystem.guest_finance_event')
             conn.execute('DROP FUNCTION prsystem.fail_guest_finance_commit()')
         self.start()
+
+    def test_development_cash_ledger_is_marked_and_cannot_enter_live_finance(self):
+        with self.assertRaises(ValueError):
+            create_app('postgresql://unused/prsystem_live',self.settings,identity_vault=self.vault,runtime_mode='development')
+        with TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='development')) as client:
+            old=self.client;self.client=client
+            try:
+                response=self.checkin(kind='NIGHTLY',duration_units=1,deposit=dict(channel='CASH',amount_mnt=60000,received=True))
+                self.stay=self.assert_status(response,201)
+                self.assertEqual(response.headers['X-PRsystem-Mode'],'MOCK_ONLY')
+                self.assertEqual(self.stay['snapshot']['financial_integration'],'MOCK_CASH_LEDGER')
+                self.assert_status(self.statement(),200)
+            finally:self.client=old
+        self.assertEqual(self.statement().json()['code'],'FINANCIAL_SOURCE_NOT_READY')

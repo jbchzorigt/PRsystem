@@ -84,10 +84,12 @@ GRANT UPDATE (reserved) ON prsystem.cash_drawer TO app_role;
 GRANT UPDATE (snapshot) ON prsystem.stay TO app_role;
 ```
 
+Existing cash-only runtime roles also need `GRANT SELECT (tenant_id,id,drawer_id,shift_id,amount_mnt,state) ON prsystem.guest_refund TO cash_role;` so the adapter loads canonical pending refund holds. Missing source access must fail closed; never infer an unnamed reservation from a projection difference.
+
 Cash tables retain FORCE RLS and immutable event/receipt history. New application tables use explicit tenant predicates and composite tenant/stay FKs, with column-scoped grants and immutable-source triggers. No runtime role may own tables or bypass RLS.
 
 ## Verification and remaining work
 
-25 new tests: 4 dependency-free deposit policy, 21 PostgreSQL/API integration. Local: **324 discovered, 62 executed, 262 PostgreSQL-dependent skipped**. Full PostgreSQL CI pending. Cases include production cash check-in, config precedence/unset/permissions, forged channels/confirmation, double-spend concurrency, duplicate refund, original drawer/current shift, expiry/security, cross-tenant FKs, immutable history, CashBook spending against refund holds, source simulation isolation, posting rollback and actual deferred-COMMIT failure.
+28 new tests: 6 dependency-free deposit/cash-hold policy, 22 PostgreSQL/API integration. Local: **327 discovered, 64 executed, 263 PostgreSQL-dependent skipped**. Initial CI on `4893b8c` ran 324 tests: 323 passed and the cross-module cash-spend test caught a missing refund source in CashBook validation. The fix adds explicit source-bound RefundHold records, preserves them across cash commands, and keeps the strict transfer + refund reservation sum invariant. Final CI pending. Cases include production cash check-in, config precedence/unset/permissions, forged channels/confirmation, double-spend concurrency, duplicate refund, original drawer/current shift, expiry/security, cross-tenant FKs, immutable history, CashBook spending against refund holds, source simulation isolation, posting rollback and actual deferred-COMMIT failure.
 
 Reception fixed count remains **2 complete, package 3 partial, package 4 partial, packages 5–6 pending**. Package 4 remaining: guest QPay/card/POS evidence/callback/reconciliation, alternate-channel approval, financial correction/reversal, provider release/late-success freeze and Platform MFA resolution, other charge producers and financial reporting. No fake provider success or financial correction is exposed to bypass these gaps.

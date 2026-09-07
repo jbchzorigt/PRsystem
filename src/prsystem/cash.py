@@ -104,6 +104,15 @@ class Receipt:
 
 
 @dataclass(frozen=True)
+class RefundHold:
+    """Read-only canonical cash refund reservation, loaded by the adapter."""
+    id: str
+    drawer_id: str
+    shift_id: str
+    amount: int
+
+
+@dataclass(frozen=True)
 class CashBook:
     tenant_id: str
     drawers: tuple[Drawer, ...]
@@ -111,6 +120,7 @@ class CashBook:
     events: tuple[CashEvent, ...] = ()
     receipts: tuple[Receipt, ...] = ()
     revision: int = 0
+    refund_holds: tuple[RefundHold, ...] = ()
 
     def drawer(self, drawer_id: str) -> Drawer:
         for drawer in self.drawers:
@@ -129,7 +139,7 @@ class CashBook:
             raise DomainError("SHIFT_NOT_FOUND")
         return not any(t.state == TransferState.PENDING
                        and shift_id in {t.source_shift_id, t.destination_shift_id}
-                       for t in self.transfers)
+                       for t in self.transfers) and not any(h.shift_id == shift_id for h in self.refund_holds)
 
     def validate(self) -> None:
         identifier(self.tenant_id)
@@ -138,7 +148,8 @@ class CashBook:
         if (len({d.id for d in self.drawers}) != len(self.drawers)
                 or len({d.shift_id for d in self.drawers}) != len(self.drawers)
                 or len({t.id for t in self.transfers}) != len(self.transfers)
-                or len({r.key for r in self.receipts}) != len(self.receipts)):
+                or len({r.key for r in self.receipts}) != len(self.receipts)
+                or len({h.id for h in self.refund_holds}) != len(self.refund_holds)):
             raise DomainError("DUPLICATE_AGGREGATE_ID")
         for t in self.transfers:
             identifier(t.id)
@@ -151,6 +162,11 @@ class CashBook:
                     source.shift_id != t.source_shift_id
                     or destination.shift_id != t.destination_shift_id):
                 raise DomainError("SHIFT_BINDING_CHANGED")
+        for hold in self.refund_holds:
+            identifier(hold.id)
+            money(hold.amount, positive=True)
+            if self.drawer(hold.drawer_id).shift_id != hold.shift_id:
+                raise DomainError('SHIFT_BINDING_CHANGED')
         for d in self.drawers:
             identifier(d.id)
             identifier(d.shift_id)
@@ -158,6 +174,7 @@ class CashBook:
             money(d.reserved)
             expected = sum(t.amount for t in self.transfers
                            if t.source_id == d.id and t.state == TransferState.PENDING)
+            expected += sum(h.amount for h in self.refund_holds if h.drawer_id == d.id)
             if d.reserved != expected or d.available < 0:
                 raise DomainError("CASH_INVARIANT_VIOLATION")
 
@@ -250,6 +267,6 @@ def execute(book: CashBook, command: CashCommand, ctx: CashContext) -> CashBook:
         raise DomainError("UNKNOWN_COMMAND")
     result = CashBook(book.tenant_id, tuple(drawers.values()), tuple(transfers.values()),
                       tuple(events), book.receipts + (Receipt(ctx.idempotency_key,
-                      ctx.actor_id, command),), book.revision + 1)
+                      ctx.actor_id, command),), book.revision + 1, book.refund_holds)
     result.validate()
     return result

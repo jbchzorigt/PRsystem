@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 
 from prsystem.cash import (
     CancelTransfer, CashBook, CashCommand, CashContext, CashEvent, ConfirmTransfer,
-    Drawer, ReserveTransfer, SpendCash, Transfer, TransferState, execute,
+    Drawer, RefundHold, ReserveTransfer, SpendCash, Transfer, TransferState, execute,
 )
 from prsystem.common import DomainError, identifier, money, timestamp
 
@@ -105,7 +105,10 @@ class PostgresCash:
                 SELECT kind, reference, drawer_id, shift_id, posted_delta, reserved_delta, actor_id, recorded_at
                 FROM prsystem.cash_event WHERE tenant_id = %s AND kind = 'CASH_DEBIT' AND reference = %s""",
                 (tenant, command.financial_reference)))
-        return CashBook(tenant, drawers, transfers, events, revision=revision)
+        holds = tuple(RefundHold(*row) for row in conn.execute("""
+            SELECT id,drawer_id,shift_id,amount_mnt FROM prsystem.guest_refund
+            WHERE tenant_id=%s AND state='RESERVED' ORDER BY id""", (tenant,)))
+        return CashBook(tenant, drawers, transfers, events, revision=revision, refund_holds=holds)
 
     @staticmethod
     def _persist(conn, before, after, command, ctx, payload):

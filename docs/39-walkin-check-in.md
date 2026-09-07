@@ -1,6 +1,6 @@
 # Reception: walk-in check-in (v0.9.0)
 
-Reception багц 3/6-ийн **development mock орчин дахь walk-in server flow** хэрэгжсэн. Guest deposit/payment service дуустал production check-in fail-closed байна; шифрлэлтийн key дангаараа энэ gate-ийг нээхгүй. Бүх Reception module эсвэл production integration дууссан гэсэн утгагүй. API service бэлэн биш хэсгүүдийг mock/manual горимоор орхих хэрэглэгчийн шийдвэр хүчинтэй.
+Reception багц 3/6-ийн **development mock орчин дахь walk-in server flow** хэрэгжсэн. v0.10-д [cash deposit integration](40-guest-cash-finance.md) нэмэгдсэн: authoritative deposit configuration, explicit received cash declaration болон vault-тай production cash check-in ажиллана. Funding-гүй check-in fail-closed; шифрлэлтийн key дангаараа gate-ийг нээхгүй. Бүх Reception module эсвэл production integration дууссан гэсэн утгагүй. API service бэлэн биш хэсгүүдийг mock/manual горимоор орхих хэрэглэгчийн шийдвэр хүчинтэй.
 
 ## Implemented boundary
 
@@ -32,7 +32,7 @@ For 30,000₮, successful check-in creates one stay-bound six-digit code with a 
 
 ## Key configuration
 
-An explicitly configured identity vault is required; missing vault fails 503 with no plaintext fallback. Separately, **production check-in remains 503 until package 4 supplies authoritative deposit satisfaction**. The developer/test-only `mock_stay_finance=True` opt-in requires a development/test runtime and isolated database, marks every response MOCK_ONLY and the immutable stay snapshot `financial_integration=DEFERRED_MOCK`. It does not create a received-payment/deposit ledger entry. The development factory enables this simulation. Production rejects the mock flag even with a valid vault.
+An explicitly configured identity vault is required; missing vault fails 503 with no plaintext fallback. Separately, **unfunded production check-in remains 503; v0.10 supplies the authoritative cash path described in document 40**. The developer/test-only `mock_stay_finance=True` opt-in requires a development/test runtime and isolated database, marks every response MOCK_ONLY and the immutable stay snapshot `financial_integration=DEFERRED_MOCK`. It does not create a received-payment/deposit ledger entry. The development factory enables this simulation. Production rejects the mock flag even with a valid vault.
 
 Prepare identity secrets outside the repository:
 
@@ -65,7 +65,7 @@ Every existing Cleaner posting runtime also needs SELECT on `room_cleaning_reque
 ## Remaining integration
 
 - Confirmed online booking must be created from authoritative booking/payment evidence, write `room_reservation` under the same room root lock, and consume its own immutable quote at check-in. No public import/paid boolean endpoint exists. Current API supports walk-ins only.
-- Package 4 owns guest charges, payments/deposits/allocations/refunds and cash-source posting. Per document 20, a walk-in must satisfy its deposit before ACTIVE; production is therefore blocked until this service is connected. Current mock check-in accepts only an explicit category deposit in the approved 50,000–100,000 MNT range; missing/zero/out-of-range catalog values fail closed. Hotel default/category override precedence and immutable deposit evidence still belong to package 4. `amount_mnt`/`deposit_mnt` here are immutable requirements; simulation does **not** claim payment or post cash. A future live ledger must reject `DEFERRED_MOCK` stays rather than adopt simulation records as financial evidence.
+- Package 4 owns guest charges, payments/deposits/allocations/refunds and cash-source posting. Per document 20, a walk-in must satisfy its deposit before ACTIVE; unfunded production check-in is blocked; v0.10 connects the cash path (document 40). Current mock check-in accepts only an explicit category deposit in the approved 50,000–100,000 MNT range; missing/zero/out-of-range catalog values fail closed. Package 4 now implements explicit hotel/category precedence and cash deposit evidence; provider/POS evidence remains pending. `amount_mnt`/`deposit_mnt` here are immutable requirements; simulation does **not** claim payment or post cash. The v0.10 live cash ledger rejects `DEFERRED_MOCK` stays rather than adopt simulation records as financial evidence.
 - Package 5 owns actual checkout and next cleaning source. No unsafe direct checkout endpoint has been added.
 - Guest QR/session execution, registry correction, Police worker/live XYP, minibar ON and operational UI remain later integration work. Source snapshots are never fabricated to bypass these gates.
 

@@ -365,7 +365,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if type(mock_stay_finance) is not bool:
         raise ValueError('mock_stay_finance must be boolean')
-    mocked = mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, *(payment_gateways or {}).values()])
+    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, *(payment_gateways or {}).values()])
     if mocked:
         from prsystem.mock_providers import require_development_database
         require_development_database(service.dsn, runtime_mode)

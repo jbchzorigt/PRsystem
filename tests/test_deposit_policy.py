@@ -23,3 +23,27 @@ class DepositPolicyTests(unittest.TestCase):
         received=100000
         self.assertEqual(available(received,allocated=30000,reserved=20000)+30000+20000,received)
         self.assertEqual(available(received,allocated=30000,refunded=20000),50000)
+
+    def test_cash_refund_hold_preserves_spendable_cash_and_prevents_close(self):
+        from dataclasses import replace
+        from datetime import datetime,timezone
+        from prsystem.cash import CashBook,Drawer,RefundHold,SpendCash,CashContext,execute
+        book=CashBook('hotel',(Drawer('front','shift',60000,20000),),refund_holds=(RefundHold('refund','front','shift',20000),))
+        book.validate();self.assertFalse(book.can_close_shift('shift'))
+        context=CashContext('hotel','actor','spend',0,datetime.now(timezone.utc),True,'shift')
+        with self.assertRaisesRegex(DomainError,'INSUFFICIENT_AVAILABLE_CASH'):
+            execute(book,SpendCash('front',40001,'expense','Approved'),context)
+        result=execute(book,SpendCash('front',40000,'expense','Approved'),context)
+        self.assertEqual(result.drawer('front').available,0)
+        self.assertEqual(result.refund_holds,book.refund_holds)
+        result.validate()
+
+    def test_cash_reservations_require_exact_sources_and_shift_binding(self):
+        from dataclasses import replace
+        from prsystem.cash import CashBook,Drawer,RefundHold,Transfer
+        book=CashBook('hotel',(Drawer('front','shift',60000,30000),Drawer('other','s2',0)),
+                      transfers=(Transfer('transfer','front','other','shift','s2',10000),),
+                      refund_holds=(RefundHold('refund','front','shift',20000),))
+        book.validate()
+        for holds in ((),(RefundHold('refund','front','wrong',20000),),(RefundHold('refund','front','shift',19999),),book.refund_holds*2):
+            with self.assertRaises(DomainError):replace(book,refund_holds=holds).validate()

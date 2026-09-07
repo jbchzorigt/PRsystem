@@ -19,6 +19,11 @@ class GuestFinance(RoomService):
     def __init__(self, auth, vault=None, runtime_mode='production'):
         super().__init__(auth)
         self.vault=vault
+        if runtime_mode not in {'production','development','test'}:
+            raise ValueError('Unknown runtime mode')
+        if runtime_mode!='production':
+            from prsystem.mock_providers import require_development_database
+            require_development_database(auth.dsn,runtime_mode)
         self.mode='CASH_LEDGER' if runtime_mode=='production' else 'MOCK_CASH_LEDGER'
 
     def configure(self,bearer,tenant,category,amount,revision,key):

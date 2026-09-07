@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
-| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening, development-mock walk-in check-in, canonical cleaning/readiness ба encrypted guest identity хэрэгжүүлсэн; [6 implementation багцаас 2 бүрэн, 3-р багц хэсэгчлэн](38-reception-foundation.md) |
+| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening, walk-in check-in, canonical cleaning/readiness, encrypted identity болон cash deposit/payment/allocation/refund хэрэгжүүлсэн; [6 implementation багцаас 2 бүрэн, 3 ба 4-р багц хэсэгчлэн](38-reception-foundation.md) |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
@@ -61,9 +61,11 @@
 | Stay duration/manual identity domain | 12 |
 | Identity authenticated encryption | 4 |
 | Walk-in check-in/readiness PostgreSQL | 19 |
-| **Нийт** | **299** |
+| Deposit conservation/config/cash-hold domain | 6 |
+| Guest cash finance PostgreSQL/API | 22 |
+| **Нийт** | **327** |
 
-Одоогийн local run: 299 discovered, crypto extra байгаа тул 58 executed, PostgreSQL-dependent 241 skipped. API/crypto extra байхгүй үед 54 dependency-free тест ажиллаж, бусад 245 skip хийнэ. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
+Одоогийн local run: 327 discovered, crypto extra байгаа тул 64 executed, PostgreSQL-dependent 263 skipped. API/crypto extra байхгүй үед 60 dependency-free тест ажиллаж, бусад 267 skip хийнэ. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
 
 [v0.7.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34077680285) (`dce6585`) дээр **237 backend тест skip-гүй**, Chromium browser tests, design lint болон token check бүгд амжилттай. Тэр milestone-д 73 backend тест нэмэгдсэн. Chromium CI нь дөрвөн purpose route, 204 success, давхар submit, password reveal, field/status focus, error/retry, 320px layout болон storage isolation-ийг шалгана.
 
@@ -74,3 +76,9 @@
 Walk-in financial gate: production check-in нь document 20-ийн шаардлагатай deposit satisfaction service холбогдох хүртэл 503. Development factory дахь explicit mock л `DEFERRED_MOCK` snapshot-тай simulation stay үүсгэнэ; payment/deposit received гэж бичихгүй. Энэ нь хэрэглэгчийн API service-үүдийг mock-оор орлуулж үргэлжлүүлэх шийдвэрийн хүрээнд байна.
 
 [v0.9.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34094455494), source `2b3946b`, дээр **299 backend тест skip-гүй (111.816 секунд)**, Chromium browser/design/token checks бүгд амжилттай. Энэ continuation **35 шинэ тест** нэмсэн. Walk-in check-in нь development mock; production нь authoritative deposit service хүртэл хаалттай. Үндсэн тоолол: **6 Reception багцаас 2 бүрэн, 3-р багц хэсэгчлэн; 4–6 үлдсэн**.
+
+## v0.10 cash finance continuation
+
+[Cash contract](40-guest-cash-finance.md): hotel/category deposit setting → atomic cash check-in, deposit liability/room charge, cash payment, normal allocation, original-drawer refund reserve/complete болон Manager not-handed release хэрэгжсэн. Cash reservation нь өмнөх spend/transfer/shift-close guard-тай холбоотой. Production cash check-in authoritative funding-тай үед нээгдэнэ; unfunded болон unsupported provider/POS path хаалттай.
+
+Тогтмол Reception тоолол: **2 бүрэн + 2 хэсэгчлэн (3, 4) + 2 үлдсэн (5, 6) = 6**. Багц 4-ийн provider/POS evidence, alternate-channel approval, correction/reversal, late provider reconciliation болон report integration үлдсэн. Эцсийн CI дүнг баталгаажуулсны дараа доор тэмдэглэнэ.
