@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from email_validator import EmailNotValidError, validate_email
+from psycopg.types.json import Jsonb
 
 from prsystem.auth import StaffAuth, digest
 from prsystem.staff_commands import StaffCommands
@@ -45,9 +46,68 @@ class StaffLifecycle(StaffCommands):
         return f"{link_id}.{mac}"
 
     @staticmethod
-    def _event(conn, kind, actor, target, tenant, link):
-        conn.execute("""INSERT INTO prsystem.staff_lifecycle_event (id, kind, actor_id, target_id, tenant_id, link_id)
-            VALUES (%s, %s, %s, %s, %s, %s)""", (secrets.token_hex(16), kind, actor, target, tenant, link))
+    def _event(conn, kind, actor, target, tenant, link, details=None):
+        conn.execute("""INSERT INTO prsystem.staff_lifecycle_event (id, kind, actor_id, target_id, tenant_id, link_id, details)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)""", (secrets.token_hex(16), kind, actor, target, tenant, link, Jsonb(details or {})))
+
+    def admin_reset(self, bearer, tenant, target, revision, key, peer):
+        self.auth._rate_limit(digest(bearer), peer, "admin-reset")
+        command = {"action": "ADMIN_RESET", "account_id": target, "revision": revision}
+        with transaction(self.auth.dsn) as conn:
+            actor, _ = self._admin(conn, bearer, tenant, target)
+            replay = self._receipt(conn, tenant, key, actor, command)
+            if replay is not None:
+                return replay
+            member = conn.execute("""SELECT revision FROM prsystem.staff_membership
+                WHERE tenant_id = %s AND account_id = %s FOR SHARE""", (tenant, target)).fetchone()
+            if member is None:
+                raise DomainError("MEMBERSHIP_NOT_FOUND")
+            if type(revision) is not int or member[0] != revision:
+                raise DomainError("REVISION_CONFLICT")
+            account = conn.execute("SELECT email, verified_at FROM prsystem.staff_account WHERE id = %s", (target,)).fetchone()
+            if account[1] is None:
+                raise DomainError("ACCOUNT_NOT_VERIFIED")
+            request_id = secrets.token_hex(16)
+            conn.execute("INSERT INTO prsystem.password_reset_request (id, email) VALUES (%s, %s)", (request_id, account[0]))
+            self._event(conn, "ADMIN_RESET_REQUESTED", actor, target, tenant, None, {"request_id": request_id, "revision": revision})
+            result = {"status": "ACCEPTED"}
+            self._save_receipt(conn, tenant, key, actor, command, result)
+            return result
+
+    def recover_invite(self, bearer, tenant, target, revision, key, reason):
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+            raise DomainError("INVALID_REASON")
+        command = {"action": "RECOVER_INVITE", "account_id": target, "revision": revision, "reason": reason}
+        with transaction(self.auth.dsn) as conn:
+            actor, package = self._admin(conn, bearer, tenant, target)
+            replay = self._receipt(conn, tenant, key, actor, command)
+            if replay is not None:
+                return replay
+            member = conn.execute("""SELECT status, roles, revision, is_primary FROM prsystem.staff_membership
+                WHERE tenant_id = %s AND account_id = %s FOR UPDATE""", (tenant, target)).fetchone()
+            if member is None:
+                raise DomainError("MEMBERSHIP_NOT_FOUND")
+            if type(revision) is not int or revision != member[2]:
+                raise DomainError("REVISION_CONFLICT")
+            if member[3]:
+                raise DomainError("PRIMARY_ADMIN_PROTECTED")
+            if member[0] not in {"SUSPENDED", "TERMINATED"}:
+                raise DomainError("INVALID_MEMBERSHIP_TRANSITION")
+            account = conn.execute("SELECT status, verified_at, auth_epoch FROM prsystem.staff_account WHERE id = %s", (target,)).fetchone()
+            if account[0] != "ACTIVE":
+                raise DomainError("SECURITY_SUSPENDED")
+            if account[1] is not None:
+                raise DomainError("VERIFIED_ACCOUNT_REQUIRES_REACTIVATION")
+            self._roles(member[1], package)
+            new_revision = conn.execute("""UPDATE prsystem.staff_membership SET status = 'PENDING'
+                WHERE tenant_id = %s AND account_id = %s RETURNING revision""", (tenant, target)).fetchone()[0]
+            conn.execute("""UPDATE prsystem.staff_session SET revoked_at = clock_timestamp()
+                WHERE tenant_id = %s AND account_id = %s AND revoked_at IS NULL""", (tenant, target))
+            result = self._issue(conn, "INVITE", target, account[2], tenant, actor, new_revision)
+            self._event(conn, "INVITE_RECOVERED", actor, target, tenant, result["invitation_id"],
+                        {"reason": reason, "previous_status": member[0], "revision": new_revision})
+            self._save_receipt(conn, tenant, key, actor, command, result)
+            return result
 
     def _issue(self, conn, purpose, account, epoch, tenant=None, inviter=None, revision=None):
         conn.execute("""UPDATE prsystem.staff_link SET state = 'SUPERSEDED'

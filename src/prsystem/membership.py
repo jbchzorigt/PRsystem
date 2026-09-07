@@ -4,6 +4,7 @@ import secrets
 
 from psycopg.types.json import Jsonb
 
+from prsystem.auth import digest
 from prsystem.common import DomainError, identifier
 from prsystem.postgres.connection import transaction
 from prsystem.staff_commands import StaffCommands
@@ -146,6 +147,47 @@ class MembershipService(StaffCommands):
                 new_revision = conn.execute("""UPDATE prsystem.staff_work_exception SET claimant_id = %s, revision = revision + 1
                     WHERE tenant_id = %s AND id = %s RETURNING revision""", (actor, tenant, exception_id)).fetchone()[0]
                 self._event(conn, tenant, actor, row[2], "WORK_CLAIMED", {"exception_id": exception_id, "revision": new_revision})
+            result = {"id": exception_id, "claimant_id": actor, "revision": new_revision, "status": "CLAIMED"}
+            self._save_receipt(conn, tenant, key, actor, command, result)
+            return result
+
+    def recover_claim(self, bearer, tenant, exception_id, revision, key, reason):
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
+            raise DomainError("INVALID_REASON")
+        command = {"action": "RECOVER_CLAIM", "exception_id": exception_id, "revision": revision, "reason": reason}
+        with transaction(self.auth.dsn) as conn:
+            session = conn.execute("SELECT account_id FROM prsystem.staff_session WHERE token_hash = %s", (digest(bearer),)).fetchone()
+            if session is None:
+                raise DomainError("UNAUTHENTICATED")
+            snapshot = conn.execute("SELECT claimant_id FROM prsystem.staff_work_exception WHERE tenant_id = %s AND id = %s",
+                                    (tenant, exception_id)).fetchone()
+            previous = snapshot[0] if snapshot else None
+            self._lock_accounts(conn, {session[0], previous} - {None})
+            actor = self._queue_actor(conn, bearer, tenant)
+            replay = self._receipt(conn, tenant, key, actor, command)
+            if replay is not None:
+                return replay
+            row = conn.execute("""SELECT e.claimant_id, e.revision, w.owner_id FROM prsystem.staff_work_exception e
+                JOIN prsystem.staff_open_work w ON (w.tenant_id, w.id) = (e.tenant_id, e.work_id)
+                WHERE e.tenant_id = %s AND e.id = %s AND w.state = 'BLOCKED' FOR UPDATE OF e""", (tenant, exception_id)).fetchone()
+            if row is None:
+                raise DomainError("EXCEPTION_NOT_FOUND")
+            if type(revision) is not int or row[1] != revision or row[0] != previous:
+                raise DomainError("REVISION_CONFLICT")
+            if previous is None:
+                raise DomainError("EXCEPTION_NOT_CLAIMED")
+            member = conn.execute("""SELECT m.status, m.roles, a.status, a.verified_at FROM prsystem.staff_membership m
+                JOIN prsystem.staff_account a ON a.id = m.account_id WHERE m.tenant_id = %s AND m.account_id = %s
+                FOR SHARE OF m""", (tenant, previous)).fetchone()
+            package = conn.execute("SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id = %s", (tenant,)).fetchone()[0]
+            if member[0] == "ACTIVE" and member[2] == "ACTIVE" and member[3] is not None and self._manager(member[1], package):
+                raise DomainError("CLAIMANT_STILL_ELIGIBLE")
+            new_revision = conn.execute("""UPDATE prsystem.staff_work_exception SET claimant_id = %s, revision = revision + 1
+                WHERE tenant_id = %s AND id = %s RETURNING revision""", (actor, tenant, exception_id)).fetchone()[0]
+            self._event(conn, tenant, actor, previous, "WORK_CLAIM_RELEASED",
+                        {"exception_id": exception_id, "revision": new_revision, "reason": reason})
+            self._event(conn, tenant, actor, row[2], "WORK_CLAIMED",
+                        {"exception_id": exception_id, "revision": new_revision, "previous_claimant_id": previous, "reason": reason})
             result = {"id": exception_id, "claimant_id": actor, "revision": new_revision, "status": "CLAIMED"}
             self._save_receipt(conn, tenant, key, actor, command, result)
             return result

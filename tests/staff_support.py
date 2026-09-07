@@ -32,6 +32,7 @@ class StaffApiCase(PostgresCase):
                 "GRANT SELECT ON prsystem.staff_account, prsystem.hotel_access, prsystem.staff_membership, "
                 "prsystem.staff_session, prsystem.auth_rate_bucket TO {}",
                 "GRANT INSERT ON prsystem.staff_session, prsystem.auth_rate_bucket, prsystem.auth_event TO {}",
+                "GRANT INSERT ON prsystem.staff_denied_event TO {}",
                 "GRANT UPDATE (password_hash, auth_epoch) ON prsystem.staff_account TO {}",
                 "GRANT UPDATE (last_seen_at, revoked_at) ON prsystem.staff_session TO {}",
                 "GRANT UPDATE (attempts, window_started) ON prsystem.auth_rate_bucket TO {}",
@@ -100,4 +101,3 @@ class StaffApiCase(PostgresCase):
                     return True
                 sleep(0.02)
         return False
-

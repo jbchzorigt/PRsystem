@@ -10,11 +10,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from starlette.concurrency import run_in_threadpool
 
 from prsystem.auth import AuthSettings, StaffAuth
 from prsystem.common import DomainError
 from prsystem.staff_lifecycle import StaffLifecycle
 from prsystem.membership import MembershipService
+from prsystem.security_audit import record_denial
 
 
 class Login(BaseModel):
@@ -107,10 +109,22 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
                   "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
                   "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
+                  "EXCEPTION_NOT_CLAIMED": 409, "CLAIMANT_STILL_ELIGIBLE": 409,
+                  "VERIFIED_ACCOUNT_REQUIRES_REACTIVATION": 409,
                   "MEMBERSHIP_NOT_FOUND": 404, "MEMBERSHIP_EXISTS": 409, "MEMBERSHIP_NOT_PENDING": 409,
                   "REVISION_CONFLICT": 409, "IDEMPOTENCY_CONFLICT": 409, "LINK_SERVICE_UNAVAILABLE": 503,
                   "TOKEN_KEY_MISMATCH": 503, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
         headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
+        if status in {401, 403}:
+            authorization = request.headers.get("Authorization", "").split(" ", 1)
+            secret = authorization[1] if len(authorization) == 2 and authorization[0].lower() == "bearer" and 20 <= len(authorization[1]) <= 256 else None
+            route = request.scope.get("route")
+            try:
+                await run_in_threadpool(record_denial, service, bearer=secret,
+                    tenant=request.path_params.get("tenant_id"), target=request.path_params.get("account_id"),
+                    action=getattr(route, "path", "UNKNOWN"), method=request.method, code=code)
+            except (psycopg.Error, DomainError):
+                return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
         if status == 429:
             headers["Retry-After"] = str(service.settings.login_window_seconds)
         return JSONResponse({"code": "SERVICE_UNAVAILABLE" if status == 503 else code}, status_code=status, headers=headers)
@@ -162,6 +176,15 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def revoke(tenant_id: str, account_id: str, body: InvitationChange, secret: Annotated[str, Depends(token)]):
         return links().change_invite(secret, tenant_id, account_id, body.expected_revision, body.idempotency_key, resend=False)
 
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/invitations/recover")
+    def recover_invite(tenant_id: str, account_id: str, body: MembershipChange, secret: Annotated[str, Depends(token)]):
+        return links().recover_invite(secret, tenant_id, account_id, body.expected_revision, body.idempotency_key, body.reason)
+
+    @app.post("/hotels/{tenant_id}/staff/{account_id}/password/reset", status_code=202)
+    def admin_reset(tenant_id: str, account_id: str, body: InvitationChange, request: Request,
+                    secret: Annotated[str, Depends(token)]):
+        return links().admin_reset(secret, tenant_id, account_id, body.expected_revision, body.idempotency_key, peer(request))
+
     @app.post("/auth/invitations/accept")
     def accept_invite(body: LinkPassword, request: Request):
         return links().accept(body.token.get_secret_value(), body.password.get_secret_value(), peer(request))
@@ -192,6 +215,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/hotels/{tenant_id}/staff-work/exceptions/{exception_id}/claim")
     def claim(tenant_id: str, exception_id: str, body: InvitationChange, secret: Annotated[str, Depends(token)]):
         return memberships.claim(secret, tenant_id, exception_id, body.expected_revision, body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/staff-work/exceptions/{exception_id}/recover")
+    def recover_claim(tenant_id: str, exception_id: str, body: MembershipChange, secret: Annotated[str, Depends(token)]):
+        return memberships.recover_claim(secret, tenant_id, exception_id, body.expected_revision, body.idempotency_key, body.reason)
 
     @app.post("/auth/password/reset/request", status_code=202)
     def request_reset(body: ResetRequest, request: Request):
