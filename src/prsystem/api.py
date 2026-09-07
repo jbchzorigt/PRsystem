@@ -349,6 +349,13 @@ class ReasonCommand(BaseModel):
     idempotency_key: str=Field(min_length=1,max_length=128)
 
 
+class FundingReturnProof(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    reference: str|None=Field(default=None,min_length=1,max_length=200)
+    confirmation: str|None=Field(default=None,min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
 class CorrectionProof(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     reference: str=Field(min_length=1,max_length=200)
@@ -558,7 +565,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
     memberships = MembershipService(service)
-    cleaning = CleaningService(service)
+    cleaning = CleaningService(service,runtime_mode)
     onboarding = OnboardingService(service,lifecycle,phone_gateway=phone_gateway,payment_gateways=payment_gateways)
     renewals = RenewalService(service,payment_gateways)
     shifts = ShiftService(service)
@@ -566,7 +573,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     openings = OpeningService(service)
     rooms = RoomService(service)
     room_lifecycle = RoomLifecycle(service)
-    readiness = ReadinessService(service)
+    readiness = ReadinessService(service,runtime_mode)
     stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
     checkout = CheckoutService(service, stays.vault, runtime_mode)
@@ -636,6 +643,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'REFUND_APPROVAL_REQUIRED':409,'REFUND_RELEASE_NOT_PROVEN':409})
         stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
         stay_errors.update({'PAYMENT_ALREADY_PAID':409,'PAYMENT_VOID_REQUIRES_CANCELLATION':409,'PHYSICAL_COUNT_REQUIRED':409})
+        stay_errors['PUBLIC_ORIGIN_REQUIRED']=503
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -798,6 +806,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def cancel_guest_intent(tenant_id: str,stay_id: str,intent_id: str,body: MembershipChange,secret: Annotated[str,Depends(token)]):
         return guest_payments.cancel(secret,tenant_id,stay_id,intent_id,body.expected_revision,body.idempotency_key,body.reason)
 
+    @app.post('/hotels/{tenant_id}/check-in-funding/{funding_id}/return')
+    def return_funding(tenant_id: str,funding_id: str,body: ReasonCommand,secret: Annotated[str,Depends(token)]):
+        return checkin_funding.request_return(secret,tenant_id,funding_id,body.idempotency_key,body.reason)
+
+    @app.post('/hotels/{tenant_id}/check-in-funding/{funding_id}/return/complete')
+    def finish_funding_return(tenant_id: str,funding_id: str,body: FundingReturnProof,secret: Annotated[str,Depends(token)]):
+        return checkin_funding.finish_return(secret,tenant_id,funding_id,body.idempotency_key,body.reference,body.confirmation)
+
     @app.post('/hotels/{tenant_id}/check-in-funding/{funding_id}/cancel')
     def cancel_funding(tenant_id: str,funding_id: str,body: ReasonCommand,secret: Annotated[str,Depends(token)]):
         return checkin_funding.cancel(secret,tenant_id,funding_id,body.idempotency_key,body.reason)
@@ -841,6 +857,11 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/handovers/{handover_id}/decision')
     def decide_handover(tenant_id: str,handover_id: str,body: HandoverDecision,secret: Annotated[str,Depends(token)]):
         return handovers.decide(secret,tenant_id,handover_id,body.accept,body.count_id,body.reason,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/rooms/{room_id}/guest-qr/card')
+    def room_qr_card(tenant_id: str,room_id: str,secret: Annotated[str,Depends(token)]):
+        origin=os.environ.get('PRSYSTEM_PUBLIC_ORIGIN','http://127.0.0.1:8000' if runtime_mode!='production' else '')
+        return guest_access.qr_card(secret,tenant_id,room_id,origin)
 
     @app.post('/guest/access')
     def redeem_guest_access(body: GuestRedeem):
@@ -996,6 +1017,13 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get("/staff/restaurant-accept", include_in_schema=False)
     def staff_page():
         return FileResponse(static_root / "staff.html", headers={
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "X-Frame-Options": "DENY",
+        })
+
+    @app.get("/guest/entry", include_in_schema=False)
+    def guest_entry_page():
+        return FileResponse(static_root / "guest.html", headers={
             "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "X-Frame-Options": "DENY",
         })

@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from postgres_support import ADMIN_DSN
 from guest_finance_support import GuestFinanceCase
 if ADMIN_DSN:
+    from prsystem.common import DomainError
     import psycopg
     from fastapi.testclient import TestClient
     from prsystem.api import create_app
@@ -66,7 +67,32 @@ class CheckinFundingTests(GuestFinanceCase):
         response=self.client.post(f'/hotels/{self.tenant}/check-in-funding/{funding}/cancel',headers=self.headers(self.worker_token),json=dict(idempotency_key='cancel',reason='Guest leaves before payment'))
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(self.reconcile(funding).json()['state'],'CANCELLED')
-        with self.assertRaises(Exception):gateway.set_status(funding,'SUCCEEDED')
+        with self.assertRaises(DomainError):gateway.set_status(funding,'SUCCEEDED')
         with psycopg.connect(self.owner_dsn) as conn:
             self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.stay WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
             self.assertEqual(conn.execute('SELECT state FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s',(self.tenant,funding)).fetchone()[0],'FAILED')
+
+    def test_unapplied_pos_return_blocks_checkin_and_releases_only_after_proof(self):
+        funding=self.assert_status(self.funding(),201)['funding_id']
+        def post(suffix,body):return self.client.post(f'/hotels/{self.tenant}/check-in-funding/{funding}/'+suffix,headers=self.headers(self.worker_token),json=body)
+        self.assert_status(post('return',dict(idempotency_key='return',reason='Guest decides not to stay')),200)
+        self.assert_status(self.checkin(funding_id=funding),409)
+        self.assert_status(post('return/complete',dict(idempotency_key='empty')),422)
+        result=self.assert_status(post('return/complete',dict(idempotency_key='complete',reference='POS-RETURN-001',confirmation='Card reversal receipt signed')),200)
+        self.assertTrue(result['returned']);self.assertEqual(self.drawer(),(0,0))
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.stay WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+            self.assertEqual(conn.execute('SELECT state FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s',(self.tenant,funding)).fetchone()[0],'FAILED')
+
+    def test_unapplied_provider_return_uses_exact_server_evidence(self):
+        directory=TemporaryDirectory();self.addCleanup(directory.cleanup)
+        store=MockStore(directory.name+'/providers.sqlite3',environment='test');gateway=MockPaymentGateway(store,'QPAY')
+        self.client.close();self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways={'QPAY':gateway}));self.addCleanup(self.client.close)
+        funding=self.assert_status(self.funding(channel='QPAY'),201)['funding_id'];self.reconcile(funding);gateway.set_status(funding,'SUCCEEDED');self.reconcile(funding)
+        def post(suffix,body):return self.client.post(f'/hotels/{self.tenant}/check-in-funding/{funding}/'+suffix,headers=self.headers(self.worker_token),json=body)
+        self.assert_status(post('return',dict(idempotency_key='return',reason='Guest leaves')),200)
+        self.assertEqual(self.assert_status(post('return/complete',dict(idempotency_key='finish')),200)['state'],'REFUNDING')
+        with psycopg.connect(self.owner_dsn) as conn:self.assertEqual(conn.execute('SELECT state FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s',(self.tenant,funding)).fetchone()[0],'PENDING')
+        gateway.set_refund_status('funding-return:'+funding,'SUCCEEDED')
+        self.assertTrue(self.assert_status(post('return/complete',dict(idempotency_key='finish')),200)['returned'])
+        self.assert_status(self.checkin(funding_id=funding),409)

@@ -81,3 +81,15 @@ class GuestAccessAmendmentTests(GuestFinanceCase):
         request=self.assert_status(self.amendment(),201)
         self.assert_status(self.decision(request['amendment_id'],approve=False),200)
         self.assert_status(self.amendment(key='retry'),201)
+
+    def test_printable_qr_card_is_manager_only_and_uses_configured_origin(self):
+        from unittest.mock import patch
+        self.qr()
+        url=f'/hotels/{self.tenant}/rooms/{self.room}/guest-qr/card'
+        with patch.dict('os.environ',{'PRSYSTEM_PUBLIC_ORIGIN':'https://hotel.example.com'}):
+            data=self.assert_status(self.client.get(url,headers=self.headers(self.manager_token)),200)
+            self.assertEqual(data['room_number'],'101');self.assertGreater(len(data['matrix']),20)
+            self.assertEqual(set(data),{'room_number','revision','matrix'})
+            self.assert_status(self.client.get(url,headers=self.headers(self.worker_token)),403)
+        with patch.dict('os.environ',{'PRSYSTEM_PUBLIC_ORIGIN':'https://evil.example/path?token=x'}):
+            self.assertEqual(self.client.get(url,headers=self.headers(self.manager_token)).json()['code'],'PUBLIC_ORIGIN_REQUIRED')

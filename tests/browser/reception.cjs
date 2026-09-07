@@ -45,6 +45,9 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   fs.mkdirSync('artifacts',{recursive:true});await page.screenshot({path:'artifacts/reception-mobile.png',fullPage:true});
   await page.setViewportSize({width:1280,height:900});await page.screenshot({path:'artifacts/reception-desktop.png',fullPage:true});
   fs.writeFileSync('artifacts/reception-requests.json',JSON.stringify(requests));
+  await page.route('**/guest/access',async route=>{const body=route.request().postDataJSON();assert.equal(body.qr_token,'q'.repeat(43));assert.equal(body.code,'123456');await route.fulfill({json:{access_token:'guest-session'}});});
+  await page.route('**/guest/session',route=>route.fulfill({json:{room_number:'101',planned_checkout_at:'2026-09-08T04:00:00Z'}}));
+  await page.goto(origin+'/guest/entry#qr='+'q'.repeat(43));assert.equal(new URL(page.url()).hash,'');await page.getByLabel('Reception-оос авсан 6 оронтой код').fill('123456');await page.getByRole('button',{name:'Нэвтрэх',exact:true}).click();await page.getByRole('heading',{name:'101 өрөөнд тавтай морил'}).waitFor();assert.equal(await page.evaluate(()=>localStorage.length+sessionStorage.length),0);
   assert.deepEqual(problems,[]);assert.equal(await page.locator('form:not([novalidate])').count(),0);
   console.log('Reception browser checks passed: real forms, validation, retry/idempotency, dirty modal, cash payment, checkout, handover, responsive and private storage.');
  }finally{await browser.close();server.close();}

@@ -8,11 +8,11 @@ from prsystem.postgres.connection import transaction
 
 class ReadinessService(RoomService):
     @staticmethod
-    def _room(conn, tenant, room, *, allow_retiring=False):
+    def _room(conn, tenant, room, *, allow_retiring=False, allow_mock=False):
         row = conn.execute('SELECT cleaning_state,status,minibar_mode,revision,category_id FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant, room)).fetchone()
         if not row:
             raise DomainError('WORK_SOURCE_NOT_FOUND')
-        if row[1] not in ({'ACTIVE','RETIRING'} if allow_retiring else {'ACTIVE'}) or row[2] != 'OFF':
+        if row[1] not in ({'ACTIVE','RETIRING'} if allow_retiring else {'ACTIVE'}) or row[2] not in ({'OFF','MOCK_ON'} if allow_mock else {'OFF'}):
             raise DomainError('ROOM_NOT_READY')
         if conn.execute("SELECT 1 FROM prsystem.stay WHERE tenant_id=%s AND room_id=%s AND state='ACTIVE'", (tenant, room)).fetchone():
             raise DomainError('ROOM_OCCUPIED')
@@ -81,7 +81,7 @@ class ReadinessService(RoomService):
                 WHERE t.tenant_id=%s AND t.id=%s AND b.state='OPEN' ''', (tenant, task)).fetchone()
             if not bridge:
                 raise DomainError('WORK_SOURCE_NOT_FOUND')
-            row = self._room(conn, tenant, bridge[0], allow_retiring=True)
+            row = self._room(conn, tenant, bridge[0], allow_retiring=True,allow_mock=self.runtime_mode!='production')
             conn.execute('SELECT id FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant, bridge[1])).fetchone()
             owner = conn.execute("""SELECT t.assignee_id,t.assignment_version,t.state,w.state FROM prsystem.cleaning_task t
                 JOIN prsystem.staff_open_work w ON w.tenant_id=t.tenant_id AND w.source_id=t.id AND w.kind='CLEANING_TASK'

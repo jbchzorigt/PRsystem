@@ -128,3 +128,21 @@ class GuestAccess(GuestFinance):
                 self._save_receipt(conn,tenant,key,actor,command,result);return result
             rows=conn.execute('SELECT id,created_at FROM prsystem.guest_session WHERE tenant_id=%s AND stay_id=%s AND revoked_at IS NULL ORDER BY created_at,id LIMIT 5',(tenant,stay)).fetchall()
             return [dict(session_id=r[0],created_at=r[1]) for r in rows]
+
+    def qr_card(self,bearer,tenant,room,origin):
+        from urllib.parse import urlsplit
+        parsed=urlsplit(origin)
+        if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {'','/'} or parsed.query or parsed.fragment:
+            raise DomainError('PUBLIC_ORIGIN_REQUIRED')
+        if parsed.scheme!='https' and parsed.hostname not in {'localhost','127.0.0.1','::1'}:raise DomainError('PUBLIC_ORIGIN_REQUIRED')
+        with transaction(self.auth.dsn) as conn:
+            actor=self._queue_actor(conn,bearer,tenant);self.package(conn,tenant)
+            if not self.vault:raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
+            row=conn.execute('SELECT r.number,q.revision,q.envelope FROM prsystem.room r JOIN prsystem.room_guest_qr q ON(q.tenant_id,q.room_id)=(r.tenant_id,r.id) WHERE r.tenant_id=%s AND r.id=%s',(tenant,room)).fetchone()
+            if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            token=self.vault.open(row[2],tenant,room,'room-qr')
+            import qrcode
+            qr=qrcode.QRCode(border=4,error_correction=qrcode.constants.ERROR_CORRECT_M)
+            qr.add_data(origin.rstrip('/')+'/guest/entry#qr='+token);qr.make(fit=True)
+            self.event(conn,tenant,actor,'ROOM_QR_CARD_READ',room,dict(revision=row[1]))
+            return dict(room_number=row[0],revision=row[1],matrix=qr.get_matrix())

@@ -42,7 +42,7 @@ class Operations(GuestFinance):
                     WHERE tenant_id=%s AND (owner_id=%s OR %s) AND id>%s ORDER BY id LIMIT %s""",(tenant,actor,manager or admin,after,limit),'shift_id owner_id drawer_id state opened_at closed_at review_state')
                 result['custodies']=rows(conn,"SELECT id,drawer_id FROM prsystem.cash_custody WHERE tenant_id=%s AND owner_id=%s AND state='HELD' ORDER BY id LIMIT 100",(tenant,actor),'custody_id drawer_id')
                 result['funding']=rows(conn,"""SELECT id,room_id,channel,amount_mnt,state,invoice_id FROM prsystem.checkin_funding
-                    WHERE tenant_id=%s AND actor_id=%s AND state IN ('PENDING','CONFIRMED') ORDER BY id LIMIT 100""",(tenant,actor),'funding_id room_id channel amount_mnt state invoice_id')
+                    WHERE tenant_id=%s AND actor_id=%s AND state IN ('PENDING','CONFIRMED','REFUNDING') ORDER BY id LIMIT 100""",(tenant,actor),'funding_id room_id channel amount_mnt state invoice_id')
             if manager:
                 result['qrs']=rows(conn,'SELECT room_id,revision FROM prsystem.room_guest_qr WHERE tenant_id=%s ORDER BY room_id LIMIT 100',(tenant,),'room_id revision')
                 result['settings']=conn.execute('SELECT hourly_price,nightly_price,checkout_time,revision FROM prsystem.room_hotel_settings WHERE tenant_id=%s',(tenant,)).fetchone()

@@ -23,7 +23,7 @@ class OperationsTests(GuestFinanceCase):
         self.assertEqual(data['gross_receipts'],[dict(purpose='DEPOSIT',channel='CASH',amount_mnt=60000)])
         self.assertEqual(data['note'],'SOURCE_SHIFT_TOTALS_NOT_REVENUE')
         self.assert_status(self.get(f'shifts/{self.shift}/report',self.replacement_token),403)
-        self.assert_status(self.get(f'shifts/{self.shift}/report',self.admin_token),200)
+        self.assert_status(self.get(f'shifts/{self.shift}/report',self.admin),200)
 
     def test_manager_receiver_cannot_bypass_blind_handover_with_report(self):
         self.start()

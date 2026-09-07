@@ -35,3 +35,5 @@
 .operations [aria-invalid=true] { border-color: var(--danger); }
 .operations .secret { overflow-wrap: anywhere; border: 1px solid var(--line); padding: 1rem; }
 @media(max-width:600px) { .operations main { margin: 1rem; } .console { padding: 1rem; } .operations header { flex-wrap: wrap; } .operations form { padding: 1rem; } .operations dl { grid-template-columns: 1fr; } .operations dd { margin-bottom: .5rem; } }
+
+.operations .qr-card { width: min(100%,22rem); height: auto; background: white; fill: black; display: block; }

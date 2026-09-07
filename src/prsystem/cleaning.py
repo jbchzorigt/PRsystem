@@ -13,6 +13,14 @@ from prsystem.subscription import AccessFacts, Action, subscription_gate
 
 
 class CleaningService(MembershipService):
+    def __init__(self,auth,runtime_mode='production'):
+        super().__init__(auth)
+        if runtime_mode not in {'production','development','test'}:raise ValueError('Unknown runtime mode')
+        if runtime_mode!='production':
+            from prsystem.mock_providers import require_development_database
+            require_development_database(auth.dsn,runtime_mode)
+        self.runtime_mode=runtime_mode
+
     @staticmethod
     def event(conn, tenant, actor, kind, source, details):
         conn.execute("""INSERT INTO prsystem.operational_event
@@ -132,7 +140,8 @@ class CleaningService(MembershipService):
                 conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",('room-catalog:'+tenant,))
                 room=conn.execute('SELECT cleaning_state FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,bridge[0])).fetchone()
                 if bridge[1]!='OPEN' or not room or room[0]!='CLEANING': raise DomainError('CLEANING_NOT_STARTED')
-            source=conn.execute('SELECT id,room_id,configuration_id,configuration_version FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant,source[0])).fetchone()
+            source=conn.execute('SELECT id,room_id,configuration_id,configuration_version,snapshot FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant,source[0])).fetchone()
+            if source[4].get('minibar_mode')=='MOCK_ON' and self.runtime_mode=='production':raise DomainError('FINANCIAL_SOURCE_NOT_READY')
             task=conn.execute("""SELECT t.assignee_id,t.assignment_version,t.state,w.state FROM prsystem.cleaning_task t
                 JOIN prsystem.staff_open_work w ON w.tenant_id=t.tenant_id AND w.source_id=t.id AND w.kind='CLEANING_TASK'
                 WHERE t.tenant_id=%s AND t.id=%s FOR UPDATE OF t,w""", (tenant,task_id)).fetchone()

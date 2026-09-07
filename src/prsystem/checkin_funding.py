@@ -101,3 +101,53 @@ class CheckinFunding(GuestPayments):
             self.event(conn,tenant,actor,'PENDING_CHECKIN_FUNDING_VOIDED',funding,dict(reason=reason))
             result=dict(funding_id=funding,state='CANCELLED')
             self._save_receipt(conn,tenant,key,actor,command,result);return result
+
+    def request_return(self,bearer,tenant,funding,key,reason):
+        reason=self._text(reason,1000)
+        command=dict(action='RETURN_UNAPPLIED_FUNDING',funding=funding,reason=reason)
+        with transaction(self.auth.dsn) as conn:
+            actor=StayService._actor(self,conn,bearer,tenant)
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            ShiftService._book(conn,tenant)
+            row=conn.execute('SELECT actor_id,state,mode FROM prsystem.checkin_funding WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,funding)).fetchone()
+            if not row or row[0]!=actor:raise DomainError('FORBIDDEN')
+            if row[1]!='CONFIRMED' or row[2]!=self.mode:raise DomainError('INVALID_FINANCIAL_SOURCE')
+            conn.execute('INSERT INTO prsystem.checkin_funding_return(tenant_id,funding_id,actor_id,reason) VALUES(%s,%s,%s,%s)',(tenant,funding,actor,reason))
+            conn.execute("UPDATE prsystem.checkin_funding SET state='REFUNDING' WHERE tenant_id=%s AND id=%s",(tenant,funding))
+            result=dict(funding_id=funding,state='REFUNDING')
+            self.event(conn,tenant,actor,'UNAPPLIED_FUNDING_RETURN_REQUESTED',funding,{})
+            self._save_receipt(conn,tenant,key,actor,command,result);return result
+
+    def finish_return(self,bearer,tenant,funding,key,reference=None,confirmation=None):
+        if reference is not None:self._text(reference,200)
+        if confirmation is not None:self._text(confirmation,1000)
+        with transaction(self.auth.dsn) as conn:
+            actor=StayService._actor(self,conn,bearer,tenant)
+            if not self.vault:raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
+            command=dict(action='FINISH_UNAPPLIED_FUNDING_RETURN',funding=funding,reference=reference,
+                         proof=self.vault.fingerprint('unapplied-funding-return',[tenant,funding,confirmation]))
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            ShiftService._book(conn,tenant)
+            row=conn.execute('SELECT actor_id,state,channel,merchant_id,payment_id,amount_mnt,recorded_at,mode FROM prsystem.checkin_funding WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,funding)).fetchone()
+            if not row or row[0]!=actor:raise DomainError('FORBIDDEN')
+            if row[1]!='REFUNDING' or row[7]!=self.mode:raise DomainError('INVALID_FINANCIAL_SOURCE')
+            if row[2]=='MANUAL_POS':
+                if not reference or not confirmation:raise DomainError('INVALID_REQUEST')
+            else:
+                if reference is not None or confirmation is not None:raise DomainError('INVALID_REQUEST')
+                gateway=self.gateway(row[2]);request='funding-return:'+funding
+                if gateway.merchant_id!=row[3]:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+                gateway.create_refund(request,row[4],row[5]);evidence=gateway.refund(request)
+                if evidence.get('merchant_id')!=row[3] or evidence.get('original')!=row[4] or evidence.get('amount')!=row[5] or evidence.get('currency')!='MNT':raise DomainError('PROVIDER_EVIDENCE_INVALID')
+                if evidence.get('status')!='SUCCEEDED':return dict(funding_id=funding,state='REFUNDING',provider_state=evidence.get('status'))
+                now=conn.execute('SELECT clock_timestamp()').fetchone()[0];confirmed=evidence.get('confirmed_at')
+                if not isinstance(confirmed,datetime) or confirmed.tzinfo is None or not row[6]<=confirmed<=now:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+                reference=evidence.get('reference');self._text(reference,200);confirmation='Authoritative mock provider refund'
+            conn.execute('UPDATE prsystem.checkin_funding_return SET completed_at=clock_timestamp(),provider_reference=%s,confirmation_envelope=%s WHERE tenant_id=%s AND funding_id=%s',(reference,Jsonb(self.vault.seal(confirmation,tenant,funding,'funding-return')),tenant,funding))
+            conn.execute("UPDATE prsystem.checkin_funding SET state='CANCELLED' WHERE tenant_id=%s AND id=%s",(tenant,funding))
+            conn.execute("UPDATE prsystem.shift_obligation SET state='FAILED' WHERE tenant_id=%s AND id=%s",(tenant,funding))
+            result=dict(funding_id=funding,state='CANCELLED',returned=True)
+            self.event(conn,tenant,actor,'UNAPPLIED_FUNDING_RETURNED',funding,dict(channel=row[2],amount_mnt=row[5]))
+            self._save_receipt(conn,tenant,key,actor,command,result);return result

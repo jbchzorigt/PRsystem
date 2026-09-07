@@ -7,6 +7,7 @@ from unittest.mock import patch
 from postgres_support import ADMIN_DSN
 from guest_finance_support import GuestFinanceCase
 if ADMIN_DSN:
+    from prsystem.common import DomainError
     import psycopg
     from fastapi.testclient import TestClient
     from prsystem.api import create_app
@@ -186,7 +187,7 @@ class GuestPaymentTests(GuestFinanceCase):
         self.assertEqual(result['state'],'CANCELLED')
         self.assertEqual(self.command(f'payment-intents/{intent}/cancel',body).json(),result)
         self.assertEqual(self.reconcile(intent).json()['state'],'CANCELLED')
-        with self.assertRaises(Exception):self.gateways['QPAY'].set_status(intent,'SUCCEEDED')
+        with self.assertRaises(DomainError):self.gateways['QPAY'].set_status(intent,'SUCCEEDED')
         self.assertEqual(self.statement().json()['pending_payment_mnt'],0)
         with psycopg.connect(self.owner_dsn) as conn:
             self.assertEqual(conn.execute('SELECT state FROM prsystem.shift_obligation WHERE tenant_id=%s AND id=%s',(self.tenant,intent)).fetchone()[0],'FAILED')
