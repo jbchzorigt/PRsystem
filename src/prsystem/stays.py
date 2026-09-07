@@ -24,6 +24,7 @@ class StayService(RoomService):
             from prsystem.mock_providers import require_development_database
             require_development_database(auth.dsn, runtime_mode)
         self.mock_finance = mock_finance
+        self.runtime_mode = runtime_mode
 
     def _actor(self, conn, bearer, tenant):
         self._actors(conn, bearer, tenant)
@@ -81,13 +82,19 @@ class StayService(RoomService):
         return result
 
     def check_in(self, bearer, tenant, data, key):
+        # Keep legacy command fingerprints stable when the new optional field is absent.
+        if data.get('deposit') is None:
+            data={k:v for k,v in data.items() if k!='deposit'}
+        cash_deposit=data.get('deposit')
+        from prsystem.guest_finance import GuestFinance
+        finance=GuestFinance(self.auth,self.vault,self.runtime_mode)
         with transaction(self.auth.dsn) as conn:
             actor = self._actor(conn, bearer, tenant)
             if self.vault is None:
                 raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
-            # Deposit capture/allocation is package four. Until it exists, no
-            # production ACTIVE stay may bypass the required financial gate.
-            if not self.mock_finance:
+            # Cash confirmation now posts atomically; absent or unsupported
+            # funding never bypasses the production deposit requirement.
+            if cash_deposit is None and not self.mock_finance:
                 raise DomainError('STAY_FINANCE_UNAVAILABLE')
             command = dict(action='WALK_IN_CHECK_IN', fingerprint=self.vault.fingerprint('check-in-command', [tenant, data]))
             replay = self._receipt(conn, tenant, key, actor, command)
@@ -120,7 +127,15 @@ class StayService(RoomService):
             price = self.effective_prices(row)[data['kind'].lower()]
             if price is None or row[20] is None:
                 raise DomainError('STAY_SETTINGS_REQUIRED')
-            if not 50000 <= row[19] <= 100000:
+            deposit_amount=row[19]
+            deposit_snapshot=None
+            if cash_deposit is not None:
+                deposit_snapshot=finance.setting(conn,tenant,row[3])
+                deposit_amount=deposit_snapshot['amount_mnt']
+                if (cash_deposit.get('channel')!='CASH' or cash_deposit.get('received') is not True
+                        or type(cash_deposit.get('amount_mnt')) is not int or cash_deposit['amount_mnt']!=deposit_amount):
+                    raise DomainError('DEPOSIT_REQUIREMENT_NOT_MET')
+            elif not 50000 <= deposit_amount <= 100000:
                 raise DomainError('STAY_DEPOSIT_SETTINGS_REQUIRED')
             end, amount = stay_terms(data['kind'], data['duration_units'], actual, recorded, price['unit_price'], row[20])
             proof = self._readiness(conn, tenant, row[0], row[3], actual, recorded)
@@ -129,14 +144,16 @@ class StayService(RoomService):
             stay = secrets.token_hex(16)
             snapshot = dict(room_id=row[0], room_number=row[1], room_revision=row[7], category_id=row[3], category_name=row[4],
                             category_revision=row[12], hotel_settings_revision=row[15], price=price, checkout_time=str(row[20]),
-                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', financial_integration='DEFERRED_MOCK', cleaning_buffer_minutes=row[17], deposit_mnt=row[19])
+                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', financial_integration=finance.mode if cash_deposit is not None else 'DEFERRED_MOCK', cleaning_buffer_minutes=row[17], deposit_mnt=deposit_amount)
+            if deposit_snapshot is not None:
+                snapshot['deposit_configuration']=deposit_snapshot
             reason = self.vault.seal(data['backdate_reason'], tenant, stay, 'backdate-reason') if data.get('backdate_reason') else None
             conn.execute('''INSERT INTO prsystem.stay (tenant_id,id,room_id,shift_id,actor_id,kind,duration_units,
                 actual_checkin_at,check_in_recorded_at,planned_checkout_at,backdate_reason_envelope,
                 amount_mnt,deposit_mnt,cleaning_buffer_minutes,snapshot,readiness_sequence)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                 (tenant, stay, row[0], shift[0], actor, data['kind'], data['duration_units'], actual, recorded, end,
-                 Jsonb(reason) if reason else None, amount, row[19], row[17], Jsonb(snapshot), proof))
+                 Jsonb(reason) if reason else None, amount, deposit_amount, row[17], Jsonb(snapshot), proof))
             lookup = self.vault.fingerprint('guest-exact-identity', list(exact)) if exact else None
             conn.execute('''INSERT INTO prsystem.stay_guest_identity (tenant_id,stay_id,identity_type,provenance,envelope,lookup_token)
                 VALUES (%s,%s,%s,'MANUAL',%s,%s)''', (tenant, stay, identity['identity_type'], Jsonb(self.vault.seal(identity, tenant, stay)), lookup))
@@ -150,7 +167,9 @@ class StayService(RoomService):
                     self.vault.fingerprint('guest-code', [tenant, stay, code]), Jsonb(self.vault.seal(code, tenant, stay, 'guest-code')), recorded, recorded+timedelta(minutes=10)))
             result = dict(stay_id=stay, room_id=row[0], shift_id=shift[0], state='ACTIVE', kind=data['kind'], duration_units=data['duration_units'],
                           actual_checkin_at=actual.isoformat(), check_in_recorded_at=recorded.isoformat(), planned_checkout_at=end.isoformat(),
-                          amount_mnt=amount, deposit_mnt=row[19], snapshot=snapshot, guest_identity_revision=1)
+                          amount_mnt=amount, deposit_mnt=deposit_amount, snapshot=snapshot, guest_identity_revision=1)
+            if cash_deposit is not None:
+                result.update(finance.initial(conn,tenant,stay,actor,shift,deposit_amount,amount,recorded))
             self.event(conn, tenant, actor, 'STAY_CHECKED_IN', stay, dict(room_id=row[0], shift_id=shift[0], kind=data['kind'], amount_mnt=amount))
             self._save_receipt(conn, tenant, key, actor, command, result)
             return self._response(conn, tenant, result)
