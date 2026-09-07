@@ -29,6 +29,7 @@ from prsystem.rooms import RoomService
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
+from prsystem.guest_corrections import GuestCorrections
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -179,6 +180,17 @@ class GuestCashReceipt(CashConfirmation):
     charge_id: str | None = Field(default=None,min_length=1,max_length=128)
     expected_revision: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class CashCorrectionRequest(InvitationChange):
+    receipt_id: str = Field(min_length=1,max_length=128)
+    replacement_amount_mnt: int = Field(ge=0,le=2**63-1)
+    reason: str = Field(min_length=1,max_length=1000)
+
+
+class CashCorrectionDecision(InvitationChange):
+    approve: bool
+    reason: str = Field(min_length=1,max_length=1000)
 
 
 class DepositAllocation(InvitationChange):
@@ -382,6 +394,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     readiness = ReadinessService(service)
     stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
+    guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.10.0")
@@ -430,6 +443,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors['IDENTITY_VAULT_UNAVAILABLE'] = 503
         stay_errors['STAY_FINANCE_UNAVAILABLE'] = 503
         stay_errors.update({code:409 for code in ('DEPOSIT_REQUIREMENT_NOT_MET','FINANCIAL_SOURCE_NOT_READY','FINANCIAL_AGGREGATE_FROZEN','DEPOSIT_BALANCE_CONFLICT','INSUFFICIENT_DEPOSIT','CHARGE_OVERPAYMENT','INVALID_FINANCIAL_SOURCE','ORIGINAL_CASH_DRAWER_REQUIRED','REFUND_TERMINAL','CASH_SOURCE_CONFLICT','INSUFFICIENT_CASH')})
+        stay_errors.update({code:409 for code in ('CORRECTION_SOURCE_IN_USE','CORRECTION_HAS_NO_CHANGE','CORRECTION_PENDING','CORRECTION_TERMINAL','CORRECTION_SOURCE_CHANGED')})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -519,6 +533,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-receipts',status_code=201)
     def guest_cash_receipt(tenant_id: str,stay_id: str,body: GuestCashReceipt,secret: Annotated[str,Depends(token)]):
         return guest_finance.receive(secret,tenant_id,stay_id,body.purpose,body.amount_mnt,body.charge_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-corrections',status_code=201)
+    def request_cash_correction(tenant_id: str,stay_id: str,body: CashCorrectionRequest,secret: Annotated[str,Depends(token)]):
+        return guest_corrections.request(secret,tenant_id,stay_id,body.receipt_id,body.replacement_amount_mnt,body.reason,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-corrections/{correction_id}/decision')
+    def decide_cash_correction(tenant_id: str,stay_id: str,correction_id: str,body: CashCorrectionDecision,secret: Annotated[str,Depends(token)]):
+        return guest_corrections.decide(secret,tenant_id,stay_id,correction_id,body.approve,body.reason,body.expected_revision,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/deposit-allocations',status_code=201)
     def guest_deposit_allocation(tenant_id: str,stay_id: str,body: DepositAllocation,secret: Annotated[str,Depends(token)]):

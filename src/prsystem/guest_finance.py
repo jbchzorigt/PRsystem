@@ -115,8 +115,8 @@ class GuestFinance(RoomService):
         row=conn.execute('SELECT shift_id,posted,reserved FROM prsystem.cash_drawer WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,drawer)).fetchone()
         if not row or row[0]!=shift:raise DomainError('CASH_SOURCE_CONFLICT')
         posted,reserved=row[1]+posted_delta,row[2]+reserved_delta
+        if posted<0 or reserved>posted:raise DomainError('INSUFFICIENT_CASH')
         money(posted);money(reserved)
-        if reserved>posted:raise DomainError('INSUFFICIENT_CASH')
         conn.execute('UPDATE prsystem.cash_drawer SET posted=%s,reserved=%s WHERE tenant_id=%s AND id=%s',(posted,reserved,tenant,drawer))
         revision=conn.execute('UPDATE prsystem.cash_book SET revision=revision+1 WHERE tenant_id=%s RETURNING revision',(tenant,)).fetchone()[0]
         conn.execute('INSERT INTO prsystem.cash_event VALUES (%s,%s,0,%s,%s,%s,%s,%s,%s,%s,%s)',(tenant,revision,kind,reference,drawer,shift,posted_delta,reserved_delta,actor,now))
@@ -126,6 +126,11 @@ class GuestFinance(RoomService):
     @staticmethod
     def receipt_balance(row):
         return available(row[0],row[4],row[1],row[2],row[3])
+
+    @staticmethod
+    def no_pending_correction(conn,tenant,receipt):
+        if conn.execute("SELECT 1 FROM prsystem.guest_correction WHERE tenant_id=%s AND receipt_id=%s AND state='PENDING'",(tenant,receipt)).fetchone():
+            raise DomainError('CORRECTION_PENDING')
 
     @staticmethod
     def load_receipt(conn,tenant,stay,receipt):
@@ -141,12 +146,13 @@ class GuestFinance(RoomService):
         if amount>row[0]-row[1]:raise DomainError('CHARGE_OVERPAYMENT')
         conn.execute('UPDATE prsystem.guest_charge SET paid_mnt=paid_mnt+%s WHERE tenant_id=%s AND id=%s',(amount,tenant,charge))
 
-    def record_receipt(self,conn,tenant,stay,actor,shift,amount,purpose,now):
+    def record_receipt(self,conn,tenant,stay,actor,shift,amount,purpose,now,*,post_cash=True):
         money(amount,positive=True)
         receipt=secrets.token_hex(16)
         conn.execute('''INSERT INTO prsystem.guest_receipt (tenant_id,stay_id,id,purpose,channel,amount_mnt,actor_id,shift_id,drawer_id,recorded_at)
             VALUES (%s,%s,%s,%s,'CASH',%s,%s,%s,%s,%s)''',(tenant,stay,receipt,purpose,amount,actor,shift[0],shift[2],now))
-        self.cash(conn,tenant,actor,shift[0],shift[2],'GUEST_DEPOSIT_RECEIVED' if purpose=='DEPOSIT' else 'GUEST_PAYMENT_RECEIVED',receipt,amount,0,now)
+        if post_cash:
+            self.cash(conn,tenant,actor,shift[0],shift[2],'GUEST_DEPOSIT_RECEIVED' if purpose=='DEPOSIT' else 'GUEST_PAYMENT_RECEIVED',receipt,amount,0,now)
         return receipt
 
     def initial(self,conn,tenant,stay,actor,shift,deposit,charge_amount,now):
@@ -190,6 +196,7 @@ class GuestFinance(RoomService):
             ShiftService._book(conn,tenant)
             before=self.lock(conn,tenant,stay,revision,active=True);after=dict(before)
             StayService._shift(conn,tenant,actor)
+            self.no_pending_correction(conn,tenant,receipt)
             funding=self.load_receipt(conn,tenant,stay,receipt)
             if funding[5]!='DEPOSIT':raise DomainError('INVALID_FINANCIAL_SOURCE')
             require_available(amount,self.receipt_balance(funding));require_available(amount,self.balance(before)['available'])
@@ -212,6 +219,7 @@ class GuestFinance(RoomService):
             ShiftService._book(conn,tenant)
             before=self.lock(conn,tenant,stay,revision);after=dict(before)
             shift=StayService._shift(conn,tenant,actor)
+            self.no_pending_correction(conn,tenant,receipt)
             funding=self.load_receipt(conn,tenant,stay,receipt)
             if funding[5]!='DEPOSIT':raise DomainError('INVALID_FINANCIAL_SOURCE')
             if funding[6]!=shift[2]:raise DomainError('ORIGINAL_CASH_DRAWER_REQUIRED')
