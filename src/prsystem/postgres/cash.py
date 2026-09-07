@@ -108,7 +108,7 @@ class PostgresCash:
                 (tenant, command.financial_reference)))
         holds = tuple(RefundHold(*row) for row in conn.execute("""
             SELECT id,drawer_id,shift_id,amount_mnt FROM prsystem.guest_refund
-            WHERE tenant_id=%s AND state='RESERVED' ORDER BY id""", (tenant,)))
+            WHERE tenant_id=%s AND state='RESERVED' AND channel='CASH' ORDER BY id""", (tenant,)))
         return CashBook(tenant, drawers, transfers, events, revision=revision, refund_holds=holds)
 
     @staticmethod

@@ -35,6 +35,9 @@ class MockStore:
                 CREATE TABLE IF NOT EXISTS mock_mail (
                     link_id TEXT PRIMARY KEY, recipient TEXT NOT NULL,
                     purpose TEXT NOT NULL, url TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS mock_refund (
+                    provider TEXT NOT NULL, request TEXT NOT NULL, original TEXT NOT NULL, amount INTEGER NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'PENDING',confirmed REAL,PRIMARY KEY(provider,request));
             ''')
 
     @contextmanager
@@ -48,7 +51,7 @@ class MockStore:
             conn.close()
 
     def inspect(self, kind, limit=25):
-        if kind not in {'phone', 'invoice', 'mail'} or type(limit) is not int or not 1 <= limit <= 100:
+        if kind not in {'phone', 'invoice', 'mail', 'refund'} or type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError('Invalid mock inspection')
         # Local operator only; this is never an HTTP endpoint or production log.
         with self.connect() as conn:
@@ -127,6 +130,26 @@ class MockPaymentGateway:
         return dict(status=row['state'], merchant_id=self.merchant_id, invoice_id=row['invoice'],
                     amount=row['amount'], currency='MNT', payment_id='mock-capture-' + row['invoice'],
                     confirmed_at=datetime.fromtimestamp(row['confirmed'], timezone.utc) if row['confirmed'] is not None else None)
+
+
+    def create_refund(self,request_id,original,amount):
+        identifier(request_id);identifier(original);money(amount,positive=True)
+        with self.store.connect() as conn:
+            conn.execute('INSERT OR IGNORE INTO mock_refund(provider,request,original,amount) VALUES(?,?,?,?)',(self.provider,request_id,original,amount))
+            row=conn.execute('SELECT original,amount FROM mock_refund WHERE provider=? AND request=?',(self.provider,request_id)).fetchone()
+            if (row['original'],row['amount'])!=(original,amount):raise DomainError('IDEMPOTENCY_CONFLICT')
+
+    def set_refund_status(self,request_id,state):
+        """Local-only controls include late success after a prior final failure."""
+        if state not in {'PENDING','UNKNOWN','FAILED','FINAL_FAILED','VOIDED','NOT_PROCESSED','SUCCEEDED','CORRECTED_NOT_SUCCESS'}:raise ValueError('Invalid mock refund state')
+        with self.store.connect() as conn:
+            if not conn.execute('UPDATE mock_refund SET state=?,confirmed=? WHERE provider=? AND request=?',(state,self.store.clock() if state=='SUCCEEDED' else None,self.provider,request_id)).rowcount:raise DomainError('WORK_SOURCE_NOT_FOUND')
+
+    def refund(self,request_id):
+        with self.store.connect() as conn:row=conn.execute('SELECT * FROM mock_refund WHERE provider=? AND request=?',(self.provider,request_id)).fetchone()
+        if not row:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+        return dict(status=row['state'],merchant_id=self.merchant_id,reference='mock-refund:'+self.provider+':'+request_id,
+                    amount=row['amount'],currency='MNT',original=row['original'],confirmed_at=datetime.fromtimestamp(row['confirmed'],timezone.utc) if row['confirmed'] else None)
 
 
 class MockMailTransport:

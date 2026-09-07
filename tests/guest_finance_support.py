@@ -23,6 +23,10 @@ class GuestFinanceCase(WalkInCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                'GRANT SELECT,INSERT ON prsystem.guest_refund_route,prsystem.refund_provider_evidence,prsystem.late_refund_case,prsystem.late_refund_posting TO {}',
+                'GRANT UPDATE(approval,approver_id,approval_reason,approved_at,sent_at,provider_reference,last_provider_state) ON prsystem.guest_refund_route TO {}',
+                'GRANT UPDATE(state,claimant_id,resolver_id,resolved_at,reason) ON prsystem.late_refund_case TO {}',
+                'GRANT UPDATE(frozen) ON prsystem.guest_finance TO {}',
                 'GRANT SELECT,INSERT ON prsystem.checkin_funding TO {}',
                 'GRANT UPDATE(state,invoice_id,payment_id,confirmed_at,stay_id,receipt_id) ON prsystem.checkin_funding TO {}',
                 'GRANT SELECT,INSERT ON prsystem.reception_booking,prsystem.booking_stay_application TO {}',

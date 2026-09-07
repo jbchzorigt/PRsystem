@@ -34,7 +34,7 @@ class PostgresCase(unittest.TestCase):
                 "prsystem.cash_event, prsystem.cash_receipt, prsystem.cash_outbox TO {}",
                 "GRANT SELECT ON prsystem.staff_open_work TO {}",
                 "GRANT SELECT ON prsystem.reception_shift,prsystem.shift_handover TO {}",
-                "GRANT SELECT (tenant_id,id,drawer_id,shift_id,amount_mnt,state) ON prsystem.guest_refund TO {}",
+                "GRANT SELECT (tenant_id,id,drawer_id,shift_id,amount_mnt,state,channel) ON prsystem.guest_refund TO {}",
                 "GRANT UPDATE (revision) ON prsystem.cash_book TO {}",
                 "GRANT UPDATE (posted, reserved) ON prsystem.cash_drawer TO {}",
                 "GRANT UPDATE (state) ON prsystem.cash_transfer TO {}",

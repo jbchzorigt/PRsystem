@@ -38,6 +38,7 @@ from prsystem.room_lifecycle import RoomLifecycle
 from prsystem.handover import HandoverService
 from prsystem.reception_booking import ReceptionBooking
 from prsystem.checkin_funding import CheckinFunding
+from prsystem.routed_refunds import RoutedRefunds
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -328,6 +329,25 @@ class CheckinFundingInput(BaseModel):
     idempotency_key: str=Field(min_length=1,max_length=128)
 
 
+class RoutedRefundInput(InvitationChange):
+    receipt_id: str=Field(min_length=1,max_length=128)
+    amount_mnt: int=Field(gt=0,le=2**63-1)
+    channel: Literal['CASH','MANUAL_POS','QPAY','KHAAN']
+    recipient: str=Field(min_length=1,max_length=1000)
+    reason: str=Field(min_length=1,max_length=1000)
+
+
+class ManualRoutedRefund(InvitationChange):
+    recipient_confirmation: str=Field(min_length=1,max_length=1000)
+    reference: str|None=Field(default=None,min_length=1,max_length=200)
+
+
+class ReasonCommand(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    reason: str=Field(min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
 class RoomCleaningRequest(InvitationChange):
     assignee_id: str = Field(min_length=1,max_length=128)
 
@@ -500,6 +520,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
+    routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.11.0")
@@ -554,6 +575,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'INVALID_GUEST_ACCESS':401,'GUEST_ACCESS_LIMIT':409,'AMENDMENT_PENDING':409})
         stay_errors.update({'INVALID_LIFECYCLE_TRANSITION':409,'LIFECYCLE_BLOCKED':409})
         stay_errors.update({'HANDOVER_PENDING':409,'RECOUNT_REQUIRED':409})
+        stay_errors.update({'REFUND_APPROVAL_REQUIRED':409,'REFUND_RELEASE_NOT_PROVEN':409})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -635,6 +657,34 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get('/hotels/{tenant_id}/room-categories/{category_id}/deposit-settings')
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/refunds',status_code=201)
+    def reserve_routed_refund(tenant_id: str,stay_id: str,body: RoutedRefundInput,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.reserve(secret,tenant_id,stay_id,body.receipt_id,body.amount_mnt,body.channel,body.recipient,body.reason,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/refunds/{refund_id}/approval')
+    def approve_routed_refund(tenant_id: str,stay_id: str,refund_id: str,body: AmendmentDecision,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.approve(secret,tenant_id,stay_id,refund_id,body.approve,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/refunds/{refund_id}/complete')
+    def complete_routed_refund(tenant_id: str,stay_id: str,refund_id: str,body: ManualRoutedRefund,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.manual(secret,tenant_id,stay_id,refund_id,body.recipient_confirmation,body.reference,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/refunds/{refund_id}/release')
+    def release_routed_refund(tenant_id: str,stay_id: str,refund_id: str,body: CashRefundRelease,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.release(secret,tenant_id,stay_id,refund_id,body.reason,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/refunds/{refund_id}/reconcile')
+    def reconcile_routed_refund(tenant_id: str,stay_id: str,refund_id: str,body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.reconcile(secret,tenant_id,stay_id,refund_id)
+
+    @app.post('/platform/hotels/{tenant_id}/refunds/{refund_id}/claim')
+    def claim_late_refund(tenant_id: str,refund_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.claim_case(platform_service(),secret,tenant_id,refund_id,body.idempotency_key)
+
+    @app.post('/platform/hotels/{tenant_id}/refunds/{refund_id}/resolve')
+    def resolve_late_refund(tenant_id: str,refund_id: str,body: ReasonCommand,secret: Annotated[str,Depends(token)]):
+        return routed_refunds.resolve_case(platform_service(),secret,tenant_id,refund_id,body.reason,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/check-in-funding',status_code=201)
     def prepare_checkin_funding(tenant_id: str,body: CheckinFundingInput,secret: Annotated[str,Depends(token)]):

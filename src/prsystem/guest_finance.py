@@ -253,6 +253,7 @@ class GuestFinance(RoomService):
             row=conn.execute('SELECT receipt_id,amount_mnt,state,shift_id,drawer_id FROM prsystem.guest_refund WHERE tenant_id=%s AND stay_id=%s AND id=%s FOR UPDATE',(tenant,stay,refund)).fetchone()
             if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
             if row[2]!='RESERVED':raise DomainError('REFUND_TERMINAL')
+            if conn.execute('SELECT 1 FROM prsystem.guest_refund_route WHERE tenant_id=%s AND refund_id=%s',(tenant,refund)).fetchone():raise DomainError('INVALID_FINANCIAL_SOURCE')
             if not release:
                 shift=StayService._shift(conn,tenant,actor)
                 if (shift[0],shift[2])!=(row[3],row[4]):raise DomainError('ORIGINAL_CASH_DRAWER_REQUIRED')
