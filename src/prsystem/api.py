@@ -19,6 +19,7 @@ from prsystem.staff_lifecycle import StaffLifecycle
 from prsystem.membership import MembershipService
 from prsystem.security_audit import record_denial
 from prsystem.restaurant_identity import RestaurantIdentity
+from prsystem.cleaning import CleaningService
 
 
 class Login(BaseModel):
@@ -60,6 +61,16 @@ class MembershipChange(InvitationChange):
 
 class RoleChange(MembershipChange):
     roles: list[str] = Field(min_length=1, max_length=5)
+
+
+class WorkReplacement(MembershipChange):
+    replacement_id: str = Field(min_length=1, max_length=128)
+
+
+class CleaningPost(InvitationChange):
+    action_id: str = Field(min_length=1,max_length=128)
+    quantity: int = Field(gt=0,le=9223372036854775807)
+    actual_count: int | None = Field(default=None,ge=0,le=9223372036854775807)
 
 
 class ResetRequest(BaseModel):
@@ -128,6 +139,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
     memberships = MembershipService(service)
+    cleaning = CleaningService(service)
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem staff API", version="0.6.0")
     bearer = HTTPBearer(auto_error=False)
@@ -167,6 +179,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
                   "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
                   "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
+                  "WORK_SOURCE_NOT_FOUND":404,"WORK_NOT_OPEN":409,"REMAINING_ACTION_EXCEEDED":409,"INSUFFICIENT_STOCK":409,
                   "EXCEPTION_NOT_CLAIMED": 409, "CLAIMANT_STILL_ELIGIBLE": 409,
                   "VERIFIED_ACCOUNT_REQUIRES_REACTIVATION": 409,
                   "RESTAURANT_LINK_EXISTS": 409,
@@ -207,6 +220,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get("/staff/assets/{asset}", include_in_schema=False)
     def staff_asset(asset: Literal["staff.css", "staff.js"]):
         return FileResponse(static_root / asset)
+
+    @app.post("/hotels/{tenant_id}/staff-work/exceptions/{exception_id}/cleaning/reassign")
+    def cleaning_reassign(tenant_id: str, exception_id: str, body: WorkReplacement, secret: Annotated[str, Depends(token)]):
+        return cleaning.reassign(secret,tenant_id,exception_id,body.expected_revision,body.replacement_id,body.idempotency_key,body.reason)
+
+    @app.post("/hotels/{tenant_id}/cleaning/tasks/{task_id}/post")
+    def cleaning_post(tenant_id: str, task_id: str, body: CleaningPost, secret: Annotated[str, Depends(token)]):
+        return cleaning.post(secret,tenant_id,task_id,body.expected_revision,body.action_id,body.quantity,body.idempotency_key,body.actual_count)
 
     @app.get("/health")
     def health():

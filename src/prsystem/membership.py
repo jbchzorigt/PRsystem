@@ -87,10 +87,13 @@ class MembershipService(StaffCommands):
             queue_ids = []
             for work_id, kind in blocked:
                 queue_id = secrets.token_hex(16)
-                conn.execute("""INSERT INTO prsystem.staff_work_exception (tenant_id, id, work_id, reason)
-                    VALUES (%s, %s, %s, %s)""", (tenant, queue_id, work_id,
-                    "TAKEOVER_REQUIRED" if kind == "SHIFT" else "REASSIGNMENT_REQUIRED"))
-                queue_ids.append(queue_id)
+                queued = conn.execute("""INSERT INTO prsystem.staff_work_exception (tenant_id, id, work_id, reason)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (tenant_id,work_id) DO UPDATE SET claimant_id=NULL,
+                        revision=staff_work_exception.revision+1
+                    RETURNING id""", (tenant, queue_id, work_id,
+                    "TAKEOVER_REQUIRED" if kind == "SHIFT" else "REASSIGNMENT_REQUIRED")).fetchone()
+                queue_ids.append(queued[0])
             if next_status != "ACTIVE" or not self._manager(next_roles, package):
                 released = conn.execute("""UPDATE prsystem.staff_work_exception SET claimant_id = NULL, revision = revision + 1
                     WHERE tenant_id = %s AND claimant_id = %s RETURNING id, revision""", (tenant, target)).fetchall()
