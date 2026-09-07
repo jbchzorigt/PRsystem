@@ -154,7 +154,9 @@ class ReceptionDependencies(GuestFinance):
         snapshot=conn.execute('SELECT snapshot FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
         if snapshot['minibar_mode']!='OFF':
             if runtime_mode=='production' or not conn.execute("SELECT 1 FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s AND state='REPORTED'",(tenant,stay)).fetchone():raise DomainError('MINIBAR_REPORT_REQUIRED')
-        orders=conn.execute("SELECT id FROM prsystem.reception_restaurant_order WHERE tenant_id=%s AND stay_id=%s AND state NOT IN ('DONE','REFUNDED') FOR SHARE",(tenant,stay)).fetchall()
+        # Both order insertion and final checkout hold the same stay lock.
+        # No extra UPDATE privilege on read-only service projections is needed.
+        orders=conn.execute("SELECT id FROM prsystem.reception_restaurant_order WHERE tenant_id=%s AND stay_id=%s AND state NOT IN ('DONE','REFUNDED')",(tenant,stay)).fetchall()
         if len(choices)!=len({x['order_id'] for x in choices}) or {x['order_id'] for x in choices}!={r[0] for r in orders} or (orders and not guest_informed):raise DomainError('RESTAURANT_ACK_REQUIRED')
         for choice in choices:conn.execute('INSERT INTO prsystem.restaurant_checkout_outbox(tenant_id,order_id,stay_id,choice,actor_id,guest_informed) VALUES(%s,%s,%s,%s,%s,true)',(tenant,choice['order_id'],stay,choice['choice'],actor))
 

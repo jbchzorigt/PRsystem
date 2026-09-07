@@ -32,3 +32,38 @@ Native radio selection is intentionally platform-owned. No select/date/table,
 dialog, delete action or local draft storage. Locale mn, light theme only,
 keyboard and narrow-screen reflow required. Project browser tests exercise the
 shared form state matrix; PostgreSQL tests independently verify real endpoints.
+
+## Reception console business variant
+
+`/reception` uses `reception.js` Form, Feedback, CRUD and navigation owners for
+operational commands; the token-only staff forms above remain the LinkPassword
+variant. Shared visual tokens and global scrollbar belong to `staff.css`.
+`reception.css` only owns console geometry. API models own command semantics.
+Source policies: docs/02,03,05,18,20,21,24,26,38–42.
+
+| Capability | Canonical owner | Contract |
+| --- | --- | --- |
+| Form | reception.js `form` | novalidate, inline errors, first-error focus, stable key per unchanged retry, pending lock, password masking |
+| Select | reception.js `select` | native select; platform popup geometry and locale accepted |
+| Date | reception.js `field` | native date/datetime-local; platform popup accepted, typed input available; business instants explicitly Asia/Ulaanbaatar +08:00 |
+| Dialog | reception.html `discard` + reception.js `guard` | native modal dialog, inert background, Escape, safe initial focus, return to trigger |
+| CRUD | reception.js command/forms | pessimistic server confirmation, CAS, errors retain input; no optimistic financial success |
+| Feedback | reception.js say/form status | persistent localized recovery, no raw server errors or secrets in global feedback |
+| Navigation | reception.js navigate | four Reception destinations, role-specific tools, guarded dirty forms |
+| Table | reception.js table | caption, headers, keyboard scroll region; natural document scroll |
+
+Route document title policy: localized destination followed by `— PRsystem`.
+Route error / 403 page behavior: preserve navigation, explain denial inline;
+401 clears identity/context and returns to login. No automatic retries.
+List state and sensitive form values stay only in memory: reception filters,
+room/stay identifiers and guest names are not written to URL or storage. The
+URL fragment contains only the non-sensitive destination. Lists use actual
+bounded keyset pages; no fabricated page totals. Body owns vertical scrolling;
+tables own horizontal overflow, forms retain natural height at 320 px.
+Soft-delete vs hard-delete policy: room/category lifecycle is reversible
+inactivation with explicit reason and server dependency gates, never physical
+removal of historical records. Financial correction creates immutable reversal.
+Confirmation is the named command form, including reason/count/destination as
+applicable. Navigation cannot discard a dirty form without the modal decision.
+No secret or guest draft persists. Pagehide clears credentials and rendered
+private context. Browser-close warning is scoped to dirty forms.

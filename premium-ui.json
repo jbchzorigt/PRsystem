@@ -1,11 +1,29 @@
 {
-  "profile": "product-admin", "sourceRoots": ["src/prsystem/static"], "locale": "mn",
-  "canonicalMap": "UX-CONTRACT.md", "requiredCapabilities": ["Form", "Scrollbar"],
-  "requiredCommands": ["unit", "e2e", "accessibility"],
+  "profile": "product-admin",
+  "sourceRoots": [
+    "src/prsystem/static"
+  ],
+  "locale": "mn",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": [
+    "Form",
+    "Scrollbar",
+    "Select",
+    "Date",
+    "Dialog",
+    "CRUD"
+  ],
+  "requiredCommands": [
+    "unit",
+    "e2e",
+    "accessibility"
+  ],
   "commands": {
     "unit": "PYTHONPATH=src python -m unittest discover -s tests -q",
-    "e2e": "node tests/browser/staff.cjs",
-    "accessibility": "node tests/browser/staff.cjs"
+    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs",
+    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs"
   },
-  "evidence": {"failurePaths": "tests/browser/staff.cjs"}
+  "evidence": {
+    "failurePaths": "tests/browser/reception.cjs"
+  }
 }

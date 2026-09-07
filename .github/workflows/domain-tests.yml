@@ -57,6 +57,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Verify shared staff forms
         run: node tests/browser/staff.cjs
+      - name: Verify Reception operations
+        run: node tests/browser/reception.cjs
       - name: Check design tokens
         run: python scripts/export_ui_tokens.py --check
       - name: Lint design contract

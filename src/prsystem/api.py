@@ -576,6 +576,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
     routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
+    from prsystem.operations import Operations
+    operations=Operations(service,stays.vault,runtime_mode)
     reception_dependencies=ReceptionDependencies(service,stays.vault,runtime_mode)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
@@ -674,6 +676,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
 
     static_root = Path(__file__).with_name("static")
+
+    @app.get('/hotels/{tenant_id}/operations')
+    def operations_overview(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=Query(default='',max_length=128),limit: int=Query(default=50,ge=1,le=100)):
+        return operations.overview(secret,tenant_id,after,limit)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/guest')
+    def reception_guest(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)]):
+        return operations.stay_detail(secret,tenant_id,stay_id)
+
+    @app.get('/hotels/{tenant_id}/shifts/{shift_id}/report')
+    def reception_shift_report(tenant_id: str,shift_id: str,secret: Annotated[str,Depends(token)]):
+        return operations.shift_report(secret,tenant_id,shift_id)
 
     @app.post('/hotels/{tenant_id}/cash/drawers',status_code=201)
     def create_drawer(tenant_id: str,body: DrawerConfiguration,secret: Annotated[str,Depends(token)]):
@@ -977,8 +991,15 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
             "X-Frame-Options": "DENY",
         })
 
+    @app.get("/reception", include_in_schema=False)
+    def reception_page():
+        return FileResponse(static_root / "reception.html", headers={
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "X-Frame-Options": "DENY",
+        })
+
     @app.get("/staff/assets/{asset}", include_in_schema=False)
-    def staff_asset(asset: Literal["staff.css", "staff.js"]):
+    def staff_asset(asset: Literal["staff.css", "staff.js", "reception.css", "reception.js"]):
         return FileResponse(static_root / asset)
 
     @app.post("/hotels/{tenant_id}/staff-work/exceptions/{exception_id}/cleaning/reassign")
