@@ -292,7 +292,7 @@ class StaffLifecycle(StaffCommands):
         revalidates the token. Duplicate delivery contains the same one-use token.
         """
         with transaction(self.auth.dsn) as conn:
-            row = conn.execute("""SELECT l.purpose, l.token_hash, a.email, l.issued_epoch, a.auth_epoch, l.account_id, l.tenant_id, l.membership_revision
+            row = conn.execute("""SELECT l.purpose, l.token_hash, a.email, l.issued_epoch, a.auth_epoch, l.account_id, l.tenant_id, l.membership_revision, l.restaurant_id
                 FROM prsystem.staff_mail_intent m JOIN prsystem.staff_link l ON l.id = m.link_id
                 JOIN prsystem.staff_account a ON a.id = l.account_id
                 WHERE l.id = %s AND l.state = 'ACTIVE' AND l.expires_at > clock_timestamp() AND m.delivered_at IS NULL""", (link_id,)).fetchone()
@@ -301,6 +301,11 @@ class StaffLifecycle(StaffCommands):
             if row[0] == "INVITE":
                 member = conn.execute("SELECT status, revision FROM prsystem.staff_membership WHERE tenant_id = %s AND account_id = %s",
                                       (row[6], row[5])).fetchone()
+                if member != ("PENDING", row[7]):
+                    return None
+            if row[0] == "RESTAURANT_INVITE":
+                member = conn.execute("SELECT status, revision FROM prsystem.restaurant_membership WHERE restaurant_id = %s AND account_id = %s",
+                                      (row[8], row[5])).fetchone()
                 if member != ("PENDING", row[7]):
                     return None
             token = self._token(row[0], link_id)

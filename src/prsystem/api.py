@@ -2,14 +2,14 @@
 
 import os
 import base64
-from typing import Annotated
+from typing import Annotated, Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from prsystem.auth import AuthSettings, StaffAuth
@@ -17,6 +17,7 @@ from prsystem.common import DomainError
 from prsystem.staff_lifecycle import StaffLifecycle
 from prsystem.membership import MembershipService
 from prsystem.security_audit import record_denial
+from prsystem.restaurant_identity import RestaurantIdentity
 
 
 class Login(BaseModel):
@@ -65,13 +66,69 @@ class ResetRequest(BaseModel):
     email: str = Field(min_length=3, max_length=254)
 
 
+class RestaurantLogin(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    email: str = Field(min_length=3, max_length=254)
+    password: SecretStr = Field(min_length=1, max_length=128)
+    restaurant_id: str = Field(min_length=1, max_length=128)
+
+
+class RestaurantInvite(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=254)
+    name: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class WeeklyHours(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    day: int = Field(ge=0, le=6)
+    closed: bool
+    opens: str | None = Field(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    closes: str | None = Field(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+
+    @model_validator(mode="after")
+    def hours(self):
+        if (self.closed and (self.opens is not None or self.closes is not None)) or (
+                not self.closed and (self.opens is None or self.closes is None or self.opens == self.closes)):
+            raise ValueError("Invalid weekly hours")
+        return self
+
+
+class RestaurantRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=100)
+    description: str = Field(min_length=1, max_length=2000)
+    address: str = Field(min_length=1, max_length=500)
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    phone: str = Field(pattern=r"^\+?[0-9][0-9 -]{5,19}$")
+    weekly_hours: list[WeeklyHours] = Field(min_length=7, max_length=7)
+    email: str = Field(min_length=3, max_length=254)
+    manager_name: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def unique_days(self):
+        if len({entry.day for entry in self.weekly_hours}) != 7:
+            raise ValueError("Exactly one entry for each weekday is required")
+        return self
+
+
+class RestaurantLink(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
 def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None) -> FastAPI:
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if token_key is None and os.environ.get("PRSYSTEM_LINK_KEY"):
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
     memberships = MembershipService(service)
-    app = FastAPI(title="PRsystem staff API", version="0.5.0")
+    restaurants = RestaurantIdentity(service, lifecycle)
+    app = FastAPI(title="PRsystem staff API", version="0.6.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -111,6 +168,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                   "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
                   "EXCEPTION_NOT_CLAIMED": 409, "CLAIMANT_STILL_ELIGIBLE": 409,
                   "VERIFIED_ACCOUNT_REQUIRES_REACTIVATION": 409,
+                  "RESTAURANT_LINK_EXISTS": 409,
                   "MEMBERSHIP_NOT_FOUND": 404, "MEMBERSHIP_EXISTS": 409, "MEMBERSHIP_NOT_PENDING": 409,
                   "REVISION_CONFLICT": 409, "IDEMPOTENCY_CONFLICT": 409, "LINK_SERVICE_UNAVAILABLE": 503,
                   "TOKEN_KEY_MISMATCH": 503, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
@@ -122,6 +180,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
             try:
                 await run_in_threadpool(record_denial, service, bearer=secret,
                     tenant=request.path_params.get("tenant_id"), target=request.path_params.get("account_id"),
+                    restaurant=request.path_params.get("restaurant_id"),
                     action=getattr(route, "path", "UNKNOWN"), method=request.method, code=code)
             except (psycopg.Error, DomainError):
                 return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
@@ -140,6 +199,42 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/auth/login")
     def login(body: Login, request: Request):
         return service.login(body.email, body.password.get_secret_value(), body.tenant_id, peer(request))
+
+    @app.post("/auth/restaurants/login")
+    def restaurant_login(body: RestaurantLogin, request: Request):
+        return service.login(body.email, body.password.get_secret_value(), None, peer(request), restaurant=body.restaurant_id)
+
+    @app.post("/auth/restaurants/invitations/accept")
+    def restaurant_accept(body: LinkPassword, request: Request):
+        return restaurants.accept(body.token.get_secret_value(), body.password.get_secret_value(), peer(request))
+
+    @app.post("/hotels/{tenant_id}/restaurants", status_code=201)
+    def restaurant_register(tenant_id: str, body: RestaurantRegistration, secret: Annotated[str, Depends(token)]):
+        return restaurants.register(secret, tenant_id, body.model_dump(mode="json", exclude={"idempotency_key"}), body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/restaurants/{restaurant_id}/link", status_code=201)
+    def restaurant_link(tenant_id: str, restaurant_id: str, body: RestaurantLink, secret: Annotated[str, Depends(token)]):
+        return restaurants.link(secret, tenant_id, restaurant_id, body.idempotency_key)
+
+    @app.get("/hotels/{tenant_id}/restaurants/{restaurant_id}/profile")
+    def restaurant_profile(tenant_id: str, restaurant_id: str, secret: Annotated[str, Depends(token)]):
+        return restaurants.profile(secret, tenant_id, restaurant_id)
+
+    @app.post("/hotels/{tenant_id}/restaurants/{restaurant_id}/staff/invitations", status_code=201)
+    def restaurant_invite(tenant_id: str, restaurant_id: str, body: RestaurantInvite, secret: Annotated[str, Depends(token)]):
+        return restaurants.invite(secret, tenant_id, restaurant_id, body.email, body.name, body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/restaurants/{restaurant_id}/staff/{account_id}/invitations/{action}")
+    def restaurant_invite_change(tenant_id: str, restaurant_id: str, account_id: str,
+                                 action: Literal["resend", "revoke"], body: InvitationChange,
+                                 secret: Annotated[str, Depends(token)]):
+        return restaurants.change(secret, tenant_id, restaurant_id, account_id, action.upper(), body.expected_revision, body.idempotency_key)
+
+    @app.post("/hotels/{tenant_id}/restaurants/{restaurant_id}/staff/{account_id}/{action}")
+    def restaurant_member_change(tenant_id: str, restaurant_id: str, account_id: str,
+                                 action: Literal["suspend", "terminate", "reactivate", "recover"], body: MembershipChange,
+                                 secret: Annotated[str, Depends(token)]):
+        return restaurants.change(secret, tenant_id, restaurant_id, account_id, action.upper(), body.expected_revision, body.idempotency_key, body.reason)
 
     @app.get("/auth/me")
     def me(secret: Annotated[str, Depends(token)]):

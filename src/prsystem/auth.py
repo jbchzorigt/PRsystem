@@ -66,11 +66,13 @@ class StaffAuth:
             raise DomainError("RATE_LIMITED")
 
     @staticmethod
-    def _audit(conn, kind, account, tenant):
-        conn.execute("INSERT INTO prsystem.auth_event (id, kind, actor_id, tenant_id) VALUES (%s, %s, %s, %s)",
-                     (str(uuid4()), kind, account, tenant))
+    def _audit(conn, kind, account, tenant, restaurant=None):
+        conn.execute("INSERT INTO prsystem.auth_event (id, kind, actor_id, tenant_id, restaurant_id) VALUES (%s, %s, %s, %s, %s)",
+                     (str(uuid4()), kind, account, tenant, restaurant))
 
-    def login(self, email: str, password: str, tenant: str, peer: str):
+    def login(self, email: str, password: str, tenant: str | None, peer: str, *, restaurant: str | None = None):
+        if (tenant is None) == (restaurant is None):
+            raise DomainError("INVALID_REQUEST")
         email = email.strip().lower()
         self._rate_limit(email, peer)
         with transaction(self.dsn) as conn:
@@ -80,9 +82,14 @@ class StaffAuth:
             valid = self._verify(self.passwords, account[1] if account and account[3] is not None else self._dummy_hash, password)
             if not valid or not account or account[2] != "ACTIVE" or account[3] is None:
                 raise DomainError("INVALID_CREDENTIALS")
-            membership = conn.execute("""SELECT revision FROM prsystem.staff_membership
-                WHERE tenant_id = %s AND account_id = %s AND status = 'ACTIVE' FOR SHARE""",
-                (tenant, account[0])).fetchone()
+            if restaurant is None:
+                membership = conn.execute("""SELECT revision FROM prsystem.staff_membership
+                    WHERE tenant_id = %s AND account_id = %s AND status = 'ACTIVE' FOR SHARE""",
+                    (tenant, account[0])).fetchone()
+            else:
+                membership = conn.execute("""SELECT revision FROM prsystem.restaurant_membership
+                    WHERE restaurant_id = %s AND account_id = %s AND status = 'ACTIVE' FOR SHARE""",
+                    (restaurant, account[0])).fetchone()
             if membership is None:
                 raise DomainError("INVALID_CREDENTIALS")
             epoch = account[4]
@@ -93,13 +100,13 @@ class StaffAuth:
             now = conn.execute("SELECT clock_timestamp()").fetchone()[0]
             expires = now + timedelta(seconds=self.settings.absolute_seconds)
             conn.execute("""INSERT INTO prsystem.staff_session
-                (token_hash, tenant_id, account_id, auth_epoch, membership_revision, created_at, expires_at, last_seen_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                (digest(token), tenant, account[0], epoch, membership[0], now, expires, now))
-            self._audit(conn, "LOGIN", account[0], tenant)
+                (token_hash, tenant_id, account_id, auth_epoch, membership_revision, created_at, expires_at, last_seen_at, restaurant_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (digest(token), tenant, account[0], epoch, membership[0], now, expires, now, restaurant))
+            self._audit(conn, "LOGIN", account[0], tenant, restaurant)
             return {"access_token": token, "token_type": "bearer", "expires_at": expires}
 
-    def _authenticate(self, conn, token, tenant=None):
+    def _authenticate(self, conn, token, tenant=None, *, restaurant=None):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             raise DomainError("UNAUTHENTICATED")
         key = digest(token)
@@ -108,19 +115,24 @@ class StaffAuth:
             raise DomainError("UNAUTHENTICATED")
         account = conn.execute("""SELECT id, status, verified_at, auth_epoch, password_hash
             FROM prsystem.staff_account WHERE id = %s FOR UPDATE""", (identity[0],)).fetchone()
-        session = conn.execute("""SELECT tenant_id, auth_epoch, membership_revision, expires_at, last_seen_at, revoked_at
+        session = conn.execute("""SELECT tenant_id, auth_epoch, membership_revision, expires_at, last_seen_at, revoked_at, restaurant_id
             FROM prsystem.staff_session WHERE token_hash = %s FOR UPDATE""", (key,)).fetchone()
-        membership = conn.execute("""SELECT status, revision, roles FROM prsystem.staff_membership
-            WHERE tenant_id = %s AND account_id = %s FOR SHARE""", (session[0], account[0])).fetchone()
+        if session[6] is None:
+            membership = conn.execute("""SELECT status, revision, roles FROM prsystem.staff_membership
+                WHERE tenant_id = %s AND account_id = %s FOR SHARE""", (session[0], account[0])).fetchone()
+        else:
+            membership = conn.execute("""SELECT status, revision, ARRAY['RESTAURANT_MANAGER']::text[]
+                FROM prsystem.restaurant_membership WHERE restaurant_id = %s AND account_id = %s FOR SHARE""",
+                (session[6], account[0])).fetchone()
         now = conn.execute("SELECT clock_timestamp()").fetchone()[0]
         if (account[1] != "ACTIVE" or account[2] is None or session[5] is not None
                 or session[1] != account[3] or membership[0] != "ACTIVE" or session[2] != membership[1]
                 or now >= session[3] or now >= session[4] + timedelta(seconds=self.settings.idle_seconds)):
             raise DomainError("UNAUTHENTICATED")
-        if tenant is not None and tenant != session[0]:
+        if (tenant is not None and tenant != session[0]) or (restaurant is not None and restaurant != session[6]):
             raise DomainError("FORBIDDEN")
         conn.execute("UPDATE prsystem.staff_session SET last_seen_at = %s WHERE token_hash = %s", (now, key))
-        return {"account_id": account[0], "tenant_id": session[0], "roles": membership[2],
+        return {"account_id": account[0], "tenant_id": session[0], "restaurant_id": session[6], "roles": membership[2],
                 "membership_revision": membership[1], "expires_at": session[3]}, account[4]
 
     def me(self, token):
@@ -138,7 +150,7 @@ class StaffAuth:
             # Keep account -> session order, including the audit's account FK lock.
             conn.execute("SELECT id FROM prsystem.staff_account WHERE id = %s FOR UPDATE", (identity[0],))
             row = conn.execute("""UPDATE prsystem.staff_session SET revoked_at = clock_timestamp()
-                WHERE token_hash = %s AND revoked_at IS NULL RETURNING account_id, tenant_id""",
+                WHERE token_hash = %s AND revoked_at IS NULL RETURNING account_id, tenant_id, restaurant_id""",
                 (key,)).fetchone()
             if row:
                 self._audit(conn, "LOGOUT", *row)
