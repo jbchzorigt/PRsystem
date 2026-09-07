@@ -113,3 +113,18 @@ class GuestAccess(GuestFinance):
             if not row:raise DomainError('INVALID_GUEST_ACCESS')
             self.package(conn,row[0])
             return dict(room_number=row[1],planned_checkout_at=row[2])
+
+    def devices(self,bearer,tenant,stay,session=None,key=None):
+        with transaction(self.auth.dsn) as conn:
+            actor=self.actor(conn,bearer,tenant,stay);self.package(conn,tenant)
+            if session:
+                command=dict(action='REVOKE_GUEST_DEVICE',stay=stay,session=session)
+                replay=self._receipt(conn,tenant,key,actor,command)
+                if replay is not None:return replay
+                if not conn.execute('SELECT id FROM prsystem.stay WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,stay)).fetchone():raise DomainError('WORK_SOURCE_NOT_FOUND')
+                if not conn.execute('UPDATE prsystem.guest_session SET revoked_at=coalesce(revoked_at,clock_timestamp()) WHERE tenant_id=%s AND stay_id=%s AND id=%s RETURNING id',(tenant,stay,session)).fetchone():raise DomainError('WORK_SOURCE_NOT_FOUND')
+                result=dict(session_id=session,status='REVOKED')
+                self.event(conn,tenant,actor,'GUEST_DEVICE_REVOKED',stay,result)
+                self._save_receipt(conn,tenant,key,actor,command,result);return result
+            rows=conn.execute('SELECT id,created_at FROM prsystem.guest_session WHERE tenant_id=%s AND stay_id=%s AND revoked_at IS NULL ORDER BY created_at,id LIMIT 5',(tenant,stay)).fetchall()
+            return [dict(session_id=r[0],created_at=r[1]) for r in rows]

@@ -36,6 +36,8 @@ from prsystem.guest_access import GuestAccess
 from prsystem.stay_amendments import StayAmendments
 from prsystem.room_lifecycle import RoomLifecycle
 from prsystem.handover import HandoverService
+from prsystem.reception_booking import ReceptionBooking
+from prsystem.checkin_funding import CheckinFunding
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -295,7 +297,35 @@ class WalkInCheckIn(BaseModel):
     backdate_reason: str | None = Field(default=None,min_length=1,max_length=1000)
     guest: PrimaryGuestInput
     deposit: CashConfirmation | None = None
+    funding_id: str|None=Field(default=None,min_length=1,max_length=128)
     idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class OnlineCheckIn(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    guest: PrimaryGuestInput
+    actual_checkin_at: str|None=Field(default=None,min_length=20,max_length=40)
+    backdate_reason: str|None=Field(default=None,min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
+class MockBookingInput(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    room_id: str=Field(min_length=1,max_length=128)
+    kind: Literal['HOURLY','NIGHTLY']
+    duration_units: int=Field(ge=1,le=365)
+    planned_checkin_at: str=Field(min_length=20,max_length=40)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
+class CheckinFundingInput(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    room_id: str=Field(min_length=1,max_length=128)
+    channel: Literal['MANUAL_POS','QPAY','KHAAN']
+    reference: str|None=Field(default=None,min_length=1,max_length=200)
+    terminal_id: str|None=Field(default=None,min_length=1,max_length=100)
+    transacted_at: str|None=Field(default=None,min_length=20,max_length=40)
+    idempotency_key: str=Field(min_length=1,max_length=128)
 
 
 class RoomCleaningRequest(InvitationChange):
@@ -462,13 +492,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     rooms = RoomService(service)
     room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service)
-    stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
+    stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
     checkout = CheckoutService(service, stays.vault, runtime_mode)
     guest_access = GuestAccess(service, stays.vault, runtime_mode)
     amendments = StayAmendments(service, stays.vault, runtime_mode)
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
+    checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.11.0")
@@ -605,6 +636,26 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
 
+    @app.post('/hotels/{tenant_id}/check-in-funding',status_code=201)
+    def prepare_checkin_funding(tenant_id: str,body: CheckinFundingInput,secret: Annotated[str,Depends(token)]):
+        return checkin_funding.create(secret,tenant_id,body.room_id,body.channel,body.idempotency_key,body.reference,body.terminal_id,body.transacted_at)
+
+    @app.post('/hotels/{tenant_id}/check-in-funding/{funding_id}/reconcile')
+    def reconcile_checkin_funding(tenant_id: str,funding_id: str,body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return checkin_funding.reconcile(secret,tenant_id,funding_id)
+
+    @app.post('/hotels/{tenant_id}/mock/bookings',status_code=201)
+    def simulate_confirmed_booking(tenant_id: str,body: MockBookingInput,secret: Annotated[str,Depends(token)]):
+        return stays.mock_booking(secret,tenant_id,body.room_id,body.kind,body.duration_units,body.planned_checkin_at,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/bookings')
+    def list_bookings(tenant_id: str,secret: Annotated[str,Depends(token)],limit: int=Query(default=50,ge=1,le=100),after: str=Query(default='',max_length=128)):
+        return stays.bookings(secret,tenant_id,limit,after)
+
+    @app.post('/hotels/{tenant_id}/bookings/{booking_id}/check-in',status_code=201)
+    def booking_check_in(tenant_id: str,booking_id: str,body: OnlineCheckIn,secret: Annotated[str,Depends(token)]):
+        return stays.check_in_booking(secret,tenant_id,booking_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
     @app.put('/hotels/{tenant_id}/shifts/policy')
     def configure_shift_policy(tenant_id: str,body: ShiftPolicy,secret: Annotated[str,Depends(token)]):
         return handovers.policy(secret,tenant_id,body.single_worker,body.expected_revision,body.idempotency_key)
@@ -652,6 +703,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/guest-access/revoke')
     def revoke_guest_access(tenant_id: str,stay_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
         return guest_access.codes(secret,tenant_id,stay_id,body.idempotency_key,revoke=True)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/guest-sessions')
+    def list_guest_devices(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)]):
+        return guest_access.devices(secret,tenant_id,stay_id)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/guest-sessions/{session_id}/revoke')
+    def revoke_guest_device(tenant_id: str,stay_id: str,session_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return guest_access.devices(secret,tenant_id,stay_id,session_id,body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/stays/{stay_id}/time-amendments')
     def list_time_amendments(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)]):

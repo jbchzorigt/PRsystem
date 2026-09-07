@@ -38,7 +38,7 @@ class GuestPayments(GuestFinance):
         self.charge(conn,tenant,stay,charge,amount,excluding_intent=intent)
         receipt = self.record_receipt(conn,tenant,stay,actor,shift,amount,'PAYMENT',now,post_cash=False,channel=provider)
         self.claim(conn,provider,merchant,reference,tenant,receipt)
-        conn.execute('INSERT INTO prsystem.guest_payment_evidence VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+        conn.execute('INSERT INTO prsystem.guest_payment_evidence(tenant_id,stay_id,receipt_id,provider,merchant_id,payment_id,amount_mnt,transacted_at,terminal_id,intent_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                      (tenant,stay,receipt,provider,merchant,reference,amount,transacted,terminal,intent))
         conn.execute('UPDATE prsystem.guest_receipt SET allocated=%s WHERE tenant_id=%s AND id=%s', (amount,tenant,receipt))
         conn.execute('INSERT INTO prsystem.guest_allocation VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',

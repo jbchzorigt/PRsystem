@@ -59,7 +59,7 @@ class StayService(RoomService):
         return proof[0]
 
     @staticmethod
-    def _available(conn, tenant, room, actual, end, buffer_minutes):
+    def _available(conn, tenant, room, actual, end, buffer_minutes,excluding_reservation=None):
         history = conn.execute('''SELECT state,coalesce((SELECT a.actual_checkin_at FROM prsystem.stay_time_amendment a
             WHERE a.tenant_id=s.tenant_id AND a.stay_id=s.id AND a.state='APPROVED' ORDER BY a.decided_at DESC,a.id DESC LIMIT 1),actual_checkin_at),actual_checkout_at,cleaning_buffer_minutes
             FROM prsystem.stay s WHERE tenant_id=%s AND room_id=%s''', (tenant, room)).fetchall()
@@ -68,7 +68,7 @@ class StayService(RoomService):
             if state == 'ACTIVE' or overlaps(actual, end, start, checkout, buffer_minutes, buffer):
                 raise DomainError('ROOM_OCCUPIED')
         reservations = conn.execute("""SELECT planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes
-            FROM prsystem.room_reservation WHERE tenant_id=%s AND room_id=%s AND state='CONFIRMED'""", (tenant, room)).fetchall()
+            FROM prsystem.room_reservation WHERE tenant_id=%s AND room_id=%s AND state='CONFIRMED' AND id IS DISTINCT FROM %s""", (tenant, room,excluding_reservation)).fetchall()
         if any(overlaps(actual, end, start, finish, buffer_minutes, buffer) for start, finish, buffer in reservations):
             raise DomainError('RESERVATION_CONFLICT')
 
@@ -87,6 +87,10 @@ class StayService(RoomService):
         if data.get('deposit') is None:
             data={k:v for k,v in data.items() if k!='deposit'}
         cash_deposit=data.get('deposit')
+        funding_id=data.get('funding_id')
+        if funding_id is None:data={k:v for k,v in data.items() if k!='funding_id'}
+        if funding_id and cash_deposit is not None:raise DomainError('INVALID_REQUEST')
+        booking_id=data.get('booking_id')
         from prsystem.guest_finance import GuestFinance
         finance=GuestFinance(self.auth,self.vault,self.runtime_mode)
         with transaction(self.auth.dsn) as conn:
@@ -95,7 +99,7 @@ class StayService(RoomService):
                 raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
             # Cash confirmation now posts atomically; absent or unsupported
             # funding never bypasses the production deposit requirement.
-            if cash_deposit is None and not self.mock_finance:
+            if cash_deposit is None and not self.mock_finance and booking_id is None and funding_id is None:
                 raise DomainError('STAY_FINANCE_UNAVAILABLE')
             command = dict(action='WALK_IN_CHECK_IN', fingerprint=self.vault.fingerprint('check-in-command', [tenant, data]))
             replay = self._receipt(conn, tenant, key, actor, command)
@@ -125,36 +129,56 @@ class StayService(RoomService):
             except (ValueError, AttributeError) as exc:
                 raise DomainError('INVALID_REQUEST') from exc
             actual = actual_time(recorded, shift[1], requested, data.get('backdate_reason'))
+            booking=None
+            if booking_id:
+                from prsystem.mock_providers import require_development_database
+                if self.runtime_mode=='production':raise DomainError('GUEST_PROVIDER_UNAVAILABLE')
+                require_development_database(self.auth.dsn,self.runtime_mode)
+                booking=conn.execute('''SELECT b.room_id,b.kind,b.duration_units,b.planned_checkin_at,b.planned_checkout_at,b.amount_mnt,b.snapshot,r.state
+                    FROM prsystem.reception_booking b JOIN prsystem.room_reservation r ON(r.tenant_id,r.id)=(b.tenant_id,b.id)
+                    WHERE b.tenant_id=%s AND b.id=%s FOR UPDATE OF r''',(tenant,booking_id)).fetchone()
+                if not booking or booking[:3]!=(row[0],data['kind'],data['duration_units']) or booking[7]!='CONFIRMED' or cash_deposit is not None:raise DomainError('INVALID_FINANCIAL_SOURCE')
+                if actual<booking[3] or recorded>=booking[4]:raise DomainError('ACTUAL_TIME_OUT_OF_RANGE')
             price = self.effective_prices(row)[data['kind'].lower()]
             if price is None or row[20] is None:
                 raise DomainError('STAY_SETTINGS_REQUIRED')
             deposit_amount=row[19]
             deposit_snapshot=None
-            if cash_deposit is not None:
+            funding_evidence=None
+            if cash_deposit is not None or funding_id:
                 deposit_snapshot=finance.setting(conn,tenant,row[3])
                 deposit_amount=deposit_snapshot['amount_mnt']
-                if (cash_deposit.get('channel')!='CASH' or cash_deposit.get('received') is not True
+                if cash_deposit is not None and (cash_deposit.get('channel')!='CASH' or cash_deposit.get('received') is not True
                         or type(cash_deposit.get('amount_mnt')) is not int or cash_deposit['amount_mnt']!=deposit_amount):
                     raise DomainError('DEPOSIT_REQUIREMENT_NOT_MET')
-            elif not 50000 <= deposit_amount <= 100000:
+                if funding_id:
+                    from prsystem.checkin_funding import CheckinFunding
+                    funding_evidence=CheckinFunding.load(conn,tenant,funding_id,row[0],actor,shift,deposit_amount,finance.mode)
+            elif not booking and not 50000 <= deposit_amount <= 100000:
                 raise DomainError('STAY_DEPOSIT_SETTINGS_REQUIRED')
             end, amount = stay_terms(data['kind'], data['duration_units'], actual, recorded, price['unit_price'], row[20])
+            buffer=row[17]
+            if booking:
+                end,amount,deposit_amount=booking[4],booking[5],0
+                buffer=booking[6]['cleaning_buffer_minutes']
+                price=dict(unit_price=booking[6]['unit_price'],source='BOOKING',source_id=booking_id)
             proof = self._readiness(conn, tenant, row[0], row[3], actual, recorded)
-            self._available(conn, tenant, row[0], actual, end, row[17])
+            self._available(conn, tenant, row[0], actual, end, buffer,excluding_reservation=booking_id)
             identity, exact = validate_identity(data['guest'], actual.astimezone(HOTEL_ZONE).date())
             stay = secrets.token_hex(16)
             snapshot = dict(room_id=row[0], room_number=row[1], room_revision=row[7], category_id=row[3], category_name=row[4],
                             category_revision=row[12], hotel_settings_revision=row[15], price=price, checkout_time=str(row[20]),
-                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', financial_integration=finance.mode if cash_deposit is not None else 'DEFERRED_MOCK', cleaning_buffer_minutes=row[17], deposit_mnt=deposit_amount)
+                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', financial_integration=finance.mode if cash_deposit is not None or booking or funding_id else 'DEFERRED_MOCK', cleaning_buffer_minutes=buffer, deposit_mnt=deposit_amount)
+            if booking:snapshot.update(booking_id=booking_id,booking_snapshot=booking[6],planned_checkin_at=booking[3].isoformat(),deposit_exemption='MOCK_PLATFORM_CONFIRMED_PAID')
             if deposit_snapshot is not None:
                 snapshot['deposit_configuration']=deposit_snapshot
             reason = self.vault.seal(data['backdate_reason'], tenant, stay, 'backdate-reason') if data.get('backdate_reason') else None
             conn.execute('''INSERT INTO prsystem.stay (tenant_id,id,room_id,shift_id,actor_id,kind,duration_units,
-                actual_checkin_at,check_in_recorded_at,planned_checkout_at,backdate_reason_envelope,
+                actual_checkin_at,check_in_recorded_at,planned_checkout_at,backdate_reason_envelope,origin,
                 amount_mnt,deposit_mnt,cleaning_buffer_minutes,snapshot,readiness_sequence)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                 (tenant, stay, row[0], shift[0], actor, data['kind'], data['duration_units'], actual, recorded, end,
-                 Jsonb(reason) if reason else None, amount, deposit_amount, row[17], Jsonb(snapshot), proof))
+                 Jsonb(reason) if reason else None,'ONLINE' if booking else 'WALK_IN', amount, deposit_amount, buffer, Jsonb(snapshot), proof))
             lookup = self.vault.fingerprint('guest-exact-identity', list(exact)) if exact else None
             conn.execute('''INSERT INTO prsystem.stay_guest_identity (tenant_id,stay_id,identity_type,provenance,envelope,lookup_token)
                 VALUES (%s,%s,%s,'MANUAL',%s,%s)''', (tenant, stay, identity['identity_type'], Jsonb(self.vault.seal(identity, tenant, stay)), lookup))
@@ -169,8 +193,17 @@ class StayService(RoomService):
             result = dict(stay_id=stay, room_id=row[0], shift_id=shift[0], state='ACTIVE', kind=data['kind'], duration_units=data['duration_units'],
                           actual_checkin_at=actual.isoformat(), check_in_recorded_at=recorded.isoformat(), planned_checkout_at=end.isoformat(),
                           amount_mnt=amount, deposit_mnt=deposit_amount, snapshot=snapshot, guest_identity_revision=1)
-            if cash_deposit is not None:
-                result.update(finance.initial(conn,tenant,stay,actor,shift,deposit_amount,amount,recorded))
+            if cash_deposit is not None or funding_id:
+                result.update(finance.initial(conn,tenant,stay,actor,shift,deposit_amount,amount,recorded,funding_evidence[0] if funding_id else 'CASH'))
+                if funding_id:CheckinFunding.apply(conn,tenant,funding_id,stay,result['deposit_receipt_id'],funding_evidence)
+            elif booking:
+                conn.execute('INSERT INTO prsystem.guest_finance(tenant_id,stay_id) VALUES(%s,%s)',(tenant,stay))
+                charge=secrets.token_hex(16)
+                conn.execute("INSERT INTO prsystem.guest_charge(tenant_id,stay_id,id,kind,source_id,amount_mnt,paid_mnt,recorded_at) VALUES(%s,%s,%s,'ROOM',%s,%s,%s,%s)",(tenant,stay,charge,stay,amount,amount,recorded))
+                conn.execute('INSERT INTO prsystem.booking_stay_application VALUES(%s,%s,%s,%s)',(tenant,booking_id,stay,amount))
+                conn.execute("UPDATE prsystem.room_reservation SET state='CONSUMED' WHERE tenant_id=%s AND id=%s",(tenant,booking_id))
+                result.update(room_charge_id=charge,deposit_receipt_id=None,finance_revision=1)
+                finance.audit(conn,tenant,stay,actor,'MOCK_BOOKING_PREPAID_APPLIED',booking_id,dict(amount_mnt=amount,deposit_exemption=True),1,recorded)
             self.event(conn, tenant, actor, 'STAY_CHECKED_IN', stay, dict(room_id=row[0], shift_id=shift[0], kind=data['kind'], amount_mnt=amount))
             self._save_receipt(conn, tenant, key, actor, command, result)
             return self._response(conn, tenant, result)

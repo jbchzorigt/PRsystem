@@ -157,13 +157,13 @@ class GuestFinance(RoomService):
             self.cash(conn,tenant,actor,shift[0],shift[2],'GUEST_DEPOSIT_RECEIVED' if purpose=='DEPOSIT' else 'GUEST_PAYMENT_RECEIVED',receipt,amount,0,now)
         return receipt
 
-    def initial(self,conn,tenant,stay,actor,shift,deposit,charge_amount,now):
+    def initial(self,conn,tenant,stay,actor,shift,deposit,charge_amount,now,channel='CASH'):
         conn.execute('INSERT INTO prsystem.guest_finance (tenant_id,stay_id,received) VALUES (%s,%s,%s)',(tenant,stay,deposit))
         charge=secrets.token_hex(16)
         conn.execute("INSERT INTO prsystem.guest_charge (tenant_id,stay_id,id,kind,source_id,amount_mnt,recorded_at) VALUES (%s,%s,%s,'ROOM',%s,%s,%s)",(tenant,stay,charge,stay,charge_amount,now))
-        receipt=self.record_receipt(conn,tenant,stay,actor,shift,deposit,'DEPOSIT',now)
+        receipt=self.record_receipt(conn,tenant,stay,actor,shift,deposit,'DEPOSIT',now,post_cash=channel=='CASH',channel=channel)
         result=dict(deposit_receipt_id=receipt,room_charge_id=charge,finance_revision=1)
-        self.audit(conn,tenant,stay,actor,'CHECK_IN_CASH_DEPOSIT',receipt,dict(result,deposit_mnt=deposit,room_charge_mnt=charge_amount,shift_id=shift[0]),1,now)
+        self.audit(conn,tenant,stay,actor,'CHECK_IN_CASH_DEPOSIT' if channel=='CASH' else 'CHECK_IN_NON_CASH_DEPOSIT',receipt,dict(result,deposit_mnt=deposit,room_charge_mnt=charge_amount,shift_id=shift[0],channel=channel),1,now)
         return result
 
     def receive(self,bearer,tenant,stay,purpose,amount,charge,revision,key):
