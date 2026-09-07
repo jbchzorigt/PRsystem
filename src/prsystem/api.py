@@ -26,6 +26,9 @@ from prsystem.onboarding import OnboardingService
 from prsystem.renewal import RenewalService
 from prsystem.opening import OpeningService
 from prsystem.rooms import RoomService
+from prsystem.readiness import ReadinessService
+from prsystem.stays import StayService
+from prsystem.guest_identity import vault_from_environment
 
 
 class Login(BaseModel):
@@ -128,6 +131,45 @@ class TariffChange(BaseModel):
     nightly_price: int | None = Field(gt=0,le=2**63-1)
     expected_revision: int = Field(ge=1)
     idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class GuardianInput(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    name: str = Field(min_length=1,max_length=200)
+    phone: str = Field(min_length=1,max_length=200)
+    relationship: str = Field(min_length=1,max_length=200)
+
+
+class PrimaryGuestInput(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    identity_type: Literal['MN_REG_NO','FOREIGN_PASSPORT','OTHER_GOV_ID','NO_DOCUMENT']
+    family_name: str = Field(min_length=1,max_length=200)
+    given_name: str = Field(min_length=1,max_length=200)
+    date_of_birth: str = Field(min_length=10,max_length=10)
+    nationality: str = Field(min_length=1,max_length=200)
+    document_number: str | None = Field(default=None,min_length=1,max_length=200)
+    issuing_country: str | None = Field(default=None,min_length=2,max_length=2)
+    expiry_date: str | None = Field(default=None,min_length=10,max_length=10)
+    document_type: str | None = Field(default=None,min_length=1,max_length=200)
+    issuing_authority: str | None = Field(default=None,min_length=1,max_length=200)
+    no_document_reason: str | None = Field(default=None,min_length=1,max_length=1000)
+    note: str | None = Field(default=None,min_length=1,max_length=2000)
+    guardian: GuardianInput | None = None
+
+
+class WalkInCheckIn(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    room_id: str = Field(min_length=1,max_length=128)
+    kind: Literal['HOURLY','NIGHTLY']
+    duration_units: int = Field(ge=1,le=2**63-1)
+    actual_checkin_at: str | None = Field(default=None,min_length=20,max_length=40)
+    backdate_reason: str | None = Field(default=None,min_length=1,max_length=1000)
+    guest: PrimaryGuestInput
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class RoomCleaningRequest(InvitationChange):
+    assignee_id: str = Field(min_length=1,max_length=128)
 
 
 class OnboardingApplication(BaseModel):
@@ -267,7 +309,7 @@ class RestaurantLink(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production') -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None) -> FastAPI:
     if runtime_mode not in {'production','development','test'}:
         raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
@@ -285,9 +327,11 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     shifts = ShiftService(service)
     openings = OpeningService(service)
     rooms = RoomService(service)
+    readiness = ReadinessService(service)
+    stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment())
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
-    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.8.0")
+    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.9.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -328,6 +372,9 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         code = str(exc)
+        stay_errors = {code:409 for code in ('ROOM_NOT_READY','ROOM_OCCUPIED','RESERVATION_CONFLICT','HISTORICAL_READINESS_REQUIRED','OPEN_SHIFT_REQUIRED','STAY_SETTINGS_REQUIRED','CLEANING_NOT_STARTED','WORK_SOURCE_CONFLICT')}
+        stay_errors.update({code:422 for code in ('INVALID_GUEST_IDENTITY','GUARDIAN_REQUIRED','ACTUAL_TIME_OUT_OF_RANGE','INVALID_STAY_DURATION','STAY_ALREADY_ENDED','TIMEZONE_REQUIRED')})
+        stay_errors['IDENTITY_VAULT_UNAVAILABLE'] = 503
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
@@ -343,7 +390,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                   "MEMBERSHIP_NOT_FOUND": 404, "MEMBERSHIP_EXISTS": 409, "MEMBERSHIP_NOT_PENDING": 409,
                   "REVISION_CONFLICT": 409, "IDEMPOTENCY_CONFLICT": 409, "LINK_SERVICE_UNAVAILABLE": 503,
                   "TOKEN_KEY_MISMATCH": 503, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
-        status = catalog_errors.get(code,status)
+        status = stay_errors.get(code,catalog_errors.get(code,status))
         headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
         if status in {401, 403}:
             authorization = request.headers.get("Authorization", "").split(" ", 1)
@@ -384,6 +431,26 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/cash/drawers/{drawer_id}/opening-review/{decision}')
     def review_opening(tenant_id: str,drawer_id: str,decision: Literal['approve','dispute'],body: MembershipChange,secret: Annotated[str,Depends(token)]):
         return openings.review_opening(secret,tenant_id,drawer_id,decision.upper(),body.idempotency_key,body.reason)
+
+    @app.post('/hotels/{tenant_id}/rooms/{room_id}/cleaning-requests',status_code=201)
+    def request_room_cleaning(tenant_id: str,room_id: str,body: RoomCleaningRequest,secret: Annotated[str,Depends(token)]):
+        return readiness.request(secret,tenant_id,room_id,body.assignee_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/rooms/{room_id}/manager-clean')
+    def manager_room_clean(tenant_id: str,room_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
+        return readiness.manager_clean(secret,tenant_id,room_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/cleaning/tasks/{task_id}/start')
+    def start_room_cleaning(tenant_id: str,task_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
+        return readiness.start(secret,tenant_id,task_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/check-in',status_code=201)
+    def walk_in_check_in(tenant_id: str,body: WalkInCheckIn,secret: Annotated[str,Depends(token)]):
+        return stays.check_in(secret,tenant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/stays/active')
+    def active_stays(tenant_id: str,secret: Annotated[str,Depends(token)],limit: Annotated[int,Query(ge=1,le=100)]=100,after: Annotated[str,Query(max_length=128)]=''):
+        return stays.list_active(secret,tenant_id,limit,after)
 
     @app.put('/hotels/{tenant_id}/rooms/settings')
     def room_settings(tenant_id: str,body: HotelStaySettings,secret: Annotated[str,Depends(token)]):

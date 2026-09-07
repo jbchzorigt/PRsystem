@@ -20,7 +20,16 @@ def create_app():
     store = store_from_environment()
     dsn = os.environ['PRSYSTEM_APP_DSN']
     require_development_database(dsn, 'development')
-    return staff_app(dsn, runtime_mode='development', phone_gateway=MockPhoneGateway(store),
+    # Domain-separated dev keys are stable across restarts; production never derives them from LINK_KEY.
+    import hashlib
+    import hmac
+    from prsystem.guest_identity import IdentityVault
+    key = base64.b64decode(os.environ['PRSYSTEM_LINK_KEY'], altchars=b'-_', validate=True)
+    if len(key) < 32:
+        raise ValueError('Development key must have at least 32 bytes')
+    derive = lambda purpose: hmac.new(key, purpose, hashlib.sha256).digest()
+    vault = IdentityVault({'dev-v1': derive(b'dev-identity-encryption')}, 'dev-v1', derive(b'dev-identity-lookup'))
+    return staff_app(dsn, runtime_mode='development', identity_vault=vault, phone_gateway=MockPhoneGateway(store),
                      payment_gateways={name: MockPaymentGateway(store, name) for name in ('QPAY', 'KHAAN')})
 
 

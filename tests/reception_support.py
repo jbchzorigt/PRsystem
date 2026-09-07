@@ -11,6 +11,8 @@ class ReceptionCase(OperationalCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
+                'GRANT SELECT,INSERT ON prsystem.room_readiness_event TO {}',
+                'GRANT USAGE ON SEQUENCE prsystem.room_readiness_event_sequence_seq TO {}',
                 'GRANT SELECT,INSERT ON prsystem.cash_location_config,prsystem.cash_initial_opening,prsystem.cash_shift_reference,prsystem.reception_shift,prsystem.room_hotel_settings,prsystem.room_category,prsystem.room TO {}',
                 'GRANT UPDATE (code,name,physical_location,expected_float,status,revision,configured_by) ON prsystem.cash_location_config TO {}',
                 'GRANT UPDATE (review_state) ON prsystem.cash_initial_opening TO {}',

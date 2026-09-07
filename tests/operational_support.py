@@ -18,6 +18,7 @@ class OperationalCase(StaffApiCase):
                 'GRANT UPDATE (state) ON prsystem.staff_link TO {}',
                 'GRANT UPDATE (state,owner_id,assignment_version) ON prsystem.staff_open_work TO {}',
                 'GRANT UPDATE (claimant_id,revision) ON prsystem.staff_work_exception TO {}',
+                'GRANT SELECT ON prsystem.room_cleaning_request TO {}',
                 'GRANT SELECT ON prsystem.cleaning_source,prsystem.cleaning_action,prsystem.cleaning_task,prsystem.cleaning_stock,prsystem.cleaning_posting TO {}',
                 'GRANT UPDATE (id) ON prsystem.cleaning_source TO {}',
                 'GRANT UPDATE (completed) ON prsystem.cleaning_action TO {}',

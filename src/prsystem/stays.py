@@ -1,0 +1,154 @@
+"""Walk-in check-in transaction, before guest financial posting (package four).
+
+Account -> receipt -> cash book -> catalog -> room -> shift/work. Every future
+booking writer must lock this same room before reserving an interval. No client
+price, cleanliness, paid/confirmed flag, shift root or snapshot is accepted.
+"""
+import secrets
+from datetime import datetime, timedelta
+from psycopg.types.json import Jsonb
+from prsystem.common import DomainError
+from prsystem.guest_identity import validate_identity
+from prsystem.rooms import RoomService
+from prsystem.shifts import ShiftService
+from prsystem.stay_policy import HOTEL_ZONE, actual_time, stay_terms, overlaps
+from prsystem.subscription import Action
+from prsystem.postgres.connection import transaction
+
+
+class StayService(RoomService):
+    def __init__(self, auth, vault=None):
+        super().__init__(auth)
+        self.vault = vault
+
+    def _actor(self, conn, bearer, tenant):
+        self._actors(conn, bearer, tenant)
+        principal, _ = self.auth._authenticate(conn, bearer, tenant)
+        actor = principal['account_id']
+        ShiftService._reception(conn, tenant, actor, action=Action.CHECK_IN)
+        return actor
+
+    @staticmethod
+    def _shift(conn, tenant, actor):
+        row = conn.execute("""SELECT s.id,s.opened_at,s.drawer_id FROM prsystem.reception_shift s
+            JOIN prsystem.staff_open_work w ON w.tenant_id=s.tenant_id AND w.source_id=s.id AND w.kind='SHIFT'
+            JOIN prsystem.cash_drawer d ON (d.tenant_id,d.id,d.shift_id)=(s.tenant_id,s.drawer_id,s.id)
+            WHERE s.tenant_id=%s AND s.owner_id=%s AND s.state='OPEN' AND w.state='OPEN' AND w.owner_id=s.owner_id
+            FOR UPDATE OF s,w""", (tenant, actor)).fetchone()
+        if not row:
+            raise DomainError('OPEN_SHIFT_REQUIRED')
+        return row
+
+    @staticmethod
+    def _readiness(conn, tenant, room, category, actual, recorded):
+        proof = conn.execute('''SELECT sequence,cleaning_state,room_status,category_status,category_id
+            FROM prsystem.room_readiness_event WHERE tenant_id=%s AND room_id=%s AND recorded_at<=%s
+            ORDER BY recorded_at DESC,sequence DESC LIMIT 1''', (tenant, room, actual)).fetchone()
+        if not proof or proof[1:] != ('CLEAN', 'ACTIVE', 'ACTIVE', category):
+            raise DomainError('HISTORICAL_READINESS_REQUIRED')
+        changed = conn.execute('''SELECT 1 FROM prsystem.room_readiness_event WHERE tenant_id=%s AND room_id=%s
+            AND recorded_at>%s AND recorded_at<=%s
+            AND (cleaning_state<>'CLEAN' OR room_status<>'ACTIVE' OR category_status<>'ACTIVE' OR category_id<>%s) LIMIT 1''', (tenant, room, actual, recorded, category)).fetchone()
+        if changed:
+            raise DomainError('HISTORICAL_READINESS_REQUIRED')
+        return proof[0]
+
+    @staticmethod
+    def _available(conn, tenant, room, actual, end, buffer_minutes):
+        history = conn.execute('''SELECT state,actual_checkin_at,actual_checkout_at,cleaning_buffer_minutes
+            FROM prsystem.stay WHERE tenant_id=%s AND room_id=%s''', (tenant, room)).fetchall()
+        for state, start, checkout, buffer in history:
+            # An overdue, unchecked-out stay remains occupied indefinitely.
+            if state == 'ACTIVE' or overlaps(actual, end, start, checkout, buffer_minutes, buffer):
+                raise DomainError('ROOM_OCCUPIED')
+        reservations = conn.execute("""SELECT planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes
+            FROM prsystem.room_reservation WHERE tenant_id=%s AND room_id=%s AND state='CONFIRMED'""", (tenant, room)).fetchall()
+        if any(overlaps(actual, end, start, finish, buffer_minutes, buffer) for start, finish, buffer in reservations):
+            raise DomainError('RESERVATION_CONFLICT')
+
+    def _response(self, conn, tenant, result):
+        result = dict(result)
+        code = conn.execute('''SELECT envelope FROM prsystem.stay_guest_code
+            WHERE tenant_id=%s AND stay_id=%s AND consumed_at IS NULL AND revoked_at IS NULL
+            AND EXISTS (SELECT 1 FROM prsystem.stay s WHERE (s.tenant_id,s.id)=(stay_guest_code.tenant_id,stay_guest_code.stay_id) AND s.state='ACTIVE')
+            AND expires_at>clock_timestamp() ORDER BY created_at,id LIMIT 1''', (tenant, result['stay_id'])).fetchone()
+        # Raw codes are never stored in command receipts or audit events.
+        result['guest_access_code'] = self.vault.open(code[0], tenant, result['stay_id'], 'guest-code') if code else None
+        return result
+
+    def check_in(self, bearer, tenant, data, key):
+        with transaction(self.auth.dsn) as conn:
+            actor = self._actor(conn, bearer, tenant)
+            if self.vault is None:
+                raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
+            command = dict(action='WALK_IN_CHECK_IN', fingerprint=self.vault.fingerprint('check-in-command', [tenant, data]))
+            replay = self._receipt(conn, tenant, key, actor, command)
+            if replay is not None:
+                return self._response(conn, tenant, replay)
+            ShiftService._book(conn, tenant)
+            self._catalog_lock(conn, tenant)
+            conn.execute('SELECT id FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant, data['room_id'])).fetchone()
+            row = conn.execute('''SELECT r.id,r.number,r.floor,r.category_id,c.name,r.status,r.cleaning_state,r.revision,
+                r.hourly_price,r.nightly_price,c.hourly_price,c.nightly_price,c.revision,
+                h.hourly_price,h.nightly_price,h.revision,r.tenant_id,c.cleaning_buffer_minutes,c.status,
+                c.deposit,h.checkout_time,r.minibar_mode
+                FROM prsystem.room r JOIN prsystem.room_category c ON (c.tenant_id,c.id)=(r.tenant_id,r.category_id)
+                LEFT JOIN prsystem.room_hotel_settings h ON h.tenant_id=r.tenant_id
+                WHERE r.tenant_id=%s AND r.id=%s''', (tenant, data['room_id'])).fetchone()
+            if not row:
+                raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if (row[5], row[6], row[18], row[21]) != ('ACTIVE', 'CLEAN', 'ACTIVE', 'OFF'):
+                raise DomainError('ROOM_NOT_READY')
+            shift = self._shift(conn, tenant, actor)
+            recorded = conn.execute('SELECT clock_timestamp()').fetchone()[0]
+            # Recheck expiry after potentially waiting on the serialization locks.
+            ShiftService._reception(conn, tenant, actor, action=Action.CHECK_IN)
+            requested = data.get('actual_checkin_at')
+            try:
+                requested = datetime.fromisoformat(requested.replace('Z', '+00:00')) if requested is not None else None
+            except (ValueError, AttributeError) as exc:
+                raise DomainError('INVALID_REQUEST') from exc
+            actual = actual_time(recorded, shift[1], requested, data.get('backdate_reason'))
+            price = self.effective_prices(row)[data['kind'].lower()]
+            if price is None or row[20] is None:
+                raise DomainError('STAY_SETTINGS_REQUIRED')
+            end, amount = stay_terms(data['kind'], data['duration_units'], actual, recorded, price['unit_price'], row[20])
+            proof = self._readiness(conn, tenant, row[0], row[3], actual, recorded)
+            self._available(conn, tenant, row[0], actual, end, row[17])
+            identity, exact = validate_identity(data['guest'], actual.astimezone(HOTEL_ZONE).date())
+            stay = secrets.token_hex(16)
+            snapshot = dict(room_id=row[0], room_number=row[1], room_revision=row[7], category_id=row[3], category_name=row[4],
+                            category_revision=row[12], hotel_settings_revision=row[15], price=price, checkout_time=str(row[20]),
+                            timezone='Asia/Ulaanbaatar', minibar_mode='OFF', cleaning_buffer_minutes=row[17], deposit_mnt=row[19])
+            reason = self.vault.seal(data['backdate_reason'], tenant, stay, 'backdate-reason') if data.get('backdate_reason') else None
+            conn.execute('''INSERT INTO prsystem.stay (tenant_id,id,room_id,shift_id,actor_id,kind,duration_units,
+                actual_checkin_at,check_in_recorded_at,planned_checkout_at,backdate_reason_envelope,
+                amount_mnt,deposit_mnt,cleaning_buffer_minutes,snapshot,readiness_sequence)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                (tenant, stay, row[0], shift[0], actor, data['kind'], data['duration_units'], actual, recorded, end,
+                 Jsonb(reason) if reason else None, amount, row[19], row[17], Jsonb(snapshot), proof))
+            lookup = self.vault.fingerprint('guest-exact-identity', list(exact)) if exact else None
+            conn.execute('''INSERT INTO prsystem.stay_guest_identity (tenant_id,stay_id,identity_type,provenance,envelope,lookup_token)
+                VALUES (%s,%s,%s,'MANUAL',%s,%s)''', (tenant, stay, identity['identity_type'], Jsonb(self.vault.seal(identity, tenant, stay)), lookup))
+            if identity['identity_type'] == 'MN_REG_NO':
+                conn.execute('INSERT INTO prsystem.identity_match_outbox VALUES (%s,%s,1,%s,%s)', (tenant, stay, recorded, lookup))
+            package = conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s', (tenant,)).fetchone()[0]
+            if package == 30000:
+                code = f'{secrets.randbelow(1000000):06d}'
+                conn.execute('''INSERT INTO prsystem.stay_guest_code (tenant_id,stay_id,id,code_hash,envelope,created_at,expires_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)''', (tenant, stay, secrets.token_hex(16),
+                    self.vault.fingerprint('guest-code', [tenant, stay, code]), Jsonb(self.vault.seal(code, tenant, stay, 'guest-code')), recorded, recorded+timedelta(minutes=10)))
+            result = dict(stay_id=stay, room_id=row[0], shift_id=shift[0], state='ACTIVE', kind=data['kind'], duration_units=data['duration_units'],
+                          actual_checkin_at=actual.isoformat(), check_in_recorded_at=recorded.isoformat(), planned_checkout_at=end.isoformat(),
+                          amount_mnt=amount, deposit_mnt=row[19], snapshot=snapshot, guest_identity_revision=1)
+            self.event(conn, tenant, actor, 'STAY_CHECKED_IN', stay, dict(room_id=row[0], shift_id=shift[0], kind=data['kind'], amount_mnt=amount))
+            self._save_receipt(conn, tenant, key, actor, command, result)
+            return self._response(conn, tenant, result)
+
+    def list_active(self, bearer, tenant, limit=100, after=''):
+        with transaction(self.auth.dsn) as conn:
+            self._reader(conn, bearer, tenant)
+            rows = conn.execute("""SELECT id,room_id,kind,actual_checkin_at,planned_checkout_at,amount_mnt,
+                clock_timestamp()>planned_checkout_at AS overdue FROM prsystem.stay
+                WHERE tenant_id=%s AND state='ACTIVE' AND id>%s ORDER BY id LIMIT %s""", (tenant, after, limit)).fetchall()
+            return [dict(zip(('stay_id','room_id','kind','actual_checkin_at','planned_checkout_at','amount_mnt','overdue'), row)) for row in rows]
