@@ -5,8 +5,8 @@
 ## Одоогийн Reception acceptance
 
 **3/6-р шат: Reception-ийн 6/6 implementation багц mock boundary-тай баталгаажсан.**
-[Эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34118207412):
-source `759d886b`, 413 backend тест skip-гүй; browser/API-contract/design/token шалгалтууд амжилттай.
+[Эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34119366083):
+v0.12.0 source `75cb9b4`, 414 backend тест skip-гүй; browser/API-contract/design/token шалгалтууд амжилттай.
 Booking/Minibar/Restaurant producer болон гадаад үйлчилгээний mock заагийг
 [43-р acceptance баримт](43-reception-stage3-acceptance.md)-д тодорхойлов.
 Доорх v0.8–v0.11 тоолол, тестийн хүснэгтүүд нь өмнөх milestone-ийн түүх болно.
@@ -19,9 +19,9 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
-| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 413 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
+| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
-| 5 | Minibar, Restaurant, Operation | Эхлээгүй |
+| 5 | Minibar, Restaurant, Operation | Reception-д хэрэгтэй mock boundary бэлэн; бүтэн module үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
@@ -122,3 +122,18 @@ POS/provider/channel correction; room/category lifecycle, minibar-enabled
 checkout, ordinary handover/self-close, operational UI; дараагийн 4–6-р үе шат.
 Бодит provider deployment хэрэглэгчийн зөвшөөрлөөр mock/release gate хэвээр.
 2-р шатны original live acceptance **4 бүрэн + 5 хэсэгчлэн / 9** өөрчлөгдөөгүй.
+
+
+## v0.12 — Reception acceptance: 6/6
+
+[Acceptance](43-reception-stage3-acceptance.md) болон [integration contract](44-reception-integration-contract.md):
+booking adapter, guest QR/session, actual-time amendment, cash/POS/provider funding,
+refund/correction/reconciliation, checkout/minibar/Restaurant mock ports,
+room lifecycle, ordinary handover/custody/self-close болон operational console холбогдсон.
+Expired overview нь persisted pre-lock stay/shift бүрийг authorize хийж completion
+ажлыг нээнэ; шинэ үйл ажиллагааг хаана. Cash/POS бүртгэлийг 0 дүнтэй reversal болгох
+засварын маягт API-ийн зөвшөөрсөн хүрээг дагана.
+
+**414 backend тест skip-гүй**, Chromium/browser API contract/design/token checks
+амжилттай. 364-test milestone-оос 50 тест нэмэгдсэн. Бодит provider API хэрэглэгчийн
+шийдвэрээр mock хэвээр; дараагийн 4–6-р шат болон stage-2 live acceptance тусдаа.

@@ -5,7 +5,7 @@ Reception module-ийн эхний хоёр багцыг хэрэгжүүлэв.
 ажилладаг болсон гэсэн тайлан биш.
 
 **Одоогийн шинэчлэлт: 6/6 implementation багц mock boundary-тай баталгаажсан.**
-413 backend тест skip-гүй, browser/API-contract/design/token CI амжилттай. Дүнг
+v0.12.0: 414 backend тест skip-гүй, browser/API-contract/design/token CI амжилттай. Дүнг
 [43-р acceptance баримт](43-reception-stage3-acceptance.md)-д нэгтгэв.
 Доорх хүснэгт нь v0.8–v0.11 үеийн түүхэн төлөв.
 

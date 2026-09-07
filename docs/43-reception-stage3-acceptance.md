@@ -37,13 +37,15 @@ Mock өгөгдөл production санхүүгийн нотолгоо болох�
 
 ## Баталгаажуулалт
 
-Source `759d886bf50348f856ac4ea4ee72a842baed51f7` дээр
-[эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34118207412):
-**413 backend тест skip-гүй, 281.042 секундэд амжилттай**. Chromium staff/Reception/
-guest entry, API request-model contract, design lint болон token check бүгд давсан.
-Өмнөх 364 тесттэй milestone-оос 49 тест нэмэгдсэн.
-Local: 60 тест ажилласан, PostgreSQL-dependent 353 skip; үүнийг CI-ийн бүрэн
-дүнтэй сольж тайлагнаагүй. Local token check болон premium strict audit алдаагүй.
+v0.12.0 source `75cb9b479cfd58410df59d5392c3dd1e02903a95` дээр
+[эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34119366083):
+**414 backend тест skip-гүй, 289.319 секундэд амжилттай**. Chromium staff/Reception/
+guest entry, expired completion UI, API request-model contract, design lint болон
+token check бүгд давсан. Өмнөх 364 тесттэй milestone-оос 50 тест нэмэгдсэн.
+Local: 68 тест ажилласан, PostgreSQL шаарддаг 346 skip. Local дүн нь бүрэн
+PostgreSQL CI-ийн оронд ашиглагдаагүй. Premium strict audit: 0 error/warning.
+Desktop болон 320px mobile screenshot-ийг CI artifact-д хадгалж харагдацыг шалгасан.
+Энэ дүнг оруулсан дараагийн commit зөвхөн баримтжуулалт өөрчилсөн.
 
 Энэ milestone нь дээр тодорхойлсон Reception implementation acceptance юм.
 Бодит provider болон дараагийн module-ийн production acceptance биш.
@@ -51,5 +53,3 @@ Subscription-expired completion API болон console overview нь persisted p
 stay/shift бүрийг authorize хийж зөвхөн гүйцээх ажлыг харуулна. Шинэ check-in,
 funding, booking болон configuration хаалттай. Stage-2 live acceptance тусдаа хэвээр.
 API, санхүү, QR болон mock boundary-ийн дэлгэрэнгүй: [integration contract](44-reception-integration-contract.md).
-
-v0.12.0 completion overview болон browser assertion-ийн нэмэлт баталгаажуулалт хүлээгдэж байна.

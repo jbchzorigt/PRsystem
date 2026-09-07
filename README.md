@@ -2,7 +2,7 @@
 
 Hotel operations, online booking, subscription, restaurant болон тусгаарлагдсан Police portal-ийн систем.
 
-Одоогийн milestone: **3/6-р шат — Reception**. Өрөө/тариф, анхны ээлж,
+Одоогийн milestone: **v0.12.0 · 3/6-р шат — Reception-ийн 6/6 багц дууссан**. Өрөө/тариф, анхны ээлж,
 funded check-in, booking adapter, guest QR/session, санхүүгийн ledger/correction/refund,
 checkout/cleaning/lifecycle, handover болон `/reception` дэлгэц холбогдсон.
 [Зургаан багцын acceptance ба тестийн дүн](docs/43-reception-stage3-acceptance.md),
@@ -76,3 +76,5 @@ Migration нь `PRSYSTEM_MIGRATION_DSN` хэрэглэнэ. Runtime grants, staf
 Domain-only ажиллуулахад PostgreSQL тестүүд skip хийнэ. CI-ийн тусдаа `postgres` job бодит PostgreSQL 17 дээр бүх тестийг ажиллуулна; local ажиллуулах заавар [энд](docs/29-postgres-cash.md).
 
 Guest finance v0.11: [cash correction, POS болон provider mock contract](docs/41-guest-corrections-and-provider-mocks.md), [checkout/cleaning](docs/42-checkout-cleaning.md).
+
+Reception v0.12: [API, QR, санхүү болон mock integration contract](docs/44-reception-integration-contract.md).
