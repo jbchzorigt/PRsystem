@@ -92,4 +92,6 @@ class GuestAccessAmendmentTests(GuestFinanceCase):
             self.assertEqual(set(data),{'room_number','revision','matrix'})
             self.assert_status(self.client.get(url,headers=self.headers(self.worker_token)),403)
         with patch.dict('os.environ',{'PRSYSTEM_PUBLIC_ORIGIN':'https://evil.example/path?token=x'}):
-            self.assertEqual(self.client.get(url,headers=self.headers(self.manager_token)).json()['code'],'PUBLIC_ORIGIN_REQUIRED')
+            response=self.client.get(url,headers=self.headers(self.manager_token))
+            self.assertEqual(response.status_code,503)
+            self.assertEqual(response.json(),{'code':'SERVICE_UNAVAILABLE'})
