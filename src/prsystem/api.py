@@ -24,6 +24,8 @@ from prsystem.shifts import ShiftService
 from prsystem.platform import PlatformService
 from prsystem.onboarding import OnboardingService
 from prsystem.renewal import RenewalService
+from prsystem.opening import OpeningService
+from prsystem.rooms import RoomService
 
 
 class Login(BaseModel):
@@ -69,6 +71,63 @@ class RoleChange(MembershipChange):
 
 class WorkReplacement(MembershipChange):
     replacement_id: str = Field(min_length=1, max_length=128)
+
+
+class DrawerConfiguration(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    code: str = Field(min_length=1,max_length=200)
+    name: str = Field(min_length=1,max_length=200)
+    physical_location: str = Field(min_length=1,max_length=200)
+    expected_float: int = Field(ge=0,le=2**63-1)
+    status: Literal['ACTIVE','INACTIVE'] = 'ACTIVE'
+    expected_revision: int = Field(default=0,ge=0)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class PhysicalOpening(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    actual: int = Field(ge=0,le=2**63-1)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class HotelStaySettings(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    hourly_price: int = Field(gt=0,le=2**63-1)
+    nightly_price: int = Field(gt=0,le=2**63-1)
+    checkout_time: str = Field(pattern=r'^(?:[01]\d|2[0-3]):[0-5]\d$')
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class CategoryCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    name: str = Field(min_length=1,max_length=200)
+    description: str = Field(default='',max_length=2000)
+    hourly_price: int | None = Field(default=None,gt=0,le=2**63-1)
+    nightly_price: int | None = Field(default=None,gt=0,le=2**63-1)
+    deposit: int = Field(default=0,ge=0,le=2**63-1)
+    cleaning_buffer_minutes: int = Field(ge=0,le=2147483647)
+    status: Literal['ACTIVE','INACTIVE'] = 'ACTIVE'
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class RoomCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    number: str = Field(min_length=1,max_length=50)
+    floor: str = Field(min_length=1,max_length=50)
+    category_id: str = Field(min_length=1,max_length=128)
+    hourly_price: int | None = Field(default=None,gt=0,le=2**63-1)
+    nightly_price: int | None = Field(default=None,gt=0,le=2**63-1)
+    status: Literal['ACTIVE','INACTIVE'] = 'ACTIVE'
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class TariffChange(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    hourly_price: int | None = Field(gt=0,le=2**63-1)
+    nightly_price: int | None = Field(gt=0,le=2**63-1)
+    expected_revision: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1,max_length=128)
 
 
 class OnboardingApplication(BaseModel):
@@ -208,8 +267,14 @@ class RestaurantLink(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production') -> FastAPI:
+    if runtime_mode not in {'production','development','test'}:
+        raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
+    mocked = any(getattr(port, 'is_mock', False) for port in [phone_gateway, *(payment_gateways or {}).values()])
+    if mocked:
+        from prsystem.mock_providers import require_development_database
+        require_development_database(service.dsn, runtime_mode)
     if token_key is None and os.environ.get("PRSYSTEM_LINK_KEY"):
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
@@ -218,9 +283,11 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     onboarding = OnboardingService(service,lifecycle,phone_gateway=phone_gateway,payment_gateways=payment_gateways)
     renewals = RenewalService(service,payment_gateways)
     shifts = ShiftService(service)
+    openings = OpeningService(service)
+    rooms = RoomService(service)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
-    app = FastAPI(title="PRsystem staff API", version="0.7.0")
+    app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.8.0")
     bearer = HTTPBearer(auto_error=False)
 
     def token(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
@@ -249,6 +316,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        if mocked:
+            response.headers['X-PRsystem-Mode'] = 'MOCK_ONLY'
         return response
 
     @app.exception_handler(RequestValidationError)
@@ -259,6 +328,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         code = str(exc)
+        catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
+                          'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -272,6 +343,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                   "MEMBERSHIP_NOT_FOUND": 404, "MEMBERSHIP_EXISTS": 409, "MEMBERSHIP_NOT_PENDING": 409,
                   "REVISION_CONFLICT": 409, "IDEMPOTENCY_CONFLICT": 409, "LINK_SERVICE_UNAVAILABLE": 503,
                   "TOKEN_KEY_MISMATCH": 503, "CASH_BOOK_NOT_FOUND": 404, "UNSAFE_DATABASE_ROLE": 503}.get(code, 403)
+        status = catalog_errors.get(code,status)
         headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
         if status in {401, 403}:
             authorization = request.headers.get("Authorization", "").split(" ", 1)
@@ -296,6 +368,50 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
 
     static_root = Path(__file__).with_name("static")
+
+    @app.post('/hotels/{tenant_id}/cash/drawers',status_code=201)
+    def create_drawer(tenant_id: str,body: DrawerConfiguration,secret: Annotated[str,Depends(token)]):
+        return openings.configure(secret,tenant_id,None,body.model_dump(exclude={'idempotency_key','expected_revision'}),body.idempotency_key,body.expected_revision)
+
+    @app.post('/hotels/{tenant_id}/cash/drawers/{drawer_id}/configure')
+    def configure_drawer(tenant_id: str,drawer_id: str,body: DrawerConfiguration,secret: Annotated[str,Depends(token)]):
+        return openings.configure(secret,tenant_id,drawer_id,body.model_dump(exclude={'idempotency_key','expected_revision'}),body.idempotency_key,body.expected_revision)
+
+    @app.post('/hotels/{tenant_id}/cash/drawers/{drawer_id}/open',status_code=201)
+    def open_drawer(tenant_id: str,drawer_id: str,body: PhysicalOpening,secret: Annotated[str,Depends(token)]):
+        return openings.open(secret,tenant_id,drawer_id,body.actual,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/cash/drawers/{drawer_id}/opening-review/{decision}')
+    def review_opening(tenant_id: str,drawer_id: str,decision: Literal['approve','dispute'],body: MembershipChange,secret: Annotated[str,Depends(token)]):
+        return openings.review_opening(secret,tenant_id,drawer_id,decision.upper(),body.idempotency_key,body.reason)
+
+    @app.put('/hotels/{tenant_id}/rooms/settings')
+    def room_settings(tenant_id: str,body: HotelStaySettings,secret: Annotated[str,Depends(token)]):
+        return rooms.hotel_settings(secret,tenant_id,body.hourly_price,body.nightly_price,body.checkout_time,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/room-categories',status_code=201)
+    def create_category(tenant_id: str,body: CategoryCreate,secret: Annotated[str,Depends(token)]):
+        return rooms.create_category(secret,tenant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/rooms',status_code=201)
+    def create_room(tenant_id: str,body: RoomCreate,secret: Annotated[str,Depends(token)]):
+        return rooms.create_room(secret,tenant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.put('/hotels/{tenant_id}/rooms/{room_id}/tariffs')
+    def room_tariffs(tenant_id: str,room_id: str,body: TariffChange,secret: Annotated[str,Depends(token)]):
+        return rooms.tariffs(secret,tenant_id,'room',room_id,body.hourly_price,body.nightly_price,body.expected_revision,body.idempotency_key)
+
+    @app.put('/hotels/{tenant_id}/room-categories/{category_id}/tariffs')
+    def category_tariffs(tenant_id: str,category_id: str,body: TariffChange,secret: Annotated[str,Depends(token)]):
+        return rooms.tariffs(secret,tenant_id,'category',category_id,body.hourly_price,body.nightly_price,body.expected_revision,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/rooms')
+    def list_rooms(tenant_id: str,secret: Annotated[str,Depends(token)],limit: Annotated[int,Query(ge=1,le=100)]=100,after: Annotated[str,Query(max_length=128)]=''):
+        return rooms.list_rooms(secret,tenant_id,limit,after)
+
+    @app.get('/hotels/{tenant_id}/room-categories')
+    def list_categories(tenant_id: str,secret: Annotated[str,Depends(token)],limit: Annotated[int,Query(ge=1,le=100)]=100,after: Annotated[str,Query(max_length=128)]=''):
+        return rooms.list_categories(secret,tenant_id,limit,after)
 
     @app.get("/staff/activate", include_in_schema=False)
     @app.get("/staff/accept", include_in_schema=False)

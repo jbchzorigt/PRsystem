@@ -74,6 +74,41 @@ class OnboardingTests(StaffApiCase):
         with self.assertRaisesRegex(DomainError,'PAYMENT_REQUIRED'):self.flow.provision(self.app)
         with psycopg.connect(self.owner_dsn) as conn:self.assertIsNone(conn.execute('SELECT id FROM prsystem.staff_account WHERE email=%s',(self.data['email'],)).fetchone())
 
+    def test_development_providers_complete_real_onboarding_only_after_simulated_payment(self):
+        import tempfile
+        from pathlib import Path
+        from prsystem.mock_providers import MockStore,MockPhoneGateway,MockPaymentGateway,MockMailTransport
+        with tempfile.TemporaryDirectory() as directory:
+            store=MockStore(Path(directory)/'provider.sqlite3',environment='test')
+            phone=MockPhoneGateway(store);gateway=MockPaymentGateway(store,'QPAY')
+            flow=OnboardingService(self.auth,self.links,phone_gateway=phone,payment_gateways={'QPAY':gateway})
+            with TestClient(create_app(self.app_dsn,self.settings,token_key=self.token_key,phone_gateway=phone,payment_gateways={'QPAY':gateway},runtime_mode='test'),client=(self.peer,12345)) as client:
+                headers=self.headers(self.access)
+                sent=client.post(f'/onboarding/{self.app}/phone/request',headers=headers)
+                self.assertEqual(sent.status_code,202,sent.text);self.assertEqual(sent.headers['X-PRsystem-Mode'],'MOCK_ONLY')
+                code=store.inspect('phone')[0]['code']
+                verified=client.post(f'/onboarding/{self.app}/phone/verify',headers=headers,json=dict(code=code));self.assertEqual(verified.status_code,200,verified.text)
+                invoice=client.post(f'/onboarding/{self.app}/invoice/QPAY',headers=headers);self.assertEqual(invoice.status_code,200,invoice.text)
+                attempt=invoice.json()['attempt_id'];self.assertEqual(flow.reconcile(attempt),'PENDING')
+                with self.assertRaisesRegex(DomainError,'PAYMENT_REQUIRED'):flow.provision(self.app)
+                gateway.set_status(attempt,'SUCCEEDED');self.assertEqual(flow.reconcile(attempt),'PAID')
+                result=flow.provision(self.app)
+                with psycopg.connect(self.owner_dsn) as conn:link=conn.execute("SELECT id FROM prsystem.staff_link WHERE tenant_id=%s AND purpose='ADMIN_ACTIVATION'",(result['tenant_id'],)).fetchone()[0]
+                envelope=self.links.prepare_delivery(link);MockMailTransport(store)(envelope)
+                self.assertEqual(len(store.inspect('mail')),1)
+                activated=client.post('/auth/admin/activate',json=dict(token=envelope.token,password=self.password))
+                self.assertEqual(activated.status_code,200,activated.text)
+                self.assertEqual(client.get('/dev/payments').status_code,404)
+
+    def test_mock_gateways_are_rejected_by_default_production_factory(self):
+        import tempfile
+        from pathlib import Path
+        from prsystem.mock_providers import MockStore,MockPhoneGateway,require_development_database
+        with tempfile.TemporaryDirectory() as directory:
+            mock=MockPhoneGateway(MockStore(Path(directory)/'state.sqlite3',environment='test'))
+            with self.assertRaises(ValueError):create_app(self.app_dsn,phone_gateway=mock)
+            with self.assertRaises(ValueError):require_development_database('dbname=production','development')
+
     def test_payment_then_atomic_provision_pending_primary_activation(self):
         attempt=self.paid();result=self.flow.provision(self.app);self.assertEqual(result['state'],'PROVISIONED')
         self.assertEqual(self.flow.provision(self.app),result)
