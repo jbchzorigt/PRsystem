@@ -82,3 +82,5 @@ Reference: [OWASP password recovery guidance](https://cheatsheetseries.owasp.org
 Role/status mutation, scope session revoke, Primary хамгаалалт ба queue claim нь [дараагийн багцад](33-membership-work.md) нэмэгдсэн.
 
 2026-09-07: Admin reset хүсэлт, unverified invite recovery, denied-action audit болон TLS mail worker [34-р contract](34-staff-recovery-mail-worker.md)-д нэмэгдсэн. Worker transport код нь бодит delivery/deployment acceptance-ийг орлохгүй.
+
+Restaurant invitation нь тусдаа purpose, membership, sponsor/creator check-тэйгээр [35-р contract](35-restaurant-identity.md)-д хэрэгжсэн; Hotel invite Restaurant role олгохгүй хэвээр.

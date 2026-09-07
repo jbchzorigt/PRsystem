@@ -95,3 +95,5 @@ Dead-letter alert-ийн дараа SMTP/DNS/key тохиргоог засаж, 
 ## CI баталгаа
 
 14 recovery/audit болон 11 mail transport/worker тест нэмэгдсэн. [PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) нийт **138 тестийг skip-гүй** амжилттай ажиллуулсан. SMTP тестүүд controlled transport ашигласан; бодит provider recipient-д хүргэлт батлаагүй.
+
+Restaurant identity нэмэлт: worker-д `GRANT SELECT ON prsystem.restaurant_membership` болон HTTPS `/staff/restaurant-accept` UI хэрэгтэй. Purpose/route нь [35-р contract](35-restaurant-identity.md)-аар тусгаарлагдсан.

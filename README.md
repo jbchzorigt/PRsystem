@@ -12,6 +12,7 @@ Hotel operations, online booking, subscription, restaurant болон тусга
 - [Урилга, password reset, email delivery contract](docs/32-staff-invitations-reset.md)
 - [Membership өөрчлөлт, Primary хамгаалалт, queue claim](docs/33-membership-work.md)
 - [Admin reset, invite/claim recovery, security audit, mail worker](docs/34-staff-recovery-mail-worker.md)
+- [Restaurant identity, invitation, session scope](docs/35-restaurant-identity.md)
 
 ## Шалгах
 
@@ -39,6 +40,7 @@ python -m unittest discover -s tests -v
 | `prsystem.settlement` | Zero-refund eligibility, бусад hold, integer commission, D+1 local batch time |
 | `prsystem.postgres` | Versioned migration, tenant RLS, cash transaction, append-only journal/receipt/outbox |
 | `prsystem.auth`, `prsystem.api` | Staff password/session, scope revocation, login throttling, authorized cash read |
+| `prsystem.restaurant_identity` | Creator/Manager Plus registration ба invitation, тусдаа Restaurant membership/session |
 | `prsystem.membership` | Primary хамгаалалттай role/status, scope session revoke, atomic exception queue/claim |
 | `prsystem.staff_lifecycle` | Canonical invitation, resend/revoke/accept, reset, secret-free email intent |
 

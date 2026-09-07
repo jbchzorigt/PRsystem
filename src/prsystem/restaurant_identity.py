@@ -249,12 +249,12 @@ class RestaurantIdentity(StaffCommands):
     def profile(self, token, tenant, restaurant):
         with transaction(self.auth.dsn) as conn:
             self.auth._authenticate(conn, token, restaurant=restaurant)
-            self._gate(conn, tenant, True)
             row = conn.execute('''SELECT r.name, r.category, r.description, r.address, r.latitude, r.longitude,
                 r.phone, r.weekly_hours, r.timezone, h.active FROM prsystem.restaurant r
                 JOIN prsystem.hotel_restaurant h ON h.restaurant_id = r.id
-                WHERE r.id = %s AND h.tenant_id = %s''', (restaurant, tenant)).fetchone()
+                WHERE r.id = %s AND h.tenant_id = %s FOR SHARE OF r, h''', (restaurant, tenant)).fetchone()
             if row is None:
                 raise DomainError('FORBIDDEN')
+            self._gate(conn, tenant, True)
             return dict(zip(('name', 'category', 'description', 'address', 'latitude', 'longitude', 'phone',
                              'weekly_hours', 'timezone', 'active'), row))

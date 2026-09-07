@@ -168,6 +168,9 @@ class RestaurantIdentityTests(StaffApiCase):
         second = self.venue(email=uuid4().hex+'@example.com', idempotency_key='second')
         self.assertEqual(self.profile(second, token).status_code, 403)
         self.assertEqual(self.profile(first, token, self.other).status_code, 403)
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.hotel_access SET expires_at = now() - interval '3 days', security_suspended = true WHERE tenant_id = %s", (self.other,))
+        self.assertEqual(self.profile(first, token, self.other).json()['code'], 'FORBIDDEN')
         self.assertEqual(self.cash(token).status_code, 403)
         self.assertEqual(self.invite(first, uuid4().hex+'@example.com', token).status_code, 403)
 

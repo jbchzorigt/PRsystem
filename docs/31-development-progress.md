@@ -15,7 +15,7 @@
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-## 2-р шатны үлдсэн 9 багц — 3/9 дууссан
+## 2-р шатны үлдсэн 9 багц — 3/9 дууссан; №9 final CI хүлээгдэж байна
 
 Энэ тогтмол дугаарлалт нь 2026-09-06-нд хэрэглэгчид тайлбарласан үлдсэн 9 багц. Өмнөх 4/4 нь өмнөх implementation багцын явц байсан. Доорх тоо нь төслийн completion хувь биш.
 
@@ -29,9 +29,9 @@
 | 6 | Cleaner reassignment/continuation | Үлдсэн: бодит task/stock/room reference, assignment version, immutable movement ба remaining-action guard |
 | 7 | Hotel/account/package-related recovery | Хэсэгчлэн: эрхгүй claimant-ийг current Manager авах API бэлэн; tenant lock-ийн billing/Platform recovery холболт үлдсэн |
 | **8** | **Denied-action security audit** | **Дууссан:** 401/403 denial нь rollback-аас тусдаа хадгалагдана; raw request/secret агуулахгүй |
-| 9 | Restaurant invitation/access realm | Үлдсэн: restaurant identity, hotel–restaurant ownership холбоос, тусдаа membership/session/invitation scope |
+| 9 | Restaurant invitation/access realm | Код/26 тест бэлэн: restaurant identity/link, creator permission, тусдаа membership/session/invitation, lifecycle; final CI хүлээгдэж байна |
 
-**3 дууссан + 2 хэсэгчлэн + 4 үлдсэн = 9.** Дуусаагүй код/интеграцийг blocker гэсэн нэрээр дууссан гэж тооцохгүй. SMTP credential хэрэгтэй хэсгээс гадна өөр хэрэгжүүлэх ажил байгаа; бүх үлдсэн ажил гадаад тохиргооноос блоклогдоогүй.
+**3 дууссан + 2 хэсэгчлэн + 1 final CI хүлээж буй + 3 үлдсэн = 9.** Дуусаагүй код/интеграцийг blocker гэсэн нэрээр дууссан гэж тооцохгүй. SMTP credential хэрэгтэй хэсгээс гадна өөр хэрэгжүүлэх ажил байгаа; бүх үлдсэн ажил гадаад тохиргооноос блоклогдоогүй.
 
 [Recovery/worker contract ба minimum grants](34-staff-recovery-mail-worker.md). [Membership/queue boundary](33-membership-work.md).
 
@@ -47,8 +47,9 @@
 | Recovery/security audit | 14 |
 | SMTP transport | 4 |
 | Mail worker PostgreSQL | 7 |
-| **Нийт** | **138** |
+| Restaurant identity/access | 26 |
+| **Нийт** | **164** |
 
-API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 108 тестийг skip хийнэ; 30 domain тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан.
+API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 134 тестийг skip хийнэ; 30 domain тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан.
 
-Дараагийн хэрэгжүүлэлт: №9-ийн тусдаа Restaurant identity, №5–6-ийн operational source/shift/task суурь; №1-ийн HTTPS acceptance UI болон SMTP deployment; №2/7-ийн payment/ownership/Platform recovery. Явцын update **«Үе шат 2/6 · Үлдсэн 9 багцаас X/9 дууссан»** гэсэн тогтмол хэмжүүрийг ашиглана.
+№9-ийн contract: [Restaurant identity](35-restaurant-identity.md). Дараагийн хэрэгжүүлэлт: №5–6-ийн operational source/shift/task суурь; №1-ийн HTTPS acceptance UI болон SMTP deployment; №2/7-ийн payment/ownership/Platform recovery. Явцын update **«Үе шат 2/6 · Үлдсэн 9 багцаас X/9 дууссан»** гэсэн тогтмол хэмжүүрийг ашиглана.
