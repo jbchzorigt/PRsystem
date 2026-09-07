@@ -124,7 +124,9 @@ class WalkInStayTests(ReceptionCase):
         self.ready()
         self.assertEqual(self.checkin(actual_checkin_at=before.isoformat(),backdate_reason='Earlier arrival').json()['code'],'HISTORICAL_READINESS_REQUIRED')
         with psycopg.connect(self.owner_dsn) as conn:after=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+        self.assert_status(self.client.put(f'/hotels/{self.tenant}/rooms/settings',headers=self.headers(self.manager_token),json=dict(hourly_price=22222,nightly_price=80000,checkout_time='12:00',expected_revision=1,idempotency_key='current-price')),200)
         result=self.assert_status(self.checkin(actual_checkin_at=after.isoformat(),backdate_reason='Correct arrival'),201)
+        self.assertEqual(result['amount_mnt'],33333)
         self.assertLess(datetime.fromisoformat(result['actual_checkin_at']),datetime.fromisoformat(result['check_in_recorded_at']))
 
     def test_two_receptions_cannot_check_into_same_room(self):
@@ -151,6 +153,8 @@ class WalkInStayTests(ReceptionCase):
         self.assertEqual(self.checkin(token=self.replacement_token).json()['code'],'OPEN_SHIFT_REQUIRED')
         self.assert_status(self.checkin(tenant=self.other),403)
         with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=clock_timestamp()-interval '1 minute' WHERE tenant_id=%s",(self.tenant,))
+        self.assert_status(self.checkin(idempotency_key='within-grace'),201)
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=clock_timestamp()-interval '49 hours' WHERE tenant_id=%s",(self.tenant,))
         self.assertEqual(self.checkin().json()['code'],'SUBSCRIPTION_EXPIRED')
         with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET security_suspended=true WHERE tenant_id=%s',(self.tenant,))
         self.assertEqual(self.checkin().json()['code'],'SECURITY_SUSPENDED')
@@ -197,3 +201,28 @@ class WalkInStayTests(ReceptionCase):
         rows=self.assert_status(response,200);self.assertEqual(len(rows),1)
         self.assertNotIn('guest_access_code',rows[0]);self.assertNotIn('АБ90010211',response.text)
         self.assert_status(self.client.get(f'/hotels/{self.other}/stays/active',headers=self.headers(self.worker_token)),403)
+
+    def test_started_cleaning_continuation_completes_the_same_room_source(self):
+        task=self.request_cleaning();self.assert_status(self.start_cleaning(task),200)
+        self.suspend()
+        with psycopg.connect(self.owner_dsn) as conn:
+            exception=conn.execute("""SELECT e.id FROM prsystem.staff_work_exception e JOIN prsystem.staff_open_work w
+                ON (w.tenant_id,w.id)=(e.tenant_id,e.work_id) WHERE e.tenant_id=%s AND w.kind='CLEANING_TASK'""",(self.tenant,)).fetchone()[0]
+        revision=self.claim(exception)
+        response=self.client.post(f'/hotels/{self.tenant}/staff-work/exceptions/{exception}/cleaning/reassign',headers=self.headers(self.manager_token),json=dict(expected_revision=revision,replacement_id=self.replacement,idempotency_key='continue',reason='Continue room cleaning'))
+        continued=self.assert_status(response,200)
+        self.assertEqual(continued['mode'],'CONTINUATION')
+        self.assertEqual(continued['source_id'],task['source_id'])
+        continued['action_id']=task['action_id']
+        self.assert_status(self.post_cleaning(continued,self.replacement_token),200)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT cleaning_state FROM prsystem.room WHERE tenant_id=%s AND id=%s',(self.tenant,self.room)).fetchone()[0],'CLEAN')
+
+    def test_replay_never_resurrects_consumed_code_or_bypasses_current_auth(self):
+        self.ready();result=self.assert_status(self.checkin(),201)
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.stay_guest_code SET consumed_at=clock_timestamp() WHERE tenant_id=%s',(self.tenant,))
+        replay=self.assert_status(self.checkin(),201)
+        self.assertEqual(replay['stay_id'],result['stay_id']);self.assertIsNone(replay['guest_access_code'])
+        self.suspend()
+        self.assertEqual(self.checkin().status_code,401)

@@ -40,7 +40,8 @@ def validate_identity(data, on_date):
     if dob > on_date:
         raise DomainError('INVALID_GUEST_IDENTITY')
     age = on_date.year - dob.year - ((on_date.month, on_date.day) < (dob.month, dob.day))
-    result.update(identity_type=kind, date_of_birth=dob.isoformat(), age_at_checkin=age, provenance='MANUAL')
+    result.update(identity_type=kind, date_of_birth=dob.isoformat(), age_at_checkin=age, provenance='MANUAL',
+                  matching_eligibility='ELIGIBLE_EXACT_RD' if kind == 'MN_REG_NO' else 'NOT_ELIGIBLE_EXACT_RD')
     identifier = country = None
     required = set()
     if kind == 'MN_REG_NO':

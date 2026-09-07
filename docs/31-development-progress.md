@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
-| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening хэрэгжүүлсэн; [6 implementation багцаас 2](38-reception-foundation.md) |
+| **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **Идэвхтэй:** room/category/default tariffs, Reception read API болон configured float → initial opening, walk-in check-in, canonical cleaning/readiness ба encrypted guest identity хэрэгжүүлсэн; [6 implementation багцаас 2 бүрэн, 3-р багц хэсэгчлэн](38-reception-foundation.md) |
 | 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Эхлээгүй |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
@@ -58,12 +58,15 @@
 | Development mock providers | 7 |
 | Initial configured float/shift opening | 9 |
 | Room catalog/tariffs | 9 |
-| **Нийт** | **264** |
+| Stay duration/manual identity domain | 12 |
+| Identity authenticated encryption | 4 |
+| Walk-in check-in/readiness PostgreSQL | 17 |
+| **Нийт** | **297** |
 
-API dependencies/`PRSYSTEM_TEST_ADMIN_DSN` байхгүй local run 222 тестийг skip хийнэ; 42 dependency-free тест ажиллана. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
+Одоогийн local run: 297 discovered, crypto extra байгаа тул 58 executed, PostgreSQL-dependent 239 skipped. API/crypto extra байхгүй үед 54 dependency-free тест ажиллаж, бусад 243 skip хийнэ. [Recovery CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069208439) 127 тестийг skip-гүй амжилттай ажиллуулсан. [Mail worker орсон PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34069567087) бүх 138 тестийг skip-гүй амжилттай ажиллуулсан. [Restaurant identity эцсийн PostgreSQL CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34071168507) нийт **164 тестийг skip-гүй** амжилттай ажиллуулсан.
 
 [v0.7.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34077680285) (`dce6585`) дээр **237 backend тест skip-гүй**, Chromium browser tests, design lint болон token check бүгд амжилттай. Тэр milestone-д 73 backend тест нэмэгдсэн. Chromium CI нь дөрвөн purpose route, 204 success, давхар submit, password reveal, field/status focus, error/retry, 320px layout болон storage isolation-ийг шалгана.
 
 [v0.8.0 CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34084343027) (`336a14e`) дээр **264 backend тест skip-гүй**, Chromium browser болон design/token checks амжилттай. Энэ continuation нь mock providers, бодит onboarding integration, initial float/shift opening, room catalog/tariffs-ийн **27 шинэ тест** нэмсэн.
 
-№9-ийн contract: [Restaurant identity](35-restaurant-identity.md). Дараагийн ажил: [Reception багц 3/6 — stay interval/readiness, snapshot, check-in](38-reception-foundation.md). Mock ажиллуулах заавар: [37-development-mocks.md](37-development-mocks.md). Явцын update **«Үе шат 3/6 · Reception-ийн 6 багцаас 2 дууссан»** гэсэн хэмжүүрийг ашиглана; 2-р шатны анхны 9 багцын release acceptance тооллыг дээр өөрчлөлгүй хадгалав.
+№9-ийн contract: [Restaurant identity](35-restaurant-identity.md). [Reception багц 3/6-ийн walk-in implementation](39-walkin-check-in.md) нэмэгдсэн. Online booking ба guest QR/session integration үлдсэн; дараагийн үндсэн ажил нь багц 4-ийн guest financial ledger/deposit/payment allocation/refund. Mock ажиллуулах заавар: [37-development-mocks.md](37-development-mocks.md). Явцын update **«Үе шат 3/6 · Reception-ийн 6 багцаас 2 бүрэн, 3-р багц хэсэгчлэн»** гэсэн хэмжүүрийг ашиглана; 2-р шатны анхны 9 багцын release acceptance тооллыг дээр өөрчлөлгүй хадгалав.
