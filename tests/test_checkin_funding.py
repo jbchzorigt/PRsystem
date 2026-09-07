@@ -96,3 +96,10 @@ class CheckinFundingTests(GuestFinanceCase):
         gateway.set_refund_status('funding-return:'+funding,'SUCCEEDED')
         self.assertTrue(self.assert_status(post('return/complete',dict(idempotency_key='finish')),200)['returned'])
         self.assert_status(self.checkin(funding_id=funding),409)
+
+    def test_confirmed_funding_capture_cannot_be_reused_as_a_guest_payment(self):
+        self.assert_status(self.funding(),201)
+        self.start()
+        response=self.command('pos-payments',dict(charge_id=self.stay['room_charge_id'],amount_mnt=1000,reference='POS-DEPOSIT-001',terminal_id='FRONT-1',transacted_at=datetime.now(timezone.utc).isoformat(),expected_revision=1,idempotency_key='duplicate-payment'))
+        self.assertEqual(response.json()['code'],'PAYMENT_REFERENCE_USED')
+        self.assertEqual(self.statement().json()['charge_paid_mnt'],0)

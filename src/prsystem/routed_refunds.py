@@ -187,7 +187,7 @@ class RoutedRefunds(GuestPayments):
         reason=self._text(reason,1000)
         with transaction(self.auth.dsn) as conn:
             platform.authenticate(conn,bearer,'DEPOSIT_REFUND_RECONCILE')
-            source=conn.execute('SELECT stay_id,channel,receipt_id,amount_mnt FROM prsystem.guest_refund WHERE tenant_id=%s AND id=%s',(tenant,refund)).fetchone()
+            source=conn.execute('SELECT stay_id,channel,receipt_id,amount_mnt,recorded_at FROM prsystem.guest_refund WHERE tenant_id=%s AND id=%s',(tenant,refund)).fetchone()
             if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
         evidence=self.evidence(source[1],refund,source[2],source[3])
         command=dict(action='RESOLVE_LATE_REFUND',tenant=tenant,refund=refund,reason=reason)
@@ -201,15 +201,18 @@ class RoutedRefunds(GuestPayments):
             if case[2]!=evidence['reference']:raise DomainError('PROVIDER_EVIDENCE_INVALID')
             if evidence['status']!='SUCCEEDED' and evidence['status'] not in FINAL_NOT_PAID:
                 return dict(refund_id=refund,state='RECONCILING',frozen=True)
-            covered=shortfall=0;after=dict(before)
+            covered=shortfall=0;after=dict(before);coverage=[]
             state='PROVIDER_STATUS_CORRECTED_NOT_SUCCESS'
             if evidence['status']=='SUCCEEDED':
+                confirmed=evidence.get('confirmed_at');now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+                if not isinstance(confirmed,datetime) or confirmed.tzinfo is None or not source[4]<=confirmed<=now:raise DomainError('PROVIDER_EVIDENCE_INVALID')
                 covered=min(self.balance(before)['available'],source[3]);shortfall=source[3]-covered
                 remaining=covered
                 receipts=conn.execute("SELECT id,amount_mnt-allocated-refund_reserved-refunded-reversed FROM prsystem.guest_receipt WHERE tenant_id=%s AND stay_id=%s AND purpose='DEPOSIT' ORDER BY (id=%s) DESC,id FOR UPDATE",(tenant,source[0],source[2])).fetchall()
                 for receipt_id,available in receipts:
                     take=min(remaining,available)
                     if take:conn.execute('UPDATE prsystem.guest_receipt SET refunded=refunded+%s WHERE tenant_id=%s AND id=%s',(take,tenant,receipt_id))
+                    if take:coverage.append(dict(receipt_id=receipt_id,amount_mnt=take))
                     remaining-=take
                 if remaining:raise DomainError('DEPOSIT_BALANCE_CONFLICT')
                 after['refunded']+=covered
@@ -222,7 +225,7 @@ class RoutedRefunds(GuestPayments):
             conn.execute('UPDATE prsystem.guest_finance SET frozen=%s WHERE tenant_id=%s AND stay_id=%s',(frozen,tenant,source[0]))
             requester=conn.execute('SELECT actor_id FROM prsystem.guest_refund WHERE tenant_id=%s AND id=%s',(tenant,refund)).fetchone()[0]
             now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
-            self.save(conn,tenant,source[0],before,after,requester,'LATE_REFUND_RESOLVED',refund,dict(platform_resolver_id=actor,covered_amount=covered,shortfall_amount=shortfall,outcome=state),now)
+            self.save(conn,tenant,source[0],before,after,requester,'LATE_REFUND_RESOLVED',refund,dict(platform_resolver_id=actor,covered_amount=covered,shortfall_amount=shortfall,outcome=state,coverage=coverage),now)
             result=dict(refund_id=refund,state=state,covered_amount=covered,shortfall_amount=shortfall,frozen=frozen)
             platform._event(conn,actor,'LATE_REFUND_RESOLVED',refund,dict(result,tenant_id=tenant,reason=reason))
             platform.save(conn,key,actor,command,result);return result
