@@ -23,7 +23,7 @@ const secret = 'a'.repeat(32) + '.' + 'b'.repeat(64);
       if (delay) await new Promise(r => setTimeout(r, 200));
       await route.fulfill({status, contentType: 'application/json', body: status === 204 ? '' : JSON.stringify(code)});
     });
-    for (const [name, endpoint] of [['accept', '/auth/invitations/accept'], ['restaurant-accept', '/auth/restaurants/invitations/accept'], ['reset', '/auth/password/reset/complete']]) {
+    for (const [name, endpoint] of [['activate','/auth/admin/activate'], ['accept', '/auth/invitations/accept'], ['restaurant-accept', '/auth/restaurants/invitations/accept'], ['reset', '/auth/password/reset/complete']]) {
       status = name === 'reset' ? 204 : 200;
       await page.goto(`${origin}/staff/${name}#token=${secret}`);
       assert.equal(new URL(page.url()).hash, '');
@@ -31,7 +31,7 @@ const secret = 'a'.repeat(32) + '.' + 'b'.repeat(64);
       await page.locator('#submit').click();
       assert.equal(await page.locator('#password').getAttribute('aria-invalid'), 'true');
       assert.equal(await page.evaluate(() => document.activeElement.id), 'password');
-      await page.getByLabel(name === 'reset' ? 'Шинэ нууц үг' : 'Одоогийн нууц үг', {exact:true}).fill('Password for test 2026!');
+      await page.getByLabel(['reset','activate'].includes(name) ? 'Шинэ нууц үг' : 'Одоогийн нууц үг', {exact:true}).fill('Password for test 2026!');
       await page.locator('#reveal').click();
       assert.equal(await page.locator('#password').getAttribute('type'), 'text');
       await page.locator('#reveal').press('Space');
@@ -74,6 +74,6 @@ const secret = 'a'.repeat(32) + '.' + 'b'.repeat(64);
     await page.goto(`${origin}/staff/reset`);
     assert.equal(await page.locator('#form').isVisible(), false);
     assert.match(await page.title(), /Холбоос буруу/);
-    console.log('Browser: 3 purpose routes, 204 success, duplicate guard, password reveal, validation/focus, retry, invalid links, mn, 320px, reduced motion and storage isolation OK');
+    console.log('Browser: 4 purpose routes, 204 success, duplicate guard, password reveal, validation/focus, retry, invalid links, mn, 320px, reduced motion and storage isolation OK');
   } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

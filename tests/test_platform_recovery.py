@@ -35,7 +35,7 @@ class PlatformRecoveryTests(StaffApiCase):
         return self.platform_client.post('/platform/auth/login',json=dict(email=self.platform_id+'@example.com',password=self.password,code=code or totp(self.mfa_key,int(datetime.now(timezone.utc).timestamp())//30)))
 
     def security(self,token,action='resume',key='recover'):
-        return self.platform_client.post(f'/platform/hotels/{self.tenant}/security/{action}',headers=self.headers(token),json=dict(reason='Offline incident review completed',reference='CASE-2026-1',idempotency_key=key))
+        return self.platform_client.post(f'/platform/hotels/{self.tenant}/security/{action}',headers=self.headers(token),json=dict(reason='Offline incident review completed',reference='CASE-2026-1',idempotency_key=self.platform_id+key))
 
     def test_resume_only_clears_security_not_billing_or_membership(self):
         with psycopg.connect(self.owner_dsn) as conn: conn.execute("UPDATE prsystem.hotel_access SET security_suspended=true,expires_at=now()-interval '3 days' WHERE tenant_id=%s",(self.tenant,))

@@ -3,6 +3,7 @@
   'use strict';
   const byId = id => document.getElementById(id);
   const routes = {
+    '/staff/activate': {title:'Admin эрхээ идэвхжүүлэх',endpoint:'/auth/admin/activate',activation:true},
     '/staff/accept': {title: 'Урилгаа зөвшөөрөх', endpoint: '/auth/invitations/accept'},
     '/staff/restaurant-accept': {title: 'Рестораны урилгаа зөвшөөрөх', endpoint: '/auth/restaurants/invitations/accept'},
     '/staff/reset': {title: 'Нууц үгээ шинэчлэх', endpoint: '/auth/password/reset/complete', reset: true},
@@ -29,11 +30,11 @@
   byId('title').textContent = route.title;
   document.title = `${route.title} · PRsystem`;
   byId('scope').textContent = location.pathname.includes('restaurant') ? 'Рестораны ажилтан' : 'Ажилтны эрх';
-  byId('intro').textContent = route.reset
+  byId('intro').textContent = route.activation ? 'Буудлынхаа Admin эрхийг ашиглах нууц үгээ үүсгэнэ үү.' : route.reset
     ? 'Шинэ нууц үг хадгалагдмагц бүх төхөөрөмжөөс гарна. Дараа нь дахин нэвтэрнэ үү.'
     : 'Урилгыг зөвшөөрснөөр танд олгосон ажлын эрх идэвхжинэ.';
-  byId('account-kind').hidden = Boolean(route.reset);
-  const isNew = () => route.reset || form.elements.kind.value === 'new';
+  byId('account-kind').hidden = Boolean(route.reset || route.activation);
+  const isNew = () => route.reset || route.activation || form.elements.kind.value === 'new';
   const update = () => {
     password.autocomplete = isNew() ? 'new-password' : 'current-password';
     byId('password-label').textContent = isNew() ? 'Шинэ нууц үг' : 'Одоогийн нууц үг';
@@ -43,7 +44,7 @@
   };
   form.addEventListener('change', update);
   update();
-  submit.textContent = route.reset ? 'Нууц үг шинэчлэх' : 'Урилга зөвшөөрөх';
+  submit.textContent = route.activation ? 'Эрх идэвхжүүлэх' : route.reset ? 'Нууц үг шинэчлэх' : 'Урилга зөвшөөрөх';
   const label = submit.textContent;
   form.hidden = false;
   byId('reveal').addEventListener('click', () => {
@@ -83,7 +84,7 @@
         secret = '';
         password.value = '';
         form.hidden = true;
-        say(route.reset ? 'Нууц үг шинэчлэгдлээ. Шинэ нууц үгээрээ дахин нэвтэрнэ үү.'
+        say(route.activation ? 'Admin эрх идэвхжлээ. Ажлын системдээ нэвтэрнэ үү.' : route.reset ? 'Нууц үг шинэчлэгдлээ. Шинэ нууц үгээрээ дахин нэвтэрнэ үү.'
           : 'Урилга зөвшөөрөгдлөө. Ажлын системдээ нэвтэрч эрхээ ашиглана уу.');
       } else if (data.code === 'INVALID_LINK') {
         secret = '';

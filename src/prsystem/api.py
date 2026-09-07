@@ -22,6 +22,7 @@ from prsystem.restaurant_identity import RestaurantIdentity
 from prsystem.cleaning import CleaningService
 from prsystem.shifts import ShiftService
 from prsystem.platform import PlatformService
+from prsystem.onboarding import OnboardingService
 
 
 class Login(BaseModel):
@@ -67,6 +68,38 @@ class RoleChange(MembershipChange):
 
 class WorkReplacement(MembershipChange):
     replacement_id: str = Field(min_length=1, max_length=128)
+
+
+class OnboardingApplication(BaseModel):
+    model_config = ConfigDict(extra="forbid",strict=True)
+    owner_kind: Literal["INDIVIDUAL","COMPANY"]
+    owner_identifier: str = Field(min_length=5,max_length=20)
+    first_name: str = Field(min_length=1,max_length=200)
+    last_name: str = Field(min_length=1,max_length=200)
+    company_name: str | None = Field(default=None,min_length=1,max_length=200)
+    position: str | None = Field(default=None,min_length=1,max_length=200)
+    phone: str = Field(min_length=8,max_length=16)
+    email: str = Field(min_length=3,max_length=254)
+    contact_phone: str = Field(min_length=8,max_length=16)
+    hotel_name: str = Field(min_length=1,max_length=200)
+    hotel_phone: str = Field(min_length=8,max_length=16)
+    district: str = Field(min_length=1,max_length=200)
+    ward: str = Field(min_length=1,max_length=200)
+    address: str = Field(min_length=1,max_length=500)
+    latitude: float = Field(ge=-90,le=90,allow_inf_nan=False)
+    longitude: float = Field(ge=-180,le=180,allow_inf_nan=False)
+    package_mnt: int
+    months: int
+
+
+class OnboardingOTP(BaseModel):
+    model_config = ConfigDict(extra="forbid",strict=True)
+    code: SecretStr = Field(min_length=4,max_length=8)
+
+
+class AccountProof(BaseModel):
+    model_config = ConfigDict(extra="forbid",strict=True)
+    staff_token: SecretStr = Field(min_length=20,max_length=256)
 
 
 class PlatformLogin(BaseModel):
@@ -166,13 +199,14 @@ class RestaurantLink(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None) -> FastAPI:
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if token_key is None and os.environ.get("PRSYSTEM_LINK_KEY"):
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
     lifecycle = StaffLifecycle(service, token_key) if token_key is not None else None
     memberships = MembershipService(service)
     cleaning = CleaningService(service)
+    onboarding = OnboardingService(service,lifecycle,phone_gateway=phone_gateway,payment_gateways=payment_gateways)
     shifts = ShiftService(service)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
@@ -215,7 +249,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         code = str(exc)
-        status = {"PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
+        status = {"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
+                  "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
                   "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
                   "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
@@ -252,6 +287,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
 
     static_root = Path(__file__).with_name("static")
 
+    @app.get("/staff/activate", include_in_schema=False)
     @app.get("/staff/accept", include_in_schema=False)
     @app.get("/staff/reset", include_in_schema=False)
     @app.get("/staff/restaurant-accept", include_in_schema=False)
@@ -312,6 +348,34 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/platform/hotels/{tenant_id}/security/{action}")
     def platform_security(tenant_id: str,action: Literal["suspend","resume"],body: SecurityRecovery,secret: Annotated[str,Depends(token)]):
         return platform_service().hotel_security(secret,tenant_id,action=="suspend",body.idempotency_key,body.reason,body.reference)
+
+    @app.post("/onboarding/applications",status_code=201)
+    def onboarding_create(body: OnboardingApplication,request: Request):
+        return onboarding.create(body.model_dump(exclude_none=True),peer(request))
+
+    @app.post("/onboarding/{application_id}/phone/request",status_code=202)
+    def onboarding_phone_request(application_id: str,request: Request,secret: Annotated[str,Depends(token)]):
+        return onboarding.request_phone(application_id,secret,peer(request))
+
+    @app.post("/onboarding/{application_id}/phone/verify")
+    def onboarding_phone_verify(application_id: str,body: OnboardingOTP,request: Request,secret: Annotated[str,Depends(token)]):
+        return onboarding.verify_phone(application_id,secret,body.code.get_secret_value(),peer(request))
+
+    @app.post("/onboarding/{application_id}/account-proof")
+    def onboarding_proof(application_id: str,body: AccountProof,secret: Annotated[str,Depends(token)]):
+        return onboarding.prove_account(application_id,secret,body.staff_token.get_secret_value())
+
+    @app.post("/onboarding/{application_id}/invoice/{provider}")
+    def onboarding_invoice(application_id: str,provider: Literal["QPAY","KHAAN"],secret: Annotated[str,Depends(token)]):
+        return onboarding.invoice(application_id,secret,provider)
+
+    @app.post("/auth/admin/activate")
+    def admin_activation(body: LinkPassword,request: Request):
+        return onboarding.accept(body.token.get_secret_value(),body.password.get_secret_value(),peer(request))
+
+    @app.post("/platform/onboarding/{application_id}/retry",status_code=202)
+    def onboarding_retry(application_id: str,body: SecurityRecovery,secret: Annotated[str,Depends(token)]):
+        return onboarding.manual_retry(platform_service(),secret,application_id,body.idempotency_key,body.reason,body.reference)
 
     @app.get("/health")
     def health():

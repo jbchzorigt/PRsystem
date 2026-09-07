@@ -58,7 +58,7 @@ class SMTPTransport:
 
     def message(self, envelope):
         s = self.settings
-        path = {"INVITE": "/staff/accept", "RESET": "/staff/reset", "RESTAURANT_INVITE": "/staff/restaurant-accept"}.get(envelope.purpose)
+        path = {"ADMIN_ACTIVATION": "/staff/activate", "INVITE": "/staff/accept", "RESET": "/staff/reset", "RESTAURANT_INVITE": "/staff/restaurant-accept"}.get(envelope.purpose)
         if path is None or normalized_email(envelope.recipient) != envelope.recipient or not re.fullmatch(r"[a-f0-9]{32}", envelope.link_id):
             raise TransportFailure("INVALID_ENVELOPE", permanent=True)
         # Fragment keeps the secret out of HTTP URL/access logs. The HTTPS UI
@@ -66,7 +66,7 @@ class SMTPTransport:
         link = s.public_origin.rstrip('/') + path + '#token=' + quote(envelope.token, safe='')
         msg = EmailMessage()
         msg['From'], msg['To'] = s.sender, envelope.recipient
-        msg['Subject'] = 'PRsystem: ажилтны урилга' if envelope.purpose in {'INVITE', 'RESTAURANT_INVITE'} else 'PRsystem: нууц үг сэргээх'
+        msg['Subject'] = 'PRsystem: Admin эрх идэвхжүүлэх' if envelope.purpose == 'ADMIN_ACTIVATION' else 'PRsystem: ажилтны урилга' if envelope.purpose in {'INVITE', 'RESTAURANT_INVITE'} else 'PRsystem: нууц үг сэргээх'
         msg['Date'] = formatdate(localtime=False, usegmt=True)
         msg['Message-ID'] = f'<{envelope.link_id}@{s.sender.split("@")[1]}>'
         msg.set_content('PRsystem\n\nДараах нэг удаагийн холбоосыг нээнэ үү:\n' + link

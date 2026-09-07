@@ -114,7 +114,7 @@ class StaffLifecycle(StaffCommands):
             WHERE purpose = %s AND account_id = %s AND tenant_id IS NOT DISTINCT FROM %s AND state = 'ACTIVE'""",
             (purpose, account, tenant))
         link_id = secrets.token_hex(16)
-        expires = conn.execute("SELECT clock_timestamp() + %s", (self.invite_ttl if purpose == "INVITE" else self.reset_ttl,)).fetchone()[0]
+        expires = conn.execute("SELECT clock_timestamp() + %s", (self.invite_ttl if purpose in {"INVITE", "ADMIN_ACTIVATION"} else self.reset_ttl,)).fetchone()[0]
         conn.execute("""INSERT INTO prsystem.staff_link
             (id, purpose, account_id, tenant_id, inviter_id, membership_revision, issued_epoch, token_hash, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
@@ -302,6 +302,10 @@ class StaffLifecycle(StaffCommands):
                 member = conn.execute("SELECT status, revision FROM prsystem.staff_membership WHERE tenant_id = %s AND account_id = %s",
                                       (row[6], row[5])).fetchone()
                 if member != ("PENDING", row[7]):
+                    return None
+            if row[0] == "ADMIN_ACTIVATION":
+                member = conn.execute("SELECT status,revision,is_primary FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=%s",(row[6],row[5])).fetchone()
+                if member != ("PENDING",row[7],True) or row[3] != row[4]:
                     return None
             if row[0] == "RESTAURANT_INVITE":
                 member = conn.execute("SELECT status, revision FROM prsystem.restaurant_membership WHERE restaurant_id = %s AND account_id = %s",
