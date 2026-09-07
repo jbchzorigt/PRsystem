@@ -127,6 +127,8 @@ class CheckoutService(GuestFinance):
                 raise DomainError('WORK_SOURCE_CONFLICT')
             if conn.execute("SELECT 1 FROM prsystem.room_cleaning_request WHERE tenant_id=%s AND room_id=%s AND state='OPEN'",(tenant,checkout[0])).fetchone():raise DomainError('WORK_SOURCE_CONFLICT')
             conn.execute("UPDATE prsystem.room SET cleaning_state='CLEAN',revision=revision+1 WHERE tenant_id=%s AND id=%s",(tenant,checkout[0]))
+            from prsystem.room_lifecycle import RoomLifecycle
+            RoomLifecycle.sweep(conn,tenant)
             result=dict(stay_id=stay,room_id=checkout[0],cleaning_state='CLEAN',room_revision=revision+1)
             self.event(conn,tenant,actor,'MANAGER_CHECKOUT_CLEANED',stay,result)
             self._save_receipt(conn,tenant,key,actor,command,result)

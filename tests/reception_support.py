@@ -11,6 +11,17 @@ class ReceptionCase(OperationalCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
+                'GRANT SELECT ON prsystem.shift_takeover TO {}',
+                'GRANT SELECT,INSERT ON prsystem.shift_policy,prsystem.shift_handover,prsystem.handover_count,prsystem.cash_custody TO {}',
+                'GRANT UPDATE(single_worker,revision,configured_by) ON prsystem.shift_policy TO {}',
+                'GRANT UPDATE(state,decided_at,decision_reason,new_shift_id) ON prsystem.shift_handover TO {}',
+                'GRANT UPDATE(state,released_at) ON prsystem.cash_custody TO {}',
+                'GRANT UPDATE(state,closed_at,review_state) ON prsystem.reception_shift TO {}',
+                'GRANT SELECT,INSERT ON prsystem.room_lifecycle_intent,prsystem.room_lifecycle_completion TO {}',
+                'GRANT SELECT ON prsystem.reception_dependency_blocker TO {}',
+                'GRANT EXECUTE ON FUNCTION prsystem.room_blockers(text,text),prsystem.category_blockers(text,text),prsystem.complete_room_retirement(text) TO {}',
+                'GRANT UPDATE(status) ON prsystem.room_category TO {}',
+                'GRANT UPDATE(status,category_id) ON prsystem.room TO {}',
                 'GRANT SELECT,INSERT ON prsystem.room_readiness_event TO {}',
                 'GRANT USAGE ON SEQUENCE prsystem.room_readiness_event_sequence_seq TO {}',
                 'GRANT SELECT,INSERT ON prsystem.cash_location_config,prsystem.cash_initial_opening,prsystem.cash_shift_reference,prsystem.reception_shift,prsystem.room_hotel_settings,prsystem.room_category,prsystem.room TO {}',

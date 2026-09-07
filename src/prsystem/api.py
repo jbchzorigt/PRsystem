@@ -34,6 +34,8 @@ from prsystem.guest_payments import GuestPayments
 from prsystem.checkout import CheckoutService
 from prsystem.guest_access import GuestAccess
 from prsystem.stay_amendments import StayAmendments
+from prsystem.room_lifecycle import RoomLifecycle
+from prsystem.handover import HandoverService
 from prsystem.guest_identity import vault_from_environment
 
 
@@ -115,6 +117,30 @@ class TimeAmendment(BaseModel):
 class AmendmentDecision(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     approve: bool
+    reason: str=Field(min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
+class RoomTransition(MembershipChange):
+    action: Literal['DEACTIVATE','REACTIVATE','CANCEL_RETIRING','REASSIGN_CATEGORY']
+    category_id: str|None=Field(default=None,min_length=1,max_length=128)
+
+
+class ShiftPolicy(InvitationChange):
+    single_worker: bool
+
+
+class HandoverSubmit(PhysicalOpening):
+    receiver_id: str=Field(min_length=1,max_length=128)
+    reason: str=Field(min_length=1,max_length=1000)
+    self_close: bool=False
+    custody_id: str|None=Field(default=None,min_length=1,max_length=128)
+
+
+class HandoverDecision(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    accept: bool
+    count_id: str|None=Field(default=None,min_length=1,max_length=128)
     reason: str=Field(min_length=1,max_length=1000)
     idempotency_key: str=Field(min_length=1,max_length=128)
 
@@ -431,8 +457,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     onboarding = OnboardingService(service,lifecycle,phone_gateway=phone_gateway,payment_gateways=payment_gateways)
     renewals = RenewalService(service,payment_gateways)
     shifts = ShiftService(service)
+    handovers = HandoverService(service)
     openings = OpeningService(service)
     rooms = RoomService(service)
+    room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service)
     stays = StayService(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
@@ -493,6 +521,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'INVALID_TRANSACTION_TIME':422,'PAYMENT_REFERENCE_USED':409,'GUEST_PROVIDER_UNAVAILABLE':503})
         stay_errors.update({'CHECKOUT_SOURCE_NOT_READY':409,'CHECKOUT_FINANCE_PENDING':409})
         stay_errors.update({'INVALID_GUEST_ACCESS':401,'GUEST_ACCESS_LIMIT':409,'AMENDMENT_PENDING':409})
+        stay_errors.update({'INVALID_LIFECYCLE_TRANSITION':409,'LIFECYCLE_BLOCKED':409})
+        stay_errors.update({'HANDOVER_PENDING':409,'RECOUNT_REQUIRED':409})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -575,9 +605,37 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def effective_deposit_settings(tenant_id: str,category_id: str,secret: Annotated[str,Depends(token)]):
         return guest_finance.read_setting(secret,tenant_id,category_id)
 
+    @app.put('/hotels/{tenant_id}/shifts/policy')
+    def configure_shift_policy(tenant_id: str,body: ShiftPolicy,secret: Annotated[str,Depends(token)]):
+        return handovers.policy(secret,tenant_id,body.single_worker,body.expected_revision,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/handovers')
+    def handover_inbox(tenant_id: str,secret: Annotated[str,Depends(token)]):
+        return handovers.inbox(secret,tenant_id)
+
+    @app.post('/hotels/{tenant_id}/handovers',status_code=201)
+    def submit_handover(tenant_id: str,body: HandoverSubmit,secret: Annotated[str,Depends(token)]):
+        return handovers.submit(secret,tenant_id,body.receiver_id,body.actual,body.idempotency_key,body.reason,self_close=body.self_close,custody=body.custody_id)
+
+    @app.post('/hotels/{tenant_id}/handovers/{handover_id}/counts',status_code=201)
+    def count_handover(tenant_id: str,handover_id: str,body: PhysicalOpening,secret: Annotated[str,Depends(token)]):
+        return handovers.count_handover(secret,tenant_id,handover_id,body.actual,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/handovers/{handover_id}/decision')
+    def decide_handover(tenant_id: str,handover_id: str,body: HandoverDecision,secret: Annotated[str,Depends(token)]):
+        return handovers.decide(secret,tenant_id,handover_id,body.accept,body.count_id,body.reason,body.idempotency_key)
+
     @app.post('/guest/access')
     def redeem_guest_access(body: GuestRedeem):
         return guest_access.redeem(body.qr_token.get_secret_value(),body.code.get_secret_value())
+
+    @app.post('/hotels/{tenant_id}/rooms/{room_id}/lifecycle')
+    def change_room_lifecycle(tenant_id: str,room_id: str,body: RoomTransition,secret: Annotated[str,Depends(token)]):
+        return room_lifecycle.change(secret,tenant_id,'room',room_id,body.action,body.expected_revision,body.reason,body.idempotency_key,body.category_id)
+
+    @app.post('/hotels/{tenant_id}/room-categories/{category_id}/lifecycle')
+    def change_category_lifecycle(tenant_id: str,category_id: str,body: RoomTransition,secret: Annotated[str,Depends(token)]):
+        return room_lifecycle.change(secret,tenant_id,'category',category_id,body.action,body.expected_revision,body.reason,body.idempotency_key,body.category_id)
 
     @app.get('/guest/session')
     def guest_session(secret: Annotated[str,Depends(token)]):

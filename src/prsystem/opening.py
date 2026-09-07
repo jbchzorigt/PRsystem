@@ -59,7 +59,7 @@ class OpeningService(ShiftService):
             revision=self._book(conn,tenant);self._unused(conn,tenant,drawer)
             config=conn.execute('SELECT expected_float,status,revision FROM prsystem.cash_location_config WHERE tenant_id=%s AND drawer_id=%s FOR SHARE',(tenant,drawer)).fetchone()
             if not config or config[1]!='ACTIVE':raise DomainError('DRAWER_NOT_CONFIGURED')
-            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,actor)).fetchone():raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
+            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state IN ('OPEN','SUBMITTED')",(tenant,actor)).fetchone():raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
             shift=secrets.token_hex(16)
             conn.execute('UPDATE prsystem.cash_drawer SET shift_id=%s,posted=%s WHERE tenant_id=%s AND id=%s',(shift,actual,tenant,drawer))
             now=conn.execute('SELECT clock_timestamp()').fetchone()[0]

@@ -129,6 +129,7 @@ class CleaningService(MembershipService):
             if not source: raise DomainError('WORK_SOURCE_NOT_FOUND')
             bridge=conn.execute('SELECT room_id,state FROM prsystem.room_cleaning_request WHERE tenant_id=%s AND source_id=%s',(tenant,source[0])).fetchone()
             if bridge:
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",('room-catalog:'+tenant,))
                 room=conn.execute('SELECT cleaning_state FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,bridge[0])).fetchone()
                 if bridge[1]!='OPEN' or not room or room[0]!='CLEANING': raise DomainError('CLEANING_NOT_STARTED')
             source=conn.execute('SELECT id,room_id,configuration_id,configuration_version FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant,source[0])).fetchone()
@@ -163,6 +164,8 @@ class CleaningService(MembershipService):
             if done and bridge:
                 conn.execute("UPDATE prsystem.room_cleaning_request SET state='DONE' WHERE tenant_id=%s AND source_id=%s",(tenant,source[0]))
                 conn.execute("UPDATE prsystem.room SET cleaning_state='CLEAN',revision=revision+1 WHERE tenant_id=%s AND id=%s",(tenant,bridge[0]))
+                from prsystem.room_lifecycle import RoomLifecycle
+                RoomLifecycle.sweep(conn,tenant)
             result=dict(posting_id=posting,task_id=task_id,source_id=source[0],state='DONE' if done else 'OPEN',remaining=action[2]-action[3]-quantity)
             self.event(conn,tenant,actor,'CLEANING_POSTED',source[0],dict(result,room_id=source[1],configuration_id=source[2],configuration_version=source[3],action_id=action_id))
             self._save_receipt(conn,tenant,key,actor,command,result)

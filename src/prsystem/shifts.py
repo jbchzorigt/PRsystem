@@ -63,14 +63,18 @@ class ShiftService(CleaningService):
             row=conn.execute('''SELECT e.claimant_id,e.revision,w.source_id,w.owner_id FROM prsystem.staff_work_exception e
                 JOIN prsystem.staff_open_work w ON (w.tenant_id,w.id)=(e.tenant_id,e.work_id)
                 JOIN prsystem.reception_shift s ON (s.tenant_id,s.id)=(w.tenant_id,w.source_id)
-                WHERE e.tenant_id=%s AND e.id=%s AND w.kind='SHIFT' AND w.state='BLOCKED' AND s.state='OPEN'
+                WHERE e.tenant_id=%s AND e.id=%s AND w.kind='SHIFT' AND w.state='BLOCKED' AND s.state IN ('OPEN','SUBMITTED')
                 FOR UPDATE OF e,w,s''',(tenant,exception)).fetchone()
             if not row: raise DomainError('WORK_SOURCE_NOT_FOUND')
             if type(revision) is not int or row[1]!=revision: raise DomainError('REVISION_CONFLICT')
             if row[0]!=actor: raise DomainError('EXCEPTION_NOT_CLAIMED')
             if replacement==row[3]: raise DomainError('REPLACEMENT_REQUIRED')
-            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,replacement)).fetchone(): raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
+            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state IN ('OPEN','SUBMITTED')",(tenant,replacement)).fetchone(): raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
             if conn.execute('SELECT 1 FROM prsystem.shift_takeover WHERE tenant_id=%s AND exception_id=%s',(tenant,exception)).fetchone(): raise DomainError('TAKEOVER_ALREADY_PREPARED')
+            # Suspension during ordinary handover routes through the established takeover queue.
+            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s AND state='SUBMITTED'",(tenant,row[2])).fetchone():
+                conn.execute("UPDATE prsystem.shift_handover SET state='RETURNED',decided_at=clock_timestamp(),decision_reason='SOURCE_ENTERED_TAKEOVER' WHERE tenant_id=%s AND shift_id=%s AND state='SUBMITTED'",(tenant,row[2]))
+                conn.execute("UPDATE prsystem.reception_shift SET state='OPEN' WHERE tenant_id=%s AND id=%s",(tenant,row[2]))
             takeover=secrets.token_hex(16)
             conn.execute('INSERT INTO prsystem.shift_takeover (tenant_id,id,exception_id,shift_id,replacement_id,created_by) VALUES (%s,%s,%s,%s,%s,%s)',(tenant,takeover,exception,row[2],replacement,actor))
             result=dict(takeover_id=takeover,shift_id=row[2],replacement_id=replacement,status='PREPARED')
@@ -130,7 +134,7 @@ class ShiftService(CleaningService):
             if latest!=count_id: raise DomainError('STALE_CASH_COUNT')
             drawer=conn.execute('SELECT posted,reserved,shift_id FROM prsystem.cash_drawer WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,row[3])).fetchone()
             if drawer!=(count[1],0,row[0]): raise DomainError('STALE_CASH_COUNT')
-            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,actor)).fetchone(): raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
+            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state IN ('OPEN','SUBMITTED')",(tenant,actor)).fetchone(): raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
             original_roles=conn.execute('SELECT owner_roles FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s',(tenant,row[0])).fetchone()[0]
             review='ADMIN_REQUIRED' if {'MANAGER','MANAGER_PLUS','UNKNOWN'} & set(original_roles) else 'MANAGER_REQUIRED'
             expires=conn.execute('SELECT expires_at FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]
@@ -235,6 +239,7 @@ class ShiftService(CleaningService):
             if not row or row[1]!='CLOSED' or row[2] not in {'MANAGER_REQUIRED','ADMIN_REQUIRED','DISPUTED'}: raise DomainError('WORK_NOT_OPEN')
             replacement=conn.execute('SELECT replacement_id FROM prsystem.shift_takeover WHERE tenant_id=%s AND shift_id=%s',(tenant,shift_id)).fetchone()
             self_review=actor in {row[0],replacement[0] if replacement else None}
+            if conn.execute("SELECT 1 FROM prsystem.shift_handover WHERE tenant_id=%s AND shift_id=%s AND receiver_id=%s AND state='ACCEPTED'",(tenant,shift_id,actor)).fetchone():self_review=True
             if row[2]=='ADMIN_REQUIRED' or {'MANAGER','MANAGER_PLUS','UNKNOWN'} & set(row[3]) or self_review:
                 if 'HOTEL_ADMIN' not in roles: raise DomainError('FORBIDDEN')
             result=dict(shift_id=shift_id,review_state='APPROVED' if decision=='APPROVE' else 'DISPUTED',self_reviewed=self_review)
@@ -264,7 +269,7 @@ class ShiftService(CleaningService):
             previous=conn.execute('''SELECT a.status,a.verified_at,m.status,m.roles FROM prsystem.staff_account a
                 JOIN prsystem.staff_membership m ON m.account_id=a.id WHERE a.id=%s AND m.tenant_id=%s FOR SHARE OF m''',(row[0],tenant)).fetchone()
             if previous and previous[0]=='ACTIVE' and previous[1] is not None and previous[2]=='ACTIVE' and 'RECEPTION' in previous[3]:raise DomainError('REPLACEMENT_STILL_ELIGIBLE')
-            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state='OPEN'",(tenant,replacement)).fetchone():raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
+            if conn.execute("SELECT 1 FROM prsystem.reception_shift WHERE tenant_id=%s AND owner_id=%s AND state IN ('OPEN','SUBMITTED')",(tenant,replacement)).fetchone():raise DomainError('REPLACEMENT_HAS_OPEN_SHIFT')
             conn.execute('UPDATE prsystem.shift_takeover SET replacement_id=%s WHERE tenant_id=%s AND id=%s',(replacement,tenant,takeover))
             conn.execute('UPDATE prsystem.staff_work_exception SET revision=revision+1 WHERE tenant_id=%s AND id=%s',(tenant,row[4]))
             result=dict(takeover_id=takeover,replacement_id=replacement,revision=revision+1)
