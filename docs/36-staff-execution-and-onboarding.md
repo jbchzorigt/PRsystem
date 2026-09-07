@@ -2,6 +2,8 @@
 
 **2026-09-07 · v0.7.0 · feat/approved-risk-controls · Draft PR #1**
 
+**Дараах update:** Хэрэглэгч API service бэлэн болоогүй тул [development mocks](37-development-mocks.md) хэрэглэж дараагийн ажил руу шилжихийг зөвшөөрсөн. [v0.8.0 Reception](38-reception-foundation.md)-д room catalog болон configured initial opening producer нэмэгдсэн. Доорх v0.7.0 integration үлдэгдлийг энэ update-тай хамт уншина.
+
 Энэ milestone нь 2-р шатны үлдсэн таван багцын серверийн хэрэгжилт болон
 email link-ийн веб хуудсыг нэмнэ. Бүх бүтээгдэхүүн production-ready болсон гэсэн
 тайлан биш. Canonical бизнесийн эх сурвалж: docs/03,15–19,21–22,24,26–27.
