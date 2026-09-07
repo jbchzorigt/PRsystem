@@ -134,13 +134,20 @@ class MembershipTests(StaffApiCase):
         self.assertEqual(self.change("reactivate", revision=2).status_code, 200)
 
     def test_subscription_and_security_gate_apply(self):
+        # Generic legacy work lacks an immutable reception_shift root. It must
+        # remain hidden/unclaimable even though eligible old shifts can finish.
+        self.register()
+        exception=self.change().json()['exception_ids'][0]
         with psycopg.connect(self.owner_dsn) as conn:
             conn.execute("UPDATE prsystem.hotel_access SET expires_at = now() - interval '3 days' WHERE tenant_id = %s", (self.tenant,))
         self.assertEqual(self.change().json()["code"], "SUBSCRIPTION_EXPIRED")
-        self.assertEqual(self.queue().json()["code"], "SUBSCRIPTION_EXPIRED")
+        self.assertEqual(self.queue().status_code, 200)
+        self.assertEqual(self.queue().json(), [])
+        self.assertEqual(self.claim(exception).json()["code"], "SUBSCRIPTION_EXPIRED")
         with psycopg.connect(self.owner_dsn) as conn:
             conn.execute("UPDATE prsystem.hotel_access SET security_suspended = true WHERE tenant_id = %s", (self.tenant,))
         self.assertEqual(self.change().json()["code"], "SECURITY_SUSPENDED")
+        self.assertEqual(self.queue().json()["code"], "SECURITY_SUSPENDED")
 
     def test_reason_revision_and_transition_validation(self):
         for extra in [{"reason": "   "}, {"expected_revision": True}, {"reason": ""}, {"unexpected": 1}]:

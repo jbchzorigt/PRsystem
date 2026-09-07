@@ -231,11 +231,11 @@ class ShiftService(CleaningService):
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None: return replay
             self._book(conn,tenant)
-            row=conn.execute('SELECT owner_id,state,review_state FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,shift_id)).fetchone()
+            row=conn.execute('SELECT owner_id,state,review_state,owner_roles FROM prsystem.reception_shift WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,shift_id)).fetchone()
             if not row or row[1]!='CLOSED' or row[2] not in {'MANAGER_REQUIRED','ADMIN_REQUIRED','DISPUTED'}: raise DomainError('WORK_NOT_OPEN')
             replacement=conn.execute('SELECT replacement_id FROM prsystem.shift_takeover WHERE tenant_id=%s AND shift_id=%s',(tenant,shift_id)).fetchone()
             self_review=actor in {row[0],replacement[0] if replacement else None}
-            if row[2]=='ADMIN_REQUIRED' or self_review:
+            if row[2]=='ADMIN_REQUIRED' or {'MANAGER','MANAGER_PLUS','UNKNOWN'} & set(row[3]) or self_review:
                 if 'HOTEL_ADMIN' not in roles: raise DomainError('FORBIDDEN')
             result=dict(shift_id=shift_id,review_state='APPROVED' if decision=='APPROVE' else 'DISPUTED',self_reviewed=self_review)
             conn.execute('UPDATE prsystem.reception_shift SET review_state=%s WHERE tenant_id=%s AND id=%s',(result['review_state'],tenant,shift_id))

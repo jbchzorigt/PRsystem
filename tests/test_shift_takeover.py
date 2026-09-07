@@ -248,3 +248,17 @@ class ShiftTakeoverTests(OperationalCase):
         self.assertEqual(result.status_code,200,result.text)
         with self.assertRaises(psycopg.Error):
             with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.reception_shift SET state='OPEN',closed_at=NULL WHERE tenant_id=%s AND id=%s",(self.tenant,self.shift))
+
+    def test_disputed_manager_shift_retains_admin_review_requirement(self):
+        self.worker,self.worker_token=self.add_staff(['MANAGER','RECEPTION'])
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("INSERT INTO prsystem.cash_drawer VALUES (%s,'managed','manager-shift',200,0)",(self.tenant,))
+        with transaction(self.app_dsn) as conn:self.shift=self.flow.register_shift(conn,self.tenant,self.worker,'managed')
+        self.prepare();self.expire()
+        closed=self.close(self.count(actual=200).json()['count_id'])
+        self.assertEqual(closed.status_code,200,closed.text)
+        self.assertEqual(closed.json()['review_state'],'ADMIN_REQUIRED')
+        self.assertEqual(self.flow.review(self.admin,self.tenant,self.shift,'DISPUTE','dispute','Further evidence needed')['review_state'],'DISPUTED')
+        with self.assertRaisesRegex(DomainError,'FORBIDDEN'):
+            self.flow.review(self.manager_token,self.tenant,self.shift,'APPROVE','manager-review','Manager reviewed')
+        self.assertEqual(self.flow.review(self.admin,self.tenant,self.shift,'APPROVE','admin-review','Evidence resolved')['review_state'],'APPROVED')

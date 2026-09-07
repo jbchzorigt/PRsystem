@@ -25,7 +25,7 @@
 | 2 | Paid onboarding → Primary Admin | Хэсэгчлэн: OTP/stored-owner proof ports, paid provisioning/activation, bounded worker бэлэн; бодит SMS/QPay/Khaan adapter, tax/eBarimt болон screening integration үлдсэн |
 | **3** | **Hotel Admin reset email хүсэлт** | **Дууссан:** canonical recipient, current scope/revision, idempotency, audit; бодит хүргэлт №1-ээс хамаарна |
 | **4** | **Unverified suspended invite recovery** | **Дууссан:** ижил membership → PENDING, шинэ нэг удаагийн invite, mandatory reason, хуучин link/session revoke |
-| 5 | Reception takeover execution | Хэсэгчлэн: shift/takeover, replacement recovery, count/variance, transfer terminalization, close/new shift/review API бэлэн; opening/payment producers, reconciliation delivery ба expiry-locked close integration үлдсэн |
+| 5 | Reception takeover execution | Хэсэгчлэн: shift/takeover, replacement recovery, count/variance, transfer terminalization, close/new shift/review API бэлэн; expiry-locked close бэлэн; opening/payment producers болон reconciliation delivery үлдсэн |
 | 6 | Cleaner reassignment/continuation | Хэсэгчлэн: source/task/stock, versioned reassignment, immutable continuation ба remaining-action guard бэлэн; canonical room/config/product/readiness/guest-charge producer integration үлдсэн |
 | 7 | Hotel/account/package-related recovery | Хэсэгчлэн: claimant/replacement recovery, Platform MFA security resume, paid renewal/floor бэлэн; enrollment/provider deployment, offline account-email recovery procedure болон billing integration үлдсэн |
 | **8** | **Denied-action security audit** | **Дууссан:** 401/403 denial нь rollback-аас тусдаа хадгалагдана; raw request/secret агуулахгүй |

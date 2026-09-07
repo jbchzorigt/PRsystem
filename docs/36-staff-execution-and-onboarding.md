@@ -12,7 +12,7 @@ email link-ийн веб хуудсыг нэмнэ. Бүх бүтээгдэхү�
 | --- | --- | --- |
 | №1 Email | Дөрвөн Mongolian link form, shared validation/feedback, no-store/CSP, fragment secret removal; SMTP worker-тай route таарна | SMTP sender/credential, HTTPS origin/hosting, worker schedule, зөвшөөрсөн recipient-тэй бодит хүргэлт |
 | №2 Onboarding | Application access token, immutable fields/price, phone challenge port, existing-account proof, stored-owner-contact challenge; paid-attempt uniqueness, all-or-nothing provisioning, Primary activation, 5-attempt leased job | Бодит SMS болон QPay/Khaan adapter, provider acceptance tests, tax/eBarimt болон duplicate-hotel screening integration |
-| №5 Reception | Shift source, old owner/history, replacement selection/recovery, exact transfer receive/return, Manager cancel request, payment reconciliation intent, blind count, count revision/TTL, close/new opening, separate review | Анхны configured float/opening болон payment source producer; provider reconciliation delivery; expiry-locked existing-obligation close adaptation |
+| №5 Reception | Shift source, old owner/history, replacement selection/recovery, exact transfer receive/return, Manager cancel request, payment reconciliation intent, blind count, count revision/TTL, close/new opening, separate review, pre-expiry root completion | Анхны configured float/opening болон payment source producer; provider reconciliation delivery |
 | №6 Cleaner | Immutable request snapshot, versioned assignment, source-wide remaining quantity lock, physical count/stock posting, untouched reassignment/linked continuation, old actor retention | Canonical room/config/product lifecycle producer, full inventory cost/guest-charge/readiness integration |
 | №7 Recovery | Separate Platform password/TOTP realm, recent MFA, explicit permission, security resume; authoritative renewal/floor/deferred entitlement; invalid replacement recovery | Platform enrollment/secret-store deployment, payment adapters; full offline account-email ownership recovery болон intra-term upgrade integration |
 
@@ -51,7 +51,22 @@ browser arbitrary opening/owner fact илгээдэг endpoint байхгүй. H
    сонгож болно. Previous replacement/count history үлдэнэ; шинэ actor шинэ count хийнэ.
 
 Account → tenant cash book → source/exception/transfer гэсэн lock дараалал.
-Existing generic `PostgresCash` new reserve/spend дээр BLOCKED/CLOSED registered
+Expiry hard lock-ийн үед queue зөвхөн lock-оос өмнө нээгдсэн, одоо OPEN/BLOCKED
+shift-ийг буцаана. Claim, claimant/replacement recovery, prepare, count болон close
+нь серверийн immutable `opened_at`-аар root-ийг нотолно. `opened_at == locked_at`
+нь eligible биш. Transfer болон payment intent өөрийн recorded-at-аар давхар
+шалгагдана; хуучин shift шинэ төлбөр/шилжүүлэгт эрх нээхгүй.
+
+Pending үүрэг дууссан old shift-ийг lock-ийн дараа хаахад `new_shift_id` болон
+`opening_actual` NULL, `closing_actual` бодит count байна. Drawer нь CLOSED old
+shift дээр хадгалагдана; шинэ shift, cash income, худалдах эрх үүсэхгүй. Хаалтын
+дараах санхүүгийн review болон idempotent retry тусдаа боломжтой. Security
+suspension/current role шалгалт бүх үйлдэлд хэвээр. 015 migration нь root identity,
+recorded open time, opening snapshot-ийг өөрчлөх болон CLOSED shift-ийг нээхийг
+DB trigger-ээр хориглоно.
+
+Staff queue API role нь `reception_shift`-д SELECT шаарддаг; root history-д UPDATE
+эрх өгөхгүй. Existing generic `PostgresCash` new reserve/spend дээр BLOCKED/CLOSED registered
 shift-ийг нэмэлтээр хориглоно. Mandatory cash authorizer бусад financial source,
 current permission болон subscription facts-ийг цаашид ч шалгана.
 
@@ -170,7 +185,7 @@ upgrade difference, tax/eBarimt болон provider fee/net settlement нь бү
 
 ## 7. Deployment boundaries ба grants
 
-Migration 001–014-ийг privileged migration role-оор дарааллаар ажиллуулна.
+Migration 001–015-ийг privileged migration role-оор дарааллаар ажиллуулна.
 Runtime table owner/superuser/BYPASSRLS ашиглахгүй. 009 migration нь existing cash
 projection-оос history identities backfill хийдэг тул migration role бүх tenant
 cash row-г унших эрхтэй байх ёстой. Runtime дээр `row_security` bypass хийхгүй.
