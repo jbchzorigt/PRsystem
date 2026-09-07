@@ -20,7 +20,7 @@ class RoomCatalogTests(ReceptionCase):
         data.update(extra)
         return self.client.post(f'/hotels/{self.tenant}/rooms',headers=self.headers(token or self.manager_token),json=data)
 
-    def settings(self,token=None,**extra):
+    def configure_prices(self,token=None,**extra):
         data=dict(hourly_price=10000,nightly_price=80000,checkout_time='12:00',expected_revision=0,idempotency_key='settings')
         data.update(extra)
         return self.client.put(f'/hotels/{self.tenant}/rooms/settings',headers=self.headers(token or self.manager_token),json=data)
@@ -29,7 +29,7 @@ class RoomCatalogTests(ReceptionCase):
         return self.client.get(f'/hotels/{tenant or self.tenant}/rooms',headers=self.headers(token or self.worker_token),params=params)
 
     def test_manager_sets_up_catalog_and_reception_sees_versioned_tariff_sources(self):
-        self.assertEqual(self.settings().status_code,200)
+        self.assertEqual(self.configure_prices().status_code,200)
         category=self.category();self.assertEqual(category.status_code,201,category.text)
         room=self.room(category.json()['category_id']);self.assertEqual(room.status_code,201,room.text)
         rows=self.listing();self.assertEqual(rows.status_code,200,rows.text)
@@ -42,7 +42,7 @@ class RoomCatalogTests(ReceptionCase):
         self.assertNotIn('available',item)
 
     def test_optional_overrides_unset_to_hotel_with_cas_and_history(self):
-        self.settings();category=self.category(nightly_price=None).json()['category_id']
+        self.configure_prices();category=self.category(nightly_price=None).json()['category_id']
         room=self.room(category).json()['room_id']
         body=dict(hourly_price=None,nightly_price=None,expected_revision=1,idempotency_key='unset')
         path=f'/hotels/{self.tenant}/rooms/{room}/tariffs'
@@ -57,7 +57,7 @@ class RoomCatalogTests(ReceptionCase):
     def test_reception_and_admin_do_not_inherit_manager_configuration(self):
         for token in (self.worker_token,self.admin):
             self.assertEqual(self.category(token).status_code,403)
-            self.assertEqual(self.settings(token).status_code,403)
+            self.assertEqual(self.configure_prices(token).status_code,403)
         self.assertEqual(self.category().status_code,201)
 
     def test_manager_plus_entitlement_and_expiry_security_gates(self):
@@ -106,5 +106,5 @@ class RoomCatalogTests(ReceptionCase):
         category=self.category().json()['category_id']
         for extra in [dict(status='RETIRING'),dict(cleaning_state='CLEAN'),dict(minibar_mode='ON'),dict(hourly_price=True),dict(hourly_price=0)]:
             self.assertEqual(self.room(category,**extra).status_code,422)
-        self.assertEqual(self.settings(checkout_time='25:00').status_code,422)
+        self.assertEqual(self.configure_prices(checkout_time='25:00').status_code,422)
         self.assertEqual(self.category(cleaning_buffer_minutes=-1).status_code,422)
