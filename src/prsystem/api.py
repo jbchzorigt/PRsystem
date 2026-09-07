@@ -21,6 +21,7 @@ from prsystem.security_audit import record_denial
 from prsystem.restaurant_identity import RestaurantIdentity
 from prsystem.cleaning import CleaningService
 from prsystem.shifts import ShiftService
+from prsystem.platform import PlatformService
 
 
 class Login(BaseModel):
@@ -66,6 +67,25 @@ class RoleChange(MembershipChange):
 
 class WorkReplacement(MembershipChange):
     replacement_id: str = Field(min_length=1, max_length=128)
+
+
+class PlatformLogin(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    email: str = Field(min_length=3,max_length=254)
+    password: SecretStr = Field(min_length=1,max_length=128)
+    code: SecretStr = Field(min_length=6,max_length=6)
+
+
+class PlatformMFA(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    code: SecretStr = Field(min_length=6,max_length=6)
+
+
+class SecurityRecovery(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    reason: str = Field(min_length=1,max_length=1000)
+    reference: str = Field(min_length=1,max_length=200)
+    idempotency_key: str = Field(min_length=1,max_length=128)
 
 
 class CashCount(BaseModel):
@@ -146,7 +166,7 @@ class RestaurantLink(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None) -> FastAPI:
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if token_key is None and os.environ.get("PRSYSTEM_LINK_KEY"):
         token_key = base64.b64decode(os.environ["PRSYSTEM_LINK_KEY"], altchars=b"-_", validate=True)
@@ -154,6 +174,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     memberships = MembershipService(service)
     cleaning = CleaningService(service)
     shifts = ShiftService(service)
+    platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem staff API", version="0.6.0")
     bearer = HTTPBearer(auto_error=False)
@@ -166,6 +187,11 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def peer(request):
         # Ignore user-supplied X-Forwarded-For. Configure trusted proxies at deployment.
         return request.client.host if request.client else "unknown"
+
+    def platform_service():
+        if platform is None:
+            raise DomainError("PLATFORM_UNAVAILABLE")
+        return platform
 
     def links():
         if lifecycle is None:
@@ -189,7 +215,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.exception_handler(DomainError)
     async def domain_error(request, exc):
         code = str(exc)
-        status = {"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
+        status = {"PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
                   "INVALID_REASON": 422, "INVALID_REQUEST": 422, "EXCEPTION_NOT_FOUND": 404,
                   "INVALID_MEMBERSHIP_TRANSITION": 409, "EXCEPTION_ALREADY_CLAIMED": 409,
@@ -207,7 +233,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
             secret = authorization[1] if len(authorization) == 2 and authorization[0].lower() == "bearer" and 20 <= len(authorization[1]) <= 256 else None
             route = request.scope.get("route")
             try:
-                await run_in_threadpool(record_denial, service, bearer=secret,
+                if request.url.path.startswith("/platform/") and platform is not None:
+                    await run_in_threadpool(platform.denial,secret,getattr(route,"path","UNKNOWN"),code)
+                else:
+                    await run_in_threadpool(record_denial, service, bearer=secret,
                     tenant=request.path_params.get("tenant_id"), target=request.path_params.get("account_id"),
                     restaurant=request.path_params.get("restaurant_id"),
                     action=getattr(route, "path", "UNKNOWN"), method=request.method, code=code)
@@ -271,6 +300,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post("/hotels/{tenant_id}/shifts/{shift_id}/review/{decision}")
     def shift_review(tenant_id: str,shift_id: str,decision: Literal["approve","dispute"],body: MembershipChange,secret: Annotated[str,Depends(token)]):
         return shifts.review(secret,tenant_id,shift_id,decision.upper(),body.idempotency_key,body.reason)
+
+    @app.post("/platform/auth/login")
+    def platform_login(body: PlatformLogin,request: Request):
+        return platform_service().login(body.email,body.password.get_secret_value(),body.code.get_secret_value(),peer(request))
+
+    @app.post("/platform/auth/step-up")
+    def platform_mfa(body: PlatformMFA,request: Request,secret: Annotated[str,Depends(token)]):
+        return platform_service().step_up(secret,body.code.get_secret_value(),peer(request))
+
+    @app.post("/platform/hotels/{tenant_id}/security/{action}")
+    def platform_security(tenant_id: str,action: Literal["suspend","resume"],body: SecurityRecovery,secret: Annotated[str,Depends(token)]):
+        return platform_service().hotel_security(secret,tenant_id,action=="suspend",body.idempotency_key,body.reason,body.reference)
 
     @app.get("/health")
     def health():
