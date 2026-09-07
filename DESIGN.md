@@ -27,10 +27,10 @@ spacing:
 components:
   primary-button:
     backgroundColor: "{colors.primary}"
-    color: "{colors.surface}"
+    textColor: "{colors.surface}"
   field:
     backgroundColor: "{colors.surface}"
-    color: "{colors.ink}"
+    textColor: "{colors.ink}"
 ---
 
 # PRsystem design system
