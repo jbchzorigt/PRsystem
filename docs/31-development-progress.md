@@ -163,5 +163,6 @@ cancellation/no-show, payout болон scheduled worker/UI холбоосууд
 Ижил category-ийн физик өрөөг Reception check-in үед оноож, category claim-ийг
 stay occupancy руу нэг transaction-аар шилжүүлнэ. Paid price/planned checkout
 snapshot хадгалагдаж, кассын мөнгө өөрчлөгдөхгүй. Дэлгэрэнгүй: [booking hold adapter](46-booking-holds.md).
-7 шинэ integration тест нэмсэн; PostgreSQL CI баталгаажуулалт хүлээгдэж байна.
+7 шинэ integration тест нэмсэн; **463/463 backend тест skip-гүй**, мөн browser/API-contract/design/token шалгалтууд амжилттай.
+Source `157ff47f`; [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34197849312).
 Manager upgrade, hotel-caused cancellation болон шинэ source-ийн дэлгэцүүд үлдсэн.

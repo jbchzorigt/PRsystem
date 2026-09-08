@@ -99,6 +99,10 @@ Reception finance/readiness workflow; platform refund execution remains separate
 Seven new integration tests cover immutable paid pricing/checkout, replacement
 of the category claim, duplicate concurrent check-in, unpaid/early arrival,
 dirty/different-category rooms, token/client-money/production rejection and
-commit rollback. PostgreSQL CI validation for this addition is pending.
+commit rollback. Source `157ff47f7c8ce89293ae1d1fd81710485047d377` passed
+**463 backend tests without skips**, plus browser/API-contract/design/token
+checks: [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34197849312).
+Local discovery ran 88 tests and skipped 375 PostgreSQL-dependent tests.
+The following documentation-only commit records this evidence.
 Higher-category Manager upgrades, hotel-caused cancellation, staff booking inbox
 and customer/reception UI for this new source remain future integrations.
