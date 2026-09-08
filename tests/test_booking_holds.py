@@ -23,7 +23,15 @@ class BookingHoldTests(GuestFinanceCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
-                'GRANT SELECT,INSERT ON prsystem.booking_refund_request,prsystem.booking_refund_confirmation,prsystem.booking_hold_cancellation,prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
+                'GRANT SELECT,INSERT ON prsystem.booking_category_rank,prsystem.booking_upgrade,prsystem.booking_refund_request,prsystem.booking_refund_confirmation,prsystem.booking_hold_cancellation,prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
+                'GRANT SELECT,INSERT ON prsystem.booking_paid_source,prsystem.booking_beneficiary,prsystem.booking_settlement,prsystem.booking_settlement_adjustment,prsystem.booking_finance_event,prsystem.booking_payout_batch,prsystem.booking_payout_line,prsystem.booking_payout_void,prsystem.booking_payout_attempt,prsystem.booking_payout_result TO {}',
+                'GRANT SELECT,INSERT,UPDATE ON prsystem.booker_account,prsystem.booker_session,prsystem.booker_challenge,prsystem.booking_listing,prsystem.booking_publication,prsystem.booking_category_listing TO {}',
+                'GRANT SELECT,INSERT ON prsystem.booker_receipt,prsystem.booker_event TO {}',
+                'GRANT SELECT ON prsystem.platform_account,prsystem.platform_session,prsystem.platform_receipt TO {}',
+                'GRANT UPDATE(last_totp_counter) ON prsystem.platform_account TO {}',
+                'GRANT UPDATE(mfa_at,revoked_at) ON prsystem.platform_session TO {}',
+                'GRANT INSERT ON prsystem.platform_session,prsystem.platform_receipt,prsystem.platform_event TO {}',
+                'GRANT UPDATE(rank,revision) ON prsystem.booking_category_rank TO {}',
                 'GRANT UPDATE(last_provider_state) ON prsystem.booking_refund_request TO {}',
                 'GRANT UPDATE(booking_state,hold_state,applied_attempt_id,confirmation_snapshot) ON prsystem.booking_hold TO {}',
                 'GRANT UPDATE(state,invoice_id) ON prsystem.booking_hold_attempt TO {}',
@@ -356,10 +364,10 @@ class BookingHoldTests(GuestFinanceCase):
             self.assertEqual(cancelled+applied,1)
 
     def test_pending_and_applied_bookings_cannot_guest_cancel(self):
-        hold=self.begin();self.assert_status(self.cancel(hold),409)
-        self.assertEqual(self.call(hold).json()['booking_state'],'HOLDING')
+        hold=self.begin();self.assert_status(self.cancel(hold),200)
+        self.assertEqual(self.call(hold).json()['booking_state'],'CANCELLED_GUEST')
         self.pay();self.call(hold,'/reconcile')
-        self.assert_status(self.cancel(hold),200)
+        self.assertEqual(self.call(hold).json()['refund_required_mnt'],160000)
         self.assert_status(self.cancel(hold,key='again'),409)
         self.assert_status(self.apply_hold(hold),409)
 
@@ -516,3 +524,245 @@ class BookingHoldTests(GuestFinanceCase):
         self.assertEqual(self.store.inspect('refund'),[])
         self.assertEqual(self.call(hold).json()['refunds'],[])
         self.assert_status(self.refund_reconcile(hold),200)
+
+    def terminal(self,hold,outcome,token=None,key='terminal'):
+        return self.client.post(f'/hotels/{self.tenant}/booking-holds/{hold["booking_id"]}/terminal',headers=self.headers(token or self.worker_token),json=dict(outcome=outcome,reason='Guest did not arrive / no room available',idempotency_key=key))
+
+    def test_no_show_cutoff_and_manager_reception_permissions(self):
+        from psycopg.types.json import Jsonb
+        hold=self.begin();self.pay();self.call(hold,'/reconcile')
+        self.assertEqual(self.terminal(hold,'NO_SHOW').json()['code'],'NO_SHOW_CUTOFF_NOT_PASSED')
+        with psycopg.connect(self.owner_dsn) as conn:
+            snapshot=conn.execute('SELECT snapshot FROM prsystem.booking_hold WHERE tenant_id=%s',(self.tenant,)).fetchone()[0]
+            snapshot['no_show_cutoff']=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+            conn.execute('ALTER TABLE prsystem.booking_hold DISABLE TRIGGER preserve_booking_hold')
+            conn.execute('UPDATE prsystem.booking_hold SET snapshot=%s WHERE tenant_id=%s',(Jsonb(snapshot),self.tenant))
+            conn.execute('ALTER TABLE prsystem.booking_hold ENABLE TRIGGER preserve_booking_hold')
+        result=self.assert_status(self.terminal(hold,'NO_SHOW'),200)
+        self.assertEqual((result['booking_state'],result['retained_mnt'],result['refund_due']),('NO_SHOW',80000,80000))
+        self.assertEqual(result,self.assert_status(self.terminal(hold,'NO_SHOW'),200))
+        self.assert_status(self.apply_hold(hold),409)
+        self.assert_status(self.hold(key='replacement'),201)
+
+    def test_hotel_cancellation_checks_rooms_and_requires_manager(self):
+        hold=self.arriving_hold()
+        self.assert_status(self.terminal(hold,'CANCELLED_HOTEL'),403)
+        self.assertEqual(self.terminal(hold,'CANCELLED_HOTEL',self.manager_token).json()['code'],'BOOKING_ROOM_AVAILABLE')
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.room SET cleaning_state='DIRTY' WHERE tenant_id=%s",(self.tenant,))
+        result=self.assert_status(self.terminal(hold,'CANCELLED_HOTEL',self.manager_token),200)
+        self.assertEqual((result['refund_due'],result['commission_mnt'],result['hotel_payable_mnt']),(160000,0,0))
+        self.assertEqual(self.refund_reconcile(hold).json()['refund_remaining_mnt'],160000)
+
+    def test_unpaid_cancellation_suppresses_unsent_invoice(self):
+        hold=self.assert_status(self.hold(),201)
+        self.assert_status(self.cancel(hold),200)
+        result=self.assert_status(self.call(hold,'/reconcile'),200)
+        self.assertEqual((result['booking_state'],result['refund_required_mnt']),('CANCELLED_GUEST',0))
+        self.assertEqual(self.store.inspect('invoice'),[])
+
+    def test_booking_status_uses_actual_checkin_and_checkout(self):
+        hold=self.arriving_hold();self.stay=self.assert_status(self.apply_hold(hold),201)
+        self.assertEqual(self.call(hold).json()['booking_state'],'CHECKED_IN')
+        self.assert_status(self.command('checkout',dict(expected_revision=1,idempotency_key='out')),200)
+        self.assertEqual(self.call(hold).json()['booking_state'],'COMPLETED')
+        inbox=self.client.get(f'/hotels/{self.tenant}/booking-holds',headers=self.headers(self.worker_token))
+        self.assertEqual(self.assert_status(inbox,200)[0]['booking_state'],'COMPLETED')
+
+    def test_manager_upgrade_preserves_paid_price_and_no_deposit(self):
+        hold=self.arriving_hold();original=self.room
+        category=self.assert_status(self.client.post(f'/hotels/{self.tenant}/room-categories',headers=self.headers(self.manager_token),json=dict(name='Suite',cleaning_buffer_minutes=30,deposit=60000,idempotency_key='suite')),201)['category_id']
+        for cat,rank in ((self.category,1),(category,2)):
+            self.assert_status(self.client.put(f'/hotels/{self.tenant}/room-categories/{cat}/booking-rank',headers=self.headers(self.manager_token),json=dict(rank=rank,expected_revision=0,idempotency_key='rank-'+cat)),200)
+        room=self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms',headers=self.headers(self.manager_token),json=dict(number='201',floor='2',category_id=category,nightly_price=900000,idempotency_key='suite-room')),201)['room_id']
+        self.room=room
+        task=self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms/{room}/cleaning-requests',headers=self.headers(self.manager_token),json=dict(assignee_id=self.worker,expected_revision=1,idempotency_key='suite-clean')),201)
+        self.assert_status(self.client.post(f'/hotels/{self.tenant}/cleaning/tasks/{task["task_id"]}/start',headers=self.headers(self.worker_token),json=dict(expected_revision=task['assignment_version'],idempotency_key='suite-start')),200)
+        self.assert_status(self.post_cleaning(task,key='suite-post'),200)
+        body=dict(room_id=room,reason='Same category unavailable',idempotency_key='upgrade')
+        path=f'/hotels/{self.tenant}/booking-holds/{hold["booking_id"]}/upgrade'
+        self.assert_status(self.client.post(path,headers=self.headers(self.worker_token),json=body),403)
+        self.assertEqual(self.client.post(path,headers=self.headers(self.manager_token),json=body).json()['code'],'BOOKING_ROOM_AVAILABLE')
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.room SET cleaning_state='DIRTY' WHERE tenant_id=%s AND id=%s",(self.tenant,original))
+        self.assertEqual(self.terminal(hold,'CANCELLED_HOTEL',self.manager_token).json()['code'],'BOOKING_ROOM_AVAILABLE')
+        self.assert_status(self.client.post(path,headers=self.headers(self.manager_token),json=body),200)
+        result=self.assert_status(self.apply_hold(hold),201)
+        self.assertEqual((result['room_id'],result['amount_mnt'],result['deposit_mnt']),(room,160000,0))
+
+    def finance_setup(self):
+        from uuid import uuid4
+        from prsystem.mock_bank import MockBankGateway
+        from prsystem.mfa import totp
+        self.bank=MockBankGateway(self.store);self.platform_id=uuid4().hex;self.mfa_key=b'12345678901234567890'
+        self.client.close()
+        self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways=self.gateways,bank_gateway=self.bank,platform_secret_resolver=lambda ref:self.mfa_key if ref==self.platform_id else None),client=(self.peer,12345))
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("INSERT INTO prsystem.platform_account(id,email,password_hash,permissions,mfa_key_ref) VALUES(%s,%s,%s,ARRAY['BOOKING_FINANCE','PAYOUT_EXECUTE'],%s)",(self.platform_id,self.platform_id+'@example.com',self.password_hash,self.platform_id))
+        self.finance_token=self.assert_status(self.client.post('/platform/auth/login',json=dict(email=self.platform_id+'@example.com',password=self.password,code=totp(self.mfa_key,int(datetime.now(timezone.utc).timestamp())//30))),200)['access_token']
+        self.bank.set_beneficiary(self.tenant,'verified')
+        self.assert_status(self.finance('/booking-beneficiary',dict(reference='verified',expected_revision=0,idempotency_key='beneficiary:'+self.tenant),method='put'),200)
+
+    def finance(self,path,body=None,method='post',token=None):
+        kwargs=dict(headers=self.headers(token or self.finance_token))
+        if method!='get':kwargs['json']=body or {}
+        return getattr(self.client,method)(f'/platform/hotels/{self.tenant}'+path,**kwargs)
+
+    def payable(self):
+        self.finance_setup();self.arrival=datetime.now(timezone.utc)+timedelta(hours=2)
+        hold=self.begin();self.pay();self.assert_status(self.call(hold,'/reconcile'),200)
+        self.assert_status(self.call(hold,'/cancel',dict(idempotency_key='cancel')),200)
+        self.assert_status(self.call(hold,'/refunds/reconcile'),200)
+        result=self.call(hold).json()
+        for refund in result['refunds']:self.gateways['QPAY'].set_refund_status(refund['request_id'],'SUCCEEDED')
+        self.assert_status(self.call(hold,'/refunds/reconcile'),200)
+        e=self.gateways['QPAY'].payment('booking:'+self.attempt,None)
+        self.bank.record_credit(self.tenant,'QPAY',e['merchant_id'],e['payment_id'],e['amount'],100)
+        self.capture=e['payment_id']
+        return hold
+
+    def mature(self,hold):
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('ALTER TABLE prsystem.booking_settlement DISABLE TRIGGER finance_immutable')
+            conn.execute("UPDATE prsystem.booking_settlement SET eligible_at=eligible_at-interval '2 days',batch_after=batch_after-interval '2 days' WHERE tenant_id=%s AND hold_id=%s",(self.tenant,hold['booking_id']))
+            conn.execute('ALTER TABLE prsystem.booking_settlement ENABLE TRIGGER finance_immutable')
+
+    def assess_booking(self,hold):return self.finance('/booking-holds/'+hold['booking_id']+'/settlement')
+    def make_batch(self,key='batch'):return self.finance('/booking-payouts',dict(idempotency_key=self.tenant+key))
+    def execute_batch(self,batch,key='execute'):return self.finance('/booking-payouts/'+batch['batch_id']+'/execute',dict(idempotency_key=self.tenant+key))
+    def reconcile_batch(self,batch,attempt):return self.finance('/booking-payouts/'+batch['batch_id']+'/attempts/'+attempt['attempt_id']+'/reconcile')
+
+    def test_settlement_requires_bank_refunds_then_preserves_first_eligibility(self):
+        hold=self.payable()
+        self.bank.dispute(self.tenant,self.capture,opened=True,chargeback=0)
+        self.assertEqual(self.assess_booking(hold).json()['state'],'HELD')
+        self.bank.dispute(self.tenant,self.capture,opened=False,chargeback=0)
+        first=self.assert_status(self.assess_booking(hold),200)
+        self.assertEqual((first['retained_mnt'],first['commission_mnt'],first['net_mnt']),(80000,3000,77000))
+        self.assertEqual(self.assess_booking(hold).json()['eligible_at'],first['eligible_at'])
+        self.assertEqual(self.make_batch('before-maturity').json()['state'],'NO_PAYABLE')
+        self.mature(hold);batch=self.assert_status(self.make_batch(),200);self.assertEqual(batch['amount_mnt'],77000)
+        self.assertEqual(self.make_batch().json(),batch)
+        self.assertEqual(self.make_batch('other').json()['state'],'NO_PAYABLE')
+
+    def test_payout_unknown_failed_retry_and_once_success(self):
+        hold=self.payable();self.assess_booking(hold);self.mature(hold);batch=self.make_batch().json()
+        first=self.assert_status(self.execute_batch(batch),200);self.assertEqual(first['state'],'PENDING')
+        self.bank.set_payout_status(first['attempt_id'],'UNKNOWN')
+        self.assertEqual(self.reconcile_batch(batch,first).json()['state'],'UNKNOWN')
+        self.assertEqual(self.execute_batch(batch,'retry').json()['code'],'PAYOUT_PENDING')
+        self.bank.set_payout_status(first['attempt_id'],'FAILED');self.assertEqual(self.reconcile_batch(batch,first).json()['state'],'FAILED')
+        second=self.assert_status(self.execute_batch(batch,'retry'),200);self.assertNotEqual(first['attempt_id'],second['attempt_id'])
+        self.bank.set_payout_status(second['attempt_id'],'SUCCEEDED');self.assertEqual(self.reconcile_batch(batch,second).json()['state'],'SUCCEEDED')
+        self.assertEqual(self.execute_batch(batch,'third').json()['code'],'PAYOUT_TERMINAL')
+        self.assertEqual(self.reconcile_batch(batch,second).json()['state'],'SUCCEEDED')
+
+    def test_stale_batch_void_releases_sources_and_preserves_history(self):
+        hold=self.payable();self.assess_booking(hold);self.mature(hold);batch=self.make_batch().json()
+        self.bank.dispute(self.tenant,self.capture,opened=False,chargeback=10000)
+        self.assertEqual(self.execute_batch(batch).json()['code'],'SETTLEMENT_REFRESH_REQUIRED')
+        self.assert_status(self.finance('/booking-payouts/'+batch['batch_id']+'/void',dict(reason='Bank correction',idempotency_key=self.tenant+'void')),200)
+        self.assert_status(self.assess_booking(hold),200)
+        replacement=self.assert_status(self.make_batch('replacement'),200);self.assertEqual(replacement['amount_mnt'],67375)
+        self.assertEqual(self.execute_batch(batch).json()['code'],'PAYOUT_TERMINAL')
+        self.assert_status(self.execute_batch(replacement,'new'),200)
+        with psycopg.connect(self.owner_dsn) as conn:self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_payout_batch WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],2)
+
+    def test_post_payout_chargeback_creates_receivable_without_reopening_paid_source(self):
+        hold=self.payable();self.assess_booking(hold);self.mature(hold);batch=self.make_batch().json();attempt=self.execute_batch(batch).json()
+        self.bank.set_payout_status(attempt['attempt_id'],'SUCCEEDED');self.reconcile_batch(batch,attempt)
+        self.bank.dispute(self.tenant,self.capture,opened=False,chargeback=10000);self.assess_booking(hold)
+        self.assertEqual(self.make_batch('next').json()['receivable_mnt'],9625)
+        self.assertEqual(self.execute_batch(batch,'again').json()['code'],'PAYOUT_TERMINAL')
+
+    def test_finance_realms_current_permissions_and_fresh_mfa(self):
+        self.finance_setup()
+        self.assertEqual(self.finance('/booking-finance',method='get',token=self.manager_token).status_code,401)
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.platform_session SET mfa_at=now()-interval '5 minutes' WHERE account_id=%s",(self.platform_id,))
+        self.assertEqual(self.finance('/booking-finance',method='get').json()['code'],'MFA_REQUIRED')
+
+    def booker_setup(self):
+        from prsystem.mock_providers import MockPhoneGateway
+        self.phone_gateway=MockPhoneGateway(self.store)
+        self.client.close();self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways=self.gateways,phone_gateway=self.phone_gateway),client=(self.peer,12345))
+        self.booker_phone='+97699112233';self.booker_password='booker-password-2026'
+        self.register_booker(self.booker_phone)
+        self.booker_token=self.assert_status(self.client.post('/booker/auth/login',json=dict(phone=self.booker_phone,password=self.booker_password)),200)['access_token']
+        self.photo='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZtYAAAAASUVORK5CYII='
+        self.assert_status(self.client.put(f'/hotels/{self.tenant}/booking-profile',headers=self.headers(self.manager_token),json=dict(name='Test hotel',address='Ulaanbaatar',phone=self.booker_phone,description='Hotel description',latitude=47.9,longitude=106.9,photos=[self.photo],published=True,accepting=True,expected_revision=0,idempotency_key='profile')),200)
+        self.assert_status(self.client.put(f'/hotels/{self.tenant}/room-categories/{self.category}/publication',headers=self.headers(self.manager_token),json=dict(photos=[self.photo],published=True,expected_revision=0,idempotency_key='category-public')),200)
+        with psycopg.connect(self.owner_dsn) as conn:
+            identity='publisher'+self.tenant
+            conn.execute("INSERT INTO prsystem.platform_account(id,email,password_hash,permissions,mfa_key_ref) VALUES(%s,%s,%s,'{}',%s)",(identity,identity+'@example.com',self.password_hash,identity))
+            conn.execute('INSERT INTO prsystem.booking_publication VALUES(%s,true,1,%s)',(self.tenant,identity))
+    def register_booker(self,phone,purpose='REGISTER',password=None):
+        challenge=self.assert_status(self.client.post('/booker/auth/challenge',json=dict(phone=phone,purpose=purpose,device='device:'+phone+':testing')),200)
+        otp=next(r['code'] for r in self.store.inspect('phone') if r['challenge']==challenge['challenge_id'])
+        response=self.client.post('/booker/auth/complete',json=dict(challenge_id=challenge['challenge_id'],code=otp,password=password or self.booker_password))
+        self.assert_status(response,200);return challenge
+    def public_search(self):return self.client.get('/public/booking-hotels',params=dict(planned_checkin_at=self.arrival.isoformat(),nights=2))
+    def customer_hold(self,token=None,key='customer'):
+        return self.client.post(f'/booker/hotels/{self.tenant}/bookings',headers=self.headers(token or self.booker_token),json=dict(category_id=self.category,planned_checkin_at=self.arrival.isoformat(),nights=2,provider='QPAY',idempotency_key=key))
+    def test_customer_booking_uses_separate_account_and_existing_inventory_guard(self):
+        self.booker_setup();before=self.assert_status(self.public_search(),200)
+        self.assertEqual(before['items'][0]['categories'][0]['available'],1)
+        hold=self.assert_status(self.customer_hold(),201);self.assertEqual(self.customer_hold().json(),hold)
+        self.assertEqual(self.hold().json()['code'],'BOOKING_CAPACITY_UNAVAILABLE')
+        own=self.assert_status(self.client.get('/booker/bookings',headers=self.headers(self.booker_token)),200);self.assertEqual(own[0]['booking_id'],hold['booking_id'])
+        with psycopg.connect(self.owner_dsn) as conn:
+            actor,booker=conn.execute('SELECT actor_id,booker_id FROM prsystem.booking_hold WHERE tenant_id=%s',(self.tenant,)).fetchone();self.assertIsNone(actor);self.assertIsNotNone(booker)
+            stored=conn.execute('SELECT phone_hash,phone_envelope FROM prsystem.booker_account WHERE id=%s',(booker,)).fetchone();self.assertNotIn(self.booker_phone,str(stored))
+    def test_customer_realms_and_password_reset_revoke_sessions(self):
+        self.booker_setup();self.customer_hold()
+        self.assertEqual(self.customer_hold(self.manager_token,'other').status_code,401)
+        self.assertEqual(self.client.get('/auth/me',headers=self.headers(self.booker_token)).status_code,401)
+        self.register_booker(self.booker_phone,'RESET','new-booker-password')
+        self.assertEqual(self.client.get('/booker/bookings',headers=self.headers(self.booker_token)).status_code,401)
+        self.assertEqual(self.client.post('/booker/auth/login',json=dict(phone=self.booker_phone,password=self.booker_password)).status_code,401)
+    def test_unpublished_and_expired_hotels_cannot_accept_new_customer_holds(self):
+        self.booker_setup()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.booking_publication SET allowed=false WHERE tenant_id=%s',(self.tenant,))
+        self.assertEqual(self.public_search().json()['items'],[]);self.assertEqual(self.customer_hold().status_code,404)
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.booking_publication SET allowed=true WHERE tenant_id=%s',(self.tenant,));conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
+        self.assertEqual(self.public_search().json()['items'],[]);self.assertEqual(self.customer_hold().status_code,404)
+    def test_another_customer_cannot_list_owned_booking(self):
+        self.booker_setup();self.customer_hold();self.register_booker('+97688112233')
+        other=self.assert_status(self.client.post('/booker/auth/login',json=dict(phone='+97688112233',password=self.booker_password)),200)['access_token']
+        self.assertEqual(self.client.get('/booker/bookings',headers=self.headers(other)).json(),[])
+
+    def test_cancellation_preview_change_rolls_back_terminal_mutation(self):
+        hold=self.begin();self.pay();self.call(hold,'/reconcile')
+        url=f'/guest/booking-holds/{self.tenant}/{hold["booking_id"]}/cancellation-preview'
+        preview=self.assert_status(self.client.get(url,headers=self.headers(hold['access_token'])),200)
+        self.assertEqual(preview['refund_due'],160000)
+        result=self.call(hold,'/cancel',dict(idempotency_key='preview-cancel',expected_refund_mnt=0))
+        self.assertEqual(result.json()['code'],'REVISION_CONFLICT');self.assertEqual(self.call(hold).json()['booking_state'],'CONFIRMED')
+        self.assert_status(self.call(hold,'/cancel',dict(idempotency_key='preview-cancel',expected_refund_mnt=preview['refund_due'])),200)
+
+    def test_payout_request_commit_precedes_bank_dispatch(self):
+        hold=self.payable();self.assess_booking(hold);self.mature(hold);batch=self.make_batch().json()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_payout_attempt_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_payout_attempt_commit AFTER INSERT ON prsystem.booking_payout_attempt DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_payout_attempt_commit()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.execute_batch(batch),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_payout_attempt_commit ON prsystem.booking_payout_attempt');conn.execute('DROP FUNCTION prsystem.fail_payout_attempt_commit()')
+        with self.store.connect() as conn:self.assertEqual(conn.execute('SELECT count(*) FROM mock_bank_payout').fetchone()[0],0)
+        self.assert_status(self.execute_batch(batch),200)
+
+    def test_payout_success_rollback_and_concurrent_retry_claim_source_once(self):
+        hold=self.payable();self.assess_booking(hold);self.mature(hold);batch=self.make_batch().json();attempt=self.execute_batch(batch).json()
+        self.bank.set_payout_status(attempt['attempt_id'],'SUCCEEDED')
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_payout_result_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_payout_result_commit AFTER INSERT ON prsystem.booking_payout_result DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_payout_result_commit()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.reconcile_batch(batch,attempt),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_payout_result_commit ON prsystem.booking_payout_result');conn.execute('DROP FUNCTION prsystem.fail_payout_result_commit()')
+        with psycopg.connect(self.owner_dsn) as conn:self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_paid_source WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+        barrier=Barrier(2)
+        def reconcile(_):barrier.wait();return self.reconcile_batch(batch,attempt)
+        with ThreadPoolExecutor(2) as pool:responses=list(pool.map(reconcile,range(2)))
+        self.assertEqual([r.status_code for r in responses],[200,200]);self.assertEqual(responses[0].json(),responses[1].json())
+        with psycopg.connect(self.owner_dsn) as conn:self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_paid_source WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)

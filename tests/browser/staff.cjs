@@ -12,7 +12,7 @@ const secret = 'a'.repeat(32) + '.' + 'b'.repeat(64);
     res.end(fs.readFileSync(path.join(root, file)));
   }).listen(0, '127.0.0.1');
   await new Promise(resolve => server.on('listening', resolve));
-  const browser = await chromium.launch({headless: true});
+  const browser = await chromium.launch({headless:true,...(process.env.PRSYSTEM_BROWSER_PATH?{executablePath:process.env.PRSYSTEM_BROWSER_PATH,args:['--no-sandbox']}: {})});
   try {
     const page = await browser.newPage();
     const origin = `http://127.0.0.1:${server.address().port}`;

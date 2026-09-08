@@ -48,7 +48,7 @@ class BookingHolds(GuestPayments):
             version = conn.execute('SELECT coalesce(max(version),0) FROM prsystem.booking_contract WHERE tenant_id=%s',(tenant,)).fetchone()[0]
             if version != data['expected_revision']:
                 raise DomainError('REVISION_CONFLICT')
-            conn.execute("INSERT INTO prsystem.booking_contract VALUES(%s,%s,%s,%s,%s,%s,%s,'MOCK_ONLY')",
+            conn.execute("INSERT INTO prsystem.booking_contract(tenant_id,version,contract_id,rate_bps,valid_from,valid_until,actor_id,mode) VALUES(%s,%s,%s,%s,%s,%s,%s,'MOCK_ONLY')",
                          (tenant,contract.version,contract.contract_id,contract.rate_bps,start,end,actor))
             result = dict(version=contract.version,mode='MOCK_ONLY')
             self.event(conn,tenant,actor,'MOCK_BOOKING_CONTRACT',tenant,snapshot(contract))
@@ -83,6 +83,7 @@ class BookingHolds(GuestPayments):
     def statement(conn,tenant,hold):
         row = conn.execute('''SELECT category_id,booking_state,hold_state,created_at,expires_at,snapshot,
             applied_attempt_id,confirmation_snapshot FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s''',(tenant,hold)).fetchone()
+        if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
         attempts = conn.execute('''SELECT id,provider,state,invoice_id,invoice_expires_at FROM prsystem.booking_hold_attempt
             WHERE tenant_id=%s AND hold_id=%s ORDER BY created_at,id''',(tenant,hold)).fetchall()
         refund = conn.execute('SELECT coalesce(sum(refund_due),0) FROM prsystem.booking_hold_capture WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()[0]
@@ -93,8 +94,9 @@ class BookingHolds(GuestPayments):
             ON(c.tenant_id,c.request_id)=(r.tenant_id,r.id) WHERE r.tenant_id=%s AND r.hold_id=%s ORDER BY r.id''',(tenant,hold)).fetchall()
         refunded=sum(r[4] or 0 for r in refunds)
         failed=bool(refunds) and sum(r[2] for r in refunds)==refund and all(r[3] in {'FAILED','FINAL_FAILED','VOIDED','NOT_PROCESSED','CORRECTED_NOT_SUCCESS'} for r in refunds)
-        application=conn.execute('SELECT stay_id FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()
-        return dict(stay_id=application[0] if application else None,booking_id=hold,category_id=row[0],booking_state=cancellation[0] if cancellation else row[1],hold_state='CANCELLED' if cancellation else row[2],
+        application=conn.execute('''SELECT a.stay_id,s.state FROM prsystem.booking_hold_application a JOIN prsystem.stay s
+            ON(s.tenant_id,s.id)=(a.tenant_id,a.stay_id) WHERE a.tenant_id=%s AND a.hold_id=%s''',(tenant,hold)).fetchone()
+        return dict(stay_id=application[0] if application else None,booking_id=hold,category_id=row[0],booking_state=cancellation[0] if cancellation else ('COMPLETED' if application[1]=='CLOSED' else 'CHECKED_IN') if application else row[1],hold_state='CANCELLED' if cancellation else row[2],
                     cancellation=dict(zip(('outcome','refund_due','retained_mnt','commission_mnt','hotel_payable_mnt','recorded_at'),cancellation)) if cancellation else None,
                     created_at=row[3],expires_at=row[4],quote=row[5],applied_attempt_id=row[6],confirmation=row[7],
                     refund_required_mnt=int(refund),refunded_mnt=refunded,refund_remaining_mnt=int(refund)-refunded,
@@ -114,33 +116,37 @@ class BookingHolds(GuestPayments):
                 row=conn.execute('SELECT token_envelope FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s',(tenant,replay['booking_id'])).fetchone()
                 return dict(self.statement(conn,tenant,replay['booking_id']),access_token=self.vault.open(row[0],tenant,replay['booking_id'],'mock-booker'))
             self._catalog_lock(conn,tenant)
-            now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
-            hotel_expiry=conn.execute('SELECT expires_at FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]
-            if now>=hotel_expiry+timedelta(hours=48):
-                raise DomainError('SUBSCRIPTION_EXPIRED')
-            contract=self.current_contract(conn,tenant,now)
-            setting=conn.execute('''SELECT c.nightly_price,c.revision,h.nightly_price,h.revision,h.checkout_time,c.cleaning_buffer_minutes
-                FROM prsystem.room_category c JOIN prsystem.room_hotel_settings h ON h.tenant_id=c.tenant_id
-                WHERE c.tenant_id=%s AND c.id=%s AND c.status='ACTIVE' ''',(tenant,category)).fetchone()
-            if not setting:
-                raise DomainError('STAY_SETTINGS_REQUIRED')
-            quote=quote_nights(tenant_id=tenant,category_id=category,now=now,arrival=arrival,nights=nights,
-                category_price=setting[0],category_version=setting[1],hotel_price=setting[2],hotel_version=setting[3],
-                checkout_time=setting[4],cleaning_buffer_minutes=setting[5],contract=contract)
-            require_capacity(conn,tenant,category,InventoryInterval(arrival,quote.planned_checkout_at,setting[5]))
-            gateway=self.gateway(provider)
-            hold,attempt,secret=secrets.token_hex(16),secrets.token_hex(16),secrets.token_urlsafe(32)
-            window=PaymentWindow.open(now)
-            conn.execute('''INSERT INTO prsystem.booking_hold(tenant_id,id,category_id,actor_id,token_hash,token_envelope,
-                created_at,expires_at,planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes,amount_mnt,snapshot)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-                (tenant,hold,category,actor,digest(secret),Jsonb(self.vault.seal(secret,tenant,hold,'mock-booker')),now,
-                 window.expires_at,arrival,quote.planned_checkout_at,setting[5],quote.amount_mnt,Jsonb(snapshot(quote))))
-            conn.execute('''INSERT INTO prsystem.booking_hold_attempt(tenant_id,id,hold_id,provider,merchant_id,created_at,invoice_expires_at)
-                VALUES(%s,%s,%s,%s,%s,%s,%s)''',(tenant,attempt,hold,provider,gateway.merchant_id,now,window.expires_at))
-            self.event_row(conn,tenant,hold,'HOLD_CREATED',dict(attempt_id=attempt,provider=provider,amount_mnt=quote.amount_mnt))
-            self._save_receipt(conn,tenant,key,actor,command,dict(booking_id=hold))
-            return dict(self.statement(conn,tenant,hold),access_token=secret)
+            result=self.create_locked(conn,tenant,category,arrival,nights,provider,actor=actor)
+            self._save_receipt(conn,tenant,key,actor,command,dict(booking_id=result['booking_id']))
+            return result
+
+    def create_locked(self,conn,tenant,category,arrival,nights,provider,*,actor=None,booker=None):
+        now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+        hotel_expiry=conn.execute('SELECT expires_at FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]
+        if now>=hotel_expiry+timedelta(hours=48):
+            raise DomainError('SUBSCRIPTION_EXPIRED')
+        contract=self.current_contract(conn,tenant,now)
+        setting=conn.execute('''SELECT c.nightly_price,c.revision,h.nightly_price,h.revision,h.checkout_time,c.cleaning_buffer_minutes
+            FROM prsystem.room_category c JOIN prsystem.room_hotel_settings h ON h.tenant_id=c.tenant_id
+            WHERE c.tenant_id=%s AND c.id=%s AND c.status='ACTIVE' ''',(tenant,category)).fetchone()
+        if not setting:
+            raise DomainError('STAY_SETTINGS_REQUIRED')
+        quote=quote_nights(tenant_id=tenant,category_id=category,now=now,arrival=arrival,nights=nights,
+            category_price=setting[0],category_version=setting[1],hotel_price=setting[2],hotel_version=setting[3],
+            checkout_time=setting[4],cleaning_buffer_minutes=setting[5],contract=contract)
+        require_capacity(conn,tenant,category,InventoryInterval(arrival,quote.planned_checkout_at,setting[5]))
+        gateway=self.gateway(provider)
+        hold,attempt,secret=secrets.token_hex(16),secrets.token_hex(16),secrets.token_urlsafe(32)
+        window=PaymentWindow.open(now)
+        conn.execute('''INSERT INTO prsystem.booking_hold(tenant_id,id,category_id,actor_id,booker_id,token_hash,token_envelope,
+            created_at,expires_at,planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes,amount_mnt,snapshot)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+            (tenant,hold,category,actor,booker,digest(secret),Jsonb(self.vault.seal(secret,tenant,hold,'mock-booker')),now,
+             window.expires_at,arrival,quote.planned_checkout_at,setting[5],quote.amount_mnt,Jsonb(snapshot(quote))))
+        conn.execute('''INSERT INTO prsystem.booking_hold_attempt(tenant_id,id,hold_id,provider,merchant_id,created_at,invoice_expires_at)
+            VALUES(%s,%s,%s,%s,%s,%s,%s)''',(tenant,attempt,hold,provider,gateway.merchant_id,now,window.expires_at))
+        self.event_row(conn,tenant,hold,'HOLD_CREATED',dict(attempt_id=attempt,provider=provider,amount_mnt=quote.amount_mnt))
+        return dict(self.statement(conn,tenant,hold),access_token=secret)
 
     def guest(self,conn,tenant,hold,secret):
         self.mock()
@@ -279,33 +285,55 @@ class BookingHolds(GuestPayments):
             results.append(dict(booking_id=hold,booking_state=result['booking_state']))
         return dict(results=results,limit=limit,mode='MOCK_ONLY')
 
-    def cancel_guest(self,tenant,hold,secret,key):
-        from prsystem.booking_policy import OnlineQuote, cancel_confirmed
+    def cancellation_preview(self,tenant,hold,secret):
+        from prsystem.booking_policy import OnlineQuote,cancel_confirmed
         from prsystem.settlement import BookingState
         with transaction(self.auth.dsn) as conn:
             row=self.guest(conn,tenant,hold,secret)
-            command=dict(action='CANCEL_BOOKING_GUEST')
+            state=self.statement(conn,tenant,hold)
+            if state['booking_state'] not in {'HOLDING','CONFIRMED'}:raise DomainError('BOOKING_NOT_CONFIRMED')
+            now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+            if row[3]=='HOLDING':return dict(refund_due=0,retained_mnt=0,as_of=now)
+            source=dict(state['quote']);contract=state['confirmation']
+            for name in ('quoted_at','planned_checkin_at','planned_checkout_at','free_cancel_until','no_show_cutoff'):source[name]=datetime.fromisoformat(source[name])
+            source['checkout_time']=time.fromisoformat(source['checkout_time'])
+            source.update(commission_rate_bps=contract['rate_bps'],contract_id=contract['contract_id'],contract_version=contract['version'])
+            amounts=cancel_confirmed(OnlineQuote(**source),current_state=BookingState.CONFIRMED,outcome=BookingState.CANCELLED_GUEST,now=now)
+            return dict(refund_due=amounts.settlement.room_refund.due,retained_mnt=amounts.settlement.retained_room_amount,as_of=now)
+
+    def cancel_guest(self,tenant,hold,secret,key,expected_refund=None):
+        with transaction(self.auth.dsn) as conn:
+            row=self.guest(conn,tenant,hold,secret)
+            command=dict(action='CANCEL_BOOKING_GUEST',**({'expected_refund':expected_refund} if expected_refund is not None else {}))
             replay=self.replay(conn,tenant,hold,key,command)
             if replay is not None:return replay
-            if row[3]!='CONFIRMED' or not row[4]:raise DomainError('BOOKING_NOT_CONFIRMED')
-            if conn.execute('SELECT 1 FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone():raise DomainError('BOOKING_NOT_CONFIRMED')
-            if conn.execute('SELECT 1 FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone():raise DomainError('BOOKING_ALREADY_APPLIED')
-            source,contract=conn.execute('SELECT snapshot,confirmation_snapshot FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s',(tenant,hold)).fetchone()
-            source=dict(source)
-            for name in ('quoted_at','planned_checkin_at','planned_checkout_at','free_cancel_until','no_show_cutoff'):
-                source[name]=datetime.fromisoformat(source[name])
-            source['checkout_time']=time.fromisoformat(source['checkout_time'])
-            # Cancellation uses the contract fixed at payment confirmation,
-            # even if it differs from the earlier quote or today's contract.
-            source['commission_rate_bps']=contract['rate_bps']
-            now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
-            amounts=cancel_confirmed(OnlineQuote(**source),current_state=BookingState.CONFIRMED,outcome=BookingState.CANCELLED_GUEST,now=now)
-            facts=amounts.settlement
-            result=dict(booking_id=hold,booking_state='CANCELLED_GUEST',hold_state='CANCELLED',
-                retained_mnt=facts.retained_room_amount,refund_due=facts.room_refund.due,commission_mnt=amounts.commission_mnt,
-                hotel_payable_mnt=amounts.hotel_payable_mnt,recorded_at=now.isoformat(),mode='MOCK_ONLY')
-            conn.execute('''INSERT INTO prsystem.booking_hold_cancellation VALUES(%s,%s,%s,'CANCELLED_GUEST',%s,%s,%s,%s,%s,%s,%s)''',
-                (tenant,hold,row[4],row[5],facts.retained_room_amount,facts.room_refund.due,amounts.commission_mnt,amounts.hotel_payable_mnt,Jsonb(contract),now))
-            self.event_row(conn,tenant,hold,'BOOKING_CANCELLED_GUEST',result)
+            result=self.cancel_in_transaction(conn,tenant,hold,row,'CANCELLED_GUEST')
+            if expected_refund is not None and expected_refund!=result['refund_due']:raise DomainError('REVISION_CONFLICT')
             conn.execute('INSERT INTO prsystem.booking_hold_command VALUES(%s,%s,%s,%s,%s)',(tenant,hold,key,Jsonb(command),Jsonb(result)))
             return result
+
+    def cancel_in_transaction(self,conn,tenant,hold,row,outcome):
+        from prsystem.booking_policy import OnlineQuote, cancel_confirmed
+        from prsystem.settlement import BookingState
+        if row[3] not in {'HOLDING','CONFIRMED'}:raise DomainError('BOOKING_NOT_CONFIRMED')
+        if conn.execute('SELECT 1 FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone():raise DomainError('BOOKING_NOT_CONFIRMED')
+        if conn.execute('SELECT 1 FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone():raise DomainError('BOOKING_ALREADY_APPLIED')
+        now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+        if row[3]=='HOLDING':
+            if outcome!='CANCELLED_GUEST':raise DomainError('BOOKING_NOT_CONFIRMED')
+            captured=retained=due=commission=payable=0;contract={}
+            conn.execute("UPDATE prsystem.booking_hold SET booking_state='EXPIRED',hold_state='EXPIRED' WHERE tenant_id=%s AND id=%s",(tenant,hold))
+            conn.execute("UPDATE prsystem.booking_hold_attempt SET state='EXPIRED' WHERE tenant_id=%s AND hold_id=%s AND state='ACTIVE'",(tenant,hold))
+        else:
+            source,contract=conn.execute('SELECT snapshot,confirmation_snapshot FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s',(tenant,hold)).fetchone()
+            source=dict(source)
+            for name in ('quoted_at','planned_checkin_at','planned_checkout_at','free_cancel_until','no_show_cutoff'):source[name]=datetime.fromisoformat(source[name])
+            source['checkout_time']=time.fromisoformat(source['checkout_time'])
+            source.update(commission_rate_bps=contract['rate_bps'],contract_id=contract['contract_id'],contract_version=contract['version'])
+            amounts=cancel_confirmed(OnlineQuote(**source),current_state=BookingState.CONFIRMED,outcome=BookingState(outcome),now=now)
+            facts=amounts.settlement
+            captured,retained,due,commission,payable=row[5],facts.retained_room_amount,facts.room_refund.due,amounts.commission_mnt,amounts.hotel_payable_mnt
+        result=dict(booking_id=hold,booking_state=outcome,hold_state='CANCELLED',retained_mnt=retained,refund_due=due,commission_mnt=commission,hotel_payable_mnt=payable,recorded_at=now.isoformat(),mode='MOCK_ONLY')
+        conn.execute('INSERT INTO prsystem.booking_hold_cancellation VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(tenant,hold,row[4],outcome,captured,retained,due,commission,payable,Jsonb(contract),now))
+        self.event_row(conn,tenant,hold,'BOOKING_'+outcome,result)
+        return result

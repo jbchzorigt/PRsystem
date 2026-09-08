@@ -72,3 +72,28 @@ Confirmation is the named command form, including reason/count/destination as
 applicable. Navigation cannot discard a dirty form without the modal decision.
 No secret or guest draft persists. Pagehide clears credentials and rendered
 private context. Browser-close warning is scoped to dirty forms.
+
+## Booking business variants
+
+`/booking` and `/platform/booking` reuse the Reception shell, `form`, `api`,
+`guard`, `field`, `select`, feedback, formatters and global tokens. They are
+product flows with the same native picker policy, dirty-form confirmation and
+pessimistic command behavior. The independent booker and Platform bearer realms
+are held only in memory. Booking capabilities are passed explicitly to their
+scoped endpoint; they never replace the account token or enter a URL/storage.
+Page exit clears private content and in-flight results cannot repopulate it.
+
+Public search uses explicit submit (no live keystroke queries) and bounded
+Load more. Dates, query and optional one-shot GPS coordinates remain in memory;
+exact location is neither URL state nor a persistent profile. A search review
+shows server quote and cancellation terms before creating a pending hold.
+Payment and refund statuses are independent of the terminal booking outcome.
+No client action asserts bank payment success. Mock invoices need the existing
+local operator provider controls.
+
+Reception online commands share `checkin` identity capture with the existing
+walk-in form. The physical room is selected only at arrival. Manager profile,
+category publication and rank edits use explicit server revisions. Platform
+finance requires current explicit permission and fresh MFA at the API boundary;
+unknown bank results offer reconciliation, never a new payment attempt.
+Sources: docs/09,11,45–47. Browser coverage: tests/browser/booking.cjs.

@@ -75,3 +75,10 @@ class PlatformRecoveryTests(StaffApiCase):
         with psycopg.connect(self.owner_dsn) as conn:
             row=conn.execute("SELECT actor_id,details FROM prsystem.platform_event WHERE actor_id=%s AND action='HOTEL_SECURITY_CHANGED'",(self.platform_id,)).fetchone()
             self.assertEqual(row[0],self.platform_id);self.assertNotIn(token,str(row[1]));self.assertEqual(row[1]['reference'],'CASE-2026-1')
+
+    def test_logout_revokes_platform_session_without_fresh_mfa(self):
+        token=self.platform_login().json()['access_token']
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.platform_session SET mfa_at=now()-interval '6 minutes' WHERE account_id=%s",(self.platform_id,))
+        response=self.platform_client.post('/platform/auth/logout',headers=self.headers(token),json={})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.security(token).status_code,401)

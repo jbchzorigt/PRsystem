@@ -8,7 +8,7 @@ app=create_app('postgresql://unused:unused@localhost/prsystem_test_contract')
 count=0
 for item in json.load(open(sys.argv[1])):
     if item.get('body') is None:continue
-    path='/hotels/test-hotel/'+item['tail']
+    path=item.get('path') or '/hotels/test-hotel/'+item['tail']
     route=next(r for r in app.routes if hasattr(r,'path_regex') and r.path_regex.fullmatch(path) and item['method'] in r.methods)
     fields=route.dependant.body_params
     if fields:

@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),http=require('node:http'),fs=require(
 const root=path.resolve(__dirname,'../../src/prsystem/static');
 (async()=>{
  const server=http.createServer((req,res)=>{const file=req.url.includes('/assets/')?path.basename(req.url):'reception.html';res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(path.join(root,file)));}).listen(0,'127.0.0.1');await new Promise(r=>server.on('listening',r));
- const browser=await chromium.launch({headless:true});
+ const browser=await chromium.launch({headless:true,...(process.env.PRSYSTEM_BROWSER_PATH?{executablePath:process.env.PRSYSTEM_BROWSER_PATH,args:['--no-sandbox']}: {})});
  try{
   const page=await browser.newPage({viewport:{width:1280,height:900}}),origin=`http://127.0.0.1:${server.address().port}`;
   let requests=[],failure=false,created=false,allocated=false,paid=false,closed=false,expired=false,mode='RECEPTION';const problems=[];page.on('pageerror',e=>problems.push(e.message));
@@ -31,7 +31,7 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
    await route.fulfill({json:data});
   });
   const login=async()=>{await page.goto(origin+'/reception');await page.getByRole('button',{name:'Нэвтрэх',exact:true}).click();assert.equal(await page.locator('[name=tenant_id]').getAttribute('aria-invalid'),'true');assert.equal(await page.evaluate(()=>document.activeElement.name),'tenant_id');await page.getByLabel('Буудлын код').fill('test-hotel');await page.getByLabel('Имэйл',{exact:true}).fill('worker@example.com');await page.getByLabel('Нууц үг',{exact:true}).fill('Password 2026!');await page.getByRole('button',{name:'Нууц үг харуулах'}).click();assert.equal(await page.locator('[name=password]').getAttribute('type'),'text');await page.getByRole('button',{name:'Нууц үг нуух'}).click();await page.getByRole('button',{name:'Нэвтрэх',exact:true}).click();await page.locator('#app').waitFor({state:'visible'});await page.waitForFunction(()=>document.querySelector('#content').getAttribute('aria-busy')==='false');};
-  await login();assert.equal(await page.getByRole('navigation',{name:'Үндсэн цэс'}).getByRole('link').count(),5);
+  await login();assert.equal(await page.getByRole('navigation',{name:'Үндсэн цэс'}).getByRole('link').count(),6);
   await page.getByRole('button',{name:'Walk-in зочин бүртгэх',exact:true}).click();await page.getByRole('button',{name:'Зочны мэдээлэл оруулах',exact:true}).click();
   await page.getByLabel('Овог',{exact:true}).fill('Бат');await page.getByRole('link',{name:'Өрөөнүүд',exact:true}).click();await page.locator('#discard').waitFor({state:'visible'});assert.equal(await page.evaluate(()=>document.activeElement.id),'keep');await page.keyboard.press('Escape');assert.equal(await page.getByLabel('Овог',{exact:true}).inputValue(),'Бат');
   await page.getByLabel('Нэр',{exact:true}).fill('Болд');await page.getByLabel('Төрсөн огноо',{exact:true}).fill('1990-01-01');await page.getByLabel('Иргэншил',{exact:true}).fill('Монгол');await page.getByLabel('Баримтын дугаар',{exact:true}).fill('АБ90010111');await page.getByLabel('Бэлнээр авсан барьцаа (₮)',{exact:false}).fill('60000');await page.getByLabel('Бэлэн барьцааг биечлэн авсан',{exact:false}).check();

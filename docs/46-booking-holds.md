@@ -182,3 +182,9 @@ checks in [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34206181125).
 Local: 88 executed, 392 PostgreSQL-dependent skipped. The subsequent documentation-only
 commit records validation. No-show, hotel cancellation,
 Manager upgrade, settlement/payout and staff/customer UI remain unfinished.
+
+## Local continuation candidate
+
+Lifecycle, public booker/listing, settlement/payout and UI implementations are now
+tracked in [docs/47](47-booking-completion-candidate.md). Their PostgreSQL execution
+and publication are pending; the earlier 480-test CI result does not cover them.

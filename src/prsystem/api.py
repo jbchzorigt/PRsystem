@@ -38,7 +38,7 @@ from prsystem.room_lifecycle import RoomLifecycle
 from prsystem.handover import HandoverService
 from prsystem.reception_booking import ReceptionBooking
 from prsystem.checkin_funding import CheckinFunding
-from prsystem.booking_refunds import BookingRefunds
+from prsystem.booking_settlement import BookingSettlement
 from prsystem.routed_refunds import RoutedRefunds
 from prsystem.reception_dependencies import ReceptionDependencies
 from prsystem.guest_identity import vault_from_environment
@@ -63,6 +63,27 @@ class MockBookingHold(BaseModel):
     idempotency_key: str = Field(min_length=1,max_length=128)
 
 
+class BookingTerminal(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    outcome: Literal['NO_SHOW','CANCELLED_HOTEL']
+    reason: str=Field(min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
+class BookingRank(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    rank: int=Field(ge=0,le=2147483647)
+    expected_revision: int=Field(ge=0)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
+class BookingUpgrade(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    room_id: str=Field(min_length=1,max_length=128)
+    reason: str=Field(min_length=1,max_length=1000)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+
 class BookingRefundReconcile(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
@@ -70,6 +91,7 @@ class BookingRefundReconcile(BaseModel):
 class BookingGuestCancellation(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     idempotency_key: str = Field(min_length=1,max_length=128)
+    expected_refund_mnt: int|None=Field(default=None,ge=0)
 
 
 class BookingProviderSwitch(BaseModel):
@@ -590,13 +612,63 @@ class RestaurantLink(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False) -> FastAPI:
+class BookerChallenge(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    phone: str=Field(min_length=8,max_length=20)
+    purpose: Literal['REGISTER','RESET']
+    device: str=Field(min_length=20,max_length=128)
+
+class BookerComplete(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    challenge_id: str=Field(min_length=20,max_length=128)
+    code: SecretStr=Field(min_length=6,max_length=6)
+    password: SecretStr=Field(min_length=12,max_length=128)
+
+class BookerLogin(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    phone: str=Field(min_length=8,max_length=20)
+    password: SecretStr=Field(min_length=1,max_length=128)
+
+class BookingProfile(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    name: str=Field(min_length=1,max_length=150)
+    address: str=Field(min_length=1,max_length=500)
+    phone: str=Field(min_length=8,max_length=20)
+    description: str=Field(min_length=1,max_length=3000)
+    latitude: float=Field(ge=-90,le=90,allow_inf_nan=False)
+    longitude: float=Field(ge=-180,le=180,allow_inf_nan=False)
+    photos: list[str]=Field(min_length=1,max_length=4)
+    published: bool
+    accepting: bool
+    expected_revision: int=Field(ge=0)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+class BookingCategoryPublication(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    photos: list[str]=Field(min_length=1,max_length=4)
+    published: bool
+    expected_revision: int=Field(ge=0)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+class BookingPublication(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    allowed: bool
+    expected_revision: int=Field(ge=0)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+
+class BookingBeneficiary(BaseModel):
+    model_config=ConfigDict(extra="forbid",strict=True)
+    reference: str = Field(min_length=1,max_length=200)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None) -> FastAPI:
     if runtime_mode not in {'production','development','test'}:
         raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if type(mock_stay_finance) is not bool:
         raise ValueError('mock_stay_finance must be boolean')
-    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, *(payment_gateways or {}).values()])
+    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, *(payment_gateways or {}).values()])
     if mocked:
         from prsystem.mock_providers import require_development_database
         require_development_database(service.dsn, runtime_mode)
@@ -621,12 +693,16 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode,payment_gateways)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
-    booking_holds = BookingRefunds(service, stays.vault, runtime_mode, payment_gateways)
     routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
     from prsystem.operations import Operations
     operations=Operations(service,stays.vault,runtime_mode)
     reception_dependencies=ReceptionDependencies(service,stays.vault,runtime_mode)
     platform = PlatformService(service,platform_secret_resolver) if platform_secret_resolver else None
+    booking_holds = BookingSettlement(service, stays.vault, runtime_mode, payment_gateways, platform, bank_gateway)
+    from prsystem.bookers import Bookers
+    from prsystem.booking_public import BookingPublic
+    bookers=Bookers(booking_holds,phone_gateway)
+    public_booking=BookingPublic(booking_holds,bookers)
     restaurants = RestaurantIdentity(service, lifecycle)
     app = FastAPI(title="PRsystem MOCK ONLY API" if mocked else "PRsystem staff API", version="0.12.0")
     bearer = HTTPBearer(auto_error=False)
@@ -684,7 +760,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
         stay_errors.update({'PAYMENT_ALREADY_PAID':409,'PAYMENT_VOID_REQUIRES_CANCELLATION':409,'PHYSICAL_COUNT_REQUIRED':409})
         stay_errors['PUBLIC_ORIGIN_REQUIRED']=503
-        stay_errors.update({'BOOKING_NOT_CONFIRMED':409,'BOOKING_ALREADY_APPLIED':409,'BOOKING_CONTRACT_REQUIRED':409,'BOOKING_CAPACITY_UNAVAILABLE':409,'HOLD_EXPIRED':409,
+        stay_errors.update({code:409 for code in ('BANK_BENEFICIARY_UNVERIFIED','SETTLEMENT_REFRESH_REQUIRED','SETTLEMENT_HELD','PAYOUT_TERMINAL','PAYOUT_PENDING','BANK_FUNDS_INSUFFICIENT')})
+        stay_errors.update({'NO_SHOW_CUTOFF_NOT_PASSED':409,'BOOKING_ROOM_AVAILABLE':409,'BOOKING_NOT_CONFIRMED':409,'BOOKING_ALREADY_APPLIED':409,'BOOKING_CONTRACT_REQUIRED':409,'BOOKING_CAPACITY_UNAVAILABLE':409,'HOLD_EXPIRED':409,
             'INVALID_BOOKING_TIME':422,'BOOKING_ARRIVAL_IN_PAST':422,'INVALID_CHECKOUT_TIME':422,
             'INVALID_CLEANING_BUFFER':422,'INVALID_CONTRACT_INTERVAL':422,'BOOKING_ATTEMPT_LIMIT':429})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
@@ -753,9 +830,13 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def reconcile_booking_refunds(tenant_id: str,booking_id: str,body: BookingRefundReconcile,secret: Annotated[str,Depends(token)]):
         return booking_holds.reconcile_refunds(tenant_id,booking_id,secret)
 
+    @app.get('/guest/booking-holds/{tenant_id}/{booking_id}/cancellation-preview')
+    def booking_cancel_preview(tenant_id: str,booking_id: str,secret: Annotated[str,Depends(token)]):
+        return booking_holds.cancellation_preview(tenant_id,booking_id,secret)
+
     @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/cancel')
     def cancel_guest_booking(tenant_id: str,booking_id: str,body: BookingGuestCancellation,secret: Annotated[str,Depends(token)]):
-        return booking_holds.cancel_guest(tenant_id,booking_id,secret,body.idempotency_key)
+        return booking_holds.cancel_guest(tenant_id,booking_id,secret,body.idempotency_key,body.expected_refund_mnt)
 
     @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/reconcile')
     def reconcile_booking_hold(tenant_id: str,booking_id: str,secret: Annotated[str,Depends(token)]):
@@ -904,6 +985,22 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/mock/bookings',status_code=201)
     def simulate_confirmed_booking(tenant_id: str,body: MockBookingInput,secret: Annotated[str,Depends(token)]):
         return stays.mock_booking(secret,tenant_id,body.room_id,body.kind,body.duration_units,body.planned_checkin_at,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/booking-holds')
+    def booking_inbox(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=Query('',max_length=128),limit: int=Query(50,ge=1,le=100)):
+        return booking_holds.inbox(secret,tenant_id,after,limit)
+
+    @app.put('/hotels/{tenant_id}/room-categories/{category_id}/booking-rank')
+    def booking_rank(tenant_id: str,category_id: str,body: BookingRank,secret: Annotated[str,Depends(token)]):
+        return booking_holds.ranks(secret,tenant_id,category_id,body.rank,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/booking-holds/{booking_id}/terminal')
+    def booking_terminal(tenant_id: str,booking_id: str,body: BookingTerminal,secret: Annotated[str,Depends(token)]):
+        return booking_holds.terminal(secret,tenant_id,booking_id,body.outcome,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/booking-holds/{booking_id}/upgrade')
+    def booking_upgrade(tenant_id: str,booking_id: str,body: BookingUpgrade,secret: Annotated[str,Depends(token)]):
+        return booking_holds.upgrade(secret,tenant_id,booking_id,body.room_id,body.reason,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/booking-holds/{booking_id}/check-in',status_code=201)
     def held_booking_check_in(tenant_id: str,booking_id: str,body: HeldBookingCheckIn,secret: Annotated[str,Depends(token)]):
@@ -1096,21 +1193,23 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get("/staff/restaurant-accept", include_in_schema=False)
     def staff_page():
         return FileResponse(static_root / "staff.html", headers={
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "X-Frame-Options": "DENY",
         })
 
     @app.get("/guest/entry", include_in_schema=False)
     def guest_entry_page():
         return FileResponse(static_root / "guest.html", headers={
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "X-Frame-Options": "DENY",
         })
 
+    @app.get("/booking", include_in_schema=False)
+    @app.get("/platform/booking", include_in_schema=False)
     @app.get("/reception", include_in_schema=False)
     def reception_page():
         return FileResponse(static_root / "reception.html", headers={
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             "X-Frame-Options": "DENY",
         })
 
@@ -1154,9 +1253,89 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def shift_review(tenant_id: str,shift_id: str,decision: Literal["approve","dispute"],body: MembershipChange,secret: Annotated[str,Depends(token)]):
         return shifts.review(secret,tenant_id,shift_id,decision.upper(),body.idempotency_key,body.reason)
 
+    @app.post('/booker/auth/challenge')
+    def booker_challenge(body: BookerChallenge,request: Request):
+        return bookers.challenge(body.phone,body.purpose,body.device,peer(request))
+
+    @app.post('/booker/auth/complete')
+    def booker_complete(body: BookerComplete,request: Request):
+        return bookers.complete(body.challenge_id,body.code.get_secret_value(),body.password.get_secret_value(),peer(request))
+
+    @app.post('/booker/auth/login')
+    def booker_login(body: BookerLogin,request: Request):
+        return bookers.login(body.phone,body.password.get_secret_value(),peer(request))
+
+    @app.post('/booker/auth/logout')
+    def booker_logout(body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return bookers.logout(secret)
+
+    @app.get('/public/booking-hotels')
+    def public_booking_search(planned_checkin_at: str,nights: int=Query(ge=1,le=365),query: str=Query('',max_length=200),after: str=Query('',max_length=128),limit: int=Query(10,ge=1,le=20),latitude: float|None=Query(None,ge=-90,le=90),longitude: float|None=Query(None,ge=-180,le=180)):
+        return public_booking.search(planned_checkin_at,nights,query,after,limit,latitude,longitude)
+
+    @app.get('/booker/bookings')
+    def booker_bookings(secret: Annotated[str,Depends(token)],after: str=Query('',max_length=128),limit: int=Query(25,ge=1,le=50)):
+        return public_booking.mine(secret,after,limit)
+
+    @app.post('/booker/hotels/{tenant_id}/bookings',status_code=201)
+    def booker_create_booking(tenant_id: str,body: MockBookingHold,secret: Annotated[str,Depends(token)]):
+        return public_booking.create(secret,tenant_id,body.category_id,body.planned_checkin_at,body.nights,body.provider,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/booking-settings')
+    def booking_settings(tenant_id: str,secret: Annotated[str,Depends(token)]):
+        return public_booking.settings(secret,tenant_id)
+
+    @app.put('/hotels/{tenant_id}/booking-profile')
+    def booking_profile(tenant_id: str,body: BookingProfile,secret: Annotated[str,Depends(token)]):
+        return public_booking.profile(secret,tenant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.put('/hotels/{tenant_id}/room-categories/{category_id}/publication')
+    def category_publication(tenant_id: str,category_id: str,body: BookingCategoryPublication,secret: Annotated[str,Depends(token)]):
+        return public_booking.category(secret,tenant_id,category_id,body.photos,body.published,body.expected_revision,body.idempotency_key)
+
+    @app.put('/platform/hotels/{tenant_id}/booking-contract')
+    def platform_booking_contract(tenant_id: str,body: MockBookingContract,secret: Annotated[str,Depends(token)]):
+        return public_booking.platform_contract(secret,tenant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.put('/platform/hotels/{tenant_id}/booking-publication')
+    def booking_publication(tenant_id: str,body: BookingPublication,secret: Annotated[str,Depends(token)]):
+        return public_booking.publication(secret,tenant_id,body.allowed,body.expected_revision,body.idempotency_key)
+
+    @app.get('/platform/hotels/{tenant_id}/booking-finance')
+    def booking_finance_inbox(tenant_id: str,secret: Annotated[str,Depends(token)],booking_after: str=Query('',max_length=128),batch_after: str=Query('',max_length=128)):
+        return booking_holds.finance_inbox(secret,tenant_id,booking_after,batch_after)
+
+    @app.put('/platform/hotels/{tenant_id}/booking-beneficiary')
+    def booking_beneficiary(tenant_id: str,body: BookingBeneficiary,secret: Annotated[str,Depends(token)]):
+        return booking_holds.beneficiary(secret,tenant_id,body.reference,body.expected_revision,body.idempotency_key)
+
+    @app.post('/platform/hotels/{tenant_id}/booking-holds/{booking_id}/settlement')
+    def booking_assessment(tenant_id: str,booking_id: str,body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return booking_holds.assess(secret,tenant_id,booking_id)
+
+    @app.post('/platform/hotels/{tenant_id}/booking-payouts')
+    def booking_payout_batch(tenant_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return booking_holds.batch(secret,tenant_id,body.idempotency_key)
+
+    @app.post('/platform/hotels/{tenant_id}/booking-payouts/{batch_id}/execute')
+    def booking_payout_execute(tenant_id: str,batch_id: str,body: RestaurantLink,secret: Annotated[str,Depends(token)]):
+        return booking_holds.payout(secret,tenant_id,batch_id,body.idempotency_key)
+
+    @app.post('/platform/hotels/{tenant_id}/booking-payouts/{batch_id}/attempts/{attempt_id}/reconcile')
+    def booking_payout_reconcile(tenant_id: str,batch_id: str,attempt_id: str,body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return booking_holds.reconcile_payout(secret,tenant_id,batch_id,attempt_id)
+
+    @app.post('/platform/hotels/{tenant_id}/booking-payouts/{batch_id}/void')
+    def booking_payout_void(tenant_id: str,batch_id: str,body: ReasonCommand,secret: Annotated[str,Depends(token)]):
+        return booking_holds.void_batch(secret,tenant_id,batch_id,body.reason,body.idempotency_key)
+
     @app.post("/platform/auth/login")
     def platform_login(body: PlatformLogin,request: Request):
         return platform_service().login(body.email,body.password.get_secret_value(),body.code.get_secret_value(),peer(request))
+
+    @app.post("/platform/auth/logout")
+    def platform_logout(body: EmptyInput,secret: Annotated[str,Depends(token)]):
+        return platform_service().logout(secret)
 
     @app.post("/platform/auth/step-up")
     def platform_mfa(body: PlatformMFA,request: Request,secret: Annotated[str,Depends(token)]):

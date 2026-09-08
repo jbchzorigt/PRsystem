@@ -5,6 +5,7 @@ import base64
 import json
 import os
 
+from prsystem.mock_bank import MockBankGateway
 from prsystem.mock_providers import MockStore, MockPhoneGateway, MockPaymentGateway, MockMailTransport, require_development_database
 
 
@@ -30,7 +31,8 @@ def create_app():
     derive = lambda purpose: hmac.new(key, purpose, hashlib.sha256).digest()
     vault = IdentityVault({'dev-v1': derive(b'dev-identity-encryption')}, 'dev-v1', derive(b'dev-identity-lookup'))
     return staff_app(dsn, runtime_mode='development', identity_vault=vault, mock_stay_finance=True, phone_gateway=MockPhoneGateway(store),
-                     payment_gateways={name: MockPaymentGateway(store, name) for name in ('QPAY', 'KHAAN')})
+                     payment_gateways={name: MockPaymentGateway(store, name) for name in ('QPAY', 'KHAAN')}, bank_gateway=MockBankGateway(store),
+                     platform_secret_resolver=lambda ref: base64.b64decode(os.environ.get('PRSYSTEM_DEV_MFA_'+ref,''),validate=True))
 
 
 def tick(store, dsn, key, limit=25):
@@ -65,6 +67,10 @@ def main():
     read = sub.add_parser('inspect'); read.add_argument('kind', choices=['phone', 'invoice', 'mail','refund'])
     pay = sub.add_parser('payment'); pay.add_argument('provider', choices=['QPAY', 'KHAAN']); pay.add_argument('attempt'); pay.add_argument('state', choices=['PENDING', 'FAILED', 'EXPIRED', 'SUCCEEDED'])
     refund = sub.add_parser('refund'); refund.add_argument('provider',choices=['QPAY','KHAAN']); refund.add_argument('request'); refund.add_argument('state',choices=['PENDING','UNKNOWN','FAILED','FINAL_FAILED','VOIDED','NOT_PROCESSED','SUCCEEDED','CORRECTED_NOT_SUCCESS'])
+    credit=sub.add_parser('bank-credit');credit.add_argument('tenant');credit.add_argument('provider',choices=['QPAY','KHAAN']);credit.add_argument('merchant');credit.add_argument('payment');credit.add_argument('amount',type=int);credit.add_argument('fee',type=int)
+    beneficiary=sub.add_parser('bank-beneficiary');beneficiary.add_argument('tenant');beneficiary.add_argument('reference')
+    dispute=sub.add_parser('bank-dispute');dispute.add_argument('tenant');dispute.add_argument('payment');dispute.add_argument('chargeback',type=int);dispute.add_argument('--opened',action='store_true')
+    payout=sub.add_parser('bank-payout');payout.add_argument('attempt');payout.add_argument('state',choices=['PENDING','UNKNOWN','FAILED','SUCCEEDED'])
     worker = sub.add_parser('tick'); worker.add_argument('--limit', type=int, default=25)
     args = parser.parse_args()
     try:
@@ -77,6 +83,13 @@ def main():
         elif args.command == 'refund':
             MockPaymentGateway(store,args.provider).set_refund_status(args.request,args.state)
             result={'mode':'MOCK_ONLY','state':args.state}
+        elif args.command.startswith('bank-'):
+            bank=MockBankGateway(store)
+            if args.command=='bank-credit':bank.record_credit(args.tenant,args.provider,args.merchant,args.payment,args.amount,args.fee)
+            elif args.command=='bank-beneficiary':bank.set_beneficiary(args.tenant,args.reference)
+            elif args.command=='bank-dispute':bank.dispute(args.tenant,args.payment,opened=args.opened,chargeback=args.chargeback)
+            else:bank.set_payout_status(args.attempt,args.state)
+            result={'mode':'MOCK_ONLY','status':'RECORDED'}
         else:
             dsn = os.environ['PRSYSTEM_DEV_WORKER_DSN']
             key = base64.b64decode(os.environ['PRSYSTEM_LINK_KEY'], altchars=b'-_', validate=True)

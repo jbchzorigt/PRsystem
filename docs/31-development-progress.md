@@ -20,7 +20,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
-| 4 | Online booking, payment/refund/payout | [Quote/contract/hold/cancellation domain суурь](45-online-booking-policy.md) нэмэгдсэн; [transactional mock hold/capture](46-booking-holds.md) нэмэгдсэн; verified guest, booking application, refund/payout implementation үлдсэн |
+| 4 | Online booking, payment/refund/payout | [Transactional mock holds/refunds](46-booking-holds.md) баталгаажсан; [бүрэн урсгалын local candidate](47-booking-completion-candidate.md) нэмэгдсэн. Шинэ candidate-ийн PostgreSQL CI, нийтлэлт хүлээгдэж байна |
 | 5 | Minibar, Restaurant, Operation | Reception-д хэрэгтэй mock boundary бэлэн; бүтэн module үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
@@ -85,7 +85,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 
 №9-ийн contract: [Restaurant identity](35-restaurant-identity.md). [Reception багц 3/6-ийн walk-in implementation](39-walkin-check-in.md) нэмэгдсэн. Online booking ба guest QR/session integration үлдсэн; дараагийн үндсэн ажил нь багц 4-ийн guest financial ledger/deposit/payment allocation/refund. Mock ажиллуулах заавар: [37-development-mocks.md](37-development-mocks.md). Явцын update **«Үе шат 3/6 · Reception-ийн 6 багцаас 2 бүрэн, 3-р багц хэсэгчлэн»** гэсэн хэмжүүрийг ашиглана; 2-р шатны анхны 9 багцын release acceptance тооллыг дээр өөрчлөлгүй хадгалав.
 
-Walk-in financial gate: production check-in нь document 20-ийн шаардлагатай deposit satisfaction service холбогдох хүртэл 503. Development factory дахь explicit mock л `DEFERRED_MOCK` snapshot-тай simulation stay үүсгэнэ; payment/deposit received гэж бичихгүй. Энэ нь хэрэглэгчийн API service-үүдийг mock-оор орлуулж үргэлжлүүлэх шийдвэрийн хүрээнд байна.
+Walk-in financial gate: production check-in нь document 20-ийн шаардлагатай deposit satisfaction service холбогдох хүртэл 506. Development factory дахь explicit mock л `DEFERRED_MOCK` snapshot-тай simulation stay үүсгэнэ; payment/deposit received гэж бичихгүй. Энэ нь хэрэглэгчийн API service-үүдийг mock-оор орлуулж үргэлжлүүлэх шийдвэрийн хүрээнд байна.
 
 [v0.9.0 эцсийн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34094455494), source `2b3946b`, дээр **299 backend тест skip-гүй (111.816 секунд)**, Chromium browser/design/token checks бүгд амжилттай. Энэ continuation **35 шинэ тест** нэмсэн. Walk-in check-in нь development mock; production нь authoritative deposit service хүртэл хаалттай. Үндсэн тоолол: **6 Reception багцаас 2 бүрэн, 3-р багц хэсэгчлэн; 4–6 үлдсэн**.
 
@@ -184,3 +184,14 @@ no-show, hotel cancellation, payout болон UI үлдсэн. [Хүрээ](46-
 browser/API-contract/design/token шалгалтууд тэнцсэн. Source `4c56b1d9`;
 [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34206181125).
 Post-completion correction/chargeback, no-show, hotel cancellation, payout болон UI үлдсэн.
+
+## 2026-09-08 — Stage-four local candidate
+
+No-show/hotel cancellation/upgrade, booker account/public listing, settlement,
+chargeback adjustment, mock bank payout and three booking interface variants
+are implemented locally. There are **506 discovered backend tests**: **100 ran
+and passed locally, 406 require PostgreSQL and were skipped**. Staff, Reception
+and Booking browser suites passed; captured browser commands match API models.
+This is not new PostgreSQL CI evidence. The last remote result remains 480/480.
+New source publication was rejected by automatic approval review; no remote
+branch update or merge was performed for this candidate. [Scope and gates](47-booking-completion-candidate.md).

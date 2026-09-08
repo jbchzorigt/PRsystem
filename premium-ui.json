@@ -19,8 +19,8 @@
   ],
   "commands": {
     "unit": "PYTHONPATH=src python -m unittest discover -s tests -q",
-    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs",
-    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs"
+    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs",
+    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs"
   },
   "evidence": {
     "failurePaths": "tests/browser/reception.cjs"

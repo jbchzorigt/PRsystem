@@ -37,3 +37,11 @@
 @media(max-width:600px) { .operations main { margin: 1rem; } .console { padding: 1rem; } .operations header { flex-wrap: wrap; } .operations form { padding: 1rem; } .operations dl { grid-template-columns: 1fr; } .operations dd { margin-bottom: .5rem; } }
 
 .operations .qr-card { width: min(100%,22rem); height: auto; background: white; fill: black; display: block; }
+
+.booking-photos { display: flex; flex-wrap: wrap; gap: 1rem; }
+.booking-photos img { max-width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); }
+
+.operations summary { cursor: pointer; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.operations summary:hover { background: var(--paper); }
+.operations summary:active { background: var(--surface); }
+.operations summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }

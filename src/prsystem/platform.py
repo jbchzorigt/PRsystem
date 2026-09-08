@@ -56,6 +56,13 @@ class PlatformService:
         if recent and (row[1]>now or now>=row[1]+timedelta(minutes=5)): raise DomainError('MFA_REQUIRED')
         return session[0],account
 
+    def logout(self,token):
+        with transaction(self.auth.dsn) as conn:
+            actor,_=self.authenticate(conn,token,recent=False)
+            conn.execute('UPDATE prsystem.platform_session SET revoked_at=clock_timestamp() WHERE token_hash=%s',(digest(token),))
+            self._event(conn,actor,'LOGOUT')
+            return dict(status='SIGNED_OUT')
+
     def step_up(self,token,code,peer):
         self.auth._rate_limit(digest(token),peer,'platform-mfa')
         with transaction(self.auth.dsn) as conn:

@@ -110,3 +110,12 @@ Native select/date controls deliberately retain platform-owned popup behavior.
 The app-owned discard dialog uses the native modal primitive. Table regions
 scroll horizontally; the document remains the sole vertical page scroller.
 UX-CONTRACT.md records command, permission, privacy and failure behavior.
+
+## Booking console extension
+
+Customer search, account entry and Platform finance retain the petrol rail and
+shared Reception form owners. Uploaded hotel/category photography supplies the
+catalog's visual information; image regions reserve a 16:9 footprint and wrap on
+phones. No stock imagery, fabricated ratings or decorative financial totals.
+Profile and settlement commands retain natural document scrolling. No durable
+color, type or spacing token changed. The behavior variants are in UX-CONTRACT.md.
