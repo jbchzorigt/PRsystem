@@ -131,7 +131,7 @@ class BookingPublic:
             if not hotel['accepting']:raise DomainError('BOOKING_CAPACITY_UNAVAILABLE')
             if not conn.execute('SELECT 1 FROM prsystem.booking_category_listing WHERE tenant_id=%s AND category_id=%s AND published',(tenant,category)).fetchone():raise DomainError('BOOKING_CAPACITY_UNAVAILABLE')
             result=self.booking.create_locked(conn,tenant,category,arrival,nights,provider,booker=actor)
-            conn.execute('INSERT INTO prsystem.booker_receipt VALUES(%s,%s,%s,%s,%s)',(actor,key,tenant,Jsonb(command),result['booking_id']));return result
+            conn.execute('INSERT INTO prsystem.booker_receipt VALUES(%s,%s,%s,%s,%s)',(actor,key,tenant,Jsonb(command),result['booking_id']));return dict(result,tenant_id=tenant)
     def owned(self,conn,actor,tenant,hold):
         scope(conn,tenant)
         row=conn.execute('SELECT token_envelope FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s AND booker_id=%s',(tenant,hold,actor)).fetchone()
