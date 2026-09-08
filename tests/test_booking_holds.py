@@ -1,4 +1,5 @@
 import unittest
+from itertools import count
 from datetime import datetime, timedelta, timezone
 from tempfile import TemporaryDirectory
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +22,8 @@ class BookingHoldTests(GuestFinanceCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        # Booker identity is global in this class database, not hotel-scoped.
+        cls.booker_phones=count(99000000)
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
                 'GRANT SELECT,INSERT ON prsystem.booking_category_rank,prsystem.booking_upgrade,prsystem.booking_refund_request,prsystem.booking_refund_confirmation,prsystem.booking_hold_cancellation,prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
@@ -683,11 +686,11 @@ class BookingHoldTests(GuestFinanceCase):
         from prsystem.mock_providers import MockPhoneGateway
         self.phone_gateway=MockPhoneGateway(self.store)
         self.client.close();self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways=self.gateways,phone_gateway=self.phone_gateway),client=(self.peer,12345))
-        self.booker_phone='+97699112233';self.booker_password='booker-password-2026'
+        self.booker_phone=f'+976{next(self.booker_phones)}';self.booker_password='booker-password-2026'
         self.register_booker(self.booker_phone)
         self.booker_token=self.assert_status(self.client.post('/booker/auth/login',json=dict(phone=self.booker_phone,password=self.booker_password)),200)['access_token']
         self.photo='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZtYAAAAASUVORK5CYII='
-        self.assert_status(self.client.put(f'/hotels/{self.tenant}/booking-profile',headers=self.headers(self.manager_token),json=dict(name='Test hotel',address='Ulaanbaatar',phone=self.booker_phone,description='Hotel description',latitude=47.9,longitude=106.9,photos=[self.photo],published=True,accepting=True,expected_revision=0,idempotency_key='profile')),200)
+        self.assert_status(self.client.put(f'/hotels/{self.tenant}/booking-profile',headers=self.headers(self.manager_token),json=dict(name='Test hotel '+self.tenant,address='Ulaanbaatar',phone=self.booker_phone,description='Hotel description',latitude=47.9,longitude=106.9,photos=[self.photo],published=True,accepting=True,expected_revision=0,idempotency_key='profile')),200)
         self.assert_status(self.client.put(f'/hotels/{self.tenant}/room-categories/{self.category}/publication',headers=self.headers(self.manager_token),json=dict(photos=[self.photo],published=True,expected_revision=0,idempotency_key='category-public')),200)
         with psycopg.connect(self.owner_dsn) as conn:
             identity='publisher'+self.tenant
@@ -698,7 +701,7 @@ class BookingHoldTests(GuestFinanceCase):
         otp=next(r['code'] for r in self.store.inspect('phone') if r['challenge']==challenge['challenge_id'])
         response=self.client.post('/booker/auth/complete',json=dict(challenge_id=challenge['challenge_id'],code=otp,password=password or self.booker_password))
         self.assert_status(response,200);return challenge
-    def public_search(self):return self.client.get('/public/booking-hotels',params=dict(planned_checkin_at=self.arrival.isoformat(),nights=2))
+    def public_search(self):return self.client.get('/public/booking-hotels',params=dict(planned_checkin_at=self.arrival.isoformat(),nights=2,query=self.tenant))
     def customer_hold(self,token=None,key='customer'):
         return self.client.post(f'/booker/hotels/{self.tenant}/bookings',headers=self.headers(token or self.booker_token),json=dict(category_id=self.category,planned_checkin_at=self.arrival.isoformat(),nights=2,provider='QPAY',idempotency_key=key))
     def test_customer_booking_uses_separate_account_and_existing_inventory_guard(self):
@@ -712,6 +715,9 @@ class BookingHoldTests(GuestFinanceCase):
             stored=conn.execute('SELECT phone_hash,phone_envelope FROM prsystem.booker_account WHERE id=%s',(booker,)).fetchone();self.assertNotIn(self.booker_phone,str(stored))
     def test_customer_realms_and_password_reset_revoke_sessions(self):
         self.booker_setup();self.customer_hold()
+        duplicate=self.assert_status(self.client.post('/booker/auth/challenge',json=dict(phone=self.booker_phone,purpose='REGISTER',device='duplicate-registration-device')),200)
+        otp=next(r['code'] for r in self.store.inspect('phone') if r['challenge']==duplicate['challenge_id'])
+        self.assert_status(self.client.post('/booker/auth/complete',json=dict(challenge_id=duplicate['challenge_id'],code=otp,password=self.booker_password)),401)
         self.assertEqual(self.customer_hold(self.manager_token,'other').status_code,401)
         self.assertEqual(self.client.get('/auth/me',headers=self.headers(self.booker_token)).status_code,401)
         self.register_booker(self.booker_phone,'RESET','new-booker-password')
@@ -725,8 +731,8 @@ class BookingHoldTests(GuestFinanceCase):
             conn.execute('UPDATE prsystem.booking_publication SET allowed=true WHERE tenant_id=%s',(self.tenant,));conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
         self.assertEqual(self.public_search().json()['items'],[]);self.assertEqual(self.customer_hold().status_code,404)
     def test_another_customer_cannot_list_owned_booking(self):
-        self.booker_setup();self.customer_hold();self.register_booker('+97688112233')
-        other=self.assert_status(self.client.post('/booker/auth/login',json=dict(phone='+97688112233',password=self.booker_password)),200)['access_token']
+        self.booker_setup();self.customer_hold();other_phone=f'+976{next(self.booker_phones)}';self.register_booker(other_phone)
+        other=self.assert_status(self.client.post('/booker/auth/login',json=dict(phone=other_phone,password=self.booker_password)),200)['access_token']
         self.assertEqual(self.client.get('/booker/bookings',headers=self.headers(other)).json(),[])
 
     def test_cancellation_preview_change_rolls_back_terminal_mutation(self):
