@@ -63,6 +63,11 @@ class MockBookingHold(BaseModel):
     idempotency_key: str = Field(min_length=1,max_length=128)
 
 
+class BookingGuestCancellation(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
 class BookingProviderSwitch(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     provider: Literal['QPAY','KHAAN']
@@ -675,7 +680,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
         stay_errors.update({'PAYMENT_ALREADY_PAID':409,'PAYMENT_VOID_REQUIRES_CANCELLATION':409,'PHYSICAL_COUNT_REQUIRED':409})
         stay_errors['PUBLIC_ORIGIN_REQUIRED']=503
-        stay_errors.update({'BOOKING_CONTRACT_REQUIRED':409,'BOOKING_CAPACITY_UNAVAILABLE':409,'HOLD_EXPIRED':409,
+        stay_errors.update({'BOOKING_NOT_CONFIRMED':409,'BOOKING_ALREADY_APPLIED':409,'BOOKING_CONTRACT_REQUIRED':409,'BOOKING_CAPACITY_UNAVAILABLE':409,'HOLD_EXPIRED':409,
             'INVALID_BOOKING_TIME':422,'BOOKING_ARRIVAL_IN_PAST':422,'INVALID_CHECKOUT_TIME':422,
             'INVALID_CLEANING_BUFFER':422,'INVALID_CONTRACT_INTERVAL':422,'BOOKING_ATTEMPT_LIMIT':429})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
@@ -739,6 +744,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/attempts',status_code=201)
     def switch_booking_provider(tenant_id: str,booking_id: str,body: BookingProviderSwitch,secret: Annotated[str,Depends(token)]):
         return booking_holds.switch(tenant_id,booking_id,secret,body.provider,body.idempotency_key)
+
+    @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/cancel')
+    def cancel_guest_booking(tenant_id: str,booking_id: str,body: BookingGuestCancellation,secret: Annotated[str,Depends(token)]):
+        return booking_holds.cancel_guest(tenant_id,booking_id,secret,body.idempotency_key)
 
     @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/reconcile')
     def reconcile_booking_hold(tenant_id: str,booking_id: str,secret: Annotated[str,Depends(token)]):

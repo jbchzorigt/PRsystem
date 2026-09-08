@@ -14,7 +14,8 @@ def claims(conn, tenant, category):
     return conn.execute('''SELECT id,planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes
         FROM prsystem.booking_hold h WHERE tenant_id=%s AND category_id=%s
         AND hold_state IN ('ACTIVE','CONSUMED') AND NOT EXISTS(SELECT 1 FROM prsystem.booking_hold_application a
-            WHERE (a.tenant_id,a.hold_id)=(h.tenant_id,h.id)) ORDER BY id''', (tenant, category)).fetchall()
+            WHERE (a.tenant_id,a.hold_id)=(h.tenant_id,h.id))
+        AND NOT EXISTS(SELECT 1 FROM prsystem.booking_hold_cancellation x WHERE (x.tenant_id,x.hold_id)=(h.tenant_id,h.id)) ORDER BY id''', (tenant, category)).fetchall()
 
 
 def room_intervals(conn, tenant, category, *, excluding_stay=None):

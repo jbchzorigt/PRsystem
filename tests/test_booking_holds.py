@@ -23,7 +23,7 @@ class BookingHoldTests(GuestFinanceCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
-                'GRANT SELECT,INSERT ON prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
+                'GRANT SELECT,INSERT ON prsystem.booking_hold_cancellation,prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
                 'GRANT UPDATE(booking_state,hold_state,applied_attempt_id,confirmation_snapshot) ON prsystem.booking_hold TO {}',
                 'GRANT UPDATE(state,invoice_id) ON prsystem.booking_hold_attempt TO {}',
             ):conn.execute(sql.SQL(statement).format(sql.Identifier(cls.role)))
@@ -318,3 +318,84 @@ class BookingHoldTests(GuestFinanceCase):
             self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.stay WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
             self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.guest_charge WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
         self.assert_status(self.apply_hold(hold),201)
+
+    def cancel(self,hold,key='cancel'):
+        return self.call(hold,'/cancel',dict(idempotency_key=key))
+
+    def test_guest_free_cancellation_releases_capacity_and_preserves_capture(self):
+        hold=self.begin();self.pay();self.call(hold,'/reconcile')
+        result=self.assert_status(self.cancel(hold),200)
+        self.assertEqual((result['refund_due'],result['retained_mnt'],result['commission_mnt']),(160000,0,0))
+        self.assertEqual(result,self.assert_status(self.cancel(hold),200))
+        self.assertEqual(self.call(hold).json()['booking_state'],'CANCELLED_GUEST')
+        self.assertEqual(self.call(hold,'/reconcile').json()['refund_required_mnt'],160000)
+        self.assert_status(self.hold(key='replacement'),201)
+        self.assertEqual(self.drawer(),(0,0))
+        self.assertEqual(self.store.inspect('refund'),[])
+
+    def test_late_guest_cancellation_uses_confirmation_contract(self):
+        self.arrival=datetime.now(timezone.utc)+timedelta(hours=1)
+        hold=self.begin();self.assert_status(self.contract(rate=1000,revision=1,key='confirm-contract'),200)
+        self.pay();self.call(hold,'/reconcile')
+        self.assert_status(self.contract(rate=2000,revision=2,key='later-contract'),200)
+        result=self.assert_status(self.cancel(hold),200)
+        self.assertEqual((result['retained_mnt'],result['refund_due'],result['commission_mnt'],result['hotel_payable_mnt']),(80000,80000,8000,72000))
+        self.assertEqual(self.call(hold).json()['cancellation']['commission_mnt'],8000)
+
+    def test_cancellation_and_checkin_serialize_to_one_terminal_outcome(self):
+        hold=self.arriving_hold();barrier=Barrier(2)
+        def command(kind):
+            barrier.wait()
+            return self.cancel(hold) if kind=='cancel' else self.apply_hold(hold)
+        with ThreadPoolExecutor(max_workers=2) as pool:responses=list(pool.map(command,['cancel','apply']))
+        self.assertIn([r.status_code for r in responses],([200,409],[409,201]))
+        with psycopg.connect(self.owner_dsn) as conn:
+            cancelled=conn.execute('SELECT count(*) FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s',(self.tenant,)).fetchone()[0]
+            applied=conn.execute('SELECT count(*) FROM prsystem.booking_hold_application WHERE tenant_id=%s',(self.tenant,)).fetchone()[0]
+            self.assertEqual(cancelled+applied,1)
+
+    def test_pending_and_applied_bookings_cannot_guest_cancel(self):
+        hold=self.begin();self.assert_status(self.cancel(hold),409)
+        self.assertEqual(self.call(hold).json()['booking_state'],'HOLDING')
+        self.pay();self.call(hold,'/reconcile')
+        self.assert_status(self.cancel(hold),200)
+        self.assert_status(self.cancel(hold,key='again'),409)
+        self.assert_status(self.apply_hold(hold),409)
+
+    def test_checked_in_booking_rejects_cancellation(self):
+        hold=self.arriving_hold();self.assert_status(self.apply_hold(hold),201)
+        self.assertEqual(self.cancel(hold).json()['code'],'BOOKING_ALREADY_APPLIED')
+        self.assertIsNone(self.call(hold).json()['cancellation'])
+
+    def test_duplicate_capture_after_cancellation_adds_full_refund_without_reopening(self):
+        hold=self.begin();old=self.attempt
+        switched=self.assert_status(self.call(hold,'/attempts',dict(provider='KHAAN',idempotency_key='switch')),201)
+        self.call(hold,'/reconcile');self.pay(switched['attempt_id'],'KHAAN');self.call(hold,'/reconcile')
+        self.assert_status(self.cancel(hold),200);self.pay(old)
+        result=self.assert_status(self.call(hold,'/reconcile'),200)
+        self.assertEqual((result['booking_state'],result['refund_required_mnt']),('CANCELLED_GUEST',320000))
+        self.assertEqual(result,self.assert_status(self.call(hold,'/reconcile'),200))
+
+    def test_cancellation_scope_and_client_refund_amount_are_rejected(self):
+        hold=self.begin();self.pay();self.call(hold,'/reconcile')
+        self.assert_status(self.call(hold,'/cancel',dict(idempotency_key='cancel',refund_due=1)),422)
+        self.assert_status(self.call(hold,'/cancel',dict(idempotency_key='cancel'),token=self.manager_token),403)
+        self.assert_status(self.call(hold,'/cancel',dict(idempotency_key='cancel'),tenant='foreign'),403)
+        self.assertEqual(self.call(hold).json()['booking_state'],'CONFIRMED')
+
+    def test_cancellation_commit_rollback_and_immutable_history(self):
+        hold=self.begin();self.pay();self.call(hold,'/reconcile')
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_cancel_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_cancel_commit AFTER INSERT ON prsystem.booking_hold_cancellation DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_cancel_commit()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.cancel(hold),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_cancel_commit ON prsystem.booking_hold_cancellation')
+                conn.execute('DROP FUNCTION prsystem.fail_cancel_commit()')
+        self.assertEqual(self.call(hold).json()['booking_state'],'CONFIRMED')
+        self.assert_status(self.hold(key='blocked'),409)
+        self.assert_status(self.cancel(hold),200)
+        with psycopg.connect(self.owner_dsn) as conn:
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                conn.execute('UPDATE prsystem.booking_hold_cancellation SET refund_due=1 WHERE tenant_id=%s',(self.tenant,))

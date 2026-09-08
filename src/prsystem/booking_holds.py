@@ -7,7 +7,7 @@ that booking. No staff permission is inferred from that token.
 import json
 import secrets
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 
 from psycopg.types.json import Jsonb
 
@@ -86,8 +86,11 @@ class BookingHolds(GuestPayments):
         attempts = conn.execute('''SELECT id,provider,state,invoice_id,invoice_expires_at FROM prsystem.booking_hold_attempt
             WHERE tenant_id=%s AND hold_id=%s ORDER BY created_at,id''',(tenant,hold)).fetchall()
         refund = conn.execute('SELECT coalesce(sum(refund_due),0) FROM prsystem.booking_hold_capture WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()[0]
+        cancellation=conn.execute('SELECT outcome,refund_due,retained_mnt,commission_mnt,hotel_payable_mnt,recorded_at FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()
+        if cancellation:refund+=cancellation[1]
         application=conn.execute('SELECT stay_id FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()
-        return dict(stay_id=application[0] if application else None,booking_id=hold,category_id=row[0],booking_state=row[1],hold_state=row[2],
+        return dict(stay_id=application[0] if application else None,booking_id=hold,category_id=row[0],booking_state=cancellation[0] if cancellation else row[1],hold_state='CANCELLED' if cancellation else row[2],
+                    cancellation=dict(zip(('outcome','refund_due','retained_mnt','commission_mnt','hotel_payable_mnt','recorded_at'),cancellation)) if cancellation else None,
                     created_at=row[3],expires_at=row[4],quote=row[5],applied_attempt_id=row[6],confirmation=row[7],
                     refund_required_mnt=int(refund),mode='MOCK_ONLY',
                     attempts=[dict(zip(('attempt_id','provider','state','invoice_id','expires_at'),a)) for a in attempts])
@@ -268,3 +271,34 @@ class BookingHolds(GuestPayments):
             result=self.reconcile(tenant,hold,secret)
             results.append(dict(booking_id=hold,booking_state=result['booking_state']))
         return dict(results=results,limit=limit,mode='MOCK_ONLY')
+
+    def cancel_guest(self,tenant,hold,secret,key):
+        from prsystem.booking_policy import OnlineQuote, cancel_confirmed
+        from prsystem.settlement import BookingState
+        with transaction(self.auth.dsn) as conn:
+            row=self.guest(conn,tenant,hold,secret)
+            command=dict(action='CANCEL_BOOKING_GUEST')
+            replay=self.replay(conn,tenant,hold,key,command)
+            if replay is not None:return replay
+            if row[3]!='CONFIRMED' or not row[4]:raise DomainError('BOOKING_NOT_CONFIRMED')
+            if conn.execute('SELECT 1 FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone():raise DomainError('BOOKING_NOT_CONFIRMED')
+            if conn.execute('SELECT 1 FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone():raise DomainError('BOOKING_ALREADY_APPLIED')
+            source,contract=conn.execute('SELECT snapshot,confirmation_snapshot FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s',(tenant,hold)).fetchone()
+            source=dict(source)
+            for name in ('quoted_at','planned_checkin_at','planned_checkout_at','free_cancel_until','no_show_cutoff'):
+                source[name]=datetime.fromisoformat(source[name])
+            source['checkout_time']=time.fromisoformat(source['checkout_time'])
+            # Cancellation uses the contract fixed at payment confirmation,
+            # even if it differs from the earlier quote or today's contract.
+            source['commission_rate_bps']=contract['rate_bps']
+            now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
+            amounts=cancel_confirmed(OnlineQuote(**source),current_state=BookingState.CONFIRMED,outcome=BookingState.CANCELLED_GUEST,now=now)
+            facts=amounts.settlement
+            result=dict(booking_id=hold,booking_state='CANCELLED_GUEST',hold_state='CANCELLED',
+                retained_mnt=facts.retained_room_amount,refund_due=facts.room_refund.due,commission_mnt=amounts.commission_mnt,
+                hotel_payable_mnt=amounts.hotel_payable_mnt,recorded_at=now.isoformat(),mode='MOCK_ONLY')
+            conn.execute('''INSERT INTO prsystem.booking_hold_cancellation VALUES(%s,%s,%s,'CANCELLED_GUEST',%s,%s,%s,%s,%s,%s,%s)''',
+                (tenant,hold,row[4],row[5],facts.retained_room_amount,facts.room_refund.due,amounts.commission_mnt,amounts.hotel_payable_mnt,Jsonb(contract),now))
+            self.event_row(conn,tenant,hold,'BOOKING_CANCELLED_GUEST',result)
+            conn.execute('INSERT INTO prsystem.booking_hold_command VALUES(%s,%s,%s,%s,%s)',(tenant,hold,key,Jsonb(command),Jsonb(result)))
+            return result

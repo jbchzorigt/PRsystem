@@ -106,3 +106,32 @@ Local discovery ran 88 tests and skipped 375 PostgreSQL-dependent tests.
 The following documentation-only commit records this evidence.
 Higher-category Manager upgrades, hotel-caused cancellation, staff booking inbox
 and customer/reception UI for this new source remain future integrations.
+
+## Paid mock guest cancellation
+
+`POST /guest/booking-holds/{tenant}/{booking}/cancel` accepts only an idempotency
+key and the booking-scoped mock token. It is limited to captured, confirmed,
+unapplied bookings. Staff tokens do not impersonate the mock guest. The existing
+production, isolated-database, tenant and hotel security gates remain in force.
+
+The immutable `booking_hold_cancellation` records the terminal outcome, captured
+amount, retained first-night amount, refund obligation, commission, hotel payable,
+confirmation contract and server time. The existing policy supplies a full refund
+at least 24 hours before planned arrival; otherwise the first night is retained.
+Commission uses the contract snapshotted at capture confirmation, even if the
+quote or current contract differs. Retained plus refund equals capture; commission
+plus hotel payable equals retained. These are settlement facts, not payout events.
+
+The shared catalog/hold lock serializes cancellation with payment reconciliation
+and Reception application. The cancellation row, event and command receipt commit
+together. Inventory claims exclude this terminal overlay; guest status derives
+CANCELLED_GUEST/CANCELLED without rewriting the original confirmation record.
+Check-in explicitly rejects the overlay. A retry cannot create a second obligation;
+a different terminal command is rejected. Duplicate captures observed later add
+full refund obligations and never reopen the booking. Rollback retains the claim.
+
+Eight integration tests cover free/late cancellation, confirmation contract rate,
+check-in races, unpaid/applied guards, late duplicate captures, token/client-money
+isolation and commit rollback/immutable history. PostgreSQL CI is pending.
+Provider refund execution, unpaid hold cancellation, no-show mutation, hotel-caused
+cancellation, Manager upgrades, settlement posting/payout and UI remain separate.

@@ -148,6 +148,7 @@ class StayService(RoomService):
                         FROM prsystem.booking_hold h WHERE h.tenant_id=%s AND h.id=%s FOR UPDATE''',(tenant,hold_id)).fetchone()
                     if not source or source[0]!=row[3] or source[5]!='CONFIRMED' or row[21]!='OFF':raise DomainError('INVALID_FINANCIAL_SOURCE')
                     if conn.execute("SELECT 1 FROM prsystem.reception_dependency_blocker WHERE tenant_id=%s AND room_id=%s AND state='OPEN'",(tenant,row[0])).fetchone():raise DomainError('ROOM_NOT_READY')
+                    if conn.execute('SELECT 1 FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold_id)).fetchone():raise DomainError('INVALID_FINANCIAL_SOURCE')
                     if conn.execute('SELECT 1 FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold_id)).fetchone():raise DomainError('INVALID_FINANCIAL_SOURCE')
                     capture=conn.execute('''SELECT 1 FROM prsystem.booking_hold_capture WHERE tenant_id=%s AND hold_id=%s AND attempt_id=%s
                         AND disposition='APPLIED' AND amount_mnt=%s''',(tenant,hold_id,source[6],source[3])).fetchone()
