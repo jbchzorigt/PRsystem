@@ -1,6 +1,6 @@
 # Хөгжүүлэлтийн явц
 
-**Шинэчилсэн:** 2026-09-07. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
+**Шинэчилсэн:** 2026-09-08. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
 ## Одоогийн Reception acceptance
 
@@ -13,14 +13,14 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 
 ## Нийт 6 үндсэн үе шат
 
-Дугаар нь [backend backlog](28-backend-foundation.md)-ийн дараалал. **Одоогийн төв ажил: 3/6-р үе шат — Reception.** Энэ нь төслийн 50% дууссан гэсэн хэмжүүр биш. 2026-09-07-нд хэрэглэгч бодит API service-үүдийг mock болгоод дараагийн ажил руу шилжихийг зөвшөөрсөн; provider acceptance нь хойшлуулсан release gate байна. Хөндлөн суурийн ажлууд дараагийн module-тай хамт гүйцээгдэнэ; нийт жижиг task-ийн эцсийн тоог зохиож тогтоогоогүй.
+Дугаар нь [backend backlog](28-backend-foundation.md)-ийн дараалал. **Одоогийн төв ажил: 4/6-р үе шат — Online booking.** Энэ нь төслийн 50% дууссан гэсэн хэмжүүр биш. 2026-09-07-нд хэрэглэгч бодит API service-үүдийг mock болгоод дараагийн ажил руу шилжихийг зөвшөөрсөн; provider acceptance нь хойшлуулсан release gate байна. Хөндлөн суурийн ажлууд дараагийн module-тай хамт гүйцээгдэнэ; нийт жижиг task-ийн эцсийн тоог зохиож тогтоогоогүй.
 
 | № | Үе шат | Одоогийн төлөв |
 | --- | --- | --- |
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
-| 4 | Online booking, payment/refund/payout | Settlement domain rule бэлэн; booking/provider implementation үлдсэн |
+| 4 | Online booking, payment/refund/payout | [Quote/contract/hold/cancellation domain суурь](45-online-booking-policy.md) нэмэгдсэн; transactional repository, guest API, provider/refund/payout implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Reception-д хэрэгтэй mock boundary бэлэн; бүтэн module үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
@@ -137,3 +137,10 @@ Expired overview нь persisted pre-lock stay/shift бүрийг authorize хи�
 **414 backend тест skip-гүй**, Chromium/browser API contract/design/token checks
 амжилттай. 364-test milestone-оос 50 тест нэмэгдсэн. Бодит provider API хэрэглэгчийн
 шийдвэрээр mock хэвээр; дараагийн 4–6-р шат болон stage-2 live acceptance тусдаа.
+
+## 4-р шат — booking domain эхний багц
+
+2026-09-08: `booking_policy.py`, 24 шинэ тест нэмэгдэв. Энэ нь database hold эсвэл
+guest booking API биш; [хэрэгжсэн код ба үлдсэн integration](45-online-booking-policy.md).
+Reception-ийн expired completion дэлгэц v0.12-д өмнө баталгаажсан тул давхар хийгээгүй.
+CI-ийн эцсийн баталгаажуулалт хүлээгдэж байна.
