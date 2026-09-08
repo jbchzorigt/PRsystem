@@ -53,7 +53,7 @@ use a separate outbox/worker adapter rather than network calls under this lock.
 
 ## Remaining integration
 
-Verified guest enrollment/OTP, public listing eligibility, Manager upgrade/hotel-caused cancellation, cancellation/no-show mutation, refund execution,
+Verified guest enrollment/OTP, public listing eligibility, Manager upgrade/hotel-caused cancellation, unpaid cancellation/no-show mutation, refund execution,
 commission posting/payout, scheduled expiry/reconciliation and customer UI remain.
 An unapplied confirmed category hold continues to claim inventory for its
 snapshotted interval. The same-category Reception adapter below atomically
@@ -132,6 +132,11 @@ full refund obligations and never reopen the booking. Rollback retains the claim
 
 Eight integration tests cover free/late cancellation, confirmation contract rate,
 check-in races, unpaid/applied guards, late duplicate captures, token/client-money
-isolation and commit rollback/immutable history. PostgreSQL CI is pending.
+isolation and commit rollback/immutable history. Source
+`edaf44e31fda5c3cb2c504ef3d48cb442623fb07` passed **471 backend tests without
+skips**, plus browser/API-contract/design/token checks.
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34201253745).
+Local: 88 executed, 383 PostgreSQL-dependent skipped. The subsequent
+documentation-only commit records this evidence.
 Provider refund execution, unpaid hold cancellation, no-show mutation, hotel-caused
 cancellation, Manager upgrades, settlement posting/payout and UI remain separate.

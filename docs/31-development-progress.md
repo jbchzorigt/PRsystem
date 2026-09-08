@@ -172,5 +172,6 @@ Manager upgrade, hotel-caused cancellation болон шинэ source-ийн д�
 Төлбөр нь баталгаажсан, check-in хийгдээгүй захиалгыг mock guest цуцалдаг болов.
 24+ цагийн өмнө бүтэн, түүнээс дотогш эхний шөнийг үлдээсэн буцаалтын үүрэг үүснэ.
 Capture confirmation-ийн гэрээгээр commission бодож, нөөц нэг transaction-аар сулрана.
-8 шинэ integration тест нэмсэн; PostgreSQL CI хүлээгдэж байна. Refund execution,
+8 шинэ integration тест нэмсэн; **471/471 backend тест skip-гүй**, мөн browser/API-contract/design/token шалгалтууд тэнцсэн.
+Source `edaf44e3`; [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34201253745). Refund execution,
 no-show, hotel cancellation, payout болон UI үлдсэн. [Хүрээ](46-booking-holds.md).
