@@ -29,7 +29,7 @@ Production cash check-in нь configured deposit, physical receipt болон id
 Online booking-ийн хоногийн quote, гэрээний commission, cancellation/no-show,
 10 минутын hold deadline болон capture decision-ийн domain суурь нэмэгдсэн.
 [Implementation ба үлдсэн integration](docs/45-online-booking-policy.md).
-Энэ багц database hold эсвэл нийтийн booking API-г нээхгүй.
+[Database hold ба төлбөрийн mock integration](docs/46-booking-holds.md) нэмэгдсэн. Нийтийн production booking API хараахан нээгдээгүй.
 
 ## Шалгах
 

@@ -35,6 +35,9 @@ class StayAmendments(GuestFinance):
         if any(state=='ACTIVE' or overlaps(actual,row[3],start,end,row[4],buffer) for state,start,end,buffer in history):raise DomainError('ROOM_OCCUPIED')
         reservations=conn.execute("SELECT planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes FROM prsystem.room_reservation WHERE tenant_id=%s AND room_id=%s AND state='CONFIRMED'",(tenant,row[0])).fetchall()
         if any(overlaps(actual,row[3],start,end,row[4],buffer) for start,end,buffer in reservations):raise DomainError('RESERVATION_CONFLICT')
+        from prsystem.booking_inventory import protect_existing_claims
+        from prsystem.booking_policy import InventoryInterval
+        protect_existing_claims(conn,tenant,row[0],InventoryInterval(actual,row[3],row[4]),excluding_stay=stay)
         return actual
 
     def request(self,bearer,tenant,stay,requested,reason,key):

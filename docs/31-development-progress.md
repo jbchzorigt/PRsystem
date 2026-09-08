@@ -20,7 +20,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
-| 4 | Online booking, payment/refund/payout | [Quote/contract/hold/cancellation domain суурь](45-online-booking-policy.md) нэмэгдсэн; transactional repository, guest API, provider/refund/payout implementation үлдсэн |
+| 4 | Online booking, payment/refund/payout | [Quote/contract/hold/cancellation domain суурь](45-online-booking-policy.md) нэмэгдсэн; [transactional mock hold/capture](46-booking-holds.md) нэмэгдсэн; verified guest, booking application, refund/payout implementation үлдсэн |
 | 5 | Minibar, Restaurant, Operation | Reception-д хэрэгтэй mock boundary бэлэн; бүтэн module үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
@@ -147,3 +147,9 @@ Reception-ийн expired completion дэлгэц v0.12-д өмнө баталг�
 `a8d4f4c0`, **438 backend тест skip-гүй, 298.411 секундэд амжилттай**;
 browser/API-contract/design/token шалгалтууд мөн давсан. Local full discovery:
 438 тестээс 88 ажилласан, PostgreSQL-dependent 350 skip; шинэ 24 тест бүгд давсан.
+
+## 4-р шат — transactional mock hold
+
+2026-09-08: PostgreSQL hold, provider attempt/capture, expiry reconciliation болон
+өрөөний багтаамжийн хамгаалалт нэмэгдэв. [Хүрээ ба API](46-booking-holds.md).
+Шинэ integration тестүүдийг PostgreSQL CI дээр баталгаажуулна.

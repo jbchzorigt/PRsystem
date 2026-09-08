@@ -38,9 +38,35 @@ from prsystem.room_lifecycle import RoomLifecycle
 from prsystem.handover import HandoverService
 from prsystem.reception_booking import ReceptionBooking
 from prsystem.checkin_funding import CheckinFunding
+from prsystem.booking_holds import BookingHolds
 from prsystem.routed_refunds import RoutedRefunds
 from prsystem.reception_dependencies import ReceptionDependencies
 from prsystem.guest_identity import vault_from_environment
+
+
+class MockBookingContract(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    contract_id: str = Field(min_length=1,max_length=128)
+    rate_bps: int = Field(ge=0,le=10000)
+    valid_from: str
+    valid_until: str
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class MockBookingHold(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    category_id: str = Field(min_length=1,max_length=128)
+    planned_checkin_at: str
+    nights: int = Field(ge=1)
+    provider: Literal['QPAY','KHAAN']
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class BookingProviderSwitch(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    provider: Literal['QPAY','KHAAN']
+    idempotency_key: str = Field(min_length=1,max_length=128)
 
 
 class Login(BaseModel):
@@ -582,6 +608,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode,payment_gateways)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
+    booking_holds = BookingHolds(service, stays.vault, runtime_mode, payment_gateways)
     routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
     from prsystem.operations import Operations
     operations=Operations(service,stays.vault,runtime_mode)
@@ -644,6 +671,9 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
         stay_errors.update({'PAYMENT_ALREADY_PAID':409,'PAYMENT_VOID_REQUIRES_CANCELLATION':409,'PHYSICAL_COUNT_REQUIRED':409})
         stay_errors['PUBLIC_ORIGIN_REQUIRED']=503
+        stay_errors.update({'BOOKING_CONTRACT_REQUIRED':409,'BOOKING_CAPACITY_UNAVAILABLE':409,'HOLD_EXPIRED':409,
+            'INVALID_BOOKING_TIME':422,'BOOKING_ARRIVAL_IN_PAST':422,'INVALID_CHECKOUT_TIME':422,
+            'INVALID_CLEANING_BUFFER':422,'INVALID_CONTRACT_INTERVAL':422,'BOOKING_ATTEMPT_LIMIT':429})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
@@ -685,6 +715,30 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
 
     static_root = Path(__file__).with_name("static")
+
+    @app.put('/hotels/{tenant_id}/mock/booking-contract')
+    def mock_booking_contract(tenant_id: str,body: MockBookingContract,secret: Annotated[str,Depends(token)]):
+        return booking_holds.contract(secret,tenant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/mock/booking-holds',status_code=201)
+    def mock_booking_hold(tenant_id: str,body: MockBookingHold,secret: Annotated[str,Depends(token)]):
+        return booking_holds.create(secret,tenant_id,body.category_id,body.planned_checkin_at,body.nights,body.provider,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/mock/booking-holds/expire')
+    def expire_booking_holds(tenant_id: str,secret: Annotated[str,Depends(token)],limit: int=Query(25,ge=1,le=50)):
+        return booking_holds.expire_due(secret,tenant_id,limit)
+
+    @app.get('/guest/booking-holds/{tenant_id}/{booking_id}')
+    def read_booking_hold(tenant_id: str,booking_id: str,secret: Annotated[str,Depends(token)]):
+        return booking_holds.read(tenant_id,booking_id,secret)
+
+    @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/attempts',status_code=201)
+    def switch_booking_provider(tenant_id: str,booking_id: str,body: BookingProviderSwitch,secret: Annotated[str,Depends(token)]):
+        return booking_holds.switch(tenant_id,booking_id,secret,body.provider,body.idempotency_key)
+
+    @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/reconcile')
+    def reconcile_booking_hold(tenant_id: str,booking_id: str,secret: Annotated[str,Depends(token)]):
+        return booking_holds.reconcile(tenant_id,booking_id,secret)
 
     @app.get('/hotels/{tenant_id}/operations')
     def operations_overview(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=Query(default='',max_length=128),limit: int=Query(default=50,ge=1,le=100)):

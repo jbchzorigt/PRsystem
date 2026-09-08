@@ -71,6 +71,9 @@ class StayService(RoomService):
             FROM prsystem.room_reservation WHERE tenant_id=%s AND room_id=%s AND state='CONFIRMED' AND id IS DISTINCT FROM %s""", (tenant, room,excluding_reservation)).fetchall()
         if any(overlaps(actual, end, start, finish, buffer_minutes, buffer) for start, finish, buffer in reservations):
             raise DomainError('RESERVATION_CONFLICT')
+        from prsystem.booking_inventory import protect_existing_claims
+        from prsystem.booking_policy import InventoryInterval
+        protect_existing_claims(conn,tenant,room,InventoryInterval(actual,end,buffer_minutes))
 
     def _response(self, conn, tenant, result):
         result = dict(result)
