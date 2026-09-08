@@ -61,3 +61,7 @@ calendar/year boundary, overflow, exact deadline, immutable pricing,
 zero-refund settlement, provider switch/replay/late capture, interval fragmentation
 ба category-to-stay conservation-ийг шалгана. Local бүх suite-ийн дүн болон
 PostgreSQL CI-ийн дүнг docs/31-д тусад нь тэмдэглэнэ.
+
+Эцсийн баталгаа: [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34186148437),
+source `a8d4f4c0bfce3ba5a4dd762cc10fa47727da65a0`: **438 тест skip-гүй**,
+298.411 секунд; browser/API-contract/design/token шалгалтууд амжилттай.

@@ -143,4 +143,7 @@ Expired overview нь persisted pre-lock stay/shift бүрийг authorize хи�
 2026-09-08: `booking_policy.py`, 24 шинэ тест нэмэгдэв. Энэ нь database hold эсвэл
 guest booking API биш; [хэрэгжсэн код ба үлдсэн integration](45-online-booking-policy.md).
 Reception-ийн expired completion дэлгэц v0.12-д өмнө баталгаажсан тул давхар хийгээгүй.
-CI-ийн эцсийн баталгаажуулалт хүлээгдэж байна.
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34186148437): source
+`a8d4f4c0`, **438 backend тест skip-гүй, 298.411 секундэд амжилттай**;
+browser/API-contract/design/token шалгалтууд мөн давсан. Local full discovery:
+438 тестээс 88 ажилласан, PostgreSQL-dependent 350 skip; шинэ 24 тест бүгд давсан.

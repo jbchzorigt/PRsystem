@@ -24,6 +24,13 @@ Production cash check-in нь configured deposit, physical receipt болон id
 - [Admin reset, invite/claim recovery, security audit, mail worker](docs/34-staff-recovery-mail-worker.md)
 - [Restaurant identity, invitation, session scope](docs/35-restaurant-identity.md)
 
+## 4-р шатны эхний багц
+
+Online booking-ийн хоногийн quote, гэрээний commission, cancellation/no-show,
+10 минутын hold deadline болон capture decision-ийн domain суурь нэмэгдсэн.
+[Implementation ба үлдсэн integration](docs/45-online-booking-policy.md).
+Энэ багц database hold эсвэл нийтийн booking API-г нээхгүй.
+
 ## Шалгах
 
 Python 3.12+ шаардлагатай. Domain тестүүд external package/database шаардахгүй. Linux/macOS:
