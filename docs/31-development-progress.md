@@ -152,4 +152,8 @@ browser/API-contract/design/token шалгалтууд мөн давсан. Loca
 
 2026-09-08: PostgreSQL hold, provider attempt/capture, expiry reconciliation болон
 өрөөний багтаамжийн хамгаалалт нэмэгдэв. [Хүрээ ба API](46-booking-holds.md).
-Шинэ integration тестүүдийг PostgreSQL CI дээр баталгаажуулна.
+18 шинэ integration тесттэй хувилбарын **456 backend тест бүгд skip-гүй**
+амжилттай; browser/API-contract/design/token шалгалтууд мөн тэнцсэн.
+Баталгаажсан source: `71133bf0`; [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34190759319).
+4-р шат үргэлжилж байна: verified booker, Reception application, refund execution,
+cancellation/no-show, payout болон scheduled worker/UI холбоосууд үлдсэн.

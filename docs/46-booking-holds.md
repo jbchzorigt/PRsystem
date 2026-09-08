@@ -67,4 +67,8 @@ Eighteen new integration tests cover last-unit concurrency, walk-in capacity,
 authoritative capture, duplicate/late payments, fixed expiry, provider switching,
 tenant/token/role isolation, production rejection, contract snapshots, RLS,
 immutable sources, concurrent capture, expired-contract refund obligations and
-commit rollback. PostgreSQL CI results are pending.
+commit rollback. Source `71133bf093ff96d4323f3e5f489f3385728332de` passed
+all **456 backend tests without skips**, plus browser/API-contract/design/token
+checks in [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34190759319).
+Local discovery ran 88 tests and skipped 368 PostgreSQL-dependent tests.
+The subsequent documentation-only commit records this evidence.
