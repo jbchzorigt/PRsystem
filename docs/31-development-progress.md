@@ -180,5 +180,7 @@ no-show, hotel cancellation, payout болон UI үлдсэн. [Хүрээ](46-
 
 Буцаалтын үүргийг анхны QPay/Khaan mock capture-тай холбож, provider баталгааны дараа
 буцаасан дүнд тооцно. Хүсэлт эхлээд commit хийгдэж, retry ижил request ID ашиглана;
-0₮ буцаалт provider command үүсгэхгүй. 9 шинэ integration тест, PostgreSQL CI хүлээгдэж байна.
+0₮ буцаалт provider command үүсгэхгүй. 9 шинэ integration тест; **480/480 backend тест skip-гүй**,
+browser/API-contract/design/token шалгалтууд тэнцсэн. Source `4c56b1d9`;
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34206181125).
 Post-completion correction/chargeback, no-show, hotel cancellation, payout болон UI үлдсэн.

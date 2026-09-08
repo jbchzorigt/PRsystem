@@ -176,5 +176,9 @@ network calls under the mock transaction lock. Real API credentials remain defer
 Nine integration tests cover pending/success, late success after failed states,
 concurrent dispatch, zero-refund suppression, mismatched evidence, independent
 multi-capture balances, token/production restrictions, completion rollback and
-request-commit-before-dispatch. PostgreSQL CI is pending. No-show, hotel cancellation,
+request-commit-before-dispatch. Source `4c56b1d9c63a12eaaea4f581a0295ce1fcbf4dea`
+passed **480 backend tests without skips**, plus browser/API-contract/design/token
+checks in [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34206181125).
+Local: 88 executed, 392 PostgreSQL-dependent skipped. The subsequent documentation-only
+commit records validation. No-show, hotel cancellation,
 Manager upgrade, settlement/payout and staff/customer UI remain unfinished.
