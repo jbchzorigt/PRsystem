@@ -53,7 +53,7 @@ use a separate outbox/worker adapter rather than network calls under this lock.
 
 ## Remaining integration
 
-Verified guest enrollment/OTP, public listing eligibility, Manager upgrade/hotel-caused cancellation, unpaid cancellation/no-show mutation, refund execution,
+Verified guest enrollment/OTP, public listing eligibility, Manager upgrade/hotel-caused cancellation, unpaid cancellation/no-show mutation, live refund integration,
 commission posting/payout, scheduled expiry/reconciliation and customer UI remain.
 An unapplied confirmed category hold continues to claim inventory for its
 snapshotted interval. The same-category Reception adapter below atomically
@@ -138,7 +138,7 @@ skips**, plus browser/API-contract/design/token checks.
 [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34201253745).
 Local: 88 executed, 383 PostgreSQL-dependent skipped. The subsequent
 documentation-only commit records this evidence.
-Provider refund execution, unpaid hold cancellation, no-show mutation, hotel-caused
+Live refund integration, unpaid hold cancellation, no-show mutation, hotel-caused
 cancellation, Manager upgrades, settlement posting/payout and UI remain separate.
 
 ## Original-payment mock refund execution
@@ -164,7 +164,9 @@ a separate reconciliation workflow. A database rollback after provider success
 reuses the committed request and records completion exactly once on retry.
 
 Guest status reports total required, provider-confirmed and remaining MNT, request
-statuses and the independent NONE/REQUIRED/PENDING/REFUNDED axis. Booking state,
+statuses and the independent NONE/REQUIRED/PENDING/PARTIALLY_REFUNDED/REFUNDED/FAILED
+axis. Partial confirmed amounts take PARTIALLY_REFUNDED; FAILED requires all
+required money to have requests and all of those requests to report failure. Booking state,
 capture history, cash drawers and released inventory do not change on refund.
 Confirmed requests are not resent or polled by this endpoint. Provider withdrawals,
 chargebacks and post-completion reconciliation/adjustments remain a separate gate

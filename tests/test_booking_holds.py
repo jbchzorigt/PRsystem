@@ -431,6 +431,7 @@ class BookingHoldTests(GuestFinanceCase):
             result=self.assert_status(self.refund_reconcile(hold),200)
             self.assertEqual((result['refunded_mnt'],result['refund_remaining_mnt']),(0,160000))
             self.assertEqual(result['refunds'][0]['request_id'],request)
+            self.assertEqual(result['refund_state'],'PENDING' if state=='UNKNOWN' else 'FAILED')
         self.assertEqual(len(self.store.inspect('refund')),1)
         self.gateways['QPAY'].set_refund_status(request,'SUCCEEDED')
         self.assertEqual(self.refund_reconcile(hold).json()['refunded_mnt'],160000)
@@ -474,6 +475,7 @@ class BookingHoldTests(GuestFinanceCase):
         self.gateways['QPAY'].set_refund_status(qpay['request_id'],'SUCCEEDED')
         result=self.assert_status(self.refund_reconcile(hold),200)
         self.assertEqual((result['refunded_mnt'],result['refund_remaining_mnt']),(160000,160000))
+        self.assertEqual(result['refund_state'],'PARTIALLY_REFUNDED')
         self.assertEqual(result['booking_state'],'CANCELLED_GUEST')
 
     def test_refund_scope_production_and_client_evidence_rejected(self):
