@@ -34,7 +34,7 @@ class BookingHoldTests(GuestFinanceCase):
         self.store=MockStore(directory.name+'/booking.sqlite3',environment='test')
         self.gateways={p:MockPaymentGateway(self.store,p) for p in ('QPAY','KHAAN')}
         self.client.close()
-        self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways=self.gateways))
+        self.client=TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault,runtime_mode='test',payment_gateways=self.gateways),client=(self.peer,12345))
         self.addCleanup(self.client.close)
         self.arrival=datetime.now(timezone.utc)+timedelta(days=2)
         self.assert_status(self.contract(),200)
@@ -210,3 +210,23 @@ class BookingHoldTests(GuestFinanceCase):
                 conn.execute('DROP FUNCTION prsystem.fail_booking_commit()')
         self.assertEqual(self.call(hold).json()['booking_state'],'HOLDING')
         self.assertEqual(self.call(hold,'/reconcile').json()['booking_state'],'CONFIRMED')
+
+    def test_concurrent_reconciliation_claims_capture_once(self):
+        hold=self.begin();self.pay();barrier=Barrier(2)
+        def reconcile(_):barrier.wait();return self.call(hold,'/reconcile')
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(reconcile,range(2)))
+        self.assertEqual([r.status_code for r in results],[200,200])
+        self.assertEqual(results[0].json(),results[1].json())
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_hold_capture WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)
+
+    def test_expired_contract_preserves_capture_as_full_refund_due(self):
+        hold=self.begin();now=datetime.now(timezone.utc)
+        result=self.client.put(f'/hotels/{self.tenant}/mock/booking-contract',headers=self.headers(self.manager_token),json=dict(
+            contract_id='ended',rate_bps=375,valid_from=(now-timedelta(days=2)).isoformat(),valid_until=(now-timedelta(days=1)).isoformat(),
+            expected_revision=1,idempotency_key='ended'))
+        self.assert_status(result,200);self.pay()
+        result=self.assert_status(self.call(hold,'/reconcile'),200)
+        self.assertEqual((result['booking_state'],result['refund_required_mnt']),('EXPIRED',160000))
+        self.assertEqual(result,self.assert_status(self.call(hold,'/reconcile'),200))

@@ -63,7 +63,8 @@ online capacity waits for the stage-five canonical configuration adapter.
 
 ## Validation
 
-Sixteen new integration tests cover last-unit concurrency, walk-in capacity,
+Eighteen new integration tests cover last-unit concurrency, walk-in capacity,
 authoritative capture, duplicate/late payments, fixed expiry, provider switching,
 tenant/token/role isolation, production rejection, contract snapshots, RLS,
-immutable sources and commit rollback. PostgreSQL CI results are pending.
+immutable sources, concurrent capture, expired-contract refund obligations and
+commit rollback. PostgreSQL CI results are pending.
