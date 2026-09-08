@@ -157,3 +157,11 @@ browser/API-contract/design/token шалгалтууд мөн давсан. Loca
 Баталгаажсан source: `71133bf0`; [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34190759319).
 4-р шат үргэлжилж байна: verified booker, Reception application, refund execution,
 cancellation/no-show, payout болон scheduled worker/UI холбоосууд үлдсэн.
+
+## 4-р шат — paid hold → Reception
+
+Ижил category-ийн физик өрөөг Reception check-in үед оноож, category claim-ийг
+stay occupancy руу нэг transaction-аар шилжүүлнэ. Paid price/planned checkout
+snapshot хадгалагдаж, кассын мөнгө өөрчлөгдөхгүй. Дэлгэрэнгүй: [booking hold adapter](46-booking-holds.md).
+7 шинэ integration тест нэмсэн; PostgreSQL CI баталгаажуулалт хүлээгдэж байна.
+Manager upgrade, hotel-caused cancellation болон шинэ source-ийн дэлгэцүүд үлдсэн.

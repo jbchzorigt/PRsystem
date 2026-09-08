@@ -337,6 +337,10 @@ class OnlineCheckIn(BaseModel):
     idempotency_key: str=Field(min_length=1,max_length=128)
 
 
+class HeldBookingCheckIn(OnlineCheckIn):
+    room_id: str=Field(min_length=1,max_length=128)
+
+
 class MockBookingInput(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
     room_id: str=Field(min_length=1,max_length=128)
@@ -883,6 +887,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/mock/bookings',status_code=201)
     def simulate_confirmed_booking(tenant_id: str,body: MockBookingInput,secret: Annotated[str,Depends(token)]):
         return stays.mock_booking(secret,tenant_id,body.room_id,body.kind,body.duration_units,body.planned_checkin_at,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/booking-holds/{booking_id}/check-in',status_code=201)
+    def held_booking_check_in(tenant_id: str,booking_id: str,body: HeldBookingCheckIn,secret: Annotated[str,Depends(token)]):
+        return stays.check_in_hold(secret,tenant_id,booking_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/bookings')
     def list_bookings(tenant_id: str,secret: Annotated[str,Depends(token)],limit: int=Query(default=50,ge=1,le=100),after: str=Query(default='',max_length=128)):

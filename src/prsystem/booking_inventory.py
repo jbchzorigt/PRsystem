@@ -12,8 +12,9 @@ def claims(conn, tenant, category):
     # Elapsed ACTIVE holds keep inventory until the expiry worker queries and
     # persists its terminal decision. Time alone is not a reservation release.
     return conn.execute('''SELECT id,planned_checkin_at,planned_checkout_at,cleaning_buffer_minutes
-        FROM prsystem.booking_hold WHERE tenant_id=%s AND category_id=%s
-        AND hold_state IN ('ACTIVE','CONSUMED') ORDER BY id''', (tenant, category)).fetchall()
+        FROM prsystem.booking_hold h WHERE tenant_id=%s AND category_id=%s
+        AND hold_state IN ('ACTIVE','CONSUMED') AND NOT EXISTS(SELECT 1 FROM prsystem.booking_hold_application a
+            WHERE (a.tenant_id,a.hold_id)=(h.tenant_id,h.id)) ORDER BY id''', (tenant, category)).fetchall()
 
 
 def room_intervals(conn, tenant, category, *, excluding_stay=None):
@@ -45,7 +46,7 @@ def require_capacity(conn, tenant, category, candidate, *, excluding=None):
         raise DomainError('BOOKING_CAPACITY_UNAVAILABLE')
 
 
-def protect_existing_claims(conn, tenant, room, candidate, *, excluding_stay=None):
+def protect_existing_claims(conn, tenant, room, candidate, *, excluding_stay=None, excluding_hold=None):
     """Existing walk-in/physical-reservation producers call under catalog lock.
 
     Test every outstanding claim over its full interval. Looking only at the
@@ -54,7 +55,7 @@ def protect_existing_claims(conn, tenant, room, candidate, *, excluding_stay=Non
     category = conn.execute('SELECT category_id FROM prsystem.room WHERE tenant_id=%s AND id=%s', (tenant, room)).fetchone()
     if not category:
         return
-    entries = claims(conn, tenant, category[0])
+    entries = [r for r in claims(conn, tenant, category[0]) if r[0] != excluding_hold]
     if not entries:
         return
     intervals = room_intervals(conn, tenant, category[0], excluding_stay=excluding_stay)

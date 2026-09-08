@@ -86,7 +86,8 @@ class BookingHolds(GuestPayments):
         attempts = conn.execute('''SELECT id,provider,state,invoice_id,invoice_expires_at FROM prsystem.booking_hold_attempt
             WHERE tenant_id=%s AND hold_id=%s ORDER BY created_at,id''',(tenant,hold)).fetchall()
         refund = conn.execute('SELECT coalesce(sum(refund_due),0) FROM prsystem.booking_hold_capture WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()[0]
-        return dict(booking_id=hold,category_id=row[0],booking_state=row[1],hold_state=row[2],
+        application=conn.execute('SELECT stay_id FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()
+        return dict(stay_id=application[0] if application else None,booking_id=hold,category_id=row[0],booking_state=row[1],hold_state=row[2],
                     created_at=row[3],expires_at=row[4],quote=row[5],applied_attempt_id=row[6],confirmation=row[7],
                     refund_required_mnt=int(refund),mode='MOCK_ONLY',
                     attempts=[dict(zip(('attempt_id','provider','state','invoice_id','expires_at'),a)) for a in attempts])

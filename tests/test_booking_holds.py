@@ -23,7 +23,7 @@ class BookingHoldTests(GuestFinanceCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
-                'GRANT SELECT,INSERT ON prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
+                'GRANT SELECT,INSERT ON prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
                 'GRANT UPDATE(booking_state,hold_state,applied_attempt_id,confirmation_snapshot) ON prsystem.booking_hold TO {}',
                 'GRANT UPDATE(state,invoice_id) ON prsystem.booking_hold_attempt TO {}',
             ):conn.execute(sql.SQL(statement).format(sql.Identifier(cls.role)))
@@ -230,3 +230,91 @@ class BookingHoldTests(GuestFinanceCase):
         result=self.assert_status(self.call(hold,'/reconcile'),200)
         self.assertEqual((result['booking_state'],result['refund_required_mnt']),('EXPIRED',160000))
         self.assertEqual(result,self.assert_status(self.call(hold,'/reconcile'),200))
+
+    def arriving_hold(self):
+        import time
+        self.arrival=datetime.now(timezone.utc)+timedelta(seconds=1)
+        hold=self.begin();self.pay()
+        self.assert_status(self.call(hold,'/reconcile'),200)
+        time.sleep(max(0,(self.arrival-datetime.now(timezone.utc)).total_seconds()))
+        return hold
+
+    def apply_hold(self,hold,key='apply',token=None,**extra):
+        body=dict(room_id=self.room,guest=dict(identity_type='MN_REG_NO',family_name='Бат',given_name='Болд',date_of_birth='1990-01-02',nationality='MN',document_number='АБ90010211'),idempotency_key=key)
+        body.update(extra)
+        return self.client.post(f'/hotels/{self.tenant}/booking-holds/{hold["booking_id"]}/check-in',headers=self.headers(token or self.worker_token),json=body)
+
+    def test_paid_hold_applies_snapshot_and_checks_out_without_cash(self):
+        hold=self.arriving_hold()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.room SET nightly_price=999999 WHERE tenant_id=%s',(self.tenant,))
+            conn.execute("UPDATE prsystem.room_hotel_settings SET nightly_price=777777,checkout_time='15:00',revision=revision+1 WHERE tenant_id=%s",(self.tenant,))
+        self.stay=self.assert_status(self.apply_hold(hold),201)
+        self.assertEqual(self.stay,self.assert_status(self.apply_hold(hold),201))
+        self.assertEqual((self.stay['amount_mnt'],self.stay['deposit_mnt']),(160000,0))
+        self.assertEqual(datetime.fromisoformat(self.stay['planned_checkout_at']),datetime.fromisoformat(hold['quote']['planned_checkout_at']))
+        self.assertEqual(self.stay['snapshot']['checkout_time'],hold['quote']['checkout_time'])
+        self.assertEqual(self.call(hold).json()['stay_id'],self.stay['stay_id'])
+        self.assertEqual(self.drawer(),(0,0))
+        self.assert_status(self.command('checkout',dict(expected_revision=1,idempotency_key='checkout')),200)
+        self.assertEqual(self.drawer(),(0,0))
+        self.assert_status(self.apply_hold(hold,key='twice'),409)
+
+    def test_application_replaces_claim_instead_of_double_counting(self):
+        hold=self.arriving_hold();self.assert_status(self.apply_hold(hold),201)
+        self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms',headers=self.headers(self.manager_token),json=dict(number='102',floor='1',category_id=self.category,idempotency_key='second-room')),201)
+        self.arrival=datetime.now(timezone.utc)+timedelta(days=1)
+        self.assert_status(self.hold(key='next-guest'),201)
+        self.assert_status(self.hold(key='overbook'),409)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_hold_application WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)
+
+    def test_two_checkins_cannot_apply_same_capture_twice(self):
+        hold=self.arriving_hold();barrier=Barrier(2)
+        def arrive(key):barrier.wait();return self.apply_hold(hold,key=key)
+        with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(arrive,['one','two']))
+        self.assertEqual(sorted(r.status_code for r in results),[201,409])
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_hold_application WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.guest_charge WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)
+
+    def test_unpaid_and_early_hold_cannot_check_in(self):
+        hold=self.begin()
+        self.assertEqual(self.apply_hold(hold).json()['code'],'INVALID_FINANCIAL_SOURCE')
+        self.pay();self.assert_status(self.call(hold,'/reconcile'),200)
+        self.assertEqual(self.apply_hold(hold).json()['code'],'ACTUAL_TIME_OUT_OF_RANGE')
+        self.assertIsNone(self.call(hold).json()['stay_id'])
+
+    def test_dirty_or_different_category_does_not_consume_hold(self):
+        hold=self.arriving_hold()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.room SET cleaning_state='DIRTY' WHERE tenant_id=%s",(self.tenant,))
+        self.assertEqual(self.apply_hold(hold).json()['code'],'ROOM_NOT_READY')
+        category=self.assert_status(self.client.post(f'/hotels/{self.tenant}/room-categories',headers=self.headers(self.manager_token),json=dict(name='Other',cleaning_buffer_minutes=30,deposit=50000,idempotency_key='other-category')),201)['category_id']
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.room SET cleaning_state='CLEAN',category_id=%s WHERE tenant_id=%s",(category,self.tenant))
+        self.assertEqual(self.apply_hold(hold).json()['code'],'INVALID_FINANCIAL_SOURCE')
+        self.assertIsNone(self.call(hold).json()['stay_id'])
+
+    def test_application_rejects_guest_token_client_money_and_production(self):
+        hold=self.arriving_hold()
+        self.assert_status(self.apply_hold(hold,paid=True,amount_mnt=1),422)
+        self.assert_status(self.apply_hold(hold,token=hold['access_token']),401)
+        with TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault)) as client:
+            response=client.post(f'/hotels/{self.tenant}/booking-holds/{hold["booking_id"]}/check-in',headers=self.headers(self.worker_token),json=dict(room_id=self.room,guest=dict(identity_type='MN_REG_NO',family_name='Бат',given_name='Болд',date_of_birth='1990-01-02',nationality='MN',document_number='АБ90010211'),idempotency_key='prod-apply'))
+            self.assert_status(response,503)
+        self.assertIsNone(self.call(hold).json()['stay_id'])
+
+    def test_application_commit_failure_preserves_claim_then_retry_succeeds(self):
+        hold=self.arriving_hold()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_application_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_application_commit AFTER INSERT ON prsystem.booking_hold_application DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_application_commit()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.apply_hold(hold),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_application_commit ON prsystem.booking_hold_application')
+                conn.execute('DROP FUNCTION prsystem.fail_application_commit()')
+        self.assertIsNone(self.call(hold).json()['stay_id'])
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.stay WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.guest_charge WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+        self.assert_status(self.apply_hold(hold),201)

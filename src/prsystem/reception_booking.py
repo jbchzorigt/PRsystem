@@ -56,3 +56,15 @@ class ReceptionBooking(StayService):
                 FROM prsystem.reception_booking b JOIN prsystem.room_reservation r ON(r.tenant_id,r.id)=(b.tenant_id,b.id)
                 WHERE b.tenant_id=%s AND b.id>%s ORDER BY b.id LIMIT %s''',(tenant,after,limit)).fetchall()
             return [dict(zip(('booking_id','room_id','kind','planned_checkin_at','planned_checkout_at','amount_mnt','state','mode'),r)) for r in rows]
+
+    def check_in_hold(self,bearer,tenant,hold,data,key):
+        if self.runtime_mode=='production':raise DomainError('GUEST_PROVIDER_UNAVAILABLE')
+        require_development_database(self.auth.dsn,self.runtime_mode)
+        from prsystem.booking_inventory import scope
+        with transaction(self.auth.dsn) as conn:
+            self._actor(conn,bearer,tenant);scope(conn,tenant)
+            row=conn.execute('SELECT snapshot FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s',(tenant,hold)).fetchone()
+            if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
+        # Immutable nights are only input to the command fingerprint. The
+        # complete source/capture/assignment is reauthorized under the lock.
+        return self.check_in(bearer,tenant,dict(data,kind='NIGHTLY',duration_units=row[0]['nights'],booking_id=hold,booking_hold_id=hold),key)

@@ -53,11 +53,11 @@ use a separate outbox/worker adapter rather than network calls under this lock.
 
 ## Remaining integration
 
-Verified guest enrollment/OTP, public listing eligibility, physical room assignment
-and application to Reception, cancellation/no-show mutation, refund execution,
+Verified guest enrollment/OTP, public listing eligibility, Manager upgrade/hotel-caused cancellation, cancellation/no-show mutation, refund execution,
 commission posting/payout, scheduled expiry/reconciliation and customer UI remain.
-A confirmed category hold continues to claim inventory for its snapshotted interval;
-this package does not fabricate its consumption into a physical stay. Refund due
+An unapplied confirmed category hold continues to claim inventory for its
+snapshotted interval. The same-category Reception adapter below atomically
+replaces that claim with the actual stay. Refund due
 is an immutable obligation, not evidence that money has been returned. Minibar
 online capacity waits for the stage-five canonical configuration adapter.
 
@@ -72,3 +72,33 @@ all **456 backend tests without skips**, plus browser/API-contract/design/token
 checks in [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34190759319).
 Local discovery ran 88 tests and skipped 368 PostgreSQL-dependent tests.
 The subsequent documentation-only commit records this evidence.
+
+
+## Same-category Reception application
+
+`POST /hotels/{tenant}/booking-holds/{booking}/check-in` accepts the physical
+`room_id`, actual staying guest, optional bounded backdate/reason and idempotency
+key. A current Reception with an open shift is required. The mock guest token
+cannot use this endpoint. Production remains closed to mock evidence.
+
+Under the existing cash/catalog/room transaction locks, the server rechecks the
+confirmed hold, its applied capture, same active category, non-minibar/nonblocked
+room, actual readiness, start/end bounds and all competing claims. The amount,
+nights, planned end and checkout time use the paid snapshot, regardless of new
+room/hotel tariffs. The actual guest follows existing encrypted identity checks.
+
+One immutable, tenant-RLS `booking_hold_application` links hold, capture and stay.
+The category claim is excluded from future inventory calculations only when this
+row commits together with the stay, prepaid room charge and command receipt.
+The cash drawer is unchanged and the platform-paid mock booking has zero deposit.
+No physical room is assigned or inventory released by a separate preparatory call.
+A retry returns the same stay/code; a different request cannot consume it twice.
+Guest hold status exposes its linked `stay_id`. Checkout uses the existing
+Reception finance/readiness workflow; platform refund execution remains separate.
+
+Seven new integration tests cover immutable paid pricing/checkout, replacement
+of the category claim, duplicate concurrent check-in, unpaid/early arrival,
+dirty/different-category rooms, token/client-money/production rejection and
+commit rollback. PostgreSQL CI validation for this addition is pending.
+Higher-category Manager upgrades, hotel-caused cancellation, staff booking inbox
+and customer/reception UI for this new source remain future integrations.
