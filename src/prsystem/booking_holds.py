@@ -88,11 +88,17 @@ class BookingHolds(GuestPayments):
         refund = conn.execute('SELECT coalesce(sum(refund_due),0) FROM prsystem.booking_hold_capture WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()[0]
         cancellation=conn.execute('SELECT outcome,refund_due,retained_mnt,commission_mnt,hotel_payable_mnt,recorded_at FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()
         if cancellation:refund+=cancellation[1]
+        refunds=conn.execute('''SELECT r.id,r.attempt_id,r.amount_mnt,r.last_provider_state,c.amount_mnt
+            FROM prsystem.booking_refund_request r LEFT JOIN prsystem.booking_refund_confirmation c
+            ON(c.tenant_id,c.request_id)=(r.tenant_id,r.id) WHERE r.tenant_id=%s AND r.hold_id=%s ORDER BY r.id''',(tenant,hold)).fetchall()
+        refunded=sum(r[4] or 0 for r in refunds)
         application=conn.execute('SELECT stay_id FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold)).fetchone()
         return dict(stay_id=application[0] if application else None,booking_id=hold,category_id=row[0],booking_state=cancellation[0] if cancellation else row[1],hold_state='CANCELLED' if cancellation else row[2],
                     cancellation=dict(zip(('outcome','refund_due','retained_mnt','commission_mnt','hotel_payable_mnt','recorded_at'),cancellation)) if cancellation else None,
                     created_at=row[3],expires_at=row[4],quote=row[5],applied_attempt_id=row[6],confirmation=row[7],
-                    refund_required_mnt=int(refund),mode='MOCK_ONLY',
+                    refund_required_mnt=int(refund),refunded_mnt=refunded,refund_remaining_mnt=int(refund)-refunded,
+                    refund_state='NONE' if not refund else 'REFUNDED' if refunded==refund else 'PENDING' if refunds else 'REQUIRED',
+                    refunds=[dict(request_id=r[0],attempt_id=r[1],amount_mnt=r[2],provider_state=r[3],confirmed=bool(r[4])) for r in refunds],mode='MOCK_ONLY',
                     attempts=[dict(zip(('attempt_id','provider','state','invoice_id','expires_at'),a)) for a in attempts])
 
     def create(self,bearer,tenant,category,arrival,nights,provider,key):

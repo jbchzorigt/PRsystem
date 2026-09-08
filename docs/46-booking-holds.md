@@ -140,3 +140,39 @@ Local: 88 executed, 383 PostgreSQL-dependent skipped. The subsequent
 documentation-only commit records this evidence.
 Provider refund execution, unpaid hold cancellation, no-show mutation, hotel-caused
 cancellation, Manager upgrades, settlement posting/payout and UI remain separate.
+
+## Original-payment mock refund execution
+
+`POST /guest/booking-holds/{tenant}/{booking}/refunds/reconcile` accepts an empty
+strict JSON object and the booking token. Production and tenant/security gates
+apply. It derives each positive obligation from immutable capture/cancellation
+facts; the client cannot supply an amount or provider evidence.
+
+A unique request per capture commits before any provider call. Subsequent bounded
+mock dispatch/query transactions reuse that persisted request ID and the original
+payment's provider, merchant, payment ID and amount. Zero obligations create no
+request or provider command. Multiple captured transactions have independent
+refund requests; cancellation and late/duplicate capture obligations are not
+combined into an unrelated payment return.
+
+Only exact merchant/original-payment/currency/amount evidence with a valid server
+confirmation time and unique provider reference records immutable completion.
+Pending, unknown, failed and final-failed results keep the obligation outstanding.
+Retry never creates a replacement attempt, including after final failure; the
+same request may later report success. Definitive replacement/correction needs
+a separate reconciliation workflow. A database rollback after provider success
+reuses the committed request and records completion exactly once on retry.
+
+Guest status reports total required, provider-confirmed and remaining MNT, request
+statuses and the independent NONE/REQUIRED/PENDING/REFUNDED axis. Booking state,
+capture history, cash drawers and released inventory do not change on refund.
+Confirmed requests are not resent or polled by this endpoint. Provider withdrawals,
+chargebacks and post-completion reconciliation/adjustments remain a separate gate
+before payout. Live providers still need worker/outbox integration rather than
+network calls under the mock transaction lock. Real API credentials remain deferred.
+
+Nine integration tests cover pending/success, late success after failed states,
+concurrent dispatch, zero-refund suppression, mismatched evidence, independent
+multi-capture balances, token/production restrictions, completion rollback and
+request-commit-before-dispatch. PostgreSQL CI is pending. No-show, hotel cancellation,
+Manager upgrade, settlement/payout and staff/customer UI remain unfinished.

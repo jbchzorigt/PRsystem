@@ -23,7 +23,8 @@ class BookingHoldTests(GuestFinanceCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
-                'GRANT SELECT,INSERT ON prsystem.booking_hold_cancellation,prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
+                'GRANT SELECT,INSERT ON prsystem.booking_refund_request,prsystem.booking_refund_confirmation,prsystem.booking_hold_cancellation,prsystem.booking_hold_application,prsystem.booking_contract,prsystem.booking_hold,prsystem.booking_hold_attempt,prsystem.booking_hold_capture,prsystem.booking_hold_event,prsystem.booking_hold_command TO {}',
+                'GRANT UPDATE(last_provider_state) ON prsystem.booking_refund_request TO {}',
                 'GRANT UPDATE(booking_state,hold_state,applied_attempt_id,confirmation_snapshot) ON prsystem.booking_hold TO {}',
                 'GRANT UPDATE(state,invoice_id) ON prsystem.booking_hold_attempt TO {}',
             ):conn.execute(sql.SQL(statement).format(sql.Identifier(cls.role)))
@@ -399,3 +400,117 @@ class BookingHoldTests(GuestFinanceCase):
         with psycopg.connect(self.owner_dsn) as conn:
             with self.assertRaises(psycopg.errors.CheckViolation):
                 conn.execute('UPDATE prsystem.booking_hold_cancellation SET refund_due=1 WHERE tenant_id=%s',(self.tenant,))
+
+    def refunded_booking(self):
+        hold=self.begin();self.pay();self.call(hold,'/reconcile');self.cancel(hold)
+        return hold
+
+    def refund_reconcile(self,hold):
+        return self.call(hold,'/refunds/reconcile')
+
+    def test_refund_pending_then_provider_confirmed_once(self):
+        hold=self.refunded_booking()
+        result=self.assert_status(self.refund_reconcile(hold),200)
+        self.assertEqual((result['refund_state'],result['refunded_mnt'],result['refund_remaining_mnt']),('PENDING',0,160000))
+        request=result['refunds'][0]['request_id']
+        self.gateways['QPAY'].set_refund_status(request,'SUCCEEDED')
+        result=self.assert_status(self.refund_reconcile(hold),200)
+        self.assertEqual((result['refund_state'],result['refunded_mnt'],result['refund_remaining_mnt']),('REFUNDED',160000,0))
+        with patch.object(self.gateways['QPAY'],'create_refund',side_effect=AssertionError('No resend after confirmation')):
+            self.assertEqual(result,self.assert_status(self.refund_reconcile(hold),200))
+        self.assertEqual(self.drawer(),(0,0))
+        with psycopg.connect(self.owner_dsn) as conn:
+            payment=conn.execute('SELECT payment_id FROM prsystem.booking_hold_capture WHERE tenant_id=%s',(self.tenant,)).fetchone()[0]
+        self.assertEqual(self.store.inspect('refund')[0]['original'],payment)
+
+    def test_unknown_and_failed_refund_keep_same_request_for_late_success(self):
+        hold=self.refunded_booking();result=self.assert_status(self.refund_reconcile(hold),200)
+        request=result['refunds'][0]['request_id']
+        for state in ('UNKNOWN','FAILED','FINAL_FAILED','NOT_PROCESSED','VOIDED'):
+            self.gateways['QPAY'].set_refund_status(request,state)
+            result=self.assert_status(self.refund_reconcile(hold),200)
+            self.assertEqual((result['refunded_mnt'],result['refund_remaining_mnt']),(0,160000))
+            self.assertEqual(result['refunds'][0]['request_id'],request)
+        self.assertEqual(len(self.store.inspect('refund')),1)
+        self.gateways['QPAY'].set_refund_status(request,'SUCCEEDED')
+        self.assertEqual(self.refund_reconcile(hold).json()['refunded_mnt'],160000)
+
+    def test_concurrent_refund_dispatch_uses_one_persisted_request(self):
+        hold=self.refunded_booking();barrier=Barrier(2)
+        def dispatch(_):barrier.wait();return self.refund_reconcile(hold)
+        with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(dispatch,range(2)))
+        self.assertEqual([r.status_code for r in results],[200,200])
+        self.assertEqual(results[0].json(),results[1].json())
+        self.assertEqual(len(self.store.inspect('refund')),1)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_refund_request WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)
+
+    def test_zero_refund_never_sends_provider_command(self):
+        self.arrival=datetime.now(timezone.utc)+timedelta(hours=1)
+        response=self.client.post(f'/hotels/{self.tenant}/mock/booking-holds',headers=self.headers(self.manager_token),json=dict(category_id=self.category,planned_checkin_at=self.arrival.isoformat(),nights=1,provider='QPAY',idempotency_key='single-night'))
+        hold=self.assert_status(response,201);result=self.call(hold,'/reconcile').json()
+        self.pay(result['attempts'][0]['attempt_id']);self.call(hold,'/reconcile');self.cancel(hold)
+        result=self.assert_status(self.refund_reconcile(hold),200)
+        self.assertEqual((result['refund_state'],result['refund_required_mnt'],result['refunds']),('NONE',0,[]))
+        self.assertEqual(self.store.inspect('refund'),[])
+
+    def test_invalid_refund_evidence_does_not_complete_obligation(self):
+        hold=self.refunded_booking();result=self.refund_reconcile(hold).json();request=result['refunds'][0]['request_id']
+        gateway=self.gateways['QPAY'];gateway.set_refund_status(request,'SUCCEEDED');original=gateway.refund
+        for bad in (dict(amount=1),dict(original='other-payment'),dict(merchant_id='other-merchant'),dict(currency='USD'),dict(confirmed_at=datetime.now(timezone.utc)+timedelta(days=1))):
+            with patch.object(gateway,'refund',side_effect=lambda r,b=bad:dict(original(r),**b)):
+                self.assert_status(self.refund_reconcile(hold),503)
+        self.assertEqual(self.call(hold).json()['refunded_mnt'],0)
+        self.assertEqual(self.refund_reconcile(hold).json()['refunded_mnt'],160000)
+
+    def test_multiple_capture_refunds_track_remaining_amount_independently(self):
+        hold=self.begin();old=self.attempt
+        switched=self.call(hold,'/attempts',dict(provider='KHAAN',idempotency_key='switch')).json()
+        self.call(hold,'/reconcile');self.pay(switched['attempt_id'],'KHAAN');self.call(hold,'/reconcile')
+        self.cancel(hold);self.pay(old);self.call(hold,'/reconcile')
+        result=self.assert_status(self.refund_reconcile(hold),200)
+        self.assertEqual(len(result['refunds']),2)
+        qpay=next(r for r in result['refunds'] if r['attempt_id']==old)
+        self.gateways['QPAY'].set_refund_status(qpay['request_id'],'SUCCEEDED')
+        result=self.assert_status(self.refund_reconcile(hold),200)
+        self.assertEqual((result['refunded_mnt'],result['refund_remaining_mnt']),(160000,160000))
+        self.assertEqual(result['booking_state'],'CANCELLED_GUEST')
+
+    def test_refund_scope_production_and_client_evidence_rejected(self):
+        hold=self.refunded_booking()
+        self.assert_status(self.call(hold,'/refunds/reconcile',dict(paid=True,amount=1)),422)
+        self.assert_status(self.call(hold,'/refunds/reconcile',token=self.manager_token),403)
+        self.assert_status(self.call(hold,'/refunds/reconcile',tenant='foreign'),403)
+        with TestClient(create_app(self.app_dsn,self.settings,identity_vault=self.vault)) as client:
+            self.assert_status(client.post(f'/guest/booking-holds/{self.tenant}/{hold["booking_id"]}/refunds/reconcile',headers=self.headers(hold['access_token']),json={}),503)
+        self.assertEqual(self.store.inspect('refund'),[])
+
+    def test_refund_confirmation_commit_rollback_reuses_durable_request(self):
+        hold=self.refunded_booking();request=self.refund_reconcile(hold).json()['refunds'][0]['request_id']
+        self.gateways['QPAY'].set_refund_status(request,'SUCCEEDED')
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_booking_refund_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_booking_refund_commit AFTER INSERT ON prsystem.booking_refund_confirmation DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_booking_refund_commit()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.refund_reconcile(hold),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_booking_refund_commit ON prsystem.booking_refund_confirmation')
+                conn.execute('DROP FUNCTION prsystem.fail_booking_refund_commit()')
+        result=self.call(hold).json()
+        self.assertEqual((result['refunded_mnt'],result['refunds'][0]['request_id']),(0,request))
+        self.assertEqual(self.refund_reconcile(hold).json()['refunded_mnt'],160000)
+        self.assertEqual(len(self.store.inspect('refund')),1)
+
+    def test_refund_request_must_commit_before_provider_dispatch(self):
+        hold=self.refunded_booking()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_refund_request_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_refund_request_commit AFTER INSERT ON prsystem.booking_refund_request DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_refund_request_commit()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.refund_reconcile(hold),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_refund_request_commit ON prsystem.booking_refund_request')
+                conn.execute('DROP FUNCTION prsystem.fail_refund_request_commit()')
+        self.assertEqual(self.store.inspect('refund'),[])
+        self.assertEqual(self.call(hold).json()['refunds'],[])
+        self.assert_status(self.refund_reconcile(hold),200)

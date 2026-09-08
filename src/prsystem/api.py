@@ -38,7 +38,7 @@ from prsystem.room_lifecycle import RoomLifecycle
 from prsystem.handover import HandoverService
 from prsystem.reception_booking import ReceptionBooking
 from prsystem.checkin_funding import CheckinFunding
-from prsystem.booking_holds import BookingHolds
+from prsystem.booking_refunds import BookingRefunds
 from prsystem.routed_refunds import RoutedRefunds
 from prsystem.reception_dependencies import ReceptionDependencies
 from prsystem.guest_identity import vault_from_environment
@@ -61,6 +61,10 @@ class MockBookingHold(BaseModel):
     nights: int = Field(ge=1)
     provider: Literal['QPAY','KHAAN']
     idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class BookingRefundReconcile(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
 
 
 class BookingGuestCancellation(BaseModel):
@@ -617,7 +621,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     guest_corrections = GuestCorrections(service, stays.vault, runtime_mode,payment_gateways)
     guest_payments = GuestPayments(service, stays.vault, runtime_mode, payment_gateways)
     checkin_funding = CheckinFunding(service, stays.vault, runtime_mode, payment_gateways)
-    booking_holds = BookingHolds(service, stays.vault, runtime_mode, payment_gateways)
+    booking_holds = BookingRefunds(service, stays.vault, runtime_mode, payment_gateways)
     routed_refunds = RoutedRefunds(service, stays.vault, runtime_mode, payment_gateways)
     from prsystem.operations import Operations
     operations=Operations(service,stays.vault,runtime_mode)
@@ -744,6 +748,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/attempts',status_code=201)
     def switch_booking_provider(tenant_id: str,booking_id: str,body: BookingProviderSwitch,secret: Annotated[str,Depends(token)]):
         return booking_holds.switch(tenant_id,booking_id,secret,body.provider,body.idempotency_key)
+
+    @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/refunds/reconcile')
+    def reconcile_booking_refunds(tenant_id: str,booking_id: str,body: BookingRefundReconcile,secret: Annotated[str,Depends(token)]):
+        return booking_holds.reconcile_refunds(tenant_id,booking_id,secret)
 
     @app.post('/guest/booking-holds/{tenant_id}/{booking_id}/cancel')
     def cancel_guest_booking(tenant_id: str,booking_id: str,body: BookingGuestCancellation,secret: Annotated[str,Depends(token)]):

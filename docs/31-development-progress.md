@@ -175,3 +175,10 @@ Capture confirmation-ийн гэрээгээр commission бодож, нөөц �
 8 шинэ integration тест нэмсэн; **471/471 backend тест skip-гүй**, мөн browser/API-contract/design/token шалгалтууд тэнцсэн.
 Source `edaf44e3`; [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34201253745). Refund execution,
 no-show, hotel cancellation, payout болон UI үлдсэн. [Хүрээ](46-booking-holds.md).
+
+## 4-р шат — original-payment mock refund
+
+Буцаалтын үүргийг анхны QPay/Khaan mock capture-тай холбож, provider баталгааны дараа
+буцаасан дүнд тооцно. Хүсэлт эхлээд commit хийгдэж, retry ижил request ID ашиглана;
+0₮ буцаалт provider command үүсгэхгүй. 9 шинэ integration тест, PostgreSQL CI хүлээгдэж байна.
+Post-completion correction/chargeback, no-show, hotel cancellation, payout болон UI үлдсэн.
