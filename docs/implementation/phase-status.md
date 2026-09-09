@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 20 — External adapters |
+| Current phase | 21 — Responsive UI and accessibility |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -51,6 +51,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 18 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 19 state | `DONE` |
 | Phase 19 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 20 state | `DONE` |
+| Phase 20 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -83,7 +85,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 17 | Guest registry, exports, and Hotel Admin reports | `DONE` | `0018_registry_reporting` | the Phase 17 battery — counts in [Phase 17 record](#phase-17-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 18 | Police monitoring | `DONE` | `0019_police_monitoring` | the Phase 18 battery — counts in [Phase 18 record](#phase-18-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 19 | Platform Operation | `DONE` | `0020_platform_operation` | the Phase 19 battery — counts in [Phase 19 record](#phase-19-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 20 | External adapters | `NOT STARTED` | — | — | — |
+| 20 | External adapters | `DONE` | — | the Phase 20 battery — counts in [Phase 20 record](#phase-20-record) | implemented at `ccbf602`, corrected at the commit named in the record; the record and its evidence are the commit after it |
 | 21 | Responsive UI and accessibility | `NOT STARTED` | — | — | — |
 | 22 | Security, concurrency, recovery, and full E2E | `NOT STARTED` | — | — | — |
 | 23 | Release candidate audit | `NOT STARTED` | — | — | — |
@@ -5755,5 +5757,159 @@ this record and the twelve new drift-fixture results that govern it.
 The per-command exit codes, durations and execution environment are recorded in
 [phase-19-battery-log.md](phase-19-battery-log.md).
 
-Phase 19 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 20 is authorized to begin under the
+Phase 19 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 20 has since been implemented and gated;
+see the [Phase 20 record](#phase-20-record).
+
+---
+
+## Phase 20 record
+
+External adapters: the gate register as code, adapter selection that fails closed by configuration,
+the shared infrastructure a production adapter runs on, the one adapter a published standard allows,
+and the two provider jobs Phase 14 built. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 19 tree. Phase 20 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 21 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** none — Phase 20 owns no DEC ID. Its traceable obligations are recorded in
+[requirements-traceability.md](requirements-traceability.md) v1.33 (the six Phase 20 rows), and the
+build plan's exit condition is met in the only honest way available: **no gate cleared, so no adapter
+is enabled**, and every one of the eleven slots is recorded as still blocked, with the reason and
+what would enable it, in [external-integration-gates.md](external-integration-gates.md) §6.
+
+### Scope completed
+
+- **The gate register is code** (`packages/ports/src/gates.ts`). The fourteen gates — EXT-01 to
+  EXT-11 and the three internal controls — are declared with the same statuses as the document, and
+  the type refuses `cleared: true` without an artefact and a date. A test holds the module to the
+  document gate for gate, and `SEC-SECRETS` now holds the document to `platform.external_gate`, so
+  clearing a gate is a document change, a code change and a migration together (`A-P20-2`).
+- **Adapter selection fails closed by configuration.** One `ADAPTER_<SLOT>` variable per slot names
+  `simulator`, `disabled` or a production adapter; absent, a slot is the simulator below production
+  and `disabled` at it. `selectAdapters` refuses a simulator anywhere above test, a production
+  adapter behind a `BLOCKED` gate and an adapter nobody has written — at environment parse time,
+  and again in the API before a port is bound and in the worker before Redis is contacted. The
+  storage credential is required exactly when `ADAPTER_STORAGE=s3` and refused otherwise, the same
+  rule the scheduler and Police credentials follow, and it is a `Secret` from the moment it is parsed
+  (`A-P20-7`).
+- **The infrastructure a real adapter runs on**, contract-free: an outbound HTTP client with a hard
+  timeout, a token-bucket throughput limit and status mapping into the port vocabulary; a `Secret`
+  that redacts itself under string coercion, JSON and `util.inspect`; HMAC, SHA-256 and constant-time
+  comparison; IPv4 and IPv6 CIDR allowlisting, applied as a guard on the four provider callback
+  routes — an unconfigured provider has every callback refused at and above staging, answered as an
+  opaque `NOT_FOUND` (`A-P20-8`).
+- **One production adapter, where the protocol is a published standard** (`A-P20-3`). The
+  S3-compatible object storage adapter signs path-style requests with AWS Signature Version 4 and
+  presigns the five-minute `GET`; it checks a key exists before signing it, so an expired export
+  looks the same from either path. Verified against the three AWS-published signature vectors and
+  against the compose stack's MinIO, and disabled in staging and production behind
+  `INT-STORAGE-01`. Every contract-bound adapter — both gateways, eBarimt, XYP, e-Mongolia, CallPro,
+  Google Maps, the payout facility, email and OTP — was refused rather than invented, each for a
+  reason the register records.
+- **The two Phase 14 provider jobs run on the worker** (`settlement.refund.execute`,
+  `settlement.payout.run`), each scheduled only when its adapter is not `DISABLED`, and both now
+  treating `DISABLED` as no decision: a release gate no longer marks a refund or a payout batch
+  `FAILED` (`A-P20-6`). With every gate blocked, neither is scheduled in production and the worker
+  records once at startup which gate kept it off.
+- **`DSR-01` received its mandatory Phase 20 review** and stays `OPEN — contained`: Phase 20 added no
+  third-party dependency, the affected path is unchanged, and the production tree is clean.
+
+### Gates this phase had to pass, and what they measured
+
+- **A disabled adapter refuses to run and emits a gate error.** `SEC-ADAPTERS`: with production
+  defaults, every operation of every port — twenty-four of them across the eleven slots — answered
+  `DISABLED` naming its governing gate, while `fetch` was replaced with a tripwire that never fired.
+- **A production deployment cannot be talked into an adapter.** Every slot set to `simulator` in
+  production refused startup naming the slot and its gate; the one written adapter, named in
+  production with its credential supplied, refused naming `INT-STORAGE-01` and constructed nothing;
+  and the refusal carried no credential.
+- **No secret appears in logs, traces, audit or outbox payloads.** The storage credential appeared in
+  no request URL, header or body the adapter sent, in no serialised result or refusal, in no
+  description the API and worker log at startup, and in no environment-validation message.
+- **The adapter conforms.** Against a real S3-compatible service, a put, a presigned fetch by a
+  plain client, a delete, a second delete answering `deleted: false`, a signature the service could
+  not sign, and a wrong credential answered as `SignatureDoesNotMatch`.
+- **Provider status reconciliation.** Over real PostgreSQL, the worker runtime executed an open refund
+  through the Phase 14 executor; built over production defaults it reported both sweeps disabled,
+  executed nothing, and left the refund `PENDING` rather than `FAILED`.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 20 in `PROGRESSED_PHASES`, the current phase
+  advanced to 21), `docs/implementation/phase-20-evidence.json`, nine new drift fixtures and the
+  current-phase fixtures retargeted. Check 17 binds the manifest, the governed entry and this record.
+  `GATE-SEC` gains its twentieth sub-gate, `SEC-ADAPTERS`, and check 14 holds the runbook catalogue
+  to it.
+- **Traceability:** `requirements-traceability.md` v1.33 — no decision changes state; 279 of 279.
+- **Assumptions:** `A-P20-1`…`A-P20-9` in `assumptions-and-conflicts.md` §3.24.
+
+### One correction before the battery passed
+
+The battery's first run, on the implementation commit `ccbf602`, failed three of its 28 executions
+for one cause: the committed-secret scanner flagged `AKIAIOSFODNN7EXAMPLE` — the access key id AWS
+prints beside its published SigV4 signatures, which the vector test must carry verbatim — and the
+S3 unit test's canary constant. The correction `361b116` allow-lists the documentation key id as an
+exact value, which is the scanner's designed mechanism for a public fixture, and renames the canary.
+The battery was re-run in full on the correction; it is the measured tree.
+
+### External gates
+
+**No gate cleared.** `EXT-01` to `EXT-11`, `INT-MAIL-01`, `INT-OTP-01` and `INT-STORAGE-01` all remain
+`BLOCKED`, now in three places that are held to one another, and
+[external-integration-gates.md](external-integration-gates.md) §6 records per adapter slot what
+exists, why it stays disabled and what would enable it. Otherwise unchanged: 17 P1 items; `DSR-01`
+(reviewed, still contained) and `DSR-02`, both due in Phase 22; and selecting `GATE-SEC` as a
+required GitHub status check. **Phase 20 adds no new EXT gate.**
+
+### What Phase 20 was asked to carry and did not
+
+The Phase 19 SMS delivery-status refresh stays an Operation-realm route rather than a worker sweep,
+because the worker's login holds no privilege on any Operation-realm table by Phase 19's own class
+rule and widening it is Phase 22's to review (`A-P20-5`). The domain sweeps that reach no provider —
+the Phase 13 hold expiry, the Phase 15 invoice expiry and refund SLA, and the two Phase 18 Police
+sweeps — remain service methods with tests and no scheduler entry (`A-P20-9`). The two Operation
+surfaces that need a doc 18 §5 row (`A-P14-1`, `A-P19-11`) are unchanged.
+
+### Evidence
+
+<!-- phase-20-evidence:begin -->
+
+Measured at correction commit 361b116b9c1e6901dd6c9506ff1050ff267926a7, in a clean detached
+checkout with a fresh install, a fresh Turborepo cache and forced task execution. All 28 executions
+exited 0. The two governance rows are from the final tree, which carries this record and the
+new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 313 of 313 drift fixtures caught at the measured commit; 325 of 325 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 870 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,671 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 19, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 613: ports 3, outbox 5, db 41, worker 2, api 562 |
+| `pnpm run test:concurrency` | PASS | 97 each run: db 16, api 81 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 20 of 20 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; three moderate, DSR-01 and DSR-02 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-20-evidence:end -->
+
+The per-command exit codes, durations and execution environment — and the first attempt that failed
+— are recorded in [phase-20-battery-log.md](phase-20-battery-log.md).
+
+Phase 20 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 21 is authorized to begin under the
 standing progression authorization and has **not** started.
