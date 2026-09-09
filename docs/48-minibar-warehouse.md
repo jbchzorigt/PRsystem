@@ -76,8 +76,10 @@ No merge or deployment is included.
 
 ## Next stage-five work
 
+Template Draft/Publish/Default authoring follows in
+[the second stage-five package](49-minibar-template-authoring.md).
 This receipt foundation has no warehouse stock-out yet. Product/category edits
-and lifecycle, linked reversal/correction, waste/adjustment, template versions,
+and lifecycle, linked reversal/correction, waste/adjustment, version Archive,
 room configuration/rollout, warehouse↔room transfers, active-stay refill,
 consumption/COGS and report/guest-finance integration remain to implement.
 No current product or canonical warehouse receipt is imported into

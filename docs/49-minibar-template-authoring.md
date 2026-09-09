@@ -48,17 +48,31 @@ The role must not own tables or bypass forced tenant RLS.
 
 ## Verification
 
-15 new PostgreSQL tests cover publish/default invariants, clones, immutable
+Published source `fb5c04b4c257838bbef26ee83ce73d23bddc3204` (local `bbec9a1`
+plus test correction `d9dab19`) passed **537/537 backend tests without skips**
+on PostgreSQL in **456.327 seconds**.
+[Passing CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34300095737)
+also passed all five Chromium suites, 27 generated browser requests checked
+against actual API models, design lint and token checks.
+
+All 15 new PostgreSQL tests passed: publish/default invariants, clones, immutable
 history, active-product/parent gates, package/role/replay revocation, cross-tenant
 and cross-template IDs, exact CAS races, strict input, pagination, side-effect
-isolation and commit failure. Local suite: 537 discovered, 100 passed, 437 skipped
-because PostgreSQL is unavailable locally. Full PostgreSQL CI remains pending.
-Browser authoring flow passed with safe retry, conflict/reload, picker failure,
+isolation and commit failure. Initial CI ran all 537 tests but one test reused
+an earlier key with changed data and received the intended idempotency conflict.
+The corrected test uses a fresh key to exercise a new retiring-template edit;
+it passed in the linked full run. No application behavior was changed by that fix.
+
+Local suite: 537 discovered, 100 passed, 437 skipped because PostgreSQL is not
+available locally. All five browser suites passed locally, including authoring,
+clone, edit, publish/default, safe retry, conflict/reload, picker recovery,
 validation/focus, native select keyboard use, role gating, 320px and no storage.
-All five browser suites passed locally; 10 new generated requests match the real
-API models. Strict UI audit: zero findings. Token drift check passed; design lint
-has zero errors and six existing orphaned-token warnings. Mobile/desktop
-screenshots were inspected. Final PostgreSQL/publication evidence remains pending.
+Ten new browser commands match actual API models. Strict UI audit: zero findings.
+Design lint: zero errors and six existing orphaned-token warnings. Token drift
+check passed, and mobile/desktop screenshots were inspected.
+
+Source and subsequent documentation-only acceptance update are published on
+`feat/approved-risk-controls`, Draft PR #1. No merge or deployment is included.
 
 ## Next boundaries
 
