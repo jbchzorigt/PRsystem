@@ -75,7 +75,7 @@ BEGIN
    THEN RAISE EXCEPTION 'Archive proof and no live references required' USING ERRCODE='23514'; END IF;
    RETURN NEW;
  END IF;
- IF OLD.state<>'DRAFT' OR (NEW.tenant_id,NEW.template_id,NEW.id,NEW.version_number,NEW.cloned_from_id,NEW.created_at)
+ IF OLD.state<>'DRAFT' OR NEW.state NOT IN ('DRAFT','PUBLISHED') OR (NEW.tenant_id,NEW.template_id,NEW.id,NEW.version_number,NEW.cloned_from_id,NEW.created_at)
     IS DISTINCT FROM (OLD.tenant_id,OLD.template_id,OLD.id,OLD.version_number,OLD.cloned_from_id,OLD.created_at)
  THEN RAISE EXCEPTION 'Immutable template version' USING ERRCODE='23514'; END IF;
  IF NEW.state='PUBLISHED' THEN

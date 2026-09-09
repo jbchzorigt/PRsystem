@@ -144,6 +144,9 @@ class MinibarArchiveTests(MinibarConfigurationCase):
     def test_database_cannot_bypass_blockers_proof_or_archived_immutability(self):
         with self.assertRaises(psycopg.errors.CheckViolation),psycopg.connect(self.owner_dsn) as conn:
             conn.execute("INSERT INTO prsystem.minibar_version_archive VALUES(%s,%s,%s,%s,'direct',clock_timestamp())",(self.tenant,self.template,self.version,self.manager))
+        draft=self.assert_status(self.api(f'minibar/templates/{self.template}/versions',dict(expected_revision=4,source_version_id=self.version)),201)
+        with self.assertRaises(psycopg.errors.CheckViolation),psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.minibar_template_version SET state='ARCHIVED',published_at=clock_timestamp(),published_items='[]'::jsonb WHERE tenant_id=%s AND id=%s",(self.tenant,draft['version']['version_id']))
         self.another()
         with self.assertRaises(psycopg.errors.CheckViolation),psycopg.connect(self.owner_dsn) as conn:
             conn.execute("UPDATE prsystem.minibar_template_version SET state='ARCHIVED' WHERE tenant_id=%s AND id=%s",(self.tenant,self.version))
