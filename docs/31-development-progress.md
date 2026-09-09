@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | [Бүтээгдэхүүн, агуулахын opening/purchase ledger ба Manager UI](48-minibar-warehouse.md) local commit-д бэлэн; шинэ багцын public нийтлэл auto-review-д хориглогдсон, PostgreSQL CI ажиллаагүй. Template/refill, lifecycle/correction, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | [Бүтээгдэхүүн, агуулахын opening/purchase ledger ба Manager UI](48-minibar-warehouse.md)-ийн эхний багц нийтлэгдэж, **522/522 PostgreSQL тест skip-гүй**, дөрвөн browser suite/API/design/token CI-аар баталгаажсан. Template/refill, lifecycle/correction, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан

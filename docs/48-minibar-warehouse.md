@@ -52,25 +52,27 @@ fixture creation, fault injection and verifying the database's immutable guard.
 
 16 PostgreSQL tests cover atomic opening, exact/zero cost, current role/package,
 tenant RLS, expiry/suspension, immutable history, quantity overflow, pagination,
-concurrent requests and commit rollback. Full PostgreSQL execution is pending.
+concurrent requests and commit rollback. Source `f84e4d79d5de138e7966b57266fcb2a05c3dd813`
+passed all **522 backend tests without skips** on PostgreSQL in **420.340 seconds**.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34296600033)
+also passed all four Chromium suites, 17 generated browser requests validated
+against API models, design lint and token checks. All 16 new warehouse tests passed.
 Local discovery: 522 tests, 100 passed and 422 PostgreSQL-dependent skipped.
 All four browser suites passed locally. The new suite exercised five commands
 validated against real API models; existing Reception/Booking six-command payload
-suites passed too. Strict UI audit and token checks passed. Final PostgreSQL/CI
-evidence will be recorded here.
+suites passed too. Strict UI audit and token checks passed. The linked remote
+PostgreSQL run is the full acceptance evidence; local skips are not acceptance.
 Design lint: zero errors and six existing orphaned-token warnings; runtime token
 export is unchanged. Final mobile/desktop inventory screenshots were inspected.
 
-## Publication gate
+## Publication
 
-The implementation is committed locally on `feat/minibar-warehouse` (source
-`f3c4ab8`). Automatic approval review rejected uploading this new source, tests,
-workflow and documentation to the public `jbchzorigt/PRsystem` repository,
-requiring explicit end-user approval for this payload and destination. No alternate
-upload route was attempted. The feature branch/PR has not received this package;
-PostgreSQL CI has not run for it. The prior booking source's 506-test result does
-not validate these 16 new tests. This runtime has no usable native PostgreSQL or
-Docker service, so local skipped tests remain an explicit acceptance gate.
+The user explicitly approved public publication of local `c1bd8e1` on 2026-09-09.
+Its identical source tree was published as `f84e4d79d5de138e7966b57266fcb2a05c3dd813`
+to `feat/approved-risk-controls`, Draft PR #1. Automatic approval review accepted
+the explicit authorization. Its 522-test CI passed, including all new warehouse
+tests; the subsequent documentation-only commit records that evidence.
+No merge or deployment is included.
 
 ## Next stage-five work
 
