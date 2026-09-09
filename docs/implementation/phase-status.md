@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 21 — Responsive UI and accessibility |
+| Current phase | 22 — Security, concurrency, recovery, and full E2E |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -53,6 +53,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 19 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 20 state | `DONE` |
 | Phase 20 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 21 state | `DONE` |
+| Phase 21 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -86,7 +88,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 18 | Police monitoring | `DONE` | `0019_police_monitoring` | the Phase 18 battery — counts in [Phase 18 record](#phase-18-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 19 | Platform Operation | `DONE` | `0020_platform_operation` | the Phase 19 battery — counts in [Phase 19 record](#phase-19-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 20 | External adapters | `DONE` | — | the Phase 20 battery — counts in [Phase 20 record](#phase-20-record) | implemented at `ccbf602`, corrected at the commit named in the record; the record and its evidence are the commit after it |
-| 21 | Responsive UI and accessibility | `NOT STARTED` | — | — | — |
+| 21 | Responsive UI and accessibility | `DONE` | — | the Phase 21 battery — counts in [Phase 21 record](#phase-21-record) | implemented at `357df68`, the measured tree; the record and its evidence are the commit after it |
 | 22 | Security, concurrency, recovery, and full E2E | `NOT STARTED` | — | — | — |
 | 23 | Release candidate audit | `NOT STARTED` | — | — | — |
 
@@ -5912,4 +5914,159 @@ The per-command exit codes, durations and execution environment — and the firs
 — are recorded in [phase-20-battery-log.md](phase-20-battery-log.md).
 
 Phase 20 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 21 is authorized to begin under the
+standing progression authorization and has **not** started.
+
+---
+
+## Phase 21 record
+
+Responsive UI and accessibility: the five portals wired to the real API through one shared kit,
+navigation decided by the server from the API's own authorization, Mongolian copy taken from the
+requirement documents, the Cleaner dashboard and the public search usable on a phone, grace banners
+and the hard-lock screen, and accessibility measured by a scan rather than asserted. Authorized under
+the [standing progression authorization](#standing-progression-authorization), implemented and gated
+on top of the Phase 20 tree. Phase 21 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 22 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** none — Phase 21 owns no DEC ID. Its traceable obligations are the four Phase 21
+rows of [requirements-traceability.md](requirements-traceability.md) v1.34 §2.1, and each of the
+build plan's three gates was measured: Playwright per-portal flows at a phone, a tablet and a desktop
+profile; an automated accessibility scan on every primary screen; and an architecture test that web
+packages import only `contracts` and the kit.
+
+### Scope completed
+
+- **One kit, five portals** (`packages/web-kit`, `apps/web-*`). The kit carries the shell — skip
+  link, landmark header, server-decided navigation with `aria-current`, the `main` landmark — the
+  fields with their `aria-describedby` hints and errors, tables that stack into labelled cards below
+  768px, the Mongolian error vocabulary, a typed HTTP client that speaks the API's error envelope,
+  and the httpOnly session cookie. It depends on `@prsystem/contracts` and nothing else of the
+  platform (`A-P21-9`). Every page is a server component rendered per request from the cookie; every
+  command is a Server Action carrying an idempotency key minted when the form was rendered
+  (`A-P21-2`); outcomes travel back as codes, never as identifiers (`A-P21-3`).
+- **Hotel Operations** — sign-in, the room board (doc 06 §3 cards: occupancy, source, stay type,
+  time state, cleaning and minibar state), the walk-in quote and check-in, the stay page with
+  checkout and folio payments, the Cleaner dashboard (refills, inspections, cleaning tasks,
+  configuration tasks — the four lists doc 04 names), shifts, housekeeping, catalog, the guest
+  registry query, the finance dashboard, staff invitations, the restaurant access codes, and the
+  subscription page with renewals; navigation by the membership's `effectivePermissions` and package;
+  `GRACE` and `EXPIRING_SOON` banners and the `EXPIRED`/`SUSPENDED` lock screen from the session's
+  subscription state (`A-P21-11`). A tab reached by URL without the permission renders the API's
+  opaque `NOT_FOUND`.
+- **Public and Guest** — search with dates and location (geolocation opt-in, explained), the
+  listing from the public projection, the detail with the categories for the dates and the published
+  reviews, registration by phone with the number held in a ten-minute httpOnly cookie, sign-in, the
+  ten-minute hold with the cancellation terms shown before payment, provider choice → invoice →
+  pay page, cancellation, the guest's own bookings and one review per completed booking.
+- **Restaurant** — the room QR and the stay's access code open a session the API issues; the menus,
+  the order with quantities and a note, the order's invoice and refund request; the session header
+  is the portal server's, never the browser's.
+- **Police** — password sign-in, the seven dashboard counters and the Admin's two charts, the exact
+  search by registration number or match id that opens one active match (the number stays in the
+  POST body), the match with its separate workflow and outcome fields, acknowledgement, the quick
+  Found form with its one location choice, the False Match request, the all-hotel check-in list with
+  its twelve columns and the historical-search rule, the wanted registration (ХУР or manual) with
+  the case opened on it, lifecycle moves by revision, the manual-identity decision, and the Excel
+  export with its download link.
+- **Platform Operation** — password plus authenticator sign-in and the step-up screen every
+  Operation action falls back to (`A-P21-10`), the thirteen KPI cards each a filter on the list,
+  the thirteen-column subscription list with its ten server-side filters and pages, the detail with
+  suspension and password-reset initiation (queued-or-not only), the onboarding queue in its two
+  groups, the read-only reconciliation queue, recovery requests and decisions, account creation with
+  explicit permissions, and the SMS preview → confirm → history flow with delivery refresh.
+- **Two API additions the portals needed and the requirements already implied.** `GET /auth/session`
+  projects, for an Operation or Police account, the action ids it can hold and which of them need a
+  step-up — computed by the same pure pipeline the commands run, never consulted by a command
+  (`A-P21-1`); and the Police `CaseView` names its compare-and-set `revision`, so a lifecycle move can
+  carry it without a read route the API does not have (`A-P21-4`).
+
+### Gates this phase had to pass, and what they measured
+
+- **Playwright per-portal flows at mobile, tablet and desktop viewports.** `e2e/api-server.mjs`
+  provisions a scratch database through the API's own harness, seeds synthetic people, starts
+  `createApp` from the built API in the `ci` environment, configures over that API what a hotel does
+  before its first walk-in, and serves a loopback console for the simulators' one-time codes
+  (`A-P21-7`). Thirty-three flows per profile — Pixel 7, Galaxy Tab S4 and Desktop Chrome — drove
+  sign-in, the board, the quote and check-in, registration by phone, search, hold and cancellation,
+  the restaurant order, the wanted case through activation to a swept match acknowledged and Found,
+  the check-in list, and the Operation dashboard, list, reset, suspension and SMS flow; two of them
+  prove that hiding is not authorization (`A-P21-1`, `A-P21-8`).
+- **Automated accessibility scan on every primary screen.** axe-core's WCAG 2.0/2.1 A and AA rules
+  over the entry, sign-in and first signed-in screens of all five portals, at all three profiles;
+  a serious or critical violation fails, and so does any horizontal document scroll (`A-P21-6`).
+- **Architecture test.** `webBoundaryRule` in `eslint.config.mjs` and
+  `packages/testing/src/web-boundary.test.ts`: every import of every web source file scanned, the
+  kit's dependency list held to `contracts` alone, and the rule shown to fire on four crossings and
+  stay quiet on the two allowed imports.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 21 in `PROGRESSED_PHASES`, the current phase
+  advanced to 22), `docs/implementation/phase-21-evidence.json`, twelve new drift fixtures and the
+  current-phase fixtures retargeted. Check 17 binds the manifest, the governed entry and this record.
+  `validate-workspace` check 3 now approves `web-kit`, named in the build plan's tree and the
+  architecture document's shared-package table.
+- **Traceability:** `requirements-traceability.md` v1.34 — no decision changes state; 279 of 279.
+- **Assumptions:** `A-P21-1`…`A-P21-11` in `assumptions-and-conflicts.md` §3.25.
+
+### External gates
+
+Unchanged: `EXT-01` to `EXT-11`, `INT-MAIL-01`, `INT-OTP-01` and `INT-STORAGE-01` remain `BLOCKED`;
+the e-Mongolia sign-in is shown as not yet open, and every provider the portals reach — the two
+gateways, ХУР, the OTP and the SMS provider — answered as its simulator in the measured runs. 17 P1
+items; `DSR-01` and `DSR-02`, both due in Phase 22; selecting `GATE-SEC` as a required GitHub status
+check. **Phase 21 adds no new EXT gate.**
+
+### What Phase 21 was asked to carry and did not
+
+Where the API has no read, the portal shows what the last command answered rather than inventing a
+rule: the wanted-person list of doc 13 §12.1, a hotel-side order and staff list, a Cleaner-readable
+count sheet, the Police account-management screens of doc 13 §5 and the reconciliation terminal
+outcome of doc 14 §4.2 each wait on an API route recorded in `A-P21-4`. The flows do not follow a
+provider invoice to its pay page, pay a restaurant order or drive a checkout to settlement; those
+are Phase 22's full end-to-end pass (`A-P21-8`). The three measured profiles are Chromium; WebKit and
+Firefox were not installed and are not claimed.
+
+### Evidence
+
+<!-- phase-21-evidence:begin -->
+
+Measured at implementation commit 357df68be65a55126d135a46059a3f3eb9aebb43, in a clean detached
+checkout with a fresh install, a fresh Turborepo cache and forced task execution. All 28 executions
+exited 0. The two governance rows are from the final tree, which carries this record and the
+new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 325 of 325 drift fixtures caught at the measured commit; 337 of 337 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 990 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 18 of 18 projects |
+| `pnpm run typecheck` | PASS | 30 of 30 graphs |
+| `pnpm run test:unit` | PASS | 1,694 across 12 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 19, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 613: ports 3, outbox 5, db 41, worker 2, api 562 |
+| `pnpm run test:concurrency` | PASS | 97 each run: db 16, api 81 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 20 of 20 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 99 passed: 33 flows at each of three viewports, on the real API |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; three moderate, DSR-01 and DSR-02 |
+| `pnpm run build` | PASS | 18 of 18 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-21-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-21-battery-log.md](phase-21-battery-log.md).
+
+Phase 21 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 22 is authorized to begin under the
 standing progression authorization and has **not** started.
