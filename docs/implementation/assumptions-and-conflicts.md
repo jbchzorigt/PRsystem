@@ -1226,6 +1226,70 @@ recorded so a reviewer can see where a judgement was made.
   phase did not add them. They remain open, and closing them needs an approved decision rather than
   an implementation.
 
+### 3.24 Phase 20 scope alignments — approved requirements, implemented
+
+- **A-P20-1 — no gate cleared, so no adapter is enabled, and that is the phase's honest output.**
+  The build plan's exit condition is that every adapter is *either* enabled with its gate cleared
+  *or* explicitly recorded as still blocked. No contract, credential, signature rule or written
+  approval was supplied for any of the eleven EXT gates or the three internal controls, so all
+  fourteen remain `BLOCKED`, every production adapter answers `DISABLED` in staging and production,
+  and [external-integration-gates.md](external-integration-gates.md) §6 records the outcome per
+  adapter slot. CLAUDE.md §9 says not to invent a missing contract; this phase built the machinery
+  that makes an invented one impossible to deploy instead.
+- **A-P20-2 — the gate register is code as well as a document, and clearing a gate is three
+  reviewed changes.** `packages/ports/src/gates.ts` declares the same fourteen gates with the same
+  statuses as the document, and the type refuses `cleared: true` without an artefact and a date.
+  `selectAdapters` reads it at startup; a test holds it to the document, and the Phase 03
+  `sec-ext-register` sub-gate now holds the document to the `platform.external_gate` rows. So a
+  gate is cleared by a document change, a code change and a migration together, never by one
+  alone — which is what §5 of the register always required and could not previously enforce.
+- **A-P20-3 — a production adapter is written only where the protocol is a published standard.**
+  AWS Signature Version 4 is a public specification with published test vectors, and "S3-compatible
+  private object storage" is what CLAUDE.md §1 names, so the storage adapter exists: verified
+  against the three AWS-documented signatures and against the compose stack's MinIO. QPay Merchant
+  V2 is a public API too, but doc 11 §12 records that its callback verification rule, merchant type
+  and refund capability are contractual, and an adapter written from memory of the public part
+  would be an invented one. Google Maps was refused for a narrower reason: writing the Geocoding
+  adapter would decide which of Maps, Places or Geocoding is used, and `EXT-06` lists that decision
+  as outstanding. Email was refused because an SMTP adapter would have had to invent both a
+  delivery-status model and the wording of six user-facing messages. Everything else has no
+  endpoint to write against.
+- **A-P20-4 — the gates are production release gates, so a written adapter may run below
+  production against a local stand-in.** `simulator` is refused anywhere above test, and a
+  production adapter is refused above test while its gate is `BLOCKED` — but in local, CI and test
+  `ADAPTER_STORAGE=s3` runs the real adapter against MinIO, which is the only way it can be tested
+  at all. The register itself says none of the gates blocks development, and this reading keeps
+  that true without weakening what production may run.
+- **A-P20-5 — the SMS delivery-status refresh stays an Operation-realm route.** Phase 19 made every
+  Operation-realm table reachable by the API's role alone (`OPERATION_REALM_RLS`), and the worker's
+  login holds no privilege on them. Scheduling the refresh on the worker would mean widening a
+  runtime role's grants and changing the class rule Phase 19 measured — a security-relevant change
+  Phase 22 should review rather than one this phase makes in passing. The route exists and is
+  tested; a scheduler for it is recorded here as still open.
+- **A-P20-6 — a `DISABLED` answer is no decision, and the two Phase 14 provider jobs treat it so.**
+  The refund executor marked a refund `FAILED` on any non-retryable error, which was right for a
+  provider's refusal and wrong for the platform's own gate: an uncleared `EXT-03` would have turned
+  every open refund into a failed one. Both the refund executor and the payout runner now leave the
+  row where it was on `DISABLED`, and the worker schedules neither sweep while its adapter is
+  disabled, recording once at startup which gate kept it off. Nothing else about either job changed.
+- **A-P20-7 — a stale storage credential is refused, as the scheduler and Police credentials are.**
+  `OBJECT_STORAGE_SECRET_ACCESS_KEY` is required exactly when `ADAPTER_STORAGE=s3` and refused
+  otherwise. The shared schema used to demand the five storage variables of every deployment and
+  then use none of them; a secret that the process holds and cannot use is the arrangement the
+  Phase 03 scheduler rule already refuses. The variables are folded into the adapter selection and
+  the credential is a `Secret` from the moment it is parsed; the raw string is not returned.
+- **A-P20-8 — an unconfigured callback allowlist refuses every callback above test.** The provider
+  callback routes now sit behind a source-address guard. No contract has supplied a range, so in
+  staging and production every callback from an unlisted provider is answered as if the route did
+  not exist — one layer before the adapter's own `DISABLED`, and the same answer. Below staging an
+  absent list allows, so the simulator can call in from the loopback, and a configured list is
+  enforced there too. `request.ip` is the socket peer unless a trusted-proxy setting says
+  otherwise; that setting is a deployment matter this phase did not default.
+- **A-P20-9 — the sweeps that reach no provider are still unscheduled.** The Phase 13 hold-expiry
+  sweep, the Phase 15 invoice-expiry and refund-SLA sweeps and the Phase 18 Police sweeps are
+  domain jobs, not provider reconciliation, and were outside this phase's scope. They remain
+  service methods with tests and no scheduler entry, for Phase 22.
+
 ---
 
 ## 4. P1 configuration register

@@ -1,7 +1,9 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.32 (Phase 19 — the sixteen Platform Operation decisions move to `COVERED` with code
-and test references; 279 of 279 `COVERED`)
+**Version:** 1.33 (Phase 20 — no decision changes state; the phase owns no DEC ID and its
+traceable output is the per-adapter record in [external-integration-gates.md](external-integration-gates.md)
+§6, the code gate register, the `SEC-ADAPTERS` sub-gate and the `DSR-01` re-review; 279 of 279
+`COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -131,7 +133,11 @@ artefacts below are the traceable output.
 | 02 | Synthetic-identity-only test data (CLAUDE.md §8) | `packages/testing/` | `pnpm run test:unit` |
 | 02 | Seven deployable applications and the E2E harness | `apps/`, `e2e/` | `pnpm run build`, `pnpm run test:e2e` |
 | 02 | Production dependency tree clean at moderate and above; dev-only tooling contained ([DSR-01](dependency-security-register.md)) | `package.json`, `.github/workflows/ci.yml` | `pnpm run audit:prod`, `validate-workspace` 12–15 |
-| 20 | Re-review `DSR-01` when external adapters are wired | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod` |
+| 20 | Re-review `DSR-01` when external adapters are wired — **done**: Phase 20 added no third-party dependency (the S3 adapter uses `node:crypto` and the runtime's `fetch`), the transitive path is unchanged, and the entry stays `OPEN — contained` for its Phase 22 review | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod` |
+| 20 | Every external adapter enabled with its gate cleared or explicitly recorded as still blocked (CLAUDE.md §9); the register declared in code and held to the document and the database | [external-integration-gates.md](external-integration-gates.md) §6, `packages/ports/src/gates.ts`, `packages/ports/src/adapters/select-adapters.ts` | `GATE-SEC` / `SEC-ADAPTERS`, `packages/ports/src/gates.test.ts`, `SEC-SECRETS` |
+| 20 | Per-environment adapter configuration that fails closed: no simulator above test, no production adapter behind a `BLOCKED` gate, no stale storage credential; provider callback source allowlisting | `packages/config/src/adapters-env.ts`, `apps/api/src/security/callback-source.ts` | `pnpm run test:unit`, `GATE-SEC` / `SEC-STARTUP`, `SEC-STARTUP-WORKER` |
+| 20 | The one standards-based production adapter (S3-compatible object storage, SigV4) verified against the published vectors and a real S3-compatible service, and disabled in production behind `INT-STORAGE-01` | `packages/ports/src/adapters/s3/` | `pnpm run test:unit`, `pnpm run test:integration` (`@prsystem/ports`) |
+| 20 | The Phase 14 provider jobs scheduled on the worker only when their adapters can run, and `DISABLED` treated as no decision | `apps/api/src/modules/settlement/worker/`, `apps/worker/src/jobs/settlement.ts` | `pnpm run test:integration`, `pnpm run test:unit` (`@prsystem/worker`) |
 | 22 | Re-review `DSR-01` in the security pass; close it if a compatible stable Drizzle Kit has landed | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod`, `pnpm run audit:tree` |
 
 | 03 | Cluster role bootstrap separated from application migrations; restricted migration principal ([runbook](database-bootstrap-runbook.md)) | `packages/db/bootstrap/`, `packages/db/src/bootstrap.ts`, `packages/db/src/principal-guard.ts` | `GATE-SEC` / `SEC-ROLE` |

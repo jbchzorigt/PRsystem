@@ -15,6 +15,7 @@ import { ApiError } from '@prsystem/contracts';
 import { isPaymentProvider } from '@prsystem/ports';
 import type { AuthenticatedRequest } from '../../iam/http/session.guard';
 import { SessionGuard, actorOf, principalOf } from '../../iam/http/session.guard';
+import { CallbackSourceGuard } from '../../../security/callback-source';
 import { body, idempotencyKey, requireString, requireUuid } from '../../iam/http/validation';
 import { SubscriptionService } from '../services/subscription.service';
 import { newOnboardingRequest } from '../services/onboarding-context';
@@ -123,6 +124,7 @@ export class SubscriptionController {
    * matched against the stored intent.
    */
   @Post('payments/:provider/callback')
+  @UseGuards(CallbackSourceGuard)
   @HttpCode(202)
   @ApiOperation({ summary: 'Renewal or upgrade payment callback' })
   async callback(

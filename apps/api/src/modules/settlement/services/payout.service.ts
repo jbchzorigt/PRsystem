@@ -223,7 +223,9 @@ export class PayoutService extends SettlementServiceBase {
     if (!answer.ok) {
       // Unreachable is not declined. The attempt stays submitted and the next
       // run asks the bank about the same one rather than opening a second.
-      if (isRetryable(answer.error)) return undefined;
+      // Nor is `DISABLED`: an uncleared `EXT-07` is the platform declining to
+      // call, not the bank declining to pay, and it settles nothing (Phase 20).
+      if (isRetryable(answer.error) || answer.error.kind === 'DISABLED') return undefined;
       return this.settle(hotelId, batchId, request, {
         state: 'FAILED',
         failureCode: answer.error.kind,

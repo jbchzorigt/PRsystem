@@ -1697,9 +1697,9 @@ const FIXTURES = [
   {
     name: 'catalogue: the stated count no longer matches',
     file: 'runbook',
-    expect: /says "eighteen" sub-gates, configuration has 19/,
+    expect: /says "nineteen" sub-gates, configuration has 20/,
     mutate: (text) =>
-      text.replace('aggregates **nineteen** sub-gates', 'aggregates **eighteen** sub-gates'),
+      text.replace('aggregates **twenty** sub-gates', 'aggregates **nineteen** sub-gates'),
   },
   {
     name: 'catalogue: the section heading removed',

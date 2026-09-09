@@ -99,6 +99,29 @@ exit 0                         # below the high threshold; the moderate is DSR-0
 
 Recorded at Phase 02 close. The commands are re-run by every phase gate set and by CI.
 
+### Phase 20 review (mandatory — external adapters wired)
+
+Re-reviewed on 2026-09-09 at the Phase 20 implementation tree, as this entry requires of the phase
+that wires the external adapters. **Status unchanged: `OPEN — contained`.**
+
+- **Phase 20 added no third-party dependency.** The one production adapter it wrote — S3-compatible
+  object storage — is built on `node:crypto` and the runtime's global `fetch`; the outbound HTTP
+  client, the CIDR allowlist, the `Secret` wrapper and the signature primitives have no dependency
+  either. The only manifest changes are workspace links (`@prsystem/config` now depends on
+  `@prsystem/ports`, and `@prsystem/ports` gained a `test:integration` script), and the lockfile
+  moved by three lines for them.
+- **The affected path is byte-for-byte the one recorded above.** `pnpm --filter @prsystem/db why
+  esbuild` still shows `drizzle-kit@0.31.10 → @esbuild-kit/esm-loader@2.6.5 →
+  @esbuild-kit/core-utils@3.3.2 → esbuild@0.18.20`, and every other path — `drizzle-kit`'s own
+  `esbuild@0.25.12`, and `tsx`, `vite` and `vitest` at `esbuild@0.28.2` — is patched.
+- **The production tree is clean and the containment holds.** `pnpm run audit:prod` answers `No
+  known vulnerabilities found`, exit 0; `pnpm run audit:tree` answers three moderate and nothing at
+  high — this entry and `DSR-02` — exit 0; `validate-workspace` checks 12–15 pass.
+- **Nothing the adapters do reaches the vulnerable code.** The adapters run in the API and the
+  worker, neither of which installs or imports `drizzle-kit`, and no development server was added.
+
+Next mandatory review: **Phase 22**, unchanged.
+
 ### Removal condition
 
 Close this entry when a **compatible stable** Drizzle Kit release drops the deprecated

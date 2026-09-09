@@ -407,13 +407,13 @@ No procedure here removes an unrelated container, database or volume.
 
 ### GATE-SEC sub-gate catalogue
 
-`GATE-SEC` (`pnpm run test:security`) aggregates **nineteen** sub-gates:
+`GATE-SEC` (`pnpm run test:security`) aggregates **twenty** sub-gates:
 
 `SEC-ROLE`, `SEC-RLS`, `SEC-ACL-MATRIX`, `SEC-OWNERSHIP`, `SEC-LOCK-EVIDENCE`,
 `SEC-POOL-ERRORS`, `SEC-BOOTSTRAP`, `SEC-SCHEDULER`, `SEC-MAINTENANCE`,
 `SEC-STARTUP`, `SEC-STARTUP-WORKER`, `SEC-REGRESSION`, `SEC-AUDIT`,
 `SEC-PARTITION`, `SEC-POLICE-ISOLATION`, `SEC-KMS`, `SEC-PII-LEAK`,
-`SEC-ONBOARDING-ISOLATION`, `SEC-SECRETS`.
+`SEC-ONBOARDING-ISOLATION`, `SEC-SECRETS`, `SEC-ADAPTERS`.
 
 `SEC-ONBOARDING-ISOLATION` is Phase 05's: an onboarding application exists before
 any tenant does, so it is isolated by a reference rather than by `hotel_id`, and

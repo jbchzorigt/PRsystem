@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
-import { selectKeyManagement } from '@prsystem/ports';
-import type { KeyManagementPort } from '@prsystem/ports';
+import { selectAdapters, selectKeyManagement } from '@prsystem/ports';
+import type { AdapterSelection, KeyManagementPort } from '@prsystem/ports';
 import {
   selectEBarimt,
   selectPaymentGateways,
@@ -46,6 +46,11 @@ export interface OnboardingWorkerConfig {
   readonly kmsAdapter: string;
   readonly kmsSeed?: string;
   readonly parameters?: OnboardingParameters;
+  /**
+   * Phase 20: the deployment's adapter selection. Absent, the environment's
+   * defaults apply — the simulators below production, nothing above it.
+   */
+  readonly adapters?: AdapterSelection;
 }
 
 /** Builds the runtime from configuration, selecting the environment's ports. */
@@ -58,13 +63,14 @@ export function createOnboardingWorkerRuntime(
     kmsAdapter: config.kmsAdapter,
     ...(config.kmsSeed === undefined ? {} : { seed: config.kmsSeed }),
   });
+  const selected = config.adapters === undefined ? undefined : selectAdapters(config.adapters);
   const runtime = attachOnboardingWorkerRuntime({
     pool,
     keys,
-    gateways: selectPaymentGateways(config.appEnv),
-    ebarimt: selectEBarimt(config.appEnv),
-    phone: selectPhoneVerification(config.appEnv),
-    notifications: selectStaffNotification(config.appEnv),
+    gateways: selected?.payments ?? selectPaymentGateways(config.appEnv),
+    ebarimt: selected?.ebarimt ?? selectEBarimt(config.appEnv),
+    phone: selected?.otp ?? selectPhoneVerification(config.appEnv),
+    notifications: selected?.notifications ?? selectStaffNotification(config.appEnv),
     // The worker is the consumer of signals, never a producer.
     signals: new NoProvisioningSignal(),
     ...(config.parameters === undefined ? {} : { parameters: config.parameters }),

@@ -15,10 +15,6 @@ import { loadWorkerEnv } from './worker-env';
 const base: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgresql://prsystem_api:pw@localhost:5432/prsystem',
   REDIS_URL: 'redis://localhost:6379',
-  OBJECT_STORAGE_ENDPOINT: 'http://localhost:9000',
-  OBJECT_STORAGE_BUCKET: 'prsystem-local',
-  OBJECT_STORAGE_ACCESS_KEY_ID: 'local-access-key',
-  OBJECT_STORAGE_SECRET_ACCESS_KEY: 'local-secret-key',
   SMTP_HOST: 'localhost',
   SMTP_PORT: '1025',
 };

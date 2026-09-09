@@ -160,3 +160,68 @@ export type {
   SignedUrlInput,
   StoredObject,
 } from './object-storage.port';
+
+// Phase 20 — the gate register as code, and the adapter selection it governs.
+export {
+  ADAPTER_SLOTS,
+  EXTERNAL_GATE_IDS,
+  GATE_IDS,
+  GATE_REGISTER,
+  INTERNAL_GATE_IDS,
+  describeGates,
+  gateForSlot,
+  isAdapterSlot,
+  isGateCleared,
+  isGateId,
+} from './gates';
+export type {
+  AdapterSlot,
+  ExternalGateId,
+  GateEntry,
+  GateId,
+  GateStatus,
+  InternalGateId,
+} from './gates';
+export {
+  AdapterSelectionError,
+  PRODUCTION_ADAPTERS,
+  S3_OUTBOUND_TIMEOUT_MS,
+  defaultAdapterModes,
+  selectAdapters,
+} from './adapters/select-adapters';
+export type {
+  AdapterDescription,
+  AdapterMode,
+  AdapterSelection,
+  AdapterSelectionReason,
+  S3StorageConfig,
+  SelectedAdapters,
+} from './adapters/select-adapters';
+export { REDACTED_SECRET, Secret } from './adapters/secret';
+export { constantTimeEqual, hmacSha256, sha256Hex } from './adapters/signing';
+export { ipInCidr, isAllowedSource, parseCidr, parseCidrList } from './adapters/ip-allowlist';
+export type { Cidr } from './adapters/ip-allowlist';
+export {
+  FetchOutboundHttp,
+  TokenBucket,
+  classifyStatus,
+  expectStatus,
+} from './adapters/outbound-http';
+export type {
+  FetchOutboundHttpOptions,
+  OutboundHttp,
+  OutboundRequest,
+  OutboundResponse,
+  RateLimit,
+} from './adapters/outbound-http';
+export { S3ObjectStorage } from './adapters/s3/s3-object-storage';
+export type { S3ObjectStorageConfig } from './adapters/s3/s3-object-storage';
+export {
+  EMPTY_PAYLOAD_HASH,
+  UNSIGNED_PAYLOAD,
+  canonicalRequest,
+  presignUrl,
+  signHeaders,
+  uriEncode,
+} from './adapters/s3/sigv4';
+export type { SigV4Credentials, SigV4Request } from './adapters/s3/sigv4';

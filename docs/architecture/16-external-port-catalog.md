@@ -247,7 +247,17 @@ feature in production rather than defaulting it.
 
 `KeyManagementPort` and `ObjectStoragePort` are not EXT gates — the requirements name no vendor — but
 they follow the same port discipline, ship simulators, and have production implementations delivered
-in Phase 20. `KeyManagementPort` is required from Phase 03, because identifier ciphertext and lookup
+in Phase 20.
+
+**Phase 20 outcome.** The gate mapping above is now declared in code as well
+(`packages/ports/src/gates.ts`), and every deployment selects its adapters through `selectAdapters`
+from per-slot configuration (`ADAPTER_<SLOT>`), which refuses a simulator above test and a production
+adapter behind a `BLOCKED` gate before a port is bound. The one production adapter that exists is
+the S3-compatible `ObjectStoragePort` implementation, written against the published SigV4 standard;
+every contract-bound adapter is recorded as still blocked in
+[external-integration-gates.md](../implementation/external-integration-gates.md) §6. The
+`SEC-ADAPTERS` sub-gate measures that, with production defaults, every operation of every port
+answers `DISABLED` and the process makes no network call. `KeyManagementPort` is required from Phase 03, because identifier ciphertext and lookup
 tokens exist from the first migration that stores an identifier.
 
 Two more sit outside the EXT namespace for the same reason, both first needed in Phase 05:

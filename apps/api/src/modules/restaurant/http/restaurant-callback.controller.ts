@@ -1,9 +1,10 @@
-import { Body, Controller, HttpCode, Inject, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ApiError } from '@prsystem/contracts';
 import { isPaymentProvider } from '@prsystem/ports';
 import type { RawCallback } from '@prsystem/ports';
 import type { FastifyRequest } from 'fastify';
+import { CallbackSourceGuard } from '../../../security/callback-source';
 import { body } from '../../iam/http/validation';
 import { newRestaurantRequest } from '../services/restaurant-context';
 import { RestaurantOrderService } from '../services/order.service';
@@ -30,6 +31,7 @@ export class RestaurantCallbackController {
   constructor(@Inject(RestaurantOrderService) private readonly orders: RestaurantOrderService) {}
 
   @Post(':provider')
+  @UseGuards(CallbackSourceGuard)
   @HttpCode(200)
   @ApiOperation({ summary: 'A restaurant payment callback, verified server-side before use' })
   @ApiResponse({ status: 200, description: 'Accepted, rejected, duplicate or unverified' })

@@ -2,12 +2,20 @@ import { z } from 'zod';
 import {
   EnvValidationError,
   assertNoMigrationCredential,
+  deriveEnv,
   envSchema,
   formatIssues,
   postgresUrl,
   registerEnvCacheReset,
   type Env,
 } from './env';
+import {
+  callbackAllowlistSchema,
+  refineAdapters,
+  refineCallbackAllowlists,
+  resolveCallbackAllowlists,
+} from './adapters-env';
+import type { CallbackAllowlists } from './adapters-env';
 
 /**
  * API-specific configuration: the shared contract plus the D-09 scheduler
@@ -41,6 +49,12 @@ export type PoliceConfig =
 export interface ApiEnv extends Env {
   readonly scheduler: SchedulerConfig;
   readonly police: PoliceConfig;
+  /**
+   * Phase 20. The source ranges a provider's callback may arrive from, per
+   * provider. Absent means "not configured", which the guard treats as
+   * "refuse every source" above test and "allow" below it.
+   */
+  readonly callbackAllowlists: CallbackAllowlists;
 }
 
 /**
@@ -92,7 +106,12 @@ export const apiEnvSchema = envSchema
      */
     POLICE_DATABASE_URL: postgresUrl.optional(),
   })
+  .extend(callbackAllowlistSchema.shape)
   .superRefine((value, ctx) => {
+    // The shared adapter rules, attached here as well because this schema is
+    // parsed on its own rather than through `loadEnv`.
+    refineAdapters(value, value.APP_ENV, ctx);
+    refineCallbackAllowlists(value, ctx);
     const enabled = resolveSchedulerEnabled(value.APP_ENV, value.SCHEDULER_ENABLED);
     const url = value.SCHEDULER_DATABASE_URL;
 
@@ -172,8 +191,12 @@ export function loadApiEnv(source: NodeJS.ProcessEnv = process.env): ApiEnv {
     SCHEDULER_DATABASE_URL: url,
     POLICE_ENABLED: _policeFlag,
     POLICE_DATABASE_URL: policeUrl,
-    ...rest
+    CALLBACK_ALLOWLIST_QPAY: _qpayList,
+    CALLBACK_ALLOWLIST_KHAAN: _khaanList,
+    ...raw
   } = parsed.data;
+  const rest = deriveEnv(raw);
+  const callbackAllowlists = resolveCallbackAllowlists(parsed.data);
   const enabled = resolveSchedulerEnabled(parsed.data.APP_ENV, parsed.data.SCHEDULER_ENABLED);
 
   // `enabled && url !== undefined` is guaranteed by the refinement above; the
@@ -187,7 +210,7 @@ export function loadApiEnv(source: NodeJS.ProcessEnv = process.env): ApiEnv {
       ? { enabled: true, databaseUrl: policeUrl }
       : { enabled: false };
 
-  return { ...rest, scheduler, police };
+  return { ...rest, scheduler, police, callbackAllowlists };
 }
 
 let cached: ApiEnv | undefined;

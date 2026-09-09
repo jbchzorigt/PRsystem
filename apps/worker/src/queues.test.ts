@@ -69,6 +69,8 @@ describe('QUEUE_NAMES', () => {
       'reporting.export.expiry',
       'reporting.retention.purge',
       'police.match.check_in',
+      'settlement.refund.execute',
+      'settlement.payout.run',
     ]);
   });
 

@@ -4,12 +4,17 @@ import { EnvValidationError, loadEnv } from './env';
 const valid: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgresql://prsystem_api:pw@localhost:5432/prsystem',
   REDIS_URL: 'redis://localhost:6379',
+  SMTP_HOST: 'localhost',
+  SMTP_PORT: '1025',
+};
+const STORAGE_SECRET = 'local-secret-key-canary';
+const withStorage: NodeJS.ProcessEnv = {
+  ...valid,
+  ADAPTER_STORAGE: 's3',
   OBJECT_STORAGE_ENDPOINT: 'http://localhost:9000',
   OBJECT_STORAGE_BUCKET: 'prsystem-local',
   OBJECT_STORAGE_ACCESS_KEY_ID: 'local-access-key',
-  OBJECT_STORAGE_SECRET_ACCESS_KEY: 'local-secret-key',
-  SMTP_HOST: 'localhost',
-  SMTP_PORT: '1025',
+  OBJECT_STORAGE_SECRET_ACCESS_KEY: STORAGE_SECRET,
 };
 
 describe('loadEnv', () => {
@@ -19,7 +24,7 @@ describe('loadEnv', () => {
     expect(env.APP_ENV).toBe('local');
     expect(env.LOG_LEVEL).toBe('info');
     expect(env.API_PORT).toBe(3000);
-    expect(env.OBJECT_STORAGE_REGION).toBe('us-east-1');
+    expect(loadEnv(withStorage).adapters.storage?.region).toBe('us-east-1');
   });
 
   it('coerces numeric ports from strings', () => {
@@ -54,25 +59,27 @@ describe('loadEnv', () => {
   });
 
   it('never places a secret value in the error message', () => {
-    const secret = 'super-secret-value-should-not-appear';
     try {
-      loadEnv({ ...valid, OBJECT_STORAGE_SECRET_ACCESS_KEY: '', SMTP_HOST: '' });
+      // The storage secret is present and the bucket is missing, so the refusal
+      // names the storage variables — and must not echo the secret beside them.
+      loadEnv({ ...withStorage, OBJECT_STORAGE_BUCKET: '', SMTP_HOST: '' });
       expect.unreachable('expected loadEnv to throw');
     } catch (error) {
       const message = (error as Error).message;
-      expect(message).toContain('OBJECT_STORAGE_SECRET_ACCESS_KEY');
-      expect(message).not.toContain(secret);
-      expect(message).not.toContain(valid.OBJECT_STORAGE_SECRET_ACCESS_KEY!);
+      expect(message).toContain('OBJECT_STORAGE_BUCKET');
+      expect(message).toContain('SMTP_HOST');
+      expect(message).not.toContain(STORAGE_SECRET);
       expect(message).not.toContain('pw@localhost');
     }
   });
 
   it('reports every invalid field, not just the first', () => {
     try {
+      // The database, Redis and both SMTP values: four issues, reported together.
       loadEnv({});
       expect.unreachable('expected loadEnv to throw');
     } catch (error) {
-      expect((error as EnvValidationError).issues.length).toBeGreaterThan(4);
+      expect((error as EnvValidationError).issues.length).toBeGreaterThanOrEqual(4);
     }
   });
 });

@@ -1,6 +1,7 @@
 # PRsystem — External Integration Gates
 
-**Version:** 1.1 (Phase 00 repair — dependent phases realigned to the approved 23-phase structure)
+**Version:** 1.2 (Phase 20 — the register is code as well as a document; every adapter recorded as
+enabled or still blocked, per slot, in §6)
 **Source:** [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §4 (EXT-01 … EXT-11), plus the
 module-level production exceptions in docs 13, 14 and 16.
 
@@ -20,6 +21,16 @@ approval is missing:
 define a typed port and a deterministic simulator only where the phase cannot be built or gated
 without it; the permitted set is enumerated in [build-plan.md](build-plan.md) §2. "Port phase" below
 names the earliest phase permitted to define the port surface; "Adapter phase" is always 20.
+
+**Since Phase 20 the register is read at startup, not only by people.** The same gates, with the
+same statuses, are declared in `packages/ports/src/gates.ts` (`GATE_REGISTER`), and every deployment
+selects its adapters through `selectAdapters`, which refuses — before a port is bound or Redis is
+contacted — a simulator anywhere above test and a production adapter whose gate this register still
+records as `BLOCKED`. The three copies of the register — this document, that module and the
+`platform.external_gate` / `platform.internal_gate` rows Phase 03 seeds — are held to one another by
+tests (`packages/ports/src/gates.test.ts`, `packages/db/src/security/sec-ext-register.test.ts`), so
+clearing a gate is a document change, a code change and a migration, and cannot be one of them
+alone. §6 records the per-adapter outcome of Phase 20.
 
 A port is *development-ready* when its simulator passes the conformance suite: duplicate,
 out-of-order, delayed, expired, mismatched-amount, mismatched-currency, bad-signature, and
@@ -301,7 +312,7 @@ payment references, and never mark a receipt as sent before official issuance.
 
 | Gate | Source | Nature | Owning phase |
 | --- | --- | --- | --- |
-| Email delivery provider | `ONB-DEC-003`, `STAFF-DEC-001`, `OPS-DEC-008` | Activation, invitation, reset and eBarimt delivery all use email; provider, delivery-status semantics and TTLs are P1-15 configuration | 20 |
+| Email delivery provider (`INT-MAIL-01`) | `ONB-DEC-003`, `STAFF-DEC-001`, `OPS-DEC-008` | Activation, invitation, reset and eBarimt delivery all use email; provider, delivery-status semantics and TTLs are P1-15 configuration. **Still BLOCKED at Phase 20**: no provider is contracted, and the approved wording of the six messages the port carries does not exist either, so an SMTP adapter would have had to invent both a delivery-status model and user-facing copy | 20 |
 | S3-compatible object storage (`INT-STORAGE-01`) | `GUEST-DEC-007`, doc 13 §12.3 | Private buckets, one-hour export TTL, five-minute signed URLs, encrypted temporary Police export files. Phase 17 ships the typed `ObjectStoragePort` with a deterministic simulator; the production adapter answers `DISABLED` behind this gate, so an export outside local, CI and test fails closed with a recorded reason rather than writing a file nowhere | 20 |
 | Tax and VAT treatment | P1-11 | The ledger carries tax fields; official accounting treatment awaits an accountant or tax adviser. Phase 05 stamps a `taxConfigVersion` of `p1-provisional-tax-2026-08` onto every quote and payment, so the rate a figure was computed under is recorded rather than assumed | 23 |
 | Phone one-time-password provider (`INT-OTP-01`) | `ONB-DEC-004`, doc 15 §2.1 | doc 15 requires the citizen's or representative's phone to be OTP-verified before an invoice exists, and **no OTP provider is contracted**. CallPro is EXT-05 and is an SMS *send* contract, not an OTP service, so reading it as covering this would be inventing an approved capability. Phase 05 ships the typed port and a deterministic simulator; the production adapter does not exist and the port fails closed outside local, CI and test | 20 |
@@ -311,8 +322,65 @@ payment references, and never mark a receipt as sent before official issuance.
 ## 5. Gate review protocol
 
 - Every phase that introduces a port updates this file with the port surface and simulator coverage.
-- Phase 20 records, per adapter, whether the gate is cleared and which artefact cleared it.
+- Phase 20 records, per adapter, whether the gate is cleared and which artefact cleared it (§6).
 - No phase may mark a gate `CLEARED` without the named artefact — contract, credential or written
-  approval — recorded here.
+  approval — recorded here. Since Phase 20 the same status is declared in
+  `packages/ports/src/gates.ts`, whose type refuses `cleared: true` without an `artefact` and a
+  `clearedOn` date, and in `platform.external_gate` / `platform.internal_gate`; a test fails when
+  any two of the three disagree. Clearing a gate is therefore always a reviewed change to code, to
+  this document and to a migration.
 - Phase 23 performs the final gate review. Any gate still `BLOCKED` is reported as a production
   release blocker, not as a development defect, and the release decision is returned to the customer.
+
+---
+
+## 6. Phase 20 adapter record
+
+Phase 20's exit condition is that every adapter is *either* enabled with its gate cleared *or*
+explicitly recorded as still blocked. **No gate cleared during Phase 20** — no contract, credential,
+signature rule or written approval was supplied — so every production adapter remains disabled in
+staging and production, and the table below is the honest record of what exists behind each gate.
+
+Three things were built for every slot regardless of its gate, because they need no contract:
+
+- **selection by configuration** (`ADAPTER_<SLOT>` = `simulator` | `disabled` | adapter name), refused
+  at startup when it names a simulator above test, a production adapter behind a `BLOCKED` gate, or an
+  adapter nobody has written — by both the API and the worker, before a port is bound or Redis is
+  contacted;
+- **the fail-closed conformance**, measured by the `SEC-ADAPTERS` sub-gate of `GATE-SEC`: with
+  production defaults, every operation of every port answers `DISABLED` naming its gate and the
+  process makes no network call — `fetch` is replaced with a tripwire for the duration and never
+  fires;
+- **the shared adapter infrastructure** a real adapter runs on: an outbound HTTP client with a hard
+  timeout, a token-bucket throughput limit and status mapping into the port vocabulary; a `Secret`
+  wrapper that redacts itself under string coercion, JSON and `util.inspect`; HMAC / SHA-256 /
+  constant-time primitives; and IPv4 / IPv6 CIDR allowlisting, applied as a guard on the four
+  provider callback routes (`CALLBACK_ALLOWLIST_<PROVIDER>`; an unconfigured provider has every
+  callback refused at and above staging).
+
+| Slot | Gate | Production adapter | Status at Phase 20 | Why it stays disabled | What would enable it |
+| --- | --- | --- | --- | --- | --- |
+| `payment.qpay` | EXT-03 | **none written** | **BLOCKED** | doc 11 §12 records only that Merchant V2 endpoints exist; the callback verification rule, the merchant type and the refund capability are contractual. An adapter written from memory of a public API would be an invented one | The merchant contract, the callback signature rule and sandbox credentials; then the adapter, its conformance run and a `CLEARED` entry naming the contract |
+| `payment.khaan` | EXT-04 | **none written** | **BLOCKED** | No gateway or POS contract, callback, refund or reconciliation semantics, or reference field definitions exist | The gateway and POS contracts and credentials; then the adapter and its conformance run |
+| `ebarimt` | EXT-11 | **none written** | **BLOCKED** | The issuer structure, receipt breakdown, correction semantics and credentials are contractual and unapproved by the tax authority | The issuer contract, API credentials and tax authority approval |
+| `xyp` | EXT-01 | **none written** | **BLOCKED** | The service list, field list, consent basis, VPN / certificate and outage procedure are all absent; there is no endpoint to write against | The XYP contract, field list, consent basis and network access |
+| `emongolia` | EXT-02 | **none written** | **BLOCKED** | No authentication flow, field set, subject identifier, token lifecycle or sandbox is defined | The e-Mongolia integration agreement and sandbox access |
+| `sms` | EXT-05 | **none written** | **BLOCKED** | doc 14 §5.6 forbids inventing the endpoint schema, authentication type and callback signature, and none is approved. The delivery-status refresh stays an Operation-realm command (see below) | The CallPro agreement: endpoint, authentication, IP allowlist, segment billing, tariff and credentials |
+| `geo` | EXT-06 | **none written** | **BLOCKED** | Which of Maps, Places or Geocoding is used is undecided, as are the billing account, key restrictions and permitted storage; writing the Geocoding adapter would decide the first of these. `distance` remains provider-free on both paths (`A-P12-6`) | The API selection, billing account and key restrictions |
+| `payout` | EXT-07 | **none written** | **BLOCKED** | The contract permitting the platform to receive guest money and remit net amounts, and the liability allocation, are absent; there is no bank facility to write against | The settlement contract, payment-service authorization and the bank's transfer API |
+| `email` | INT-MAIL-01 | **none written** | **BLOCKED** | No provider is contracted (P1-15), and an adapter would also have had to invent the delivery-status model and the wording of six user-facing messages | The provider, its delivery-status semantics, and approved message copy |
+| `otp` | INT-OTP-01 | **none written** | **BLOCKED** | No OTP provider is contracted; CallPro is a send contract, not an OTP service | An OTP provider contract |
+| `storage` | INT-STORAGE-01 | **`s3` — written, tested, disabled in production** | **BLOCKED** | AWS Signature Version 4 is a published standard, so an S3-compatible adapter can be written without inventing anything: path-style requests signed with SigV4, presigned `GET` URLs for the five-minute link, `HEAD`-before-sign so a key that is gone cannot be signed. It is verified against the three AWS-published signature vectors and against the compose stack's MinIO (put, presigned fetch, delete, `NoSuchKey`, `SignatureDoesNotMatch`). What is missing is the production bucket, its credential and its retention configuration — a term of the agreement, not a line of code | A production bucket, region and credential; a `CLEARED` entry naming them; `ADAPTER_STORAGE=s3` |
+
+Three policy gates (EXT-08, EXT-09, EXT-10) govern no adapter and are unchanged: their absence
+disables the dependent feature in production rather than defaulting it.
+
+**Provider status reconciliation jobs.** The two Phase 14 provider jobs — the refund executor and
+the payout runner — now run on the worker deployment (`settlement.refund.execute`,
+`settlement.payout.run`), each scheduled only when its adapter is not `DISABLED` and each treating
+`DISABLED` as *no decision* rather than as a provider's failure: a release gate must not mark a refund
+`FAILED` or a payout batch `FAILED`. With every gate blocked, neither sweep is scheduled in production
+and the worker records once at startup which gate kept it off. The Phase 19 SMS delivery-status
+refresh stays an Operation-realm route, because the worker's login holds no privilege on any
+Operation-realm table by Phase 19's own classification rule and Phase 20 did not widen it
+(`A-P20-5`).

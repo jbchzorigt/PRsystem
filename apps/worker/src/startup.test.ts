@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Pool } from 'pg';
 import { LOGIN_PRINCIPALS, bootstrapCluster, runMigrations } from '@prsystem/db';
 import type { LoginPrincipal } from '@prsystem/db';
-import { KeyManagementError } from '@prsystem/ports';
+import { AdapterSelectionError, KeyManagementError } from '@prsystem/ports';
 import { createLogger } from '@prsystem/telemetry';
 import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
@@ -25,7 +25,7 @@ let db: TestDatabase;
 let workerUrl: string;
 
 /** Spy factories plus a pool tracker, so both "not called" and "released" are observable. */
-function makeDeps(connectionString: string, kmsFails: boolean) {
+function makeDeps(connectionString: string, kmsFails: boolean, adaptersFail = false) {
   const pools: Pool[] = [];
   const createConnection = vi.fn((): ConnectionOptions => ({ host: '127.0.0.1', port: 59998 }));
   const createWorkers = vi.fn((_connection: ConnectionOptions): readonly Worker[] => []);
@@ -45,6 +45,16 @@ function makeDeps(connectionString: string, kmsFails: boolean) {
           throw new KeyManagementError(
             'INT-KMS-01: no key management adapter is configured',
             'unavailable',
+          );
+        }
+      },
+      verifyAdapters: (): void => {
+        if (adaptersFail) {
+          throw new AdapterSelectionError(
+            'sms: the simulator is not permitted outside local, ci or test',
+            'sms',
+            'simulator_not_permitted',
+            'EXT-05',
           );
         }
       },
@@ -124,6 +134,22 @@ describe('startWorker ordering', () => {
     expect(allPoolsClosed(pools)).toBe(true);
   }, 60000);
 
+  it('never contacts Redis when an external adapter is misconfigured (Phase 20)', async () => {
+    // The principal and key management are valid, so the refusal can only come
+    // from the adapter selection — a simulator named above test.
+    const { deps, pools, createConnection, createWorkers } = makeDeps(workerUrl, false, true);
+
+    await expect(startWorker(deps)).rejects.toMatchObject({
+      name: 'AdapterSelectionError',
+      slot: 'sms',
+      gate: 'EXT-05',
+    });
+
+    expect(createConnection).not.toHaveBeenCalled();
+    expect(createWorkers).not.toHaveBeenCalled();
+    expect(allPoolsClosed(pools)).toBe(true);
+  }, 60000);
+
   it('checks the principal before key management', async () => {
     // Both invalid: the reported failure names the first check in the order.
     const { deps, createConnection } = makeDeps(db.url, true);
@@ -150,10 +176,6 @@ describe('the worker refuses the migration credential', () => {
       LOG_LEVEL: 'error',
       DATABASE_URL: 'postgresql://prsystem_worker_login:pw@127.0.0.1:55442/prsystem',
       REDIS_URL: 'redis://127.0.0.1:59998',
-      OBJECT_STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
-      OBJECT_STORAGE_BUCKET: 'prsystem-local',
-      OBJECT_STORAGE_ACCESS_KEY_ID: 'test-access-key',
-      OBJECT_STORAGE_SECRET_ACCESS_KEY: 'test-secret-key',
       SMTP_HOST: '127.0.0.1',
       SMTP_PORT: '1025',
     };

@@ -18,6 +18,12 @@ export interface WorkerStartupDependencies {
   readonly openGuardPool: () => Pool;
   /** Verifies the key-management configuration. Throws to refuse startup. */
   readonly verifyKeyManagement: () => void;
+  /**
+   * Phase 20: verifies the external adapter selection. Throws to refuse
+   * startup — a simulator above test, or a production adapter behind an
+   * uncleared gate, is refused before Redis is contacted.
+   */
+  readonly verifyAdapters: () => void;
   /** Builds the Redis connection. Must not be called before the guards pass. */
   readonly createConnection: () => ConnectionOptions;
   /** Constructs the queue consumers. Must not be called before the guards pass. */
@@ -35,6 +41,7 @@ export async function startWorker(deps: WorkerStartupDependencies): Promise<Star
   try {
     await assertWorkerConnectionPrincipal(guardPool, deps.logger);
     deps.verifyKeyManagement();
+    deps.verifyAdapters();
   } finally {
     // Released on both paths: a refused startup must leave no connection behind.
     await guardPool.end();

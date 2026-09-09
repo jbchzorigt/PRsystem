@@ -56,6 +56,8 @@ import { RepositoryRetention } from './modules/reporting/contracts/stay-retentio
 import { LedgerCashLedger } from './modules/finance/contracts/cash-ledger';
 import { LedgerCashPostings } from './modules/finance/contracts/billing-cash';
 import { RepositoryShiftLookup } from './modules/stay/contracts/shift-lookup';
+import { CallbackSourceModule } from './security/callback-source';
+import type { CallbackSourcePolicy } from './security/callback-source';
 
 export interface AppModuleOptions {
   /**
@@ -65,6 +67,13 @@ export interface AppModuleOptions {
    * of them can acquire a privileged pool by omission.
    */
   readonly scheduler: SchedulerConfig;
+  /**
+   * Phase 20. Which source addresses a provider callback may arrive from.
+   * Optional so a construction site that serves no callback — the OpenAPI
+   * generator — need not name one; absent, every callback source is refused,
+   * so the routes cannot become reachable by omission.
+   */
+  readonly callbackSources?: CallbackSourcePolicy;
   /**
    * Overrides for the IAM module's ports.
    *
@@ -233,6 +242,7 @@ export class AppModule {
       imports: [
         HealthModule,
         MaintenanceModule.forRoot(options.scheduler),
+        CallbackSourceModule.forRoot(options.callbackSources),
         iam,
         OnboardingModule.forRoot({ ...options.onboarding, iam }),
         catalog,

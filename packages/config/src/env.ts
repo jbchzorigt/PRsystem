@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import type { AdapterSelection } from '@prsystem/ports';
+import {
+  ADAPTER_RAW_KEYS,
+  adapterEnvSchema,
+  refineAdapters,
+  resolveAdapters,
+} from './adapters-env';
 
 /**
  * Environment contract for the API and worker runtimes.
@@ -22,7 +29,7 @@ const redisUrl = nonEmpty.refine((v) => /^rediss?:\/\//.test(v), {
 
 const port = z.coerce.number().int().min(1).max(65535);
 
-export const envSchema = z.object({
+export const envSchema = adapterEnvSchema.extend({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.enum(['local', 'ci', 'staging', 'production']).default('local'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
@@ -43,12 +50,6 @@ export const envSchema = z.object({
   KMS_ADAPTER: z.string().default('none'),
   KMS_SEED: z.string().optional(),
 
-  OBJECT_STORAGE_ENDPOINT: nonEmpty,
-  OBJECT_STORAGE_REGION: nonEmpty.default('us-east-1'),
-  OBJECT_STORAGE_BUCKET: nonEmpty,
-  OBJECT_STORAGE_ACCESS_KEY_ID: nonEmpty,
-  OBJECT_STORAGE_SECRET_ACCESS_KEY: nonEmpty,
-
   SMTP_HOST: nonEmpty,
   SMTP_PORT: port,
 
@@ -56,7 +57,31 @@ export const envSchema = z.object({
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
 });
 
-export type Env = z.infer<typeof envSchema>;
+/**
+ * The validated environment. The adapter variables and the storage credential
+ * are folded into `adapters` — a selection whose secret is a `Secret` — and
+ * are not returned as raw strings.
+ */
+export type Env = Omit<z.infer<typeof envSchema>, (typeof ADAPTER_RAW_KEYS)[number]> & {
+  readonly adapters: AdapterSelection;
+};
+
+/** The schema with the Phase 20 adapter rules attached; what `loadEnv` parses. */
+export const refinedEnvSchema = envSchema.superRefine((value, ctx) => {
+  refineAdapters(value, value.APP_ENV, ctx);
+});
+
+/** Strips the raw adapter variables and adds the resolved selection. */
+export function deriveEnv<T extends z.infer<typeof envSchema>>(
+  parsed: T,
+): Omit<T, (typeof ADAPTER_RAW_KEYS)[number]> & { readonly adapters: AdapterSelection } {
+  const rest = { ...parsed } as Record<string, unknown>;
+  for (const key of ADAPTER_RAW_KEYS) delete rest[key];
+  return {
+    ...(rest as Omit<T, (typeof ADAPTER_RAW_KEYS)[number]>),
+    adapters: resolveAdapters(parsed.APP_ENV, parsed),
+  };
+}
 
 /**
  * Field names whose values must never be echoed in an error message.
@@ -118,9 +143,9 @@ export function assertNoMigrationCredential(source: NodeJS.ProcessEnv): void {
  *         a partially valid object, and never includes a secret value in the message.
  */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = envSchema.safeParse(source);
+  const parsed = refinedEnvSchema.safeParse(source);
   if (parsed.success) {
-    return parsed.data;
+    return deriveEnv(parsed.data);
   }
   throw new EnvValidationError(formatIssues(source, parsed.error.issues));
 }

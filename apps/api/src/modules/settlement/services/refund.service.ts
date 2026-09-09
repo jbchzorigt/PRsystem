@@ -107,8 +107,11 @@ export class BookingRefundService extends SettlementServiceBase {
 
     if (!answer.ok) {
       // A provider that could not be reached has decided nothing. The
-      // obligation stays `PENDING` and the next sweep asks again.
-      if (isRetryable(answer.error)) return false;
+      // obligation stays `PENDING` and the next sweep asks again. Neither has
+      // a provider whose gate is uncleared: `DISABLED` is the platform's own
+      // refusal to call, and marking the refund failed on it would turn a
+      // release gate into a business effect (Phase 20).
+      if (isRetryable(answer.error) || answer.error.kind === 'DISABLED') return false;
       await this.record(claimed, hotelId, request, { kind: 'failed', code: answer.error.kind });
       return true;
     }

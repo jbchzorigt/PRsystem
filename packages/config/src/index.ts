@@ -12,6 +12,14 @@ export {
 export type { Env } from './env';
 
 export {
+  ADAPTER_VARIABLES,
+  adapterEnvSchema,
+  callbackAllowlistSchema,
+  resolveCallbackAllowlists,
+} from './adapters-env';
+export type { AdapterEnv, CallbackAllowlists } from './adapters-env';
+
+export {
   apiEnvSchema,
   loadApiEnv,
   apiEnv,

@@ -7,8 +7,7 @@ import { createLogger } from '@prsystem/telemetry';
 import { apiEnv } from '@prsystem/config';
 import { Pool } from 'pg';
 import { API_PREFIX, UNVERSIONED_PATHS } from '@prsystem/contracts';
-import { selectKeyManagement } from '@prsystem/ports';
-import { selectPaymentGateways } from '@prsystem/ports';
+import { selectAdapters, selectKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
 import { DatabaseSubscriptionState } from './modules/onboarding/contracts/subscription-state.adapter';
 import { registerCorrelation } from './observability/correlation.plugin';
@@ -17,6 +16,7 @@ import { assertApiConnectionPrincipal } from './observability/connection-guard';
 import { assertSchedulerConnectionPrincipal } from './security/scheduler-guard';
 import { SCHEDULER_POOL } from './maintenance/maintenance.module';
 import { OPENAPI_PATH, buildOpenApiDocument } from './openapi-document';
+import { callbackSourcePolicy } from './security/callback-source';
 
 export interface BootstrapOptions {
   /** Override the listen port. `0` binds an ephemeral port, which tests rely on. */
@@ -49,6 +49,19 @@ export async function createApp(
     await guardPool.end();
   }
 
+  // Phase 20. Every external adapter, chosen once from the validated
+  // configuration and handed to the modules that reach a provider. The
+  // selection already refused a simulator above test and a production adapter
+  // behind an uncleared gate when the environment was parsed; this is where the
+  // ports are built, and the one line that records which ran carries no
+  // endpoint and no credential.
+  const adapters = selectAdapters(config.adapters);
+  const callbackSources = callbackSourcePolicy(config.APP_ENV, config.callbackAllowlists);
+  logger.info(
+    { adapters: adapters.describe(), callbackSources: callbackSources.describe() },
+    'external adapters selected',
+  );
+
   // The subscription-state adapter's own pool. Small: it serves one short read
   // per authorization check, and giving it its own handle keeps an entitlement
   // lookup from queueing behind a long-running command.
@@ -57,7 +70,9 @@ export async function createApp(
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot({
       scheduler: config.scheduler,
+      callbackSources,
       iam: {
+        notifications: adapters.notifications,
         config: {
           databaseUrl: config.DATABASE_URL,
           appEnv: config.APP_ENV,
@@ -83,6 +98,10 @@ export async function createApp(
           redisUrl: config.REDIS_URL,
           ...(config.QUEUE_PREFIX === undefined ? {} : { queuePrefix: config.QUEUE_PREFIX }),
         },
+        gateways: adapters.payments,
+        ebarimt: adapters.ebarimt,
+        phone: adapters.otp,
+        notifications: adapters.notifications,
       },
       catalog: { config: { databaseUrl: config.DATABASE_URL } },
       minibar: { config: { databaseUrl: config.DATABASE_URL } },
@@ -93,6 +112,7 @@ export async function createApp(
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
         },
+        xyp: adapters.xyp,
       },
       billing: {
         config: { databaseUrl: config.DATABASE_URL },
@@ -100,7 +120,7 @@ export async function createApp(
         // before it is recorded. Outside local, CI and test the adapters are
         // the disabled ones, so an unconfirmed payment is refused rather than
         // recorded (CLAUDE.md §9).
-        gateways: selectPaymentGateways(config.APP_ENV),
+        gateways: adapters.payments,
       },
       // doc 24: the cash the hotel physically holds. It has no external
       // provider — cash is counted, not confirmed — so it needs only the
@@ -113,15 +133,20 @@ export async function createApp(
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
         },
+        emongolia: adapters.emongolia,
       },
       public: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+        geo: adapters.geo,
       },
       booking: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+        payments: adapters.payments,
       },
       settlement: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+        payments: adapters.payments,
+        payouts: adapters.payouts,
       },
       restaurant: {
         config: {
@@ -130,12 +155,14 @@ export async function createApp(
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { kmsSeed: config.KMS_SEED }),
         },
+        payments: adapters.payments,
       },
       review: {
         config: { databaseUrl: config.DATABASE_URL },
       },
       reporting: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+        storage: adapters.storage,
       },
       // Phase 19. Platform Operation runs on the API's own login: its realm is
       // a population, not a second deployment credential (doc 14 §2).
@@ -146,6 +173,8 @@ export async function createApp(
           kmsAdapter: config.KMS_ADAPTER,
           ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
         }),
+        sms: adapters.sms,
+        notifications: adapters.notifications,
       },
       // Phase 18. Only when this deployment holds the Police credential, and
       // then on that credential — never on the API's own (doc 13 §3).
@@ -158,6 +187,9 @@ export async function createApp(
                 kmsAdapter: config.KMS_ADAPTER,
                 ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
               }),
+              sms: adapters.sms,
+              xyp: adapters.xyp,
+              storage: adapters.storage,
             },
           }
         : {}),

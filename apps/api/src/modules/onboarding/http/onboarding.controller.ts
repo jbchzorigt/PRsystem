@@ -15,6 +15,7 @@ import { ApiError } from '@prsystem/contracts';
 import { isPaymentProvider } from '@prsystem/ports';
 import type { AuthenticatedRequest } from '../../iam/http/session.guard';
 import { SessionGuard, actorOf } from '../../iam/http/session.guard';
+import { CallbackSourceGuard } from '../../../security/callback-source';
 import { body, idempotencyKey, requireString, requireUuid } from '../../iam/http/validation';
 import { OnboardingService } from '../services/onboarding.service';
 import { ProvisioningService } from '../services/provisioning.service';
@@ -249,6 +250,7 @@ export class OnboardingController {
    * gets — a provider learns nothing about our state from the response.
    */
   @Post('payments/:provider/callback')
+  @UseGuards(CallbackSourceGuard)
   @HttpCode(202)
   @ApiOperation({ summary: 'Provider payment callback' })
   async callback(

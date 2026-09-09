@@ -325,6 +325,9 @@ importers:
 
   packages/config:
     dependencies:
+      '@prsystem/ports':
+        specifier: workspace:*
+        version: link:../ports
       zod:
         specifier: 3.25.76
         version: 3.25.76

@@ -44,6 +44,25 @@ const SEEDED: Readonly<Record<string, RegExp>> = {
 };
 
 const REQUIREMENTS = resolve(__dirname, '..', '..', '..', '..', 'docs', '00-mvp-open-decisions.md');
+const GATE_REGISTER = resolve(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  'docs',
+  'implementation',
+  'external-integration-gates.md',
+);
+
+/** The status the gate register document records for one EXT gate. */
+function documentedStatus(text: string, code: string): 'BLOCKED' | 'CLEARED' | undefined {
+  const row = text.split('\n').find((line) => line.startsWith(`| ${code} |`));
+  if (row === undefined) return undefined;
+  if (row.includes('**BLOCKED**')) return 'BLOCKED';
+  if (row.includes('**CLEARED**')) return 'CLEARED';
+  return undefined;
+}
 
 let env: ProvisionedDatabase;
 
@@ -97,6 +116,25 @@ describe('EXT register', () => {
       'SELECT gate_code FROM platform.external_gate WHERE enabled OR blocker IS NULL',
     );
     expect(open.rows).toEqual([]);
+  });
+
+  it('agrees with the gate register document on whether each gate is enabled (Phase 20)', async () => {
+    // Three registers — this table, `packages/ports` and the document — and a
+    // gate enabled in one that another still records as BLOCKED is exactly the
+    // drift §5 of the register forbids.
+    const register = readFileSync(GATE_REGISTER, 'utf8');
+    const rows = await env.api.query<{ gate_code: string; enabled: boolean }>(
+      'SELECT gate_code, enabled FROM platform.external_gate ORDER BY gate_code',
+    );
+    for (const row of rows.rows) {
+      expect({
+        code: row.gate_code,
+        documented: documentedStatus(register, row.gate_code),
+      }).toEqual({
+        code: row.gate_code,
+        documented: row.enabled ? 'CLEARED' : 'BLOCKED',
+      });
+    }
   });
 
   it('never dedicates an EXT id to POS, email or key management', async () => {

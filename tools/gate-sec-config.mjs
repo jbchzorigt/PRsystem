@@ -152,6 +152,18 @@ export const SUB_GATES = [
     artefacts: ['packages/ports/src/select-key-management.ts'],
   },
   {
+    id: 'SEC-ADAPTERS',
+    what: 'every external adapter fails closed: DISABLED with its gate, no network, no simulator or uncleared adapter in production',
+    filter: '@prsystem/ports',
+    suite: 'src/security/sec-adapters.test.ts',
+    needsDatabase: false,
+    artefacts: [
+      'packages/ports/src/gates.ts',
+      'packages/ports/src/adapters/select-adapters.ts',
+      'docs/implementation/external-integration-gates.md',
+    ],
+  },
+  {
     id: 'SEC-PII-LEAK',
     what: 'planted canaries reach no durable record and no log',
     filter: '@prsystem/db',

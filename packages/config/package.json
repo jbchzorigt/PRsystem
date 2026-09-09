@@ -20,6 +20,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@prsystem/ports": "workspace:*",
     "zod": "3.25.76"
   },
   "devDependencies": {

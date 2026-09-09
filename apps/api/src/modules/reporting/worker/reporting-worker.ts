@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
-import { selectObjectStorage } from '@prsystem/ports';
+import { selectAdapters, selectObjectStorage } from '@prsystem/ports';
+import type { AdapterSelection } from '@prsystem/ports';
 import type { SubscriptionStatePort } from '@prsystem/authz';
 import { DatabaseSubscriptionState } from '../../onboarding/contracts/subscription-state.adapter';
 import { RepositoryFinancialReads } from '../../billing/contracts/financial-reads';
@@ -39,6 +40,8 @@ export interface ReportingWorkerRuntime {
 export interface ReportingWorkerConfig {
   readonly databaseUrl: string;
   readonly appEnv: string;
+  /** Phase 20: the deployment's adapter selection; absent, the environment's defaults. */
+  readonly adapters?: AdapterSelection;
 }
 
 /** Builds the runtime from configuration, selecting the environment's storage. */
@@ -56,7 +59,10 @@ export function createReportingWorkerRuntime(
     // In production this is the disabled adapter behind `INT-STORAGE-01`: an
     // export then fails closed with a recorded reason rather than writing a
     // file nowhere (CLAUDE.md §9).
-    storage: selectObjectStorage(config.appEnv),
+    storage:
+      config.adapters === undefined
+        ? selectObjectStorage(config.appEnv)
+        : selectAdapters(config.adapters).storage,
   });
   return {
     ...runtime,

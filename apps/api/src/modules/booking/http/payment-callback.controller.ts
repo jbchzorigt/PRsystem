@@ -1,9 +1,10 @@
-import { Body, Controller, HttpCode, Inject, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ApiError } from '@prsystem/contracts';
 import { isPaymentProvider } from '@prsystem/ports';
 import type { RawCallback } from '@prsystem/ports';
 import type { AuthenticatedRequest } from '../../iam/http/session.guard';
+import { CallbackSourceGuard } from '../../../security/callback-source';
 import { body } from '../../iam/http/validation';
 import { newBookingRequest } from '../services/booking-context';
 import { BookingService } from '../services/booking.service';
@@ -29,6 +30,7 @@ export class PaymentCallbackController {
   constructor(@Inject(BookingService) private readonly bookings: BookingService) {}
 
   @Post(':provider')
+  @UseGuards(CallbackSourceGuard)
   @HttpCode(200)
   @ApiOperation({ summary: 'A provider payment callback, verified server-side before use' })
   @ApiResponse({ status: 200, description: 'Accepted, rejected, duplicate or unverified' })

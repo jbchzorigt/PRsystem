@@ -71,10 +71,6 @@ beforeAll(async () => {
     DATABASE_URL: db.loginUrl(TEST_LOGIN_PRINCIPALS.api),
     REDIS_URL,
     QUEUE_PREFIX: `e2e-${db.name}`,
-    OBJECT_STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
-    OBJECT_STORAGE_BUCKET: 'prsystem-local',
-    OBJECT_STORAGE_ACCESS_KEY_ID: 'test-access-key',
-    OBJECT_STORAGE_SECRET_ACCESS_KEY: 'test-secret-key',
     SMTP_HOST: '127.0.0.1',
     SMTP_PORT: '1025',
   });
