@@ -110,7 +110,7 @@ class MinibarTemplateTests(StaffApiCase):
         with psycopg.connect(self.owner_dsn) as conn:
             conn.execute("UPDATE prsystem.minibar_template SET status='RETIRING' WHERE tenant_id=%s",(self.tenant,))
         self.assertEqual(self.act(t,'publish').json()['code'],'TEMPLATE_NOT_ACTIVE')
-        self.assertEqual(self.act(t,'',items=[]).json()['code'],'TEMPLATE_NOT_ACTIVE')
+        self.assertEqual(self.act(t,'','retiring-edit',items=[]).json()['code'],'TEMPLATE_NOT_ACTIVE')
 
     def test_product_labels_are_frozen_at_publish(self):
         t=self.ok(self.act(self.ready(),'publish'))
