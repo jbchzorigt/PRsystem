@@ -26,6 +26,7 @@ from prsystem.onboarding import OnboardingService
 from prsystem.renewal import RenewalService
 from prsystem.opening import OpeningService
 from prsystem.rooms import RoomService
+from prsystem.minibar import MinibarWarehouse
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -42,6 +43,27 @@ from prsystem.booking_settlement import BookingSettlement
 from prsystem.routed_refunds import RoutedRefunds
 from prsystem.reception_dependencies import ReceptionDependencies
 from prsystem.guest_identity import vault_from_environment
+
+
+class MinibarProductCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    name: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=200)
+    unit: str = Field(min_length=1, max_length=50)
+    selling_price_mnt: int = Field(ge=1, le=2**63-1)
+    unit_cost_mnt: int = Field(ge=0, le=2**63-1)
+    opening_quantity: int = Field(ge=0, le=2**63-1)
+    status: Literal['ACTIVE','INACTIVE'] = 'ACTIVE'
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class MinibarStockReceipt(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    quantity: int = Field(ge=1, le=2**63-1)
+    unit_cost_mnt: int = Field(ge=0, le=2**63-1)
+    expected_revision: int = Field(ge=1, le=2**63-1)
+    reference: str = Field(default='', max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=128)
 
 
 class MockBookingContract(BaseModel):
@@ -683,6 +705,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     handovers = HandoverService(service)
     openings = OpeningService(service)
     rooms = RoomService(service)
+    minibar = MinibarWarehouse(service)
     room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service,runtime_mode)
     stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
@@ -766,7 +789,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
             'INVALID_CLEANING_BUFFER':422,'INVALID_CONTRACT_INTERVAL':422,'BOOKING_ATTEMPT_LIMIT':429})
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
-                          'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422}
+                          'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422,
+                          'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -805,6 +829,25 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
 
     static_root = Path(__file__).with_name("static")
+
+    @app.post('/hotels/{tenant_id}/minibar/products', status_code=201)
+    def minibar_create_product(tenant_id: str, body: MinibarProductCreate, secret: Annotated[str, Depends(token)]):
+        return minibar.create(secret, tenant_id, body.model_dump(exclude={'idempotency_key'}), body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/products')
+    def minibar_products(tenant_id: str, secret: Annotated[str, Depends(token)],
+                         after: str=Query('', max_length=128), limit: int=Query(50, ge=1, le=100)):
+        return minibar.products(secret, tenant_id, after, limit)
+
+    @app.post('/hotels/{tenant_id}/minibar/products/{product_id}/receipts', status_code=201)
+    def minibar_receive(tenant_id: str, product_id: str, body: MinibarStockReceipt, secret: Annotated[str, Depends(token)]):
+        return minibar.receive(secret, tenant_id, product_id, body.quantity, body.unit_cost_mnt,
+                               body.expected_revision, body.reference, body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/products/{product_id}/ledger')
+    def minibar_ledger(tenant_id: str, product_id: str, secret: Annotated[str, Depends(token)],
+                       after: int=Query(0, ge=0, le=2**63-1), limit: int=Query(50, ge=1, le=100)):
+        return minibar.ledger(secret, tenant_id, product_id, after, limit)
 
     @app.put('/hotels/{tenant_id}/mock/booking-contract')
     def mock_booking_contract(tenant_id: str,body: MockBookingContract,secret: Annotated[str,Depends(token)]):

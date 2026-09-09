@@ -17,6 +17,7 @@
 .operations .field { margin: .75rem 0; }
 .operations .error { min-height: 1.6rem; font-size: .875rem; }
 .operations .primary { width: auto; }
+.operations button { max-width: 100%; overflow-wrap: anywhere; }
 .operations .notice { border-inline-start: .25rem solid var(--focus); padding: .75rem 1rem; background: var(--paper); }
 .operations .record { padding: 1rem 0; border-bottom: 1px solid var(--line); }
 .operations .record h3 { margin: .25rem 0; }

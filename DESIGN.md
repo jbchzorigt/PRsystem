@@ -119,3 +119,10 @@ catalog's visual information; image regions reserve a 16:9 footprint and wrap on
 phones. No stock imagery, fabricated ratings or decorative financial totals.
 Profile and settlement commands retain natural document scrolling. No durable
 color, type or spacing token changed. The behavior variants are in UX-CONTRACT.md.
+
+## Warehouse extension
+
+The Manager's warehouse destination uses the existing operational rows to compare
+product, warehouse quantity, selling price and average cost. Receipt history uses
+the shared horizontally scrollable table; forms keep natural document height.
+The existing petrol rail, typography, spacing and tokens remain unchanged.

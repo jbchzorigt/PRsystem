@@ -97,3 +97,21 @@ category publication and rank edits use explicit server revisions. Platform
 finance requires current explicit permission and fresh MFA at the API boundary;
 unknown bank results offer reconciliation, never a new payment attempt.
 Sources: docs/09,11,45–47. Browser coverage: tests/browser/booking.cjs.
+
+## Warehouse receipt variant
+
+`/reception#inventory` reuses `form`, `api`, `guard`, `record`, `table`, `navigate`,
+native `select`, feedback and currency/time formatters. Source: docs/22 §§3–5,
+10–11 and docs/48. Only entitled Managers see this destination; APIs independently
+authorize every list, ledger, create and retry. Opening quantity means warehouse
+stock. Product state is selected at creation; lifecycle changes are a later flow.
+
+Successful create/receipt returns to the warehouse list with an accessible status.
+Uncertain failures keep the form and unchanged retry key. A stale stock revision
+requires an explicit refresh and review; it never silently adopts a new revision.
+Lists and ledger pages use bounded keyset navigation, kept in memory. A detached
+ledger request cannot overwrite a replacement form or another history page.
+Exact cost numerator/denominator is authoritative; fractional averages displayed
+with the existing number formatter are explicitly marked approximate. No browser
+cost calculation is submitted. Ledger actor labels and product metadata are
+recorded snapshots. Browser coverage: tests/browser/minibar.cjs.
