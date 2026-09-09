@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | [Агуулахын opening/purchase ledger ба Manager UI](48-minibar-warehouse.md), [Template Draft/Publish/Default](49-minibar-template-authoring.md) хоёр багц нийтлэгдэж, **537/537 PostgreSQL тест skip-гүй**, таван browser suite/API/design/token CI-аар баталгаажсан. [Room configuration хүсэлт/blocker/cancel](50-minibar-configuration-requests.md)-ийн нэмэлт код, 16 тест CI баталгаажуулалт хүлээж байна. Бодит reconciliation/refill, lifecycle/correction, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | [Агуулахын opening/purchase ledger ба Manager UI](48-minibar-warehouse.md), [Template Draft/Publish/Default](49-minibar-template-authoring.md) хоёр багц нийтлэгдэж, **537/537 PostgreSQL тест skip-гүй**, таван browser suite/API/design/token CI-аар баталгаажсан. [Room configuration хүсэлт/blocker/cancel](50-minibar-configuration-requests.md)-ийн нэмэлт нийтлэгдэж, **553/553 тест skip-гүй**, таван browser suite/API/design/token CI амжилттай. Шинэ 16 тест бүгд давсан; өрөөний reconciliation багц хэсэгчлэн хэвээр. Бодит reconciliation/refill, lifecycle/correction, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
@@ -200,3 +200,15 @@ suites, generated request/API validation, design lint and token checks in
 [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34292660548).
 The follow-up commit records evidence in documentation only.
 No merge or deployment was performed. [Scope and gates](47-booking-completion-candidate.md).
+
+
+## Stage 5 — pending room configuration acceptance
+
+[Өрөөний exact template хүсэлт/blocker/cancel](50-minibar-configuration-requests.md)
+нь source `ebd2f1da724a4f5138ba8c7ee246fbe6d3fcb2bc`,
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34304478952)-д
+**553/553 backend тест skip-гүй (520.160 секунд)**, таван Chromium suite,
+31 browser/API command, design/token шалгалтаар баталгаажсан. Warehouse ба
+template authoring хоёр бүрэн багц дээр энэ нэмэлт хийгдсэн; physical
+reconciliation, stock transfer, rollback/apply болон refill үлдсэн тул өрөөний
+тохиргооны том багцыг бүрэн дууссан гэж тооцоогүй.

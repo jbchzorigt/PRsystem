@@ -55,18 +55,32 @@ required. Room readers and assignment writers require SELECT on the blocker.
 No request DELETE, target/source snapshot UPDATE or stock mutation grant is added.
 The role must not own tables or bypass RLS.
 
-## Verification candidate
+## Verification
 
 16 new PostgreSQL tests cover pinned targets, OFF/mock isolation, new assignment
 and backdate blockers, existing booking/stay retention and settled checkout,
 capacity release, request/check-in concurrency, CAS/retry, revoked authority,
 strict inputs, RLS, DB guards, retirement and injected commit rollback.
 Local discovery: 553 tests, 100 executed and 453 skipped because PostgreSQL is
-unavailable in this runtime. Full PostgreSQL CI is required for acceptance.
+unavailable in this runtime. The full PostgreSQL run below provides acceptance evidence.
 All five local browser suites pass; the extended template suite exercises 14
 commands against actual API models. Strict UI audit has zero findings, shared
-token checks pass and mobile screenshots were inspected. Remote source/run and
-final result will be recorded after CI.
+token checks pass and mobile screenshots were inspected. Published source `ebd2f1da724a4f5138ba8c7ee246fbe6d3fcb2bc` passed
+**553/553 backend tests without skips in 520.160 seconds**, including all 16
+new configuration tests, in
+[full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34304478952).
+All five Chromium suites, 31 browser commands validated against actual API
+models, design lint and shared-token checks passed. The strict local UI audit
+had zero findings. Design lint retained six existing orphan-token warnings and
+zero errors. Local source commits are `b90a202`, `5ff267a` and `56d07c1`; remote
+source tree `6cd25ddcff3d0668dc99329ebd8d42d789624274` matches them exactly.
+
+The initial run failed while compiling migration 045: a CASE expression in a
+PLpgSQL IF condition needed parentheses. The corrected migration ran all 553
+tests in 487.223 seconds: 551 passed, and two new tests had incorrect setup or
+expectations. They now supply confirmed cash funding before the room blocker
+check and expect the revoked old session to return 401, then reauthenticate and
+verify the removed Manager permission returns 403. No business rule was weakened.
 
 ## Remaining room package work
 
