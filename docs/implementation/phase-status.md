@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 18 — Police monitoring |
+| Current phase | 19 — Platform Operation |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -47,6 +47,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 16 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 17 state | `DONE` |
 | Phase 17 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 18 state | `DONE` |
+| Phase 18 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -77,7 +79,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 15 | Restaurant | `DONE` | `0016_restaurant_ordering` | the Phase 15 battery — counts in [Phase 15 record](#phase-15-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 16 | Verified reviews | `DONE` | `0017_verified_reviews` | the Phase 16 battery — counts in [Phase 16 record](#phase-16-record) | implemented and corrected at the commits named in the record; the record and its evidence are the commit after them |
 | 17 | Guest registry, exports, and Hotel Admin reports | `DONE` | `0018_registry_reporting` | the Phase 17 battery — counts in [Phase 17 record](#phase-17-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 18 | Police monitoring | `NOT STARTED` | — | — | — |
+| 18 | Police monitoring | `DONE` | `0019_police_monitoring` | the Phase 18 battery — counts in [Phase 18 record](#phase-18-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 19 | Platform Operation | `NOT STARTED` | — | — | — |
 | 20 | External adapters | `NOT STARTED` | — | — | — |
 | 21 | Responsive UI and accessibility | `NOT STARTED` | — | — | — |
@@ -5415,5 +5417,159 @@ this record and the twelve new drift-fixture results that govern it.
 The per-command exit codes, durations and execution environment are recorded in
 [phase-17-battery-log.md](phase-17-battery-log.md).
 
-Phase 17 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 18 is authorized to begin under the
+Phase 17 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 18 was authorized under the same
+standing progression authorization and is recorded below.
+
+---
+
+## Phase 18 record
+
+Police monitoring: wanted people, their cases, the matches those two produce, and the alerts that
+follow. Authorized under the [standing progression authorization](#standing-progression-authorization),
+implemented and gated on top of the Phase 17 tree. Phase 18 is `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`; Phase 19 is the current phase, authorized to begin, and has **not**
+started.
+
+**Decisions closed:** the twenty-three this phase owns — `POL-DEC-001`…`-022` and `RC-DEC-034`. With
+the 240 already closed, 263 of the 279 canonical decisions are now `COVERED`.
+
+### Scope completed
+
+- **Migration `0019_police_monitoring`** — the first rows in the `police` schema, which has been
+  empty since the kernel precisely so this separation would be a database fact before it was a
+  feature. Twenty tables: the wanted person and their immutable identity revisions; the case and its
+  append-only lifecycle history; the match, its case links and its timeline; the alert, its
+  per-recipient deliveries and the district group that routes it; the Found confirmation and the two
+  two-person decision tables; the four-digit bootstrap codes and the approved official phone; the
+  exact-search log; the export job and its five-minute grants; and the two configuration tables that
+  are empty on purpose.
+- **A person, a case and a match are three things** (`POL-DEC-017`). A Wanted Person is an identity
+  and holds no `FOUND` or `CLOSED` state; a Wanted Case is one legal basis with its own lifecycle,
+  and one person may have several; a Match is unique on `(stay_id, wanted_person_id)`. `MatchCaseLink`
+  is append-only, so a case closing later never erases why an officer was called.
+- **Matching is exact or it does not happen** (`RC-DEC-034`, doc 13 §8.1). The comparison is two
+  keyed lookup tokens of the same namespace and key version, derived from a structurally valid
+  normalized `MN_REG_NO`. A passport, another government id, no document or an invalid number has no
+  exact-match path in the schema at all, and there is no fuzzy path for a name or a birth date to
+  travel down.
+- **Both triggers call one function** (`A-P18-4`, doc 13 §8.3). The check-in path and the
+  case-activation sweep call the same `SECURITY DEFINER` function, so they cannot drift into
+  creating different matches — and a stay that has already checked out is not reachable from either,
+  which is what "no retroactive matching" means here.
+- **Nobody owns a match** (`POL-DEC-016`, `POL-DEC-020`). There is no `responsible_user_id`, no
+  assignee and no transfer — not as a nullable column, not as a state. The first acknowledgement is
+  recorded with its account and its time and confers nothing; every other authorised officer still
+  sees the match, still acts on it, and can still be the one who confirms a Found.
+- **Two people, compared on account ids** (`POL-DEC-015`, `POL-DEC-018`, `POL-DEC-019`). A manual
+  identity revision, a Found correction and a False Match each need a second person, and each is
+  checked three times: by the pipeline's own separation rule, by the service, and by a CHECK on the
+  row. A False Match cannot be approved over a Found — the Found is corrected first, by its own
+  two-person path.
+- **`LOCATION_STALE` is derived** (`A-P18-6`, doc 13 §9.2). A guest who left before anybody arrived
+  is not a False Match, and the system distinguishes the two rather than asking an officer to: a
+  sweep resolves exactly the unresolved matches whose stay has ended.
+- **An SMS carries the number and nothing else** (`POL-DEC-009`). The body is a template and one
+  value — no name, no case, no hotel, no room, no address, no map, no link with an identifier in it.
+  What a delivery row keeps is the provider's message id and a masked number; the body is held for
+  the length of the call and dropped.
+- **The all-hotel check-in list is the Police Admin's alone** (`POL-DEC-010`). Not a tab an Officer
+  cannot see — an action an Officer has no permission for. Opening it shows the active stays;
+  reaching a checked-out one is a historical search with a mandatory reason and at most 31 days, and
+  there is no route of any kind that downloads it.
+- **The Wanted Case export is masked by default** (`POL-DEC-021`). One row per case, and the
+  registration number is masked unless the account holds `WANTED_CASE_EXPORT` *and*
+  `WANTED_EXPORT_FULL_IDENTIFIER` *and* has stepped up recently. Every export states a purpose and a
+  task reference, and both are audited with the row count and the file's hash.
+- **The Police realm is a deployment capability with its own credential** (`A-P18-8`).
+  `POLICE_ENABLED` and `POLICE_DATABASE_URL` follow the scheduler's shape and default off
+  everywhere: an API that does not serve the Police portal has no Police module, rather than serving
+  it on the API's own login.
+- **The four-digit bootstrap keeps every compensating control** (`POL-DEC-022`). Five minutes, one
+  use, three attempts, a thirty-minute lock on the third failure, a minute between resends, three an
+  hour and five a day, a new code invalidating the last, a keyed digest under its own HMAC scope, and
+  the same generic answer whether or not the account exists.
+
+### Gates this phase had to pass, and what they measured
+
+- **Isolation.** A wanted guest and an ordinary one check in through the same Reception flow; the
+  hotel's own view of the two stays is compared field by field, and everything that is not an
+  identifier, a time or the guest's own name is identical. The API's connection is refused on every
+  Police table, the Police connection is refused on `platform.stay`, and a Police-role transaction
+  that declares another realm reads zero rows.
+- **Separation of duties.** The creator cannot approve their own manual identity, the confirming
+  officer cannot decide their own Found correction, and the requester cannot decide their own False
+  Match — each refused with the requester and approver loaded from the database.
+- **Integration.** Three matcher runs over one check-in create one match, one alert and one detection
+  event; an approved actual-time correction creates no second match, no second alert and shifts
+  neither `detected_at`, `check_in_recorded_at` nor `actual_check_in_at`; and the escalation timer
+  and the historical check-in search both answer "not enabled" while no ЦЕГ configuration approves
+  them.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 18 in `PROGRESSED_PHASES`, the current phase
+  advanced to 19), `docs/implementation/phase-18-evidence.json`, and the drift fixtures retargeted to
+  the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.31 — the twenty-three decisions `COVERED` with
+  code and test references; 263 of 279.
+- **Assumptions:** `A-P18-1`…`A-P18-13` in `assumptions-and-conflicts.md` §3.22.
+- **Dependency security:** `DSR-02` opened for `GHSA-82fw-gwwq-j7x9`, a Vitest advisory published
+  after the Phase 17 battery. Dev-only, unreachable because no suite declares a module mock, and due
+  for review in Phase 22.
+
+### External gates
+
+`EXT-05` (CallPro) is now consumed by this phase and stays BLOCKED: the canonical `SmsPort` and its
+deterministic simulator exist, and the production adapter answers `DISABLED` and sends nothing.
+`EXT-09` (ЦЕГ) and `EXT-10` (Police security) are the two this phase is most bounded by and both stay
+BLOCKED: the escalation minutes and the check-in retention are configuration rows that do not exist,
+so neither feature runs, and the four-digit bootstrap exception and the full-registration-number SMS
+remain unapproved security exceptions. `EXT-01` (XYP/ХУР) stays BLOCKED with its simulator, and a
+lookup it cannot answer falls to manual entry and a second officer's approval. Otherwise unchanged:
+`EXT-02`, `EXT-03`, `EXT-04`, `EXT-06`, `EXT-07`, `EXT-08`, `EXT-11`; `INT-OTP-01`, `INT-MAIL-01`,
+`INT-STORAGE-01`; the Phase 19 offline verification surface; 17 P1 items; `DSR-01` and `DSR-02`; and
+selecting `GATE-SEC` as a required GitHub status check. **Phase 18 adds no new EXT gate.**
+
+### Evidence
+
+<!-- phase-18-evidence:begin -->
+
+Measured at implementation commit 3758aeb345a84242222657496ea290736de6ad98, in a clean detached
+checkout with a fresh install, a fresh Turborepo cache and forced task execution. All 28 executions
+exited 0, each on its first attempt. The two governance rows are from the final tree, which carries
+this record and the twelve new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 289 of 289 drift fixtures caught at the measured commit; 301 of 301 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 816 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,595 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 18, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 579: outbox 5, db 41, worker 2, api 531 |
+| `pnpm run test:concurrency` | PASS | 91 each run: db 16, api 75 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; three moderate, DSR-01 and DSR-02 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-18-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-18-battery-log.md](phase-18-battery-log.md).
+
+Phase 18 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 19 is authorized to begin under the
 standing progression authorization and has **not** started.

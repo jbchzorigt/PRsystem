@@ -1,6 +1,6 @@
 # PRsystem — Dependency Security Risk Register
 
-**Version:** 1.0 (Phase 02 — dev-only dependency risk constrained)
+**Version:** 1.1 (Phase 18 — a second dev-only advisory recorded: `GHSA-82fw-gwwq-j7x9`)
 
 Advisories that cannot be closed by upgrading to a compatible stable version are recorded here with
 their containment, their evidence, and the phase that must revisit them. An entry in this register is
@@ -20,7 +20,7 @@ The production audit is the release-relevant one: it covers exactly what a produ
 The full-tree audit additionally covers build and test tooling that no runtime ever loads.
 
 **This register does not claim the development dependency tree is free of advisories.** It is not.
-The open entry below is the reason, and it is reported, not hidden.
+The two open entries below are the reason, and they are reported, not hidden.
 
 ---
 
@@ -112,6 +112,70 @@ Explicitly **not** acceptable as a closure:
 - adding an audit ignore, allow-list or suppression;
 - forcing an `esbuild` override that `drizzle-kit` does not support;
 - removing the migration infrastructure.
+
+---
+
+## DSR-02 — GHSA-82fw-gwwq-j7x9 (Vitest mocker redirect)
+
+| Field | Value |
+| --- | --- |
+| Advisory | `GHSA-82fw-gwwq-j7x9` |
+| Severity | **Moderate** |
+| Summary | `@vitest/mocker`'s redirect-mock path is not confined to the project root, so a test runner serving a mocked module can be made to read a file outside it |
+| Vulnerable versions | `vitest >= 2.1.0 < 4.1.11`, `@vitest/mocker >= 2.1.0 < 4.1.11` |
+| Patched versions | `>= 4.1.11` |
+| Status | **OPEN — contained** |
+| Opened | Phase 18 (published after the Phase 17 battery of 2026-09-06, which reported one moderate) |
+| Review owner | Implementation owner for the workspace test tooling |
+| Mandatory review | **Phase 22** (security, concurrency, recovery) |
+
+### Affected paths
+
+`vitest@3.2.7` is a `devDependency` of the workspace root and of every package and application that
+has tests — thirteen paths — and `@vitest/mocker@3.2.7` is its own dependency. No `dependencies`,
+`optionalDependencies` or `peerDependencies` entry names either.
+
+### Scope
+
+Development and CI only. Vitest is the test runner; it is never imported by application code, never
+executed by the API or the worker, and never installed by a production install — `pnpm run
+audit:prod` reports no known vulnerabilities on the tree a production install ships.
+
+### Exploit condition
+
+The advisory requires a **redirect mock** — `vi.mock(path, { redirect })` or the equivalent — to be
+declared, and an attacker to control the redirect target. This workspace declares no module mock at
+all: `vi.mock` appears in no suite, and every test runs against real PostgreSQL, real HTTP and the
+deterministic port simulators rather than against mocked modules. Absent a redirect mock the
+vulnerable path is never reached.
+
+### Why it is not simply upgraded
+
+The patched line is `vitest >= 4.1.11`, two major versions above the pinned `3.2.7`. That is not a
+compatible stable upgrade: Vitest 4 changes the configuration surface, the reporter contract and the
+workspace layout this repository's thirteen test projects and their governed reporters depend on, and
+CLAUDE.md §1 pins compatible stable versions rather than tracking a major to satisfy a scanner. The
+upgrade is a change of its own, with its own gates, and Phase 22 is where it is due.
+
+### Mitigation
+
+| # | Control | Enforced by |
+| --- | --- | --- |
+| 1 | `vitest` and `@vitest/mocker` appear only in `devDependencies`, in every package that has them | `validate-workspace` check 12 |
+| 2 | No suite declares a module mock, so the redirect path has no caller | `grep -r "vi.mock"` over `apps/` and `packages/` returns nothing |
+| 3 | CI blocks moderate-and-above **production** advisories and keeps the full-tree high audit enabled | `.github/workflows/ci.yml` |
+| 4 | A production install ships neither package | `pnpm run audit:prod` |
+
+No override, ignore rule or version force was used, and the advisory is not suppressed.
+
+### Removal condition
+
+Close this entry when the workspace moves to `vitest >= 4.1.11` as a deliberate upgrade with its own
+gate run, or when a patched `3.x` is published. Confirm `pnpm why vitest` shows no version in the
+vulnerable range, and mark DSR-02 `CLOSED` with the version that closed it.
+
+Explicitly **not** acceptable as a closure: an audit ignore or allow-list, a pre-release pin, or
+removing the test suites that report it.
 
 ---
 
