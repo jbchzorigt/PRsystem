@@ -85,7 +85,16 @@ export type HmacScope =
    */
   | 'auth.room_qr_token'
   | 'auth.guest_access_code'
-  | 'auth.restaurant_guest_session';
+  | 'auth.restaurant_guest_session'
+  /**
+   * Phase 18. The four-digit Police activation and reset code (doc 13 §5.3).
+   *
+   * Its own key, not the onboarding OTP's: a four-digit code is ten thousand
+   * guesses, and the compensating controls around it — three attempts, five
+   * minutes, one use — are only as separate as the key that binds the digest to
+   * this purpose.
+   */
+  | 'auth.police_bootstrap_code';
 
 export const KEY_SCOPES: readonly KeyScope[] = [
   'pii.hotel_guest',
@@ -109,6 +118,7 @@ export const HMAC_SCOPES: readonly HmacScope[] = [
   'auth.room_qr_token',
   'auth.guest_access_code',
   'auth.restaurant_guest_session',
+  'auth.police_bootstrap_code',
 ];
 
 export interface WrappedKey {

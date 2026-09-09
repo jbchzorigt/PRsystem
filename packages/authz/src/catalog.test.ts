@@ -65,12 +65,16 @@ describe('the permission catalog', () => {
   });
 
   it('names every gated Police permission', () => {
+    // `WANTED_EXPORT_FULL_IDENTIFIER` is the one that gates no action of its
+    // own: doc 13 §12.2 makes it a second grant an exporting Police Admin must
+    // also hold, on top of the export row and a recent step-up.
     expect(POLICE_PERMISSIONS).toEqual([
       'FALSE_MATCH_APPROVE',
       'FOUND_CORRECTION_APPROVE',
       'WANTED_CASE_CREATE',
       'WANTED_CASE_EXPORT',
       'WANTED_CASE_STATE_MANAGE',
+      'WANTED_EXPORT_FULL_IDENTIFIER',
       'WANTED_IDENTITY_APPROVE',
     ]);
   });

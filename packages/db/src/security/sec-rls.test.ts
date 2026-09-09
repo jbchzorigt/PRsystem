@@ -397,26 +397,19 @@ describe('tenant isolation across CRUD, per runtime login', () => {
     });
   });
 
-  it('refuses the platform sentinel in a realm that has no platform-wide work', async () => {
+  it('admits the platform sentinel only in the realms whose work has no hotel', async () => {
     // The application context boundary, where the pairing rule lives. Phase 04
     // added the account-scoped half of the Hotel realm — signing in, changing a
     // password, logging out of every device — which belongs to an account
     // rather than to one hotel. Phase 12 added the Guest realm on the same
-    // terms: a guest belongs to no hotel, and registration, sign-in and
-    // recovery are that same account-scoped work. The Police realm has no
-    // platform-wide work and is still refused.
-    for (const realm of ['police'] as const) {
-      expect(() =>
-        assertTenantContext({
-          hotelId: PLATFORM_SCOPE,
-          realm,
-          actorRef: 'actor-sec-rls',
-          correlationId: 'corr-sec-rls',
-        }),
-      ).toThrow(/platform scope is valid only in the operation realm/);
-    }
-
-    for (const realm of ['operation', 'hotel', 'guest'] as const) {
+    // terms. Phase 18 adds the Police realm, whose work is platform-wide by its
+    // nature: a wanted person belongs to no hotel, a case belongs to no hotel,
+    // and a match belongs to the Police realm even though it names one.
+    //
+    // The sentinel still widens nothing there: no `police.*` table carries a
+    // `hotel_id` as a tenant axis, so what confines a Police transaction is the
+    // realm its policies compare and the grants its role does not hold.
+    for (const realm of ['operation', 'hotel', 'guest', 'police'] as const) {
       expect(() =>
         assertTenantContext({
           hotelId: PLATFORM_SCOPE,

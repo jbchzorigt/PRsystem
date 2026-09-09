@@ -155,7 +155,14 @@ export function assertTenantContext(context: TenantContext): void {
   // `guest_*` tables carry no `hotel_id` either. The public listing projection
   // runs here too, and reads across tenants only through the `SECURITY
   // DEFINER` functions of migration `0013` — never by widening this context.
-  // The Police realm still has no platform-wide work and is still refused.
+  // Phase 18 admits the Police realm on the same terms, and for work that is
+  // platform-wide by its nature rather than by accident: a wanted person
+  // belongs to no hotel, a case belongs to no hotel, and a match belongs to the
+  // Police realm even though it names one. None of the `police.*` tables
+  // carries a `hotel_id` as a tenant axis, so the sentinel widens nothing there
+  // either — what confines a Police transaction is the realm its policies
+  // compare, the unit and territory scope doc 18 §6 applies above them, and the
+  // fact that `prsystem_police` holds no grant on a hotel's own tables at all.
   //
   // Anything else is a resolver that has widened a tenant request into a
   // platform one. This is an application-boundary rule, not a database one —
@@ -164,7 +171,8 @@ export function assertTenantContext(context: TenantContext): void {
     context.hotelId === PLATFORM_SCOPE &&
     context.realm !== 'operation' &&
     context.realm !== 'hotel' &&
-    context.realm !== 'guest'
+    context.realm !== 'guest' &&
+    context.realm !== 'police'
   ) {
     throw new TenantScopeError(
       'the platform scope is valid only in the operation realm and for account-scoped work',

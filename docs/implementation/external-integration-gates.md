@@ -35,12 +35,12 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | EXT-02 | e-Mongolia | Guest registration and login channel | **BLOCKED** | 12 — canonical port and simulator, conformance-gated | 20 |
 | EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 | EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
-| EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 | 20 |
+| EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 — canonical port and simulator, conformance-gated | 20 |
 | EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 — canonical port and simulator, geocoding gated; distance is server-side and provider-free | 20 |
 | EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 — canonical port and simulator, execution gated | 20 |
 | EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 — retention policy, snapshot and legal hold implemented; the written basis is still absent | 20 |
-| EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 | 20 |
-| EXT-10 | Police security | Human-rights and security assessment, DR, penetration test | **BLOCKED** | 18 | 20 |
+| EXT-09 | ЦЕГ (National Police) | Wanted and check-in data sharing legal basis | **BLOCKED** | 18 — the escalation timer and the historical check-in search are configuration rows, and there are none | 20 |
+| EXT-10 | Police security | Human-rights and security assessment, DR, penetration test | **BLOCKED** | 18 — the four-digit bootstrap exception and the full-RD SMS both remain unapproved | 20 |
 | EXT-11 | eBarimt | Subscription tax receipts | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 
 All eleven gates are **production release gates**. None blocks development in Phases 01–19.
@@ -153,7 +153,9 @@ holds CallPro credentials. Full SMS bodies and full registration numbers are nev
 application logs, delivery logs or provider callback records (doc 13 §10.2).
 **Open configuration.** Per-job recipient cap and retry policy remain P1-07.
 
-**Consumed by.** Phase 18 (Match alert SMS), Phase 19 (subscription reminders).
+**Consumed by.** Phase 18 (Match alert SMS) — canonical port `SmsPort` with a deterministic
+simulator; the production adapter answers `DISABLED` and sends nothing. Phase 19 (subscription
+reminders).
 
 ---
 

@@ -42,6 +42,8 @@ import { ReviewModule } from './modules/review/review.module';
 import { RepositoryReviewEligibility } from './modules/booking/contracts/booking-reads';
 import type { ReportingModuleOptions } from './modules/reporting/reporting.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import type { PoliceModuleOptions } from './modules/police/police.module';
+import { PoliceModule } from './modules/police/police.module';
 import { RepositoryRegistryFacts } from './modules/stay/contracts/registry-reads';
 import { RepositoryExpenseClassification } from './modules/reporting/contracts/expense-classification';
 import { RepositoryFinancialReads } from './modules/billing/contracts/financial-reads';
@@ -144,6 +146,12 @@ export interface AppModuleOptions {
    * reports on reaches it through four read contracts.
    */
   readonly reporting: ReportingModuleOptions;
+  /**
+   * Phase 18. Present only when this deployment holds the Police credential:
+   * the realm is its own connection, and a deployment without one serves no
+   * Police route at all rather than serving them on the API's own login.
+   */
+  readonly police?: PoliceModuleOptions;
   /**
    * A pool the application should close on shutdown.
    *
@@ -266,6 +274,8 @@ export class AppModule {
           ...options.reporting,
           iam,
         }),
+        // Phase 18. Absent unless the deployment holds the Police credential.
+        ...(options.police === undefined ? [] : [PoliceModule.forRoot({ ...options.police, iam })]),
         SettlementModule.forRoot({
           ...options.settlement,
           bookings: options.settlement?.bookings ?? new RepositoryBookingRefundAxis(),

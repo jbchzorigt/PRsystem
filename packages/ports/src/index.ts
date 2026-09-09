@@ -118,6 +118,8 @@ export {
   UnavailablePhoneVerification,
   selectPhoneVerification,
 } from './phone-verification.port';
+export { SimulatedSms, UnavailableSms, selectSms } from './sms.port';
+export type { SmsDelivery, SmsMessage, SmsPort, SmsRecipient, SmsStatus } from './sms.port';
 export type { OtpDelivery, OtpMessage, PhoneVerificationPort } from './phone-verification.port';
 
 // INT-MAIL-01.

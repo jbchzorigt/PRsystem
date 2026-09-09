@@ -1363,6 +1363,29 @@ describe('R9 — every Worker or Scheduler entry point states its invocation-tim
         'no role closure — a boolean, whether an account already holds the application’s admin ' +
         'email, so the claim step can route the application to proof; no account row is exposed',
     },
+    // Phase 18: the one Police entry point a non-Police role may call at all.
+    {
+      signature:
+        'police.record_check_in_match(p_stay_id uuid, p_hotel_id uuid, p_room_number text, p_check_in_recorded_at timestamp with time zone, p_actual_check_in_at timestamp with time zone, p_detected_at timestamp with time zone, p_eligibility text, p_namespace text, p_token text, p_key_version text)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — every authorising fact is re-derived from the rows it reads: the ' +
+        'guest must be eligible for exact matching, the token, namespace and key version must ' +
+        'agree exactly, and the person must have an approved current identity and an active ' +
+        'case. It answers a match id or nothing — never an identity, a case or a reason — so a ' +
+        'caller learns only that there is Police work, which the relay already had to know to ' +
+        'call it, and the worker holds no privilege on any Police table',
+    },
+    {
+      signature: 'police.pending_check_in_events(p_limit integer)',
+      grantee: 'prsystem_worker',
+      closure: false,
+      guard:
+        'no role closure — a STABLE reader that returns only (event_id, hotel_id) for a ' +
+        'check-in event the matcher has not consumed. It exposes no payload, and the worker ' +
+        'reads the event itself afterwards in that hotel’s own scope under the ordinary policy',
+    },
   ] as const;
 
   it('grants EXECUTE to a Worker or Scheduler on exactly the catalogued definers', async () => {

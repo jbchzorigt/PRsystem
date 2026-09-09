@@ -30,8 +30,16 @@ import type { SchemaDifference } from './schema-difference';
 
 export type { SchemaDifference };
 
-/** The kernel schemas the comparator governs. */
-export const COMPARED_SCHEMAS = ['platform', 'audit', 'police_audit'] as const;
+/**
+ * The schemas the comparator governs.
+ *
+ * `police` joins them in Phase 18. It was empty until then and comparing an
+ * empty schema would have proved nothing; now that it holds the wanted people,
+ * the cases and the matches, a table, a policy or a grant appearing there
+ * without a declaration is exactly the drift this comparator exists to catch —
+ * and it is the schema where an undeclared policy would matter most.
+ */
+export const COMPARED_SCHEMAS = ['platform', 'audit', 'police_audit', 'police'] as const;
 
 interface LiveColumn {
   schema: string;

@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.30 (Phase 17 — the eight guest-registry, nine financial-reporting and two reception
-decisions move to `COVERED` with code and test references; 240 of 279 `COVERED`)
+**Version:** 1.31 (Phase 18 — the twenty-two Police-monitoring decisions and the reception match
+boundary move to `COVERED` with code and test references; 263 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -237,7 +237,7 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 | RC-DEC-031 | Refund request resolution SLA | 15 | COVERED | `packages/db/migrations/0016_restaurant_ordering.sql`, `apps/api/src/modules/restaurant/domain/restaurant.ts`, `apps/api/src/modules/restaurant/services/refund.service.ts` | `apps/api/src/modules/restaurant/domain/restaurant.test.ts`, `apps/api/src/modules/restaurant/restaurant.integration.test.ts`, `apps/api/src/modules/restaurant/restaurant.concurrency.test.ts` |
 | RC-DEC-032 | Guest list and Excel export columns | 17 | COVERED | `apps/api/src/modules/reporting/services/registry.service.ts`, `apps/api/src/modules/reporting/services/export.service.ts`, `apps/api/src/modules/stay/contracts/registry-reads.ts` | `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
 | RC-DEC-033 | One primary guest per stay | 08 | COVERED | `packages/db/migrations/0009_stay_reception.sql`, `apps/api/src/modules/stay/repositories/stay.repository.ts` | `apps/api/src/modules/stay/stay.integration.test.ts`, `packages/db/src/security/sec-acl-matrix.test.ts` |
-| RC-DEC-034 | Primary guest Police match boundary | 18 | PENDING | — | — |
+| RC-DEC-034 | Primary guest Police match boundary | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/stay/services/check-in.service.ts`, `apps/api/src/modules/police/worker/police-worker.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.security.test.ts` |
 | RC-DEC-035 | Cleaner checkout exception and minibar dispute | 09 | COVERED | `apps/api/src/modules/stay/services/report.service.ts`, `apps/api/src/modules/stay/services/dispute.service.ts`, `apps/api/src/modules/stay/services/payment-lock.service.ts` | `apps/api/src/modules/stay/checkout.integration.test.ts`, `apps/api/src/modules/stay/domain/checkout.test.ts` |
 | RC-DEC-036 | Minibar stock, cost and shortage override | 07 | COVERED | `packages/db/migrations/0008_minibar_inventory.sql`, `apps/api/src/modules/minibar/services/product.service.ts`, `apps/api/src/modules/minibar/services/configuration.service.ts` | `apps/api/src/modules/minibar/minibar.integration.test.ts`, `apps/api/src/modules/minibar/minibar.concurrency.test.ts`, `apps/api/src/modules/minibar/minibar.authorization.http.test.ts` |
 | RC-DEC-037 | Hotel Admin financial reporting | 17 | COVERED | `apps/api/src/modules/reporting/services/dashboard.service.ts`, `apps/api/src/modules/reporting/http/finance.controller.ts`, `packages/authz/src/actions.ts` | `apps/api/src/modules/reporting/reporting.security.test.ts`, `apps/api/src/modules/reporting/reporting.integration.test.ts`, `apps/api/src/modules/reporting/reporting.http.test.ts` |
@@ -351,30 +351,30 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 ## 11. POL-DEC — Police monitoring (doc 13, 22)
 
-| ID | Subject | Phase | Status |
-| --- | --- | --- | --- |
-| POL-DEC-001 | Wanted record creation via XYP or manual entry | 18 | PENDING |
-| POL-DEC-002 | Match information and alert | 18 | PENDING |
-| POL-DEC-003 | Police dashboard and Excel | 18 | PENDING |
-| POL-DEC-004 | Police account activation | 18 | PENDING |
-| POL-DEC-005 | Admin versus Officer visibility | 18 | PENDING |
-| POL-DEC-006 | Match versus Found distinction | 18 | PENDING |
-| POL-DEC-007 | Match concealed from hotel users | 18 | PENDING |
-| POL-DEC-008 | Alert recipients and district routing | 18 | PENDING |
-| POL-DEC-009 | Match SMS content | 18 | PENDING |
-| POL-DEC-010 | All-hotel check-in list authority | 18 | PENDING |
-| POL-DEC-011 | Alert acknowledgement and escalation | 18 | PENDING |
-| POL-DEC-012 | Flexible Found confirmation by own account | 18 | PENDING |
-| POL-DEC-013 | Scope of a Found outcome | 18 | PENDING |
-| POL-DEC-014 | Found quick form | 18 | PENDING |
-| POL-DEC-015 | Erroneous Found correction | 18 | PENDING |
-| POL-DEC-016 | No Match ownership transfer | 18 | PENDING |
-| POL-DEC-017 | Person, Case and Match model with exact identity boundary | 18 | PENDING |
-| POL-DEC-018 | Manual identity approval and case lifecycle | 18 | PENDING |
-| POL-DEC-019 | False Match two-person workflow | 18 | PENDING |
-| POL-DEC-020 | No-exclusive-owner responsibility model | 18 | PENDING |
-| POL-DEC-021 | Police permission and export boundary | 18 | PENDING |
-| POL-DEC-022 | Four-digit bootstrap code and Police authentication | 18 | PENDING |
+| ID | Subject | Phase | Status | Code | Tests |
+| --- | --- | --- | --- | --- | --- |
+| POL-DEC-001 | Wanted record creation via XYP or manual entry | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/wanted.service.ts`, `packages/ports/src/identity-verification.port.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.security.test.ts` |
+| POL-DEC-002 | Match information and alert | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/worker/police-worker.ts`, `apps/api/src/modules/police/services/alert.service.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts` |
+| POL-DEC-003 | Police dashboard and Excel | 18 | COVERED | `apps/api/src/modules/police/services/dashboard.service.ts`, `apps/api/src/modules/police/services/export.service.ts`, `apps/api/src/common/workbook.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.security.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
+| POL-DEC-004 | Police account activation | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/account.service.ts`, `apps/api/src/modules/iam/contracts/police-accounts.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
+| POL-DEC-005 | Admin versus Officer visibility | 18 | COVERED | `packages/authz/src/police.ts`, `apps/api/src/modules/police/services/police-context.ts`, `apps/api/src/modules/police/services/checkin.service.ts` | `apps/api/src/modules/police/police.security.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
+| POL-DEC-006 | Match versus Found distinction | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/domain/police.ts`, `apps/api/src/modules/police/services/match.service.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts` |
+| POL-DEC-007 | Match concealed from hotel users | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/worker/police-worker.ts`, `apps/api/src/modules/police/police.module.ts` | `apps/api/src/modules/police/police.security.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
+| POL-DEC-008 | Alert recipients and district routing | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/alert.service.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.security.test.ts` |
+| POL-DEC-009 | Match SMS content | 18 | COVERED | `apps/api/src/modules/police/domain/police.ts`, `packages/ports/src/sms.port.ts`, `apps/api/src/modules/police/services/alert.service.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `packages/ports/src/conformance.test.ts` |
+| POL-DEC-010 | All-hotel check-in list authority | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/checkin.service.ts`, `apps/api/src/modules/police/http/police.controller.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.security.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
+| POL-DEC-011 | Alert acknowledgement and escalation | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/match.service.ts`, `apps/api/src/modules/police/services/alert.service.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts` |
+| POL-DEC-012 | Flexible Found confirmation by own account | 18 | COVERED | `apps/api/src/modules/police/services/match.service.ts`, `apps/api/src/modules/police/http/police.controller.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts`, `apps/api/src/modules/police/police.security.test.ts` |
+| POL-DEC-013 | Scope of a Found outcome | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/match.service.ts`, `apps/api/src/modules/police/services/case.service.ts` | `apps/api/src/modules/police/police.integration.test.ts` |
+| POL-DEC-014 | Found quick form | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/match.service.ts` | `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
+| POL-DEC-015 | Erroneous Found correction | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/domain/police.ts`, `apps/api/src/modules/police/services/match.service.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts` |
+| POL-DEC-016 | No Match ownership transfer | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/services/match.service.ts` | `apps/api/src/modules/police/police.integration.test.ts` |
+| POL-DEC-017 | Person, Case and Match model with exact identity boundary | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/domain/police.ts`, `apps/api/src/modules/police/services/wanted.service.ts`, `apps/api/src/modules/police/worker/police-worker.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts` |
+| POL-DEC-018 | Manual identity approval and case lifecycle | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/domain/police.ts`, `apps/api/src/modules/police/services/wanted.service.ts`, `apps/api/src/modules/police/services/case.service.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts` |
+| POL-DEC-019 | False Match two-person workflow | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/domain/police.ts`, `apps/api/src/modules/police/services/match.service.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.integration.test.ts`, `apps/api/src/modules/police/police.concurrency.test.ts` |
+| POL-DEC-020 | No-exclusive-owner responsibility model | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/repositories/police.repository.ts` | `apps/api/src/modules/police/police.integration.test.ts` |
+| POL-DEC-021 | Police permission and export boundary | 18 | COVERED | `packages/authz/src/police.ts`, `apps/api/src/modules/police/services/export.service.ts`, `apps/api/src/modules/police/services/police-context.ts` | `apps/api/src/modules/police/police.security.test.ts`, `apps/api/src/modules/police/police.http.test.ts`, `packages/authz/src/catalog.test.ts` |
+| POL-DEC-022 | Four-digit bootstrap code and Police authentication | 18 | COVERED | `packages/db/migrations/0019_police_monitoring.sql`, `apps/api/src/modules/police/domain/police.ts`, `apps/api/src/modules/police/services/account.service.ts`, `packages/ports/src/key-management.port.ts` | `apps/api/src/modules/police/domain/police.test.ts`, `apps/api/src/modules/police/police.http.test.ts` |
 
 ## 12. OPS-DEC — Operation dashboard (doc 14, 18)
 

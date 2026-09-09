@@ -13,7 +13,16 @@ export type TableClass =
   | 'TENANT_RLS'
   | 'PRE_TENANT_ISOLATED'
   | 'PLATFORM_AUDIT'
-  | 'POLICE_ISOLATED';
+  | 'POLICE_ISOLATED'
+  /**
+   * Phase 18. A Police-domain table: it belongs to no hotel, so its isolation
+   * is the realm rather than the tenant. RLS is enabled and forced, its
+   * policies compare `platform.current_realm()`, and the only runtime role with
+   * any privilege on it is `prsystem_police`. A `hotel_id` on one of these is a
+   * snapshot of where a match happened, never a tenant axis — which is why the
+   * tenant rule does not apply and this class exists to say so.
+   */
+  | 'POLICE_REALM_RLS';
 
 export interface ClassifiedTable {
   readonly schema: string;
@@ -882,6 +891,126 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     classification: 'POLICE_ISOLATED',
     why: 'append-only Police audit stream, separately granted (ADR-0018 §1)',
   },
+  {
+    schema: 'police',
+    table: 'wanted_person',
+    classification: 'POLICE_REALM_RLS',
+    why: 'the identity aggregate; keyed tokens only, never a registration number (POL-DEC-017)',
+  },
+  {
+    schema: 'police',
+    table: 'wanted_identity_revision',
+    classification: 'POLICE_REALM_RLS',
+    why: 'immutable identity revisions and their two-person approval (POL-DEC-018)',
+  },
+  {
+    schema: 'police',
+    table: 'wanted_case',
+    classification: 'POLICE_REALM_RLS',
+    why: 'one legal basis with its own lifecycle; several may name one person (POL-DEC-017)',
+  },
+  {
+    schema: 'police',
+    table: 'wanted_case_event',
+    classification: 'POLICE_REALM_RLS',
+    why: 'append-only case lifecycle history with reason and actor (doc 13 §7)',
+  },
+  {
+    schema: 'police',
+    table: 'police_match',
+    classification: 'POLICE_REALM_RLS',
+    why: 'stay × person detection event; hotel_id is the snapshot of where, not a tenant',
+  },
+  {
+    schema: 'police',
+    table: 'match_case_link',
+    classification: 'POLICE_REALM_RLS',
+    why: 'append-only links to the cases active at detection (POL-DEC-017)',
+  },
+  {
+    schema: 'police',
+    table: 'match_event',
+    classification: 'POLICE_REALM_RLS',
+    why: 'append-only match timeline: acknowledgement, Found, corrections (doc 13 §13.1)',
+  },
+  {
+    schema: 'police',
+    table: 'district_alert_group',
+    classification: 'POLICE_REALM_RLS',
+    why: 'the approved routing group of a district (POL-DEC-008)',
+  },
+  {
+    schema: 'police',
+    table: 'match_alert',
+    classification: 'POLICE_REALM_RLS',
+    why: 'one alert per match, with its routing outcome and escalation stage',
+  },
+  {
+    schema: 'police',
+    table: 'alert_delivery',
+    classification: 'POLICE_REALM_RLS',
+    why: 'per-recipient delivery; a masked identifier only, never a body (doc 13 §10.2)',
+  },
+  {
+    schema: 'police',
+    table: 'escalation_policy',
+    classification: 'POLICE_REALM_RLS',
+    why: 'ЦЕГ-approved escalation minutes; absent means not enabled (POL-DEC-011)',
+  },
+  {
+    schema: 'police',
+    table: 'checkin_retention_policy',
+    classification: 'POLICE_REALM_RLS',
+    why: 'ЦЕГ-approved retention; absent means no historical search (POL-DEC-010)',
+  },
+  {
+    schema: 'police',
+    table: 'found_confirmation',
+    classification: 'POLICE_REALM_RLS',
+    why: 'who confirmed a Found, where and when (POL-DEC-012, POL-DEC-014)',
+  },
+  {
+    schema: 'police',
+    table: 'found_correction_request',
+    classification: 'POLICE_REALM_RLS',
+    why: 'two-person correction of an erroneous Found (POL-DEC-015)',
+  },
+  {
+    schema: 'police',
+    table: 'false_match_request',
+    classification: 'POLICE_REALM_RLS',
+    why: 'two-person False Match outcome workflow (POL-DEC-019)',
+  },
+  {
+    schema: 'police',
+    table: 'bootstrap_code',
+    classification: 'POLICE_REALM_RLS',
+    why: 'keyed digests of the four-digit activation and reset codes (POL-DEC-022)',
+  },
+  {
+    schema: 'police',
+    table: 'wanted_export_job',
+    classification: 'POLICE_REALM_RLS',
+    why: 'Wanted Case Excel job with purpose and task reference (POL-DEC-021)',
+  },
+  {
+    schema: 'police',
+    table: 'police_contact',
+    classification: 'POLICE_REALM_RLS',
+    why: 'the approved official phone an alert may reach, encrypted and versioned (doc 13 §10.2)',
+  },
+  {
+    schema: 'police',
+    table: 'exact_search_attempt',
+    classification: 'POLICE_REALM_RLS',
+    why: 'append-only record of every exact search, and what the rate limit counts (doc 13 §9)',
+  },
+  {
+    schema: 'police',
+    table: 'wanted_export_grant',
+    classification: 'POLICE_REALM_RLS',
+    why: 'one short-lived download link, append-only (doc 13 §12.3)',
+  },
 ];
 
 /** Roles that must never own a kernel object or hold a direct audit grant. */
@@ -915,6 +1044,8 @@ export interface ClassificationViolation {
     | 'pre_tenant_not_forced'
     | 'pre_tenant_has_no_policy'
     | 'unauthorised_audit_grant'
+    | 'police_realm_not_forced'
+    | 'police_realm_grant_outside_realm'
     | 'runtime_role_owns_object';
   readonly detail: string;
 }

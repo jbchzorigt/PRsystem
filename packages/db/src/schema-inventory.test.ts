@@ -182,7 +182,7 @@ describe('extraction property inventory', () => {
     const inventory = assertDeclaredInventory(module);
     expect(inventory.tables).toHaveLength(DECLARED_TABLES.length);
     expect(inventory.enums).toHaveLength(DECLARED_ENUMS.length);
-    expect([...inventory.schemas].sort()).toEqual(['audit', 'platform', 'police_audit']);
+    expect([...inventory.schemas].sort()).toEqual(['audit', 'platform', 'police', 'police_audit']);
     // Non-vacuous: the same helper reads enums off a module that has one.
     expect(exportedEnums(module)).toEqual([...DECLARED_ENUMS]);
   });

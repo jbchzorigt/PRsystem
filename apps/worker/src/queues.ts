@@ -4,9 +4,10 @@ import type { ConnectionOptions, WorkerOptions } from 'bullmq';
  * Queue registry.
  *
  * Phase 03 adds the two kernel queues; Phase 05 adds the three its own
- * background operations run on; Phase 17 adds the export and retention ones.
- * The remaining domain queues — notification fan-out — arrive with the phases
- * that own them (docs/architecture/02-container-and-deployment.md §5).
+ * background operations run on; Phase 17 adds the export and retention ones,
+ * and Phase 18 the matcher. The remaining domain queues — notification fan-out
+ * — arrive with the phases that own them
+ * (docs/architecture/02-container-and-deployment.md §5).
  *
  * Every Phase 05 queue has a consumer in this deployment
  * (`jobs/onboarding.ts`): the provisioning queue takes the API's best-effort
@@ -33,6 +34,8 @@ export const QUEUE_NAMES = {
   exportExpiry: 'reporting.export.expiry',
   /** Anonymises stays past their retention deadline (doc 12 §9, `GUEST-DEC-008`). */
   retentionPurge: 'reporting.retention.purge',
+  /** Matches recorded check-ins against active wanted records (doc 13 §8.3). */
+  policeMatcher: 'police.match.check_in',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

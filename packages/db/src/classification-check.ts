@@ -72,7 +72,12 @@ export async function validateClassification(pool: Pool): Promise<Classification
           )
         : { rows: [] };
 
-      if (!isAuditClass) {
+      if (entry.classification === 'POLICE_REALM_RLS') {
+        // A Police table's `hotel_id` says where a match happened. It is not a
+        // tenant axis, and isolating on it would be wrong: a match belongs to
+        // the Police realm, not to the hotel it names. The realm rule below is
+        // what protects the row.
+      } else if (!isAuditClass) {
         violations.push({
           kind: 'tenant_column_not_tenant_rls',
           detail: `${row.qualified} carries hotel_id but is classified ${entry.classification}`,
@@ -144,6 +149,36 @@ export async function validateClassification(pool: Pool): Promise<Classification
         violations.push({
           kind: 'pre_tenant_has_no_policy',
           detail: `${row.qualified} is PRE_TENANT_ISOLATED but carries no policy at all`,
+        });
+      }
+    }
+
+    // A Police-domain table is isolated by realm rather than by tenant, and the
+    // two things that make that true are checked rather than assumed: RLS is
+    // enabled and forced, and the only runtime role holding any privilege on it
+    // is the Police one. An API or worker grant appearing here would be the
+    // separation of doc 13 §3 quietly ending.
+    if (entry.classification === 'POLICE_REALM_RLS') {
+      if (!(row.rls_enabled && row.rls_forced)) {
+        violations.push({
+          kind: 'police_realm_not_forced',
+          detail: `${row.qualified} is POLICE_REALM_RLS but RLS is enabled=${String(row.rls_enabled)} forced=${String(row.rls_forced)}`,
+        });
+      }
+      const grants = await pool.query<{ grantee: string; privilege_type: string }>(
+        `SELECT pg_get_userbyid(a.grantee) AS grantee, a.privilege_type
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS a
+          WHERE n.nspname = $1 AND c.relname = $2
+            AND pg_get_userbyid(a.grantee) = ANY($3)
+            AND pg_get_userbyid(a.grantee) <> 'prsystem_police'`,
+        [entry.schema, entry.table, RUNTIME_ROLES],
+      );
+      for (const grant of grants.rows) {
+        violations.push({
+          kind: 'police_realm_grant_outside_realm',
+          detail: `${row.qualified} is Police-isolated, but ${grant.grantee} holds ${grant.privilege_type} on it`,
         });
       }
     }

@@ -112,7 +112,7 @@ describe('migration journal', () => {
         const [schema, table] = (qualified ?? '').split('.');
         expect({ file, schema }).toEqual({
           file,
-          schema: expect.stringMatching(/^(platform|audit|police_audit)$/),
+          schema: expect.stringMatching(/^(platform|audit|police_audit|police)$/),
         });
         const named = businessWords.test(table ?? '');
         expect({ file, table, businessNamed: named && !allowed.includes(table ?? '') }).toEqual({

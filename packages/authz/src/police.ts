@@ -51,6 +51,17 @@ function police(
   };
 }
 
+/**
+ * doc 13 §12.2: the second grant that unmasks a registration number in a Wanted
+ * Case export.
+ *
+ * It is not a row of doc 18 §6 and deliberately not one: it grants no action of
+ * its own. It is an additional permission the exporting Police Admin must
+ * *also* hold, on top of `WANTED_CASE_EXPORT` and a recent step-up — which is
+ * why it appears in what an Admin may be granted and in no cell.
+ */
+export const WANTED_EXPORT_FULL_IDENTIFIER = 'WANTED_EXPORT_FULL_IDENTIFIER';
+
 export const POLICE_ACTIONS: readonly PoliceAction[] = [
   police(
     'police.account_manage',
@@ -151,13 +162,14 @@ export const POLICE_ACTIONS: readonly PoliceAction[] = [
 
 /** Every explicitly named Police permission, sorted and de-duplicated. */
 export const POLICE_PERMISSIONS: readonly string[] = [
-  ...new Set(
-    POLICE_ACTIONS.flatMap((action) =>
+  ...new Set([
+    WANTED_EXPORT_FULL_IDENTIFIER,
+    ...POLICE_ACTIONS.flatMap((action) =>
       Object.values(action.cells)
         .filter((cell): cell is Extract<PoliceCell, { kind: 'named' }> => cell.kind === 'named')
         .map((cell) => cell.permission),
     ),
-  ),
+  ]),
 ].sort();
 
 const POLICE_BY_ID = new Map(POLICE_ACTIONS.map((action) => [action.id, action]));
@@ -176,10 +188,12 @@ export function policeAction(id: string): PoliceAction | undefined {
  */
 export function policeGrantablePermissions(role: PoliceRole): readonly string[] {
   return [
-    ...new Set(
-      POLICE_ACTIONS.map((action) => action.cells[role]).flatMap((cell) =>
+    ...new Set([
+      ...POLICE_ACTIONS.map((action) => action.cells[role]).flatMap((cell) =>
         cell.kind === 'named' ? [cell.permission] : [],
       ),
-    ),
+      // The one grantable permission that is not a cell (doc 13 §12.2).
+      ...(role === 'POLICE_ADMIN' ? [WANTED_EXPORT_FULL_IDENTIFIER] : []),
+    ]),
   ].sort();
 }

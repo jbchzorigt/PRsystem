@@ -29,6 +29,19 @@ export interface XypCitizen {
   readonly givenName: string;
   /** ISO date, `YYYY-MM-DD`. */
   readonly dateOfBirth: string;
+  /**
+   * The three fields doc 13 §6.1 names on top of a check-in's three.
+   *
+   * Optional because they are optional in the answer, not because they are
+   * optional in the requirement: Phase 08 needed a name and a birth date to
+   * confirm a guest, and Phase 18 needs the parent's name, the home address and
+   * its district for a wanted record. Which of them the approved service
+   * actually returns is part of `EXT-01`'s field list, which is not approved —
+   * so a missing one falls back to manual entry rather than to a blank.
+   */
+  readonly parentName?: string;
+  readonly homeAddress?: string;
+  readonly homeDistrict?: string;
 }
 
 export type XypAnswer =

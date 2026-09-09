@@ -83,7 +83,11 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     grants: {
       api: ['SELECT', 'INSERT', 'UPDATE'],
       worker: ['SELECT', 'INSERT', 'UPDATE'],
-      police: [],
+      // Phase 18: the Police realm issues commands of its own, and a command is
+      // idempotent in every realm (CLAUDE.md §6). The tenant policy still
+      // applies — a Police transaction runs at the platform sentinel, so it
+      // sees its own rows and no hotel's.
+      police: ['SELECT', 'INSERT', 'UPDATE'],
     },
     insert: (hotelId, n) => ({
       sql: `INSERT INTO platform.idempotency_key
@@ -96,7 +100,12 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.outbox_event',
-    grants: { api: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'], police: [] },
+    grants: {
+      api: ['SELECT', 'INSERT'],
+      worker: ['SELECT', 'INSERT'],
+      // Phase 18: a Police command appends its own domain events.
+      police: ['SELECT', 'INSERT'],
+    },
     insert: (hotelId, n) => ({
       sql: `INSERT INTO platform.outbox_event
               (hotel_id, aggregate_type, aggregate_id, event_type, payload)
@@ -188,7 +197,11 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
     grants: {
       api: ['SELECT', 'INSERT', 'UPDATE'],
       worker: [],
-      police: [],
+      // Phase 18: the pipeline resolves a principal the same way in every
+      // realm, and that read includes the account's memberships. A Police
+      // account has none, and the tenant policy still applies — so this reads
+      // exactly zero rows and is `SELECT` only.
+      police: ['SELECT'],
     },
     insert: (hotelId, n) => ({
       sql: `WITH acct AS (
@@ -206,7 +219,14 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   },
   {
     name: 'platform.membership_role_grant',
-    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    grants: {
+      api: ['SELECT', 'INSERT', 'UPDATE'],
+      worker: [], // Phase 18: the pipeline resolves a principal the same way in every
+      // realm, and that read includes the account's memberships. A Police
+      // account has none, and the tenant policy still applies — so this reads
+      // exactly zero rows and is `SELECT` only.
+      police: ['SELECT'],
+    },
     insert: (hotelId, n) => ({
       sql: `WITH acct AS (
               INSERT INTO platform.user_account (realm, email_normalized)
@@ -2582,15 +2602,21 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
   {
     name: 'platform.restaurant_schedule',
     grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'], police: [] },
-    insert: (hotelId, n) => ({
+    insert: (hotelId) => ({
       sql: `INSERT INTO platform.restaurant_schedule
               (hotel_id, restaurant_id, weekday, closed, opens_at, closes_at)
             VALUES ($1,
                     COALESCE((SELECT r.restaurant_id FROM platform.restaurant r
                                WHERE r.hotel_id = $1 ORDER BY r.created_at LIMIT 1),
                              ${ABSENT_UUID}),
-                    $2::integer % 7, false, TIME '09:00', TIME '22:00')`,
-      values: [hotelId, n],
+                    -- A weekday has seven values and the fixture inserts three
+                    -- rows per tenant, so the next unused one is chosen rather
+                    -- than a sequence modulo seven, which collides as soon as
+                    -- the sequence shifts.
+                    (SELECT coalesce(max(s.weekday), -1) + 1
+                       FROM platform.restaurant_schedule s WHERE s.hotel_id = $1),
+                    false, TIME '09:00', TIME '22:00')`,
+      values: [hotelId],
     }),
     updateColumn: 'revision',
     updateSet: `closed = true, opens_at = NULL, closes_at = NULL, revision = revision + 1`,

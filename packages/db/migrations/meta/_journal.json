@@ -134,6 +134,13 @@
       "when": 1757376000007,
       "tag": "0018_registry_reporting",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1757376000008,
+      "tag": "0019_police_monitoring",
+      "breakpoints": true
     }
   ]
 }

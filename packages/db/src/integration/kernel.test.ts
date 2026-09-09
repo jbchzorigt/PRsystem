@@ -525,7 +525,9 @@ describe('no business table exists yet', () => {
     expect(unclassified).toEqual([]);
 
     expect(
-      result.rows.every((row) => ['platform', 'audit', 'police_audit'].includes(row.table_schema)),
+      result.rows.every((row) =>
+        ['platform', 'audit', 'police_audit', 'police'].includes(row.table_schema),
+      ),
     ).toBe(true);
   });
 });

@@ -75,6 +75,13 @@ const wallTime = customType<{ data: string }>({
 export const platform = pgSchema('platform');
 export const auditSchema = pgSchema('audit');
 export const policeAudit = pgSchema('police_audit');
+/**
+ * Phase 18. Empty since the kernel and declared here now that it holds rows:
+ * the wanted people, their cases, and the matches those two produce. Nothing in
+ * it carries a `hotel_id`, which is why its isolation is the realm rather than
+ * the tenant.
+ */
+export const policeSchema = pgSchema('police');
 
 export const idempotencyKey = platform
   .table(
@@ -169,6 +176,11 @@ export const outboxEvent = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(event_type = 'stay.checked_in'::text)`,
+      }),
     ],
   )
   .enableRLS();
@@ -250,6 +262,11 @@ export const inboxConsumption = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(consumer = 'police.matcher'::text)`,
       }),
     ],
   )
@@ -613,6 +630,11 @@ export const hotel = platform
    FROM platform.hotel_profile p
   WHERE ((p.hotel_id = hotel.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
       }),
+      pgPolicy('police_hotel_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
     ],
   )
   .enableRLS();
@@ -681,6 +703,11 @@ END`,
       for: 'select',
       to: ['prsystem_maintenance_fn'],
       using: sql`true`,
+    }),
+    pgPolicy('police_account_read', {
+      for: 'select',
+      to: ['prsystem_maintenance_fn'],
+      using: sql`(realm = 'police'::text)`,
     }),
   ],
 );
@@ -1350,7 +1377,7 @@ CASE realm_role
     WHEN 'OPERATION_ADMIN'::text THEN (permission = ANY (ARRAY['DEPOSIT_REFUND_RECONCILE'::text, 'ONBOARDING_PROVISION_RETRY'::text, 'OPERATION_READ'::text, 'REVIEW_MODERATE'::text, 'SUBSCRIPTION_EBARIMT_RETRY'::text, 'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text, 'SUBSCRIPTION_PAYMENT_RECONCILE'::text, 'SUBSCRIPTION_REMINDER_SEND'::text]))
     WHEN 'PLATFORM_SUPER_ADMIN'::text THEN (permission = ANY (ARRAY['ACCOUNT_OWNERSHIP_RECOVERY_APPROVE'::text, 'DEPOSIT_REFUND_RECONCILE'::text, 'ONBOARDING_PROVISION_RETRY'::text, 'OPERATION_READ'::text, 'PLATFORM_OPERATION_ACCESS_MANAGE'::text, 'REVIEW_MODERATE'::text, 'SUBSCRIPTION_CONTACT_CHANGE_APPROVE'::text, 'SUBSCRIPTION_EBARIMT_RETRY'::text, 'SUBSCRIPTION_PASSWORD_RESET_INITIATE'::text, 'SUBSCRIPTION_PAYMENT_RECONCILE'::text, 'SUBSCRIPTION_REMINDER_SEND'::text, 'SUBSCRIPTION_SUSPEND'::text]))
     WHEN 'POLICE_OFFICER'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_IDENTITY_APPROVE'::text]))
-    WHEN 'POLICE_ADMIN'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_CREATE'::text, 'WANTED_CASE_EXPORT'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_IDENTITY_APPROVE'::text]))
+    WHEN 'POLICE_ADMIN'::text THEN (permission = ANY (ARRAY['FALSE_MATCH_APPROVE'::text, 'FOUND_CORRECTION_APPROVE'::text, 'WANTED_CASE_CREATE'::text, 'WANTED_CASE_EXPORT'::text, 'WANTED_CASE_STATE_MANAGE'::text, 'WANTED_EXPORT_FULL_IDENTIFIER'::text, 'WANTED_IDENTITY_APPROVE'::text]))
     ELSE false
 END`,
     ),
@@ -2262,6 +2289,11 @@ export const hotelProfile = platform
         for: 'select',
         to: ['prsystem_maintenance_fn'],
         using: sql`(listing_state = 'PUBLISHED'::text)`,
+      }),
+      pgPolicy('police_hotel_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
       }),
     ],
   )
@@ -3293,6 +3325,11 @@ export const room = platform
         using: sql`(EXISTS ( SELECT 1
    FROM platform.hotel_profile p
   WHERE ((p.hotel_id = room.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
+      }),
+      pgPolicy('police_room_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
       }),
     ],
   )
@@ -4783,6 +4820,11 @@ export const stay = platform
    FROM platform.hotel_profile p
   WHERE ((p.hotel_id = stay.hotel_id) AND (p.listing_state = 'PUBLISHED'::text))))`,
       }),
+      pgPolicy('police_stay_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
     ],
   )
   .enableRLS();
@@ -4948,6 +4990,11 @@ export const stayGuest = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('police_guest_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(is_current IS TRUE)`,
       }),
     ],
   )
@@ -5132,6 +5179,11 @@ export const stayTimeCorrection = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('police_correction_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'APPROVED'::text)`,
       }),
     ],
   )
@@ -10601,6 +10653,1113 @@ export const reportExportGrant = platform
   )
   .enableRLS();
 
+// =====================================================================
+// Phase 18 — Police monitoring (migration 0019)
+// =====================================================================
+
+export const wantedPerson = policeSchema
+  .table(
+    'wanted_person',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      identityKeyVersion: text('identity_key_version').notNull(),
+      identityNamespace: text('identity_namespace').notNull(),
+      identityToken: text('identity_token').notNull(),
+      matchKeyVersion: text('match_key_version').notNull(),
+      matchNamespace: text('match_namespace').notNull(),
+      matchToken: text('match_token').notNull(),
+      personId: uuid('person_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+    },
+    (table) => [
+      unique('wanted_person_identity_uq').on(table.identityNamespace, table.identityToken),
+      check(
+        'wanted_person_namespace_known',
+        sql`((identity_namespace = 'registration_number:MN'::text) AND (match_namespace = 'registration_number:MN'::text))`,
+      ),
+      check('wanted_person_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'wanted_person_token_shape',
+        sql`((identity_token ~ '^[0-9a-f]{64}$'::text) AND (match_token ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      index('wanted_person_match_idx').on(
+        table.matchNamespace,
+        table.matchToken,
+        table.matchKeyVersion,
+      ),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(EXISTS ( SELECT 1
+   FROM police.wanted_case c
+  WHERE ((c.person_id = wanted_person.person_id) AND (c.state = 'ACTIVE'::text))))`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const wantedIdentityRevision = policeSchema
+  .table(
+    'wanted_identity_revision',
+    {
+      approvalState: text('approval_state').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      dateOfBirth: date('date_of_birth').notNull(),
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionReason: text('decision_reason'),
+      familyName: text('family_name').notNull(),
+      givenName: text('given_name').notNull(),
+      homeAddress: text('home_address'),
+      homeDistrict: text('home_district'),
+      identifierCiphertext: bytea('identifier_ciphertext').notNull(),
+      identifierKeyVersion: text('identifier_key_version').notNull(),
+      identifierWrappedDek: bytea('identifier_wrapped_dek').notNull(),
+      isCurrent: boolean('is_current')
+        .notNull()
+        .default(sql`false`),
+      parentName: text('parent_name').notNull(),
+      personId: uuid('person_id').notNull(),
+      provenance: text('provenance').notNull(),
+      revisionId: uuid('revision_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      revisionNo: integer('revision_no').notNull(),
+    },
+    (table) => [
+      check(
+        'wanted_identity_address_bounded',
+        sql`((home_address IS NULL) OR ((length(home_address) >= 1) AND (length(home_address) <= 300)))`,
+      ),
+      check(
+        'wanted_identity_approval_known',
+        sql`(approval_state = ANY (ARRAY['PENDING_APPROVAL'::text, 'APPROVED'::text, 'REJECTED'::text]))`,
+      ),
+      check(
+        'wanted_identity_current_is_approved',
+        sql`((NOT is_current) OR (approval_state = 'APPROVED'::text))`,
+      ),
+      check(
+        'wanted_identity_district_bounded',
+        sql`((home_district IS NULL) OR ((length(home_district) >= 1) AND (length(home_district) <= 100)))`,
+      ),
+      check(
+        'wanted_identity_manual_shape',
+        sql`((provenance <> 'MANUAL'::text) OR ((approval_state = 'PENDING_APPROVAL'::text) AND (decided_by_account_id IS NULL) AND (decided_at IS NULL)) OR ((approval_state <> 'PENDING_APPROVAL'::text) AND (decided_by_account_id IS NOT NULL) AND (decided_at IS NOT NULL)))`,
+      ),
+      check(
+        'wanted_identity_names_bounded',
+        sql`(((length(family_name) >= 1) AND (length(family_name) <= 100)) AND ((length(parent_name) >= 1) AND (length(parent_name) <= 100)) AND ((length(given_name) >= 1) AND (length(given_name) <= 100)))`,
+      ),
+      check(
+        'wanted_identity_provenance_known',
+        sql`(provenance = ANY (ARRAY['XYP_VERIFIED'::text, 'MANUAL'::text]))`,
+      ),
+      check(
+        'wanted_identity_reason_bounded',
+        sql`((decision_reason IS NULL) OR ((length(decision_reason) >= 5) AND (length(decision_reason) <= 500)))`,
+      ),
+      check('wanted_identity_revision_no_positive', sql`(revision_no >= 1)`),
+      unique('wanted_identity_revision_no_uq').on(table.personId, table.revisionNo),
+      foreignKey({
+        name: 'wanted_identity_revision_person_fkey',
+        columns: [table.personId],
+        foreignColumns: [wantedPerson.personId],
+      }).onDelete('restrict'),
+      check(
+        'wanted_identity_two_person',
+        sql`((decided_by_account_id IS NULL) OR (decided_by_account_id <> created_by_account_id))`,
+      ),
+      check(
+        'wanted_identity_verified_shape',
+        sql`((provenance <> 'XYP_VERIFIED'::text) OR ((approval_state = 'APPROVED'::text) AND (decided_by_account_id IS NULL)))`,
+      ),
+      uniqueIndex('wanted_identity_current_uq')
+        .on(table.personId)
+        .where(sql`is_current IS TRUE`),
+      uniqueIndex('wanted_identity_pending_uq')
+        .on(table.personId)
+        .where(sql`approval_state = 'PENDING_APPROVAL'::text`),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`((is_current IS TRUE) AND (approval_state = 'APPROVED'::text))`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const wantedCase = policeSchema
+  .table(
+    'wanted_case',
+    {
+      activatedAt: timestamp('activated_at', { withTimezone: true }),
+      caseId: uuid('case_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      crimeCategory: text('crime_category').notNull(),
+      owningUnitRef: text('owning_unit_ref').notNull(),
+      personId: uuid('person_id').notNull(),
+      reasonText: text('reason_text').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'DRAFT'::text`),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+    },
+    (table) => [
+      check(
+        'wanted_case_activation_shape',
+        sql`((state = ANY (ARRAY['DRAFT'::text, 'PENDING_APPROVAL'::text])) = (activated_at IS NULL))`,
+      ),
+      check(
+        'wanted_case_category_bounded',
+        sql`((length(crime_category) >= 1) AND (length(crime_category) <= 120))`,
+      ),
+      unique('wanted_case_identity_uq').on(table.personId, table.caseId),
+      foreignKey({
+        name: 'wanted_case_person_fkey',
+        columns: [table.personId],
+        foreignColumns: [wantedPerson.personId],
+      }).onDelete('restrict'),
+      check(
+        'wanted_case_reason_bounded',
+        sql`((length(reason_text) >= 10) AND (length(reason_text) <= 2000))`,
+      ),
+      check('wanted_case_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'wanted_case_state_known',
+        sql`(state = ANY (ARRAY['DRAFT'::text, 'PENDING_APPROVAL'::text, 'ACTIVE'::text, 'SUSPENDED'::text, 'CLOSED'::text, 'CANCELLED'::text]))`,
+      ),
+      check(
+        'wanted_case_terminal_shape',
+        sql`((state = ANY (ARRAY['CLOSED'::text, 'CANCELLED'::text])) = (terminal_at IS NOT NULL))`,
+      ),
+      check(
+        'wanted_case_unit_bounded',
+        sql`((length(owning_unit_ref) >= 1) AND (length(owning_unit_ref) <= 100))`,
+      ),
+      index('wanted_case_active_idx')
+        .on(table.personId)
+        .where(sql`state = 'ACTIVE'::text`),
+      index('wanted_case_state_idx').on(table.state, table.createdAt.desc().nullsFirst()),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'ACTIVE'::text)`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const wantedCaseEvent = policeSchema
+  .table(
+    'wanted_case_event',
+    {
+      actorAccountId: uuid('actor_account_id').notNull(),
+      caseId: uuid('case_id').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      fromState: text('from_state').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reason: text('reason').notNull(),
+      toState: text('to_state').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'wanted_case_event_case_fkey',
+        columns: [table.caseId],
+        foreignColumns: [wantedCase.caseId],
+      }).onDelete('restrict'),
+      check(
+        'wanted_case_event_reason_bounded',
+        sql`((length(reason) >= 5) AND (length(reason) <= 500))`,
+      ),
+      check('wanted_case_event_states_differ', sql`(from_state <> to_state)`),
+      index('wanted_case_event_case_idx').on(table.caseId, table.occurredAt),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const policeMatch = policeSchema
+  .table(
+    'police_match',
+    {
+      actualCheckInAt: timestamp('actual_check_in_at', { withTimezone: true }).notNull(),
+      checkInRecordedAt: timestamp('check_in_recorded_at', { withTimezone: true }).notNull(),
+      detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
+      falseMatchReviewPending: boolean('false_match_review_pending')
+        .notNull()
+        .default(sql`false`),
+      firstAcknowledgedAt: timestamp('first_acknowledged_at', { withTimezone: true }),
+      firstAcknowledgedByAccountId: uuid('first_acknowledged_by_account_id'),
+      hotelAddressLine: text('hotel_address_line').notNull(),
+      hotelDistrict: text('hotel_district').notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      hotelName: text('hotel_name').notNull(),
+      latitudeMicro: integer('latitude_micro'),
+      longitudeMicro: integer('longitude_micro'),
+      matchId: uuid('match_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      matchMethod: text('match_method')
+        .notNull()
+        .default(sql`'EXACT_REGISTRATION_NUMBER'::text`),
+      originatingUnitRef: text('originating_unit_ref').notNull(),
+      outcome: text('outcome')
+        .notNull()
+        .default(sql`'NONE'::text`),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      roomNumber: text('room_number').notNull(),
+      stayId: uuid('stay_id').notNull(),
+      wantedPersonId: uuid('wanted_person_id').notNull(),
+      workflowState: text('workflow_state')
+        .notNull()
+        .default(sql`'NEW'::text`),
+    },
+    (table) => [
+      check(
+        'police_match_acknowledgement_shape',
+        sql`((first_acknowledged_by_account_id IS NULL) = (first_acknowledged_at IS NULL))`,
+      ),
+      check('police_match_method_known', sql`(match_method = 'EXACT_REGISTRATION_NUMBER'::text)`),
+      check(
+        'police_match_new_is_unacknowledged',
+        sql`((workflow_state <> 'NEW'::text) OR (first_acknowledged_by_account_id IS NULL))`,
+      ),
+      check(
+        'police_match_outcome_known',
+        sql`(outcome = ANY (ARRAY['NONE'::text, 'FOUND'::text, 'FALSE_MATCH'::text, 'LOCATION_STALE'::text]))`,
+      ),
+      check(
+        'police_match_outcome_resolved',
+        sql`((outcome = 'NONE'::text) OR (workflow_state = 'RESOLVED'::text))`,
+      ),
+      foreignKey({
+        name: 'police_match_person_fkey',
+        columns: [table.wantedPersonId],
+        foreignColumns: [wantedPerson.personId],
+      }).onDelete('restrict'),
+      check(
+        'police_match_position_bounded',
+        sql`(((latitude_micro IS NULL) = (longitude_micro IS NULL)) AND ((latitude_micro IS NULL) OR (((latitude_micro >= '-90000000'::integer) AND (latitude_micro <= 90000000)) AND ((longitude_micro >= '-180000000'::integer) AND (longitude_micro <= 180000000)))))`,
+      ),
+      check('police_match_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'police_match_room_bounded',
+        sql`((length(room_number) >= 1) AND (length(room_number) <= 20))`,
+      ),
+      unique('police_match_stay_person_uq').on(table.stayId, table.wantedPersonId),
+      check(
+        'police_match_workflow_known',
+        sql`(workflow_state = ANY (ARRAY['NEW'::text, 'ACKNOWLEDGED'::text, 'UNDER_REVIEW'::text, 'RESOLVED'::text]))`,
+      ),
+      index('police_match_district_idx').on(
+        table.hotelDistrict,
+        table.detectedAt.desc().nullsFirst(),
+      ),
+      index('police_match_open_idx')
+        .on(table.workflowState, table.detectedAt.desc().nullsFirst())
+        .where(sql`workflow_state <> 'RESOLVED'::text`),
+      index('police_match_person_idx').on(
+        table.wantedPersonId,
+        table.detectedAt.desc().nullsFirst(),
+      ),
+      pgPolicy('police_matcher_write', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`(workflow_state = 'NEW'::text)`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(workflow_state <> 'RESOLVED'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const matchCaseLink = policeSchema
+  .table(
+    'match_case_link',
+    {
+      caseId: uuid('case_id').notNull(),
+      linkId: uuid('link_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      linkedAt: timestamp('linked_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      matchId: uuid('match_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'match_case_link_case_fkey',
+        columns: [table.caseId],
+        foreignColumns: [wantedCase.caseId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'match_case_link_match_fkey',
+        columns: [table.matchId],
+        foreignColumns: [policeMatch.matchId],
+      }).onDelete('restrict'),
+      unique('match_case_link_uq').on(table.matchId, table.caseId),
+      pgPolicy('police_matcher_write', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`true`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const matchEvent = policeSchema
+  .table(
+    'match_event',
+    {
+      actorAccountId: uuid('actor_account_id'),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      eventType: text('event_type').notNull(),
+      matchId: uuid('match_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      payload: jsonb('payload')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'match_event_match_fkey',
+        columns: [table.matchId],
+        foreignColumns: [policeMatch.matchId],
+      }).onDelete('restrict'),
+      check('match_event_payload_sanitised', sql`(NOT platform.contains_denied_key(payload))`),
+      check(
+        'match_event_type_known',
+        sql`(event_type = ANY (ARRAY['DETECTED'::text, 'CASE_LINKED'::text, 'ALERT_CREATED'::text, 'ACKNOWLEDGED'::text, 'ROOM_UPDATED'::text, 'FOUND_CONFIRMED'::text, 'FOUND_CORRECTION_REQUESTED'::text, 'FOUND_CORRECTION_APPROVED'::text, 'FOUND_CORRECTION_REJECTED'::text, 'FALSE_MATCH_REQUESTED'::text, 'FALSE_MATCH_APPROVED'::text, 'FALSE_MATCH_REJECTED'::text, 'LOCATION_STALE'::text, 'ACTUAL_TIME_CORRECTED'::text]))`,
+      ),
+      index('match_event_match_idx').on(table.matchId, table.occurredAt),
+      pgPolicy('police_matcher_write', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`(actor_account_id IS NULL)`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const districtAlertGroup = policeSchema
+  .table(
+    'district_alert_group',
+    {
+      approvedAt: timestamp('approved_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      approvedByAccountId: uuid('approved_by_account_id').notNull(),
+      district: text('district').primaryKey().notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      unitRef: text('unit_ref').notNull(),
+    },
+    () => [
+      check(
+        'district_alert_group_bounded',
+        sql`(((length(district) >= 1) AND (length(district) <= 100)) AND ((length(unit_ref) >= 1) AND (length(unit_ref) <= 100)))`,
+      ),
+      check('district_alert_group_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'district_alert_group_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'INACTIVE'::text]))`,
+      ),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(state = 'ACTIVE'::text)`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const matchAlert = policeSchema
+  .table(
+    'match_alert',
+    {
+      alertId: uuid('alert_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+      escalatedAt: timestamp('escalated_at', { withTimezone: true }),
+      escalationStage: integer('escalation_stage')
+        .notNull()
+        .default(sql`0`),
+      matchId: uuid('match_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      routedDistrict: text('routed_district').notNull(),
+      routingError: boolean('routing_error')
+        .notNull()
+        .default(sql`false`),
+    },
+    (table) => [
+      foreignKey({
+        name: 'match_alert_match_fkey',
+        columns: [table.matchId],
+        foreignColumns: [policeMatch.matchId],
+      }).onDelete('restrict'),
+      unique('match_alert_match_uq').on(table.matchId),
+      check('match_alert_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'match_alert_stage_shape',
+        sql`((escalation_stage >= 0) AND ((escalation_stage = 0) = (escalated_at IS NULL)))`,
+      ),
+      pgPolicy('police_matcher_write', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`(escalation_stage = 0)`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+      pgPolicy('police_matcher_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(escalation_stage = 0)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const alertDelivery = policeSchema
+  .table(
+    'alert_delivery',
+    {
+      alertId: uuid('alert_id').notNull(),
+      channel: text('channel').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+      deliveryId: uuid('delivery_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      failureReason: text('failure_reason'),
+      maskedIdentifier: text('masked_identifier'),
+      openedAt: timestamp('opened_at', { withTimezone: true }),
+      providerMessageId: text('provider_message_id'),
+      recipientAccountId: uuid('recipient_account_id').notNull(),
+      recipientKind: text('recipient_kind').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'alert_delivery_alert_fkey',
+        columns: [table.alertId],
+        foreignColumns: [matchAlert.alertId],
+      }).onDelete('restrict'),
+      check(
+        'alert_delivery_channel_known',
+        sql`(channel = ANY (ARRAY['IN_APP'::text, 'SMS'::text]))`,
+      ),
+      check(
+        'alert_delivery_failure_bounded',
+        sql`((failure_reason IS NULL) OR ((length(failure_reason) >= 1) AND (length(failure_reason) <= 200)))`,
+      ),
+      check(
+        'alert_delivery_kind_known',
+        sql`(recipient_kind = ANY (ARRAY['DISTRICT_OFFICER'::text, 'POLICE_ADMIN'::text, 'DUTY_SUPERVISOR'::text]))`,
+      ),
+      check(
+        'alert_delivery_mask_shape',
+        sql`((masked_identifier IS NULL) OR (masked_identifier ~ '^\\*{4,}[0-9]{0,4}$'::text))`,
+      ),
+      unique('alert_delivery_uq').on(table.alertId, table.recipientAccountId, table.channel),
+      index('alert_delivery_alert_idx').on(table.alertId),
+      index('alert_delivery_recipient_idx').on(
+        table.recipientAccountId,
+        table.createdAt.desc().nullsFirst(),
+      ),
+      pgPolicy('police_matcher_write', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`((delivered_at IS NULL) AND (opened_at IS NULL) AND (provider_message_id IS NULL))`,
+      }),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const escalationPolicy = policeSchema
+  .table(
+    'escalation_policy',
+    {
+      approvedByAccountId: uuid('approved_by_account_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+      legalBasis: text('legal_basis').notNull(),
+      minutes: integer('minutes').notNull(),
+      policyId: uuid('policy_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      version: integer('version').notNull(),
+    },
+    (table) => [
+      check(
+        'escalation_policy_basis_bounded',
+        sql`((length(legal_basis) >= 5) AND (length(legal_basis) <= 500))`,
+      ),
+      check('escalation_policy_minutes_bounded', sql`((minutes >= 1) AND (minutes <= 1440))`),
+      check('escalation_policy_version_positive', sql`(version >= 1)`),
+      unique('escalation_policy_version_uq').on(table.version),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const checkinRetentionPolicy = policeSchema
+  .table(
+    'checkin_retention_policy',
+    {
+      approvedByAccountId: uuid('approved_by_account_id').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+      legalBasis: text('legal_basis').notNull(),
+      policyId: uuid('policy_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      retentionDays: integer('retention_days').notNull(),
+      version: integer('version').notNull(),
+    },
+    (table) => [
+      check(
+        'checkin_retention_policy_basis_bounded',
+        sql`((length(legal_basis) >= 5) AND (length(legal_basis) <= 500))`,
+      ),
+      check(
+        'checkin_retention_policy_days_bounded',
+        sql`((retention_days >= 1) AND (retention_days <= 3650))`,
+      ),
+      check('checkin_retention_policy_version_positive', sql`(version >= 1)`),
+      unique('checkin_retention_policy_version_uq').on(table.version),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const foundConfirmation = policeSchema
+  .table(
+    'found_confirmation',
+    {
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true }).notNull(),
+      correctedAt: timestamp('corrected_at', { withTimezone: true }),
+      foundByAccountId: uuid('found_by_account_id').notNull(),
+      foundByUnitRef: text('found_by_unit_ref').notNull(),
+      foundId: uuid('found_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      locationKind: text('location_kind').notNull(),
+      locationNote: text('location_note'),
+      matchId: uuid('match_id').notNull(),
+      note: text('note'),
+      state: text('state')
+        .notNull()
+        .default(sql`'ACTIVE'::text`),
+      taskReference: text('task_reference'),
+    },
+    (table) => [
+      check(
+        'found_confirmation_corrected_shape',
+        sql`((state = 'CORRECTED'::text) = (corrected_at IS NOT NULL))`,
+      ),
+      check(
+        'found_confirmation_kind_known',
+        sql`(location_kind = ANY (ARRAY['AT_MATCH_HOTEL'::text, 'OTHER_LOCATION'::text]))`,
+      ),
+      check(
+        'found_confirmation_location_shape',
+        sql`((location_kind = 'OTHER_LOCATION'::text) = ((location_note IS NOT NULL) AND ((length(location_note) >= 3) AND (length(location_note) <= 300))))`,
+      ),
+      foreignKey({
+        name: 'found_confirmation_match_fkey',
+        columns: [table.matchId],
+        foreignColumns: [policeMatch.matchId],
+      }).onDelete('restrict'),
+      check(
+        'found_confirmation_note_bounded',
+        sql`((note IS NULL) OR ((length(note) >= 1) AND (length(note) <= 500)))`,
+      ),
+      check(
+        'found_confirmation_state_known',
+        sql`(state = ANY (ARRAY['ACTIVE'::text, 'CORRECTED'::text]))`,
+      ),
+      check(
+        'found_confirmation_task_bounded',
+        sql`((task_reference IS NULL) OR ((length(task_reference) >= 1) AND (length(task_reference) <= 100)))`,
+      ),
+      uniqueIndex('found_confirmation_active_uq')
+        .on(table.matchId)
+        .where(sql`state = 'ACTIVE'::text`),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const foundCorrectionRequest = policeSchema
+  .table(
+    'found_correction_request',
+    {
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionNote: text('decision_note'),
+      foundId: uuid('found_id').notNull(),
+      matchId: uuid('match_id').notNull(),
+      reason: text('reason').notNull(),
+      requestId: uuid('request_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check(
+        'found_correction_decision_shape',
+        sql`((state = 'PENDING'::text) = ((decided_by_account_id IS NULL) AND (decided_at IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'found_correction_found_fkey',
+        columns: [table.foundId],
+        foreignColumns: [foundConfirmation.foundId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'found_correction_match_fkey',
+        columns: [table.matchId],
+        foreignColumns: [policeMatch.matchId],
+      }).onDelete('restrict'),
+      check(
+        'found_correction_note_bounded',
+        sql`((decision_note IS NULL) OR ((length(decision_note) >= 5) AND (length(decision_note) <= 500)))`,
+      ),
+      check(
+        'found_correction_reason_bounded',
+        sql`((length(reason) >= 10) AND (length(reason) <= 500))`,
+      ),
+      check(
+        'found_correction_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text]))`,
+      ),
+      check(
+        'found_correction_two_person',
+        sql`((decided_by_account_id IS NULL) OR (decided_by_account_id <> requested_by_account_id))`,
+      ),
+      uniqueIndex('found_correction_pending_uq')
+        .on(table.matchId)
+        .where(sql`state = 'PENDING'::text`),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const falseMatchRequest = policeSchema
+  .table(
+    'false_match_request',
+    {
+      decidedAt: timestamp('decided_at', { withTimezone: true }),
+      decidedByAccountId: uuid('decided_by_account_id'),
+      decisionNote: text('decision_note'),
+      matchId: uuid('match_id').notNull(),
+      reasonCode: text('reason_code').notNull(),
+      reasonNote: text('reason_note').notNull(),
+      requestId: uuid('request_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedAt: timestamp('requested_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+    },
+    (table) => [
+      check(
+        'false_match_decision_note_bounded',
+        sql`((decision_note IS NULL) OR ((length(decision_note) >= 5) AND (length(decision_note) <= 500)))`,
+      ),
+      check(
+        'false_match_decision_shape',
+        sql`((state = 'PENDING'::text) = ((decided_by_account_id IS NULL) AND (decided_at IS NULL)))`,
+      ),
+      foreignKey({
+        name: 'false_match_match_fkey',
+        columns: [table.matchId],
+        foreignColumns: [policeMatch.matchId],
+      }).onDelete('restrict'),
+      check(
+        'false_match_note_bounded',
+        sql`((length(reason_note) >= 10) AND (length(reason_note) <= 500))`,
+      ),
+      check(
+        'false_match_reason_known',
+        sql`(reason_code = ANY (ARRAY['WRONG_NUMBER_ENTERED'::text, 'IDENTIFIER_USED_BY_ANOTHER'::text, 'IDENTITY_DISPROVED'::text, 'OTHER_VERIFIED_REASON'::text]))`,
+      ),
+      check(
+        'false_match_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REJECTED'::text]))`,
+      ),
+      check(
+        'false_match_two_person',
+        sql`((decided_by_account_id IS NULL) OR (decided_by_account_id <> requested_by_account_id))`,
+      ),
+      uniqueIndex('false_match_pending_uq')
+        .on(table.matchId)
+        .where(sql`state = 'PENDING'::text`),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const bootstrapCode = policeSchema
+  .table(
+    'bootstrap_code',
+    {
+      accountId: uuid('account_id').notNull(),
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      codeHash: bytea('code_hash').notNull(),
+      codeId: uuid('code_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      consumedAt: timestamp('consumed_at', { withTimezone: true }),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hashKeyVersion: text('hash_key_version').notNull(),
+      invalidatedAt: timestamp('invalidated_at', { withTimezone: true }),
+      issuedAt: timestamp('issued_at', { withTimezone: true }).notNull(),
+      lockedUntil: timestamp('locked_until', { withTimezone: true }),
+      phoneVersion: integer('phone_version').notNull(),
+      purpose: text('purpose').notNull(),
+    },
+    (table) => [
+      check('bootstrap_code_attempts_bounded', sql`((attempts >= 0) AND (attempts <= 3))`),
+      check('bootstrap_code_phone_version_positive', sql`(phone_version >= 1)`),
+      check(
+        'bootstrap_code_purpose_known',
+        sql`(purpose = ANY (ARRAY['ACCOUNT_ACTIVATION'::text, 'PASSWORD_RESET'::text]))`,
+      ),
+      check(
+        'bootstrap_code_terminal_shape',
+        sql`((consumed_at IS NULL) OR (invalidated_at IS NULL))`,
+      ),
+      check('bootstrap_code_ttl_derived', sql`(expires_at = (issued_at + '00:05:00'::interval))`),
+      index('bootstrap_code_account_idx').on(table.accountId, table.issuedAt.desc().nullsFirst()),
+      uniqueIndex('bootstrap_code_live_uq')
+        .on(table.accountId, table.purpose)
+        .where(sql`(consumed_at IS NULL) AND (invalidated_at IS NULL)`),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const wantedExportJob = policeSchema
+  .table(
+    'wanted_export_job',
+    {
+      contentHash: text('content_hash'),
+      expiresAt: timestamp('expires_at', { withTimezone: true }),
+      failureReason: text('failure_reason'),
+      filters: jsonb('filters')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      fullIdentifier: boolean('full_identifier')
+        .notNull()
+        .default(sql`false`),
+      jobId: uuid('job_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      purpose: text('purpose').notNull(),
+      readyAt: timestamp('ready_at', { withTimezone: true }),
+      requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      rowCount: integer('row_count'),
+      state: text('state')
+        .notNull()
+        .default(sql`'QUEUED'::text`),
+      storageKey: text('storage_key'),
+      taskReference: text('task_reference').notNull(),
+    },
+    (table) => [
+      check('wanted_export_filters_sanitised', sql`(NOT platform.contains_denied_key(filters))`),
+      check(
+        'wanted_export_purpose_bounded',
+        sql`((length(purpose) >= 10) AND (length(purpose) <= 500))`,
+      ),
+      check(
+        'wanted_export_ready_shape',
+        sql`((state = 'COMPLETED'::text) = ((ready_at IS NOT NULL) AND (storage_key IS NOT NULL) AND (row_count IS NOT NULL)))`,
+      ),
+      check('wanted_export_revision_non_negative', sql`(revision >= 0)`),
+      check('wanted_export_row_cap', sql`((row_count IS NULL) OR (row_count <= 10000))`),
+      check(
+        'wanted_export_state_known',
+        sql`(state = ANY (ARRAY['QUEUED'::text, 'RUNNING'::text, 'COMPLETED'::text, 'FAILED'::text, 'EXPIRED'::text]))`,
+      ),
+      check(
+        'wanted_export_storage_key_shape',
+        sql`((storage_key IS NULL) OR (storage_key ~ '^police-exports/[0-9a-f-]{36}/[0-9a-f]{32}\\.xlsx$'::text))`,
+      ),
+      check(
+        'wanted_export_task_bounded',
+        sql`((length(task_reference) >= 1) AND (length(task_reference) <= 100))`,
+      ),
+      check(
+        'wanted_export_ttl_derived',
+        sql`(((ready_at IS NULL) AND (expires_at IS NULL)) OR (expires_at = (ready_at + '01:00:00'::interval)))`,
+      ),
+      index('wanted_export_requester_idx').on(
+        table.requestedByAccountId,
+        table.requestedAt.desc().nullsFirst(),
+      ),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const wantedExportGrant = policeSchema
+  .table(
+    'wanted_export_grant',
+    {
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      grantId: uuid('grant_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      issuedAt: timestamp('issued_at', { withTimezone: true }).notNull(),
+      issuedByAccountId: uuid('issued_by_account_id').notNull(),
+      jobId: uuid('job_id').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'wanted_export_grant_job_fkey',
+        columns: [table.jobId],
+        foreignColumns: [wantedExportJob.jobId],
+      }).onDelete('restrict'),
+      check(
+        'wanted_export_grant_ttl_derived',
+        sql`(expires_at = (issued_at + '00:05:00'::interval))`,
+      ),
+      index('wanted_export_grant_job_idx').on(table.jobId, table.issuedAt.desc().nullsFirst()),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const exactSearchAttempt = policeSchema
+  .table(
+    'exact_search_attempt',
+    {
+      accountId: uuid('account_id').notNull(),
+      attemptId: uuid('attempt_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      attemptedAt: timestamp('attempted_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      deviceRef: text('device_ref'),
+      found: boolean('found').notNull(),
+      searchKind: text('search_kind').notNull(),
+    },
+    (table) => [
+      check(
+        'exact_search_device_bounded',
+        sql`((device_ref IS NULL) OR ((length(device_ref) >= 1) AND (length(device_ref) <= 128)))`,
+      ),
+      check(
+        'exact_search_kind_known',
+        sql`(search_kind = ANY (ARRAY['REGISTRATION_NUMBER'::text, 'MATCH_ID'::text]))`,
+      ),
+      index('exact_search_account_idx').on(table.accountId, table.attemptedAt.desc().nullsFirst()),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const policeContact = policeSchema
+  .table(
+    'police_contact',
+    {
+      accountId: uuid('account_id').notNull(),
+      approvedByAccountId: uuid('approved_by_account_id').notNull(),
+      contactId: uuid('contact_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      isCurrent: boolean('is_current')
+        .notNull()
+        .default(sql`true`),
+      phoneCiphertext: bytea('phone_ciphertext').notNull(),
+      phoneKeyVersion: text('phone_key_version').notNull(),
+      phoneMasked: text('phone_masked').notNull(),
+      phoneVersion: integer('phone_version').notNull(),
+      phoneWrappedDek: bytea('phone_wrapped_dek').notNull(),
+      verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    },
+    (table) => [
+      check('police_contact_mask_shape', sql`(phone_masked ~ '^\\*{4,}[0-9]{4}$'::text)`),
+      check('police_contact_version_positive', sql`(phone_version >= 1)`),
+      unique('police_contact_version_uq').on(table.accountId, table.phoneVersion),
+      uniqueIndex('police_contact_current_uq')
+        .on(table.accountId)
+        .where(sql`is_current IS TRUE`),
+      pgPolicy('police_realm_only', {
+        to: ['prsystem_police'],
+        using: sql`(platform.current_realm() = 'police'::text)`,
+        withCheck: sql`(platform.current_realm() = 'police'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 export const DECLARED_TABLES = [
   idempotencyKey,
   outboxEvent,
@@ -10757,4 +11916,25 @@ export const DECLARED_TABLES = [
   retentionLegalHold,
   reportExportJob,
   reportExportGrant,
+  // Phase 18.
+  wantedPerson,
+  wantedIdentityRevision,
+  wantedCase,
+  wantedCaseEvent,
+  policeMatch,
+  matchCaseLink,
+  matchEvent,
+  districtAlertGroup,
+  matchAlert,
+  alertDelivery,
+  escalationPolicy,
+  checkinRetentionPolicy,
+  foundConfirmation,
+  foundCorrectionRequest,
+  falseMatchRequest,
+  bootstrapCode,
+  wantedExportJob,
+  wantedExportGrant,
+  exactSearchAttempt,
+  policeContact,
 ] as const;

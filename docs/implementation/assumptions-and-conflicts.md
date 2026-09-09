@@ -1095,6 +1095,70 @@ recorded so a reviewer can see where a judgement was made.
   production adapter answers `DISABLED` behind `INT-STORAGE-01` and an export fails closed with a
   recorded reason rather than writing a file nowhere (CLAUDE.md §9).
 
+### 3.22 Phase 18 scope alignments — approved requirements, implemented
+
+Implementation decisions taken inside the approved requirements. None changes a requirement; each is
+recorded so a reviewer can see where a judgement was made.
+
+- **A-P18-1 — a wanted person carries two keyed tokens of one number.** doc 13 §6.3 asks for a keyed
+  token for uniqueness and exact search; doc 13 §8.1 asks matching to compare the check-in's token
+  with the wanted record's. Those are different keys: `lookup.police_identity` is this schema's own
+  identity key, and `lookup.identity` is the one a check-in event carries. So the row holds both —
+  the first makes a person unique and answers an officer's search, the second is what a match
+  compares — and a leak of either cannot be joined to the other side's index.
+- **A-P18-2 — a rotated key is not a match.** The comparison is on the token, the namespace *and*
+  the key version. A token derived under a rotated key is a different value, and treating it as
+  equal would be a false positive on the one comparison doc 13 §8.1 requires to be exact. Re-deriving
+  wanted tokens after a rotation is therefore a migration, not a silent fallback, and none is needed
+  yet because no key has rotated.
+- **A-P18-3 — three functions cross between the hotel world and the Police one, and nothing else
+  does.** A check-in has to be compared against wanted people, a newly activated case has to be
+  swept against the guests in hotels right now, and doc 13 §4.1 approves one all-hotel check-in
+  list. Each is a `SECURITY DEFINER` function owned by the login-less function owner and granted to
+  exactly one runtime role. The matcher answers a match id or nothing; the sweep answers only for a
+  token the caller already holds; the list answers the approved columns.
+- **A-P18-4 — both matching triggers call the same function.** doc 13 §8.3 has two: the check-in and
+  the case activation. They are one implementation, so the two cannot drift into creating different
+  matches, and the activation sweep cannot reach a stay the check-in path would not have matched.
+- **A-P18-5 — the matcher is a consumer, not the outbox relay.** It claims its own consumption of
+  each `stay.checked_in` event under the name `police.matcher` rather than claiming the delivery row,
+  because the relay owns that and other consumers will want the same event. A redelivery, a second
+  worker or a replayed batch therefore produces one match and one alert.
+- **A-P18-6 — `LOCATION_STALE` is derived, not typed in.** doc 13 §9.2 requires the system to
+  distinguish a guest who left before anybody arrived from a False Match. A sweep asks which
+  unresolved matches are about a stay that has ended and resolves exactly those, so no officer has to
+  assert it and no new permission exists to assert it with.
+- **A-P18-7 — the exact search records the attempt even when it finds nothing.** doc 13 §9 requires
+  the unsuccessful attempts to be audited and rate-limited, so the refusal is raised *after* the
+  transaction that recorded the attempt commits. A search that threw inside its own transaction would
+  roll back the record of itself, and the limiter would count only successes.
+- **A-P18-8 — the Police realm is a deployment capability with its own credential.** `POLICE_ENABLED`
+  and `POLICE_DATABASE_URL` follow the scheduler's shape, and default **off** everywhere including
+  production: doc 13 §3 and ADR-0017 §6 treat the Police portal as a separate concern, so an API that
+  does not serve it is a normal arrangement rather than a misconfiguration. Enabled with no
+  credential, or a credential with the capability off, is still refused at startup.
+- **A-P18-9 — sign-in takes a realm.** Phase 04's `signIn` was hard-coded to the Hotel realm because
+  it had one population. doc 13 §5 gives the Police portal its own password login, so the realm is a
+  parameter of the lookup — and a Hotel address is refused at the Police sign-in exactly as a Police
+  address is refused at the Hotel one.
+- **A-P18-10 — `WANTED_EXPORT_FULL_IDENTIFIER` is grantable and is not a matrix row.** doc 13 §12.2
+  makes it a second permission an exporting Police Admin must also hold; it gates no action of its
+  own. It is therefore in what an Admin may be granted, in no cell of doc 18 §6, and checked by the
+  export command on top of the row and the step-up.
+- **A-P18-11 — the Police account's phone is a Police-schema row.** doc 13 §10.2 sends an SMS only to
+  a number a Police Admin approved and verified, and doc 13 §5.3 binds a bootstrap code to the phone
+  version it was sent to. The number is envelope-encrypted under the Police key scope and versioned,
+  so a number changed after a code was issued invalidates that code by construction.
+- **A-P18-12 — the Wanted Case export is built inside its command.** Phase 17's exports are queued
+  because a hotel's registry can be ten thousand rows of a live list; this one is a bounded read of
+  this schema's own tables, and doc 13 §12.3 asks for a short-lived link rather than a job queue. The
+  row cap is enforced before anything is built, and the file still lives an hour behind a
+  five-minute link.
+- **A-P18-13 — the escalation timer and the historical check-in search are configuration rows that do
+  not exist.** doc 13 §4.1 and §10.1 leave both to written ЦЕГ approval. Each is implemented as the
+  whole operation and disabled by the absence of its row, so production cannot acquire either by
+  deploying code — and neither can be enabled without an approved value being recorded.
+
 ---
 
 ## 4. P1 configuration register

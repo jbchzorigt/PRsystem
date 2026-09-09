@@ -28,6 +28,7 @@ import {
   selectHotelPayout,
   selectObjectStorage,
 } from './index';
+import { SimulatedSms, UnavailableSms, selectSms } from './sms.port';
 import { greatCircleMetres } from './index';
 import type { PortContext, PortResult } from './index';
 
@@ -640,5 +641,72 @@ describe('ObjectStoragePort simulator', () => {
     ).toEqual(expected);
     expect(selectObjectStorage('production')).toBeInstanceOf(UnavailableObjectStorage);
     expect(selectObjectStorage('test')).toBeInstanceOf(SimulatedObjectStorage);
+  });
+});
+
+describe('SmsPort simulator (EXT-05)', () => {
+  const recipients = [
+    { recipientRef: 'admin-1', phone: '+97699001122' },
+    { recipientRef: 'officer-1', phone: '+97699003344' },
+  ];
+  const body = 'Шинэ Match alert. РД: АА00112233.\nPolice portal-д нэвтэрч шалгана уу.';
+
+  it('sends one message per recipient and answers the same delivery for a repeated job', async () => {
+    const port = new SimulatedSms();
+    expect(port.id).toBe('sms');
+    expect(port.mode).toBe('simulator');
+    const sent = ok(await port.send({ jobId: 'job-1', recipients, body }, ctx));
+    expect(sent.messages.map((one) => one.recipientRef)).toEqual(['admin-1', 'officer-1']);
+    expect(new Set(sent.messages.map((one) => one.providerMessageId)).size).toBe(2);
+
+    // A retry of one job is not a second SMS to a police officer's phone.
+    const again = ok(await port.send({ jobId: 'job-1', recipients, body }, ctx));
+    expect(again).toEqual(sent);
+    expect(port.size).toBe(1);
+    expect(port.bodyFor('+97699003344')).toBe(body);
+  });
+
+  it('reports a status only for a message it sent, and moves it only on a verified callback', async () => {
+    const port = new SimulatedSms();
+    const sent = ok(await port.send({ jobId: 'job-2', recipients: [recipients[0]!], body }, ctx));
+    const id = sent.messages[0]!.providerMessageId;
+    expect(ok(await port.queryStatus(id, ctx))).toEqual({ status: 'SENT' });
+    expect(err(await port.queryStatus('sim-sms-9999', ctx))).toEqual({
+      kind: 'REJECTED',
+      providerCode: 'UnknownMessage',
+    });
+
+    expect(err(await port.verifyCallback({ providerMessageId: id }, ctx))).toEqual({
+      kind: 'REJECTED',
+      providerCode: 'UnverifiedCallback',
+    });
+    expect(
+      ok(await port.verifyCallback({ providerMessageId: id, status: 'DELIVERED' }, ctx)),
+    ).toEqual({ providerMessageId: id, status: 'DELIVERED' });
+    expect(ok(await port.queryStatus(id, ctx))).toEqual({ status: 'DELIVERED' });
+  });
+
+  it('distinguishes a transport failure from a refusal, and sends nothing on one', async () => {
+    const port = new SimulatedSms();
+    port.failNext();
+    expect(err(await port.send({ jobId: 'job-3', recipients, body }, ctx))).toEqual({
+      kind: 'UNAVAILABLE',
+      retryable: true,
+    });
+    expect(port.size).toBe(0);
+  });
+
+  it('is disabled in production, and sends nothing at all', async () => {
+    const disabled = new UnavailableSms();
+    expect(disabled.mode).toBe('adapter');
+    const expected = { kind: 'DISABLED', gate: 'EXT-05' };
+    expect(err(await disabled.send({ jobId: 'job-4', recipients, body }, ctx))).toEqual(expected);
+    expect(err(await disabled.queryStatus('sim-sms-0001', ctx))).toEqual(expected);
+    expect(err(await disabled.verifyCallback({}, ctx))).toEqual(expected);
+    expect(err(await disabled.execute({ jobId: 'job-5', recipients, body }, ctx))).toEqual(
+      expected,
+    );
+    expect(selectSms('production')).toBeInstanceOf(UnavailableSms);
+    expect(selectSms('test')).toBeInstanceOf(SimulatedSms);
   });
 });

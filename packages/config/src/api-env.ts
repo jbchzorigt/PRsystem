@@ -29,8 +29,18 @@ import {
 export type SchedulerConfig =
   { readonly enabled: false } | { readonly enabled: true; readonly databaseUrl: string };
 
+/**
+ * Phase 18. The Police realm is a capability with its own restricted login, and
+ * a deployment either holds it or does not: `prsystem_police` reaches no hotel
+ * table, and the API's ordinary credential reaches no Police table, so there is
+ * no way to serve the Police portal on the connection that serves the rest.
+ */
+export type PoliceConfig =
+  { readonly enabled: false } | { readonly enabled: true; readonly databaseUrl: string };
+
 export interface ApiEnv extends Env {
   readonly scheduler: SchedulerConfig;
+  readonly police: PoliceConfig;
 }
 
 /**
@@ -47,6 +57,19 @@ export function resolveSchedulerEnabled(appEnv: Env['APP_ENV'], raw: string | un
   return raw === 'true';
 }
 
+/**
+ * Whether this API deployment serves the Police portal.
+ *
+ * Unlike the scheduler, this defaults **off everywhere including production**:
+ * doc 13 §3 and ADR-0017 §6 treat the Police realm as a separate deployment
+ * concern, and a production API that happens not to serve it is a normal
+ * arrangement rather than a misconfiguration. Turning it on without the
+ * credential is still refused.
+ */
+export function resolvePoliceEnabled(_appEnv: Env['APP_ENV'], raw: string | undefined): boolean {
+  return raw === 'true';
+}
+
 export const apiEnvSchema = envSchema
   .extend({
     /** `true` / `false`. Absent means the environment-specific default above. */
@@ -58,6 +81,16 @@ export const apiEnvSchema = envSchema
      * its own authorisation is exactly the arrangement D-09 exists to prevent.
      */
     SCHEDULER_DATABASE_URL: postgresUrl.optional(),
+    /** `true` / `false`. Absent means off, in every environment. */
+    POLICE_ENABLED: z.enum(['true', 'false']).optional(),
+    /**
+     * The Police principal's connection string (doc 13 §3, ADR-0017 §6).
+     *
+     * A separate credential because it is a separate boundary: it holds the
+     * `police` schema and the account tables the pipeline reads, and nothing of
+     * a hotel's own data.
+     */
+    POLICE_DATABASE_URL: postgresUrl.optional(),
   })
   .superRefine((value, ctx) => {
     const enabled = resolveSchedulerEnabled(value.APP_ENV, value.SCHEDULER_ENABLED);
@@ -88,10 +121,35 @@ export const apiEnvSchema = envSchema
           'remove the credential or set SCHEDULER_ENABLED=true',
       });
     }
+
+    // The same two mistakes, for the Police credential. A capability advertised
+    // with nothing behind it fails when the first officer signs in; a live
+    // Police credential in a deployment that will never use it is privileged
+    // configuration nobody is accounting for.
+    const policeEnabled = resolvePoliceEnabled(value.APP_ENV, value.POLICE_ENABLED);
+    const policeUrl = value.POLICE_DATABASE_URL;
+    if (policeEnabled && (policeUrl === undefined || policeUrl.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['POLICE_DATABASE_URL'],
+        message:
+          'POLICE_DATABASE_URL is required when the Police realm is enabled; ' +
+          'set POLICE_ENABLED=false for a deployment that does not serve the Police portal',
+      });
+    }
+    if (!policeEnabled && policeUrl !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['POLICE_DATABASE_URL'],
+        message:
+          'POLICE_DATABASE_URL is set while the Police realm is disabled; ' +
+          'remove the credential or set POLICE_ENABLED=true',
+      });
+    }
   });
 
 /** Secret fields specific to the API contract. */
-const API_SECRET_KEYS = ['SCHEDULER_DATABASE_URL'] as const;
+const API_SECRET_KEYS = ['SCHEDULER_DATABASE_URL', 'POLICE_DATABASE_URL'] as const;
 
 /**
  * Parse and validate the API environment.
@@ -109,7 +167,13 @@ export function loadApiEnv(source: NodeJS.ProcessEnv = process.env): ApiEnv {
     throw new EnvValidationError(formatIssues(source, parsed.error.issues, API_SECRET_KEYS));
   }
 
-  const { SCHEDULER_ENABLED: _flag, SCHEDULER_DATABASE_URL: url, ...rest } = parsed.data;
+  const {
+    SCHEDULER_ENABLED: _flag,
+    SCHEDULER_DATABASE_URL: url,
+    POLICE_ENABLED: _policeFlag,
+    POLICE_DATABASE_URL: policeUrl,
+    ...rest
+  } = parsed.data;
   const enabled = resolveSchedulerEnabled(parsed.data.APP_ENV, parsed.data.SCHEDULER_ENABLED);
 
   // `enabled && url !== undefined` is guaranteed by the refinement above; the
@@ -117,7 +181,13 @@ export function loadApiEnv(source: NodeJS.ProcessEnv = process.env): ApiEnv {
   const scheduler: SchedulerConfig =
     enabled && url !== undefined ? { enabled: true, databaseUrl: url } : { enabled: false };
 
-  return { ...rest, scheduler };
+  const policeEnabled = resolvePoliceEnabled(parsed.data.APP_ENV, parsed.data.POLICE_ENABLED);
+  const police: PoliceConfig =
+    policeEnabled && policeUrl !== undefined
+      ? { enabled: true, databaseUrl: policeUrl }
+      : { enabled: false };
+
+  return { ...rest, scheduler, police };
 }
 
 let cached: ApiEnv | undefined;

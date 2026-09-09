@@ -1,5 +1,10 @@
 /**
- * A minimal, dependency-free `.xlsx` writer (doc 12 §7, doc 23 §8).
+ * A minimal, dependency-free `.xlsx` writer (doc 12 §7, doc 23 §8, doc 13 §12.2).
+ *
+ * It lives outside every module because three of them need the same bytes and
+ * none of them owns spreadsheets: Phase 17's registry and financial exports and
+ * Phase 18's Wanted Case export all produce one. It knows nothing about a
+ * hotel, a guest or a case — it takes strings the caller already formatted.
  *
  * An `.xlsx` is a ZIP of XML parts, and this writes exactly the four a
  * spreadsheet needs: the content types, the package relationship, the workbook

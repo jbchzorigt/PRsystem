@@ -12,6 +12,15 @@ import { GROUP_ROLES, LOGIN_PRINCIPALS, projectRoles } from './roles';
  * owner, named here.
  */
 
+/**
+ * Two Phase 18 signatures long enough that writing them inline would wrap in a
+ * way `pg_get_function_identity_arguments` does not.
+ */
+const POLICE_MATCHER =
+  'police.record_check_in_match(p_stay_id uuid, p_hotel_id uuid, p_room_number text, p_check_in_recorded_at timestamp with time zone, p_actual_check_in_at timestamp with time zone, p_detected_at timestamp with time zone, p_eligibility text, p_namespace text, p_token text, p_key_version text)';
+const POLICE_CHECK_IN_LIST =
+  'police.check_in_list(p_from timestamp with time zone, p_to timestamp with time zone, p_active_only boolean, p_limit integer, p_offset integer)';
+
 export const KERNEL_OWNERS = {
   /** DDL owner. Owns everything not listed as an exception below. */
   migrate: 'prsystem_migrate',
@@ -167,6 +176,17 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'platform.unresolved_refund_requests(p_limit integer, p_now timestamp with time zone)':
     KERNEL_OWNERS.maintenanceFn,
   'platform.restaurant_attempt_of_invoice(p_invoice_id text)': KERNEL_OWNERS.maintenanceFn,
+
+  // Phase 18. The three readings that cross between the hotel world and the
+  // Police one, and the only ones that do. Each is granted to exactly one
+  // runtime role: the matcher to the worker, the sweep and the check-in list to
+  // the Police role, and nothing here is reachable from the API role at all.
+  [POLICE_MATCHER]: KERNEL_OWNERS.maintenanceFn,
+  'police.active_stays_for_match(p_namespace text, p_token text, p_key_version text)':
+    KERNEL_OWNERS.maintenanceFn,
+  'police.stale_match_locations(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+  'police.pending_check_in_events(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+  [POLICE_CHECK_IN_LIST]: KERNEL_OWNERS.maintenanceFn,
 
   // Phase 07. The inventory ledger's two triggers: the only path by which a
   // warehouse or room balance changes, on tables no runtime may write. They

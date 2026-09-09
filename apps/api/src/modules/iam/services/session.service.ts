@@ -45,11 +45,23 @@ export class SessionService extends IamServiceBase {
    * missing credential and a suspended account are indistinguishable to the
    * caller, so the surface cannot be used to discover who has an account.
    */
-  async signIn(email: string, password: string, request: RequestContext): Promise<SignInResult> {
+  /**
+   * `realm` defaults to `hotel` because Phase 04 had one population that signs
+   * in. Phase 18 adds a second: doc 13 §5 gives the Police portal its own
+   * password login, on accounts of the Police realm — and realms never merge
+   * (doc 05 §1.1), so the realm is part of the lookup rather than something the
+   * address is trusted to imply.
+   */
+  async signIn(
+    email: string,
+    password: string,
+    request: RequestContext,
+    realm: 'hotel' | 'police' = 'hotel',
+  ): Promise<SignInResult> {
     const params = this.parameters;
     return this.inAccountScope(request, async (uow) => {
       const accounts = new AccountRepository(uow);
-      const account = await accounts.findByEmail('hotel', email);
+      const account = await accounts.findByEmail(realm, email);
       const stored =
         account === undefined ? undefined : await accounts.credentialFor(account.accountId);
 

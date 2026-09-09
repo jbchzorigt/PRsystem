@@ -7,11 +7,15 @@ import { createOnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
 import type { OnboardingWorkerRuntime } from '@prsystem/api/onboarding-worker';
 import { createReportingWorkerRuntime } from '@prsystem/api/reporting-worker';
 import type { ReportingWorkerRuntime } from '@prsystem/api/reporting-worker';
+import { createPoliceMatcherRuntime } from '@prsystem/api/police-worker';
+import type { PoliceMatcherRuntime } from '@prsystem/api/police-worker';
 import { QUEUE_NAMES, connectionFromUrl, workerOptions } from './queues';
 import { startOnboardingConsumers } from './jobs/onboarding';
 import type { OnboardingConsumers } from './jobs/onboarding';
 import { startReportingConsumers } from './jobs/reporting';
 import type { ReportingConsumers } from './jobs/reporting';
+import { startPoliceConsumers } from './jobs/police';
+import type { PoliceConsumers } from './jobs/police';
 import { startWorker } from './startup';
 
 async function main(): Promise<void> {
@@ -22,6 +26,7 @@ async function main(): Promise<void> {
   });
   let onboarding: OnboardingConsumers | undefined;
   let reporting: ReportingConsumers | undefined;
+  let police: PoliceConsumers | undefined;
 
   // Startup order is enforced by startWorker: the security preconditions run to
   // completion before Redis is contacted or any consumer is constructed.
@@ -97,10 +102,30 @@ async function main(): Promise<void> {
     throw error;
   }
 
+  // Phase 18. The matcher runs on the worker's own login and holds no
+  // privilege on any Police table — what it may do is call one function.
+  const policeRuntime: PoliceMatcherRuntime = createPoliceMatcherRuntime({
+    databaseUrl: config.DATABASE_URL,
+  });
+  try {
+    police = await startPoliceConsumers({
+      connection: connectionFromUrl(config.REDIS_URL),
+      runtime: policeRuntime,
+      logger,
+      options: { ...(config.QUEUE_PREFIX === undefined ? {} : { prefix: config.QUEUE_PREFIX }) },
+    });
+  } catch (error) {
+    await reporting.close();
+    await onboarding.close();
+    await started.close();
+    throw error;
+  }
+
   logger.info({ queues: Object.values(QUEUE_NAMES) }, 'worker started');
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'worker shutting down');
+    await police?.close();
     await reporting?.close();
     await onboarding?.close();
     await started.close();

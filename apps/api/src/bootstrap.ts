@@ -137,6 +137,20 @@ export async function createApp(
       reporting: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
       },
+      // Phase 18. Only when this deployment holds the Police credential, and
+      // then on that credential — never on the API's own (doc 13 §3).
+      ...(config.police.enabled
+        ? {
+            police: {
+              config: { databaseUrl: config.police.databaseUrl, appEnv: config.APP_ENV },
+              keys: selectKeyManagement({
+                appEnv: config.APP_ENV,
+                kmsAdapter: config.KMS_ADAPTER,
+                ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
+              }),
+            },
+          }
+        : {}),
       ownedPools: [subscriptionPool],
     }),
     new FastifyAdapter(),

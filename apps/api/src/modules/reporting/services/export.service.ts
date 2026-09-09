@@ -11,7 +11,7 @@ import {
   fileExpiry,
   urlExpiry,
 } from '../domain/reporting';
-import { buildWorkbook } from './workbook';
+import { buildWorkbook } from '../../../common/workbook';
 import type { CommandActor, ReportingDependencies, RequestContext } from './reporting-context';
 import {
   DASHBOARD_FULL,

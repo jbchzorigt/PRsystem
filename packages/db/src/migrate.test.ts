@@ -247,13 +247,14 @@ describe('migration runner', () => {
     // 0009_stay_reception, 0010_cleaner_checkout, 0011_folio_deposit_payment,
     // 0012_shift_cash_expense, 0013_guest_identity_discovery,
     // 0014_online_booking_inventory, 0015_booking_settlement,
-    // 0016_restaurant_ordering, 0017_verified_reviews, 0018_registry_reporting.
-    expect(outcome.appliedAfter).toBe(19);
+    // 0016_restaurant_ordering, 0017_verified_reviews, 0018_registry_reporting,
+    // 0019_police_monitoring.
+    expect(outcome.appliedAfter).toBe(20);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
-      expect(freshLedger).toHaveLength(19);
+      expect(freshLedger).toHaveLength(20);
     } finally {
       await pool.end();
     }
@@ -269,7 +270,7 @@ describe('migration runner', () => {
 
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
-    expect(upgradeOutcome.appliedAfter).toBe(19);
+    expect(upgradeOutcome.appliedAfter).toBe(20);
   }, 60000);
 
   it('holds the accepted Phase 03 migrations byte-for-byte, and only those', () => {
@@ -316,7 +317,7 @@ describe('migration runner', () => {
     const toHead = await runMigrations(phase04Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 2,
-      after: 19,
+      after: 20,
     });
   }, 120000);
 
@@ -336,15 +337,15 @@ describe('migration runner', () => {
     const toHead = await runMigrations(phase05Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 3,
-      after: 19,
+      after: 20,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase05Url, ledgerRows);
     const repeat = await runMigrations(phase05Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 19,
-      after: 19,
+      before: 20,
+      after: 20,
     });
     expect(await withPool(phase05Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -386,15 +387,15 @@ describe('migration runner', () => {
     const phase06 = await runMigrations(phase06Url);
     expect({ before: phase06.appliedBefore, after: phase06.appliedAfter }).toEqual({
       before: 7,
-      after: 19,
+      after: 20,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase06Url, ledgerRows);
     const repeat = await runMigrations(phase06Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 19,
-      after: 19,
+      before: 20,
+      after: 20,
     });
     expect(await withPool(phase06Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -471,7 +472,7 @@ describe('migration runner', () => {
         `SELECT n.nspname || '.' || c.relname AS table
            FROM pg_class c
            JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit', 'police')
             AND c.relkind IN ('r', 'p')
             AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
           ORDER BY 1`,
@@ -514,7 +515,7 @@ describe('migration runner', () => {
            JOIN pg_class c ON c.oid = a.attrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
            LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-          WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit', 'police')
             AND c.relkind IN ('r', 'p')
             AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
             AND a.attnum > 0 AND NOT a.attisdropped
@@ -552,7 +553,7 @@ describe('migration runner', () => {
            FROM pg_constraint con
            JOIN pg_class rel ON rel.oid = con.conrelid
            JOIN pg_namespace n ON n.oid = rel.relnamespace
-          WHERE n.nspname IN ('platform', 'audit', 'police_audit')
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit', 'police')
             AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = rel.oid)
           GROUP BY 1, 2 ORDER BY 1, 2`,
       );
@@ -566,7 +567,7 @@ describe('migration runner', () => {
 
       const indexes = await pool.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM pg_indexes
-          WHERE schemaname IN ('platform', 'audit', 'police_audit')`,
+          WHERE schemaname IN ('platform', 'audit', 'police_audit', 'police')`,
       );
       expect(Number(indexes.rows[0]?.n)).toBeGreaterThan(10);
     } finally {
@@ -621,7 +622,7 @@ describe('migration runner', () => {
           WHERE table_type = 'BASE TABLE'
             AND table_schema NOT IN ('pg_catalog', 'information_schema')
             AND NOT (table_schema = 'drizzle' AND table_name = '__drizzle_migrations')
-            AND table_schema NOT IN ('platform', 'audit', 'police_audit')`,
+            AND table_schema NOT IN ('platform', 'audit', 'police_audit', 'police')`,
       );
       expect(result.rows).toEqual([]);
     } finally {
@@ -632,8 +633,8 @@ describe('migration runner', () => {
   it('treats a second application as a safe no-op', async () => {
     const outcome = await runMigrations(freshUrl);
 
-    expect(outcome.appliedBefore).toBe(19);
-    expect(outcome.appliedAfter).toBe(19);
+    expect(outcome.appliedBefore).toBe(20);
+    expect(outcome.appliedAfter).toBe(20);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
@@ -886,7 +887,8 @@ describe('schema fingerprint sensitivity', () => {
       const live = await pool.query<{ table: string }>(
         `SELECT n.nspname || '.' || c.relname AS table
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname IN ('platform', 'audit', 'police_audit') AND c.relkind IN ('r', 'p')
+          WHERE n.nspname IN ('platform', 'audit', 'police_audit', 'police')
+            AND c.relkind IN ('r', 'p')
             AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)`,
       );
       const declared = DECLARED_TABLES.map((table) => {
@@ -1525,7 +1527,7 @@ describe('the migration runner requires the canonical migration login', () => {
     const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
     await expect(
       runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
-    ).resolves.toMatchObject({ appliedAfter: 19 });
+    ).resolves.toMatchObject({ appliedAfter: 20 });
   }, 180000);
 });
 
