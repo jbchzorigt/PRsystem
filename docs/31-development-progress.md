@@ -222,3 +222,11 @@ reconciliation, stock transfer, rollback/apply болон refill үлдсэн т
 skip-гүй (501.436 секунд)**, шинэ 16 тест, зургаан Chromium suite, 37 API хүсэлт,
 design/token шалгалтууд амжилттай. Strict UI audit 0 finding. Canonical guest
 opening/refill, variance/override, partial rollback болон Restaurant/Operation үлдсэн.
+
+## Stage 5 — version archive candidate
+
+[Published → Archived ба dependency хамгаалалт](52-minibar-version-archive.md)-ын
+API, Manager UI, immutable audit/proof болон 16 тест нэмэгдсэн. Локал 100 тест,
+долоон Chromium suite, 43 API хүсэлт, design/token шалгалт амжилттай. Автомат
+зөвшөөрлийн шалгалт GitHub нийтлэлтийг хаасан; PostgreSQL-ийн 485 тест ба CI
+хүлээгдэж байна. Энэ нэмэлт нийтлэгдээгүй; stage 5 бүхэлдээ дуусаагүй.

@@ -28,6 +28,7 @@ from prsystem.opening import OpeningService
 from prsystem.rooms import RoomService
 from prsystem.minibar import MinibarWarehouse
 from prsystem.minibar_templates import MinibarTemplates
+from prsystem.minibar_archive import MinibarArchive
 from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.readiness import ReadinessService
@@ -107,6 +108,10 @@ class MinibarConfigurationRequest(BaseModel):
         if self.target_mode=='OFF' and (self.target_template_id is not None or self.target_version_id is not None):
             raise ValueError('OFF has no target template')
         return self
+
+
+class MinibarArchiveCommand(MinibarTemplateCommand):
+    reason: str = Field(min_length=1,max_length=1000)
 
 
 class MinibarConfigurationCancel(MinibarTemplateCommand):
@@ -862,7 +867,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422,
                           'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409,
-                          'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_VERSION_IMMUTABLE':409,
+                          'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_ARCHIVE_BLOCKED':409,'TEMPLATE_VERSION_IMMUTABLE':409,
                           'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409,
                           'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
@@ -970,6 +975,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/default')
     def minibar_version_default(tenant_id: str, template_id: str, version_id: str, body: MinibarTemplateCommand, secret: Annotated[str, Depends(token)]):
         return templates.change(secret, tenant_id, template_id, 'DEFAULT', body.model_dump(exclude={'idempotency_key'}), body.idempotency_key, version_id)
+
+    @app.get('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/archive-preview')
+    def minibar_archive_preview(tenant_id: str, template_id: str, version_id: str, secret: Annotated[str, Depends(token)]):
+        return MinibarArchive(service).preview(secret,tenant_id,template_id,version_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/archive')
+    def minibar_archive(tenant_id: str, template_id: str, version_id: str, body: MinibarArchiveCommand, secret: Annotated[str, Depends(token)]):
+        return MinibarArchive(service).archive(secret,tenant_id,template_id,version_id,body.expected_revision,body.reason,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/minibar/products', status_code=201)
     def minibar_create_product(tenant_id: str, body: MinibarProductCreate, secret: Annotated[str, Depends(token)]):

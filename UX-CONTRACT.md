@@ -163,3 +163,13 @@ transfer confirmation is required; shortage/variance has no override button.
 Apply completes stock configuration only; cleanliness remains separate. Queue and
 plan failures support retry and ignore detached responses. See docs/51 and
 tests/browser/minibar-reconciliation.cjs.
+
+## Exact minibar version archive
+
+Version detail reuses shared forms, tables and status owners. Explicit preview
+loads grouped blocker counts, with retry and detached-response protection. Default
+and live references prevent the archive form. Reason and consequence acknowledgement
+are required; conflict retains input until explicit refresh/discard, unknown outcomes
+retain the command key. Success refreshes the same exact version and announces
+archive. Archived state has history/clone, with no Default/Publish/room-target action.
+Verification: test_minibar_archive.py and tests/browser/minibar-archive.cjs.
