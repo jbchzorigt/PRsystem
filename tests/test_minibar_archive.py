@@ -157,7 +157,8 @@ class MinibarArchiveTests(MinibarConfigurationCase):
 
     def test_stale_revision_and_invalid_reason_do_not_archive(self):
         self.another();self.assertEqual(self.archive(revision=1).json()['code'],'REVISION_CONFLICT')
-        self.assert_status(self.archive(reason=''),422);self.assert_status(self.archive(reason='  '),400)
+        self.assert_status(self.archive(reason=''),422)
+        invalid=self.assert_status(self.archive(reason='  '),422);self.assertEqual(invalid['code'],'INVALID_REQUEST')
         self.assertTrue(self.preview().json()['eligible'])
 
     def exact_stay_fixture(self):
