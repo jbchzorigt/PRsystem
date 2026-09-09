@@ -1,4 +1,4 @@
-# Canonical minibar reconciliation — stage 5 increment
+# Canonical minibar reconciliation — accepted stage 5 increment
 
 Manager prepares an exact pending configuration for an assigned current Cleaner.
 The server captures room stock from the immutable canonical ledger. The Cleaner
@@ -55,8 +55,14 @@ Shared forms own validation, CAS, idempotency, dirty state and retries. Detached
 loads are discarded, load failures remain retryable, and no sensitive state is
 persisted in browser storage.
 
-Candidate verification: local discovery has 569 tests, 100 executed and 469
-PostgreSQL tests skipped. Full PostgreSQL CI is required before acceptance.
+Accepted source `0e3b729b9f3d52b93ad2382fb4bfc64bebd77c9c` (tree
+`1d0fe36f503b1c7fd42b521c230fcaffc8b8b956`, identical to local `55eb802`)
+passed **569/569 backend tests without skips in 501.436 seconds**, including
+all 16 new reconciliation tests. [Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34311829855)
+also passed six Chromium suites, 37 actual browser/API command checks, design
+lint and shared-token checks. Strict local UI audit had zero findings.
+Local discovery had 100 executed tests and 469 database tests skipped; the linked
+remote run is the acceptance evidence.
 Six Chromium suites cover existing flows plus assignment/count/apply, validation,
 lost responses, queue recovery, keyboard and 320px layout. The new suite emits
 actual requests for validation against API models.

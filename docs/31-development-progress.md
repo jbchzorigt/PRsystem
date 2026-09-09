@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | [Агуулахын opening/purchase ledger ба Manager UI](48-minibar-warehouse.md), [Template Draft/Publish/Default](49-minibar-template-authoring.md) хоёр багц нийтлэгдэж, **537/537 PostgreSQL тест skip-гүй**, таван browser suite/API/design/token CI-аар баталгаажсан. [Room configuration хүсэлт/blocker/cancel](50-minibar-configuration-requests.md)-ийн нэмэлт нийтлэгдэж, **553/553 тест skip-гүй**, таван browser suite/API/design/token CI амжилттай. Шинэ 16 тест бүгд давсан; өрөөний reconciliation багц хэсэгчлэн хэвээр. Бодит reconciliation/refill, lifecycle/correction, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | [Агуулахын opening/purchase ledger ба Manager UI](48-minibar-warehouse.md), [Template Draft/Publish/Default](49-minibar-template-authoring.md) хоёр багц нийтлэгдэж, **537/537 PostgreSQL тест skip-гүй**, таван browser suite/API/design/token CI-аар баталгаажсан. [Room configuration хүсэлт/blocker/cancel](50-minibar-configuration-requests.md)-ийн нэмэлт нийтлэгдэж, **553/553 тест skip-гүй**, таван browser suite/API/design/token CI амжилттай. [Тооллого, full-plan atomic transfer/apply](51-minibar-reconciliation.md) нэмэлт **569/569 тест**, зургаан browser suite, 37 API хүсэлтээр баталгаажсан. Өрөөний reconciliation багц хэсэгчлэн: variance/override, partial rollback, canonical guest/refill, lifecycle/correction, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
@@ -213,9 +213,12 @@ template authoring хоёр бүрэн багц дээр энэ нэмэлт х�
 reconciliation, stock transfer, rollback/apply болон refill үлдсэн тул өрөөний
 тохиргооны том багцыг бүрэн дууссан гэж тооцоогүй.
 
-## Stage 5 — reconciliation candidate
+## Stage 5 — reconciliation increment acceptance
 
 [Canonical тооллого ба бүх шилжүүлэлтийг нэг transaction-аар хэрэгжүүлэх](51-minibar-reconciliation.md)
 нэмэлт бэлэн: OFF → ON, хувилбар солих, ON → OFF; зөрүү/нөөц хүрэлцээгүй
-үед хаалттай. 16 шинэ тесттэй, PostgreSQL CI хүлээгдэж байна. Canonical guest
+үед хаалттай. Source `0e3b729b9f3d52b93ad2382fb4bfc64bebd77c9c`,
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34311829855): **569/569 тест
+skip-гүй (501.436 секунд)**, шинэ 16 тест, зургаан Chromium suite, 37 API хүсэлт,
+design/token шалгалтууд амжилттай. Strict UI audit 0 finding. Canonical guest
 opening/refill, variance/override, partial rollback болон Restaurant/Operation үлдсэн.
