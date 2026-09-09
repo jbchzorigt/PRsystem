@@ -1,19 +1,26 @@
-# Online booking — local completion candidate
+# Online booking — verified mock implementation
 
-2026-09-08. **Implementation candidate, not an accepted stage-four release.**
+2026-09-09. **Implementation verified within the mock scope below.**
 Stage three remains accepted in its agreed mock boundary (docs/43).
 The user authorized unavailable external APIs to stay mocked. New source in this
-candidate has not run against PostgreSQL or been published to the remote branch.
-The last remote PostgreSQL evidence remains 480 passing tests (docs/46).
+candidate was published with explicit user approval to the public feature branch
+as `6f130d7d3932d388a5c1f64d608f47169f5b0096` (the same tree as local `5ea8d9b`).
+Final source `5493c788eceb5a13dfa469de12597b5e570fbfee` includes two CI fixes:
+unique global booker fixtures with isolated public searches, and consistent
+tenant scope in initial/retried customer booking responses. It passed **506/506
+backend tests without skips** on PostgreSQL in **367.685 seconds**, plus all three
+browser suites, generated API request validation, design lint and token checks.
+[CI evidence](https://github.com/jbchzorigt/PRsystem/actions/runs/34292660548).
+The follow-up commit updates documentation only; production gates remain below.
 
 | Workstream | Candidate implementation | Verification |
 | --- | --- | --- |
-| Terminal lifecycle | Unpaid cancellation; manual no-show after local cutoff; Manager hotel-caused cancellation; explicit category rank and zero-cost upgrade; paid contract preserved | New PostgreSQL tests authored, execution pending |
-| Guest access | Independent booker realm, mock phone OTP, password login/reset, revision-revoked sessions, own bookings, keyed phone lookup and encrypted phone | PostgreSQL tests pending; production fail-closed test passed |
-| Public catalog | Manager profile/category publication, Platform listing authority, active subscription/contract, category availability, date/location search and optional one-shot distance | PostgreSQL tests pending; browser search/login/review passed |
-| Refund review | Server cancellation preview; changed refund amount rolls back cancellation; original-payment mock reconciliation remains canonical | PostgreSQL preview test pending |
-| Settlement | Exact bank credit/refund evidence, provider fee separated from hotel net, immutable first eligibility, D+1 12:00 Ulaanbaatar maturity, immutable chargeback/net/commission adjustments | PostgreSQL tests pending |
-| Payout | Fresh Platform MFA and explicit permissions, verified beneficiary revision, immutable batches, pending/unknown reconciliation, failed-only new attempts, paid-source uniqueness, authoritative unsent-batch void and rebatch | Six local bank tests passed; PostgreSQL tests pending |
+| Terminal lifecycle | Unpaid cancellation; manual no-show after local cutoff; Manager hotel-caused cancellation; explicit category rank and zero-cost upgrade; paid contract preserved | PostgreSQL tests passed |
+| Guest access | Independent booker realm, mock phone OTP, password login/reset, revision-revoked sessions, own bookings, keyed phone lookup and encrypted phone | PostgreSQL and production fail-closed tests passed |
+| Public catalog | Manager profile/category publication, Platform listing authority, active subscription/contract, category availability, date/location search and optional one-shot distance | PostgreSQL and browser search/login/review tests passed |
+| Refund review | Server cancellation preview; changed refund amount rolls back cancellation; original-payment mock reconciliation remains canonical | PostgreSQL preview and rollback tests passed |
+| Settlement | Exact bank credit/refund evidence, provider fee separated from hotel net, immutable first eligibility, D+1 12:00 Ulaanbaatar maturity, immutable chargeback/net/commission adjustments | PostgreSQL tests passed |
+| Payout | Fresh Platform MFA and explicit permissions, verified beneficiary revision, immutable batches, pending/unknown reconciliation, failed-only new attempts, paid-source uniqueness, authoritative unsent-batch void and rebatch | Six local bank tests and PostgreSQL tests passed |
 | Interfaces | `/booking`, Reception Online destination, Manager profile/rank/publication, `/platform/booking`; shared forms, retry keys, validation, dirty guard and token privacy | Three browser suites and generated payload validation passed |
 
 ## Security and transaction boundaries
@@ -68,14 +75,18 @@ provisioning procedure. Application roles need minimum grants for migrations
 038–042; test grants demonstrate the required new table access, including the
 invoker trigger's insert/select on `booking_paid_source`.
 
-## Explicit remaining acceptance/release gates
+## Verification and publication
 
-- Execute all 506 backend tests against PostgreSQL with the restricted app role;
-  validate migration replay, tenant isolation, race and rollback cases.
-- Publish this exact reviewed candidate to the authorized feature branch and run
-  CI. Automatic approval review rejected new source disclosure to GitHub during
-  this task, despite the earlier branch/PR authorization. No alternate upload
-  route was attempted after that rejection; the candidate stays local.
+- All 506 backend tests executed against PostgreSQL with the restricted app role;
+  migration replay, tenant isolation, race and rollback checks passed.
+- Publication completed after the user explicitly approved public source disclosure.
+  [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34292660548) passed
+  on the authorized feature branch; the PR remains a draft. No merge or deployment.
+- Local discovery had 100 executed and 406 database-dependent skipped tests;
+  the remote PostgreSQL run above is the full backend acceptance evidence.
+
+## Explicit remaining release/integration gates
+
 - Real SMS/e-Mongolia, payment/refund/bank transport, image delivery, scheduling,
   production secret management and deployment remain external release work.
   Category inventory intentionally excludes minibar-configured rooms until the

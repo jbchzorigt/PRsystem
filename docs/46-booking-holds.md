@@ -183,8 +183,11 @@ Local: 88 executed, 392 PostgreSQL-dependent skipped. The subsequent documentati
 commit records validation. No-show, hotel cancellation,
 Manager upgrade, settlement/payout and staff/customer UI remain unfinished.
 
-## Local continuation candidate
+## Verified mock continuation
 
 Lifecycle, public booker/listing, settlement/payout and UI implementations are now
-tracked in [docs/47](47-booking-completion-candidate.md). Their PostgreSQL execution
-and publication are pending; the earlier 480-test CI result does not cover them.
+tracked in [docs/47](47-booking-completion-candidate.md). Publication was explicitly
+approved by the user. Source `5493c788eceb5a13dfa469de12597b5e570fbfee` passed
+**506 backend tests without skips**, plus browser/API/design/token checks in
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34292660548).
+The earlier 480-test result remains historical evidence for the refund checkpoint.

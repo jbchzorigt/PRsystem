@@ -1,5 +1,8 @@
 # Online booking — 4-р шатны domain суурь
 
+Historical domain checkpoint. The subsequent persistence, customer and finance
+implementation and its 506-test PostgreSQL evidence are recorded in [docs/47](47-booking-completion-candidate.md).
+
 2026-09-08. Бизнесийн эх сурвалж: docs/09 BK-DEC-012/013,
 docs/11 PAY-DEC-001–010. Implementation: `src/prsystem/booking_policy.py`.
 

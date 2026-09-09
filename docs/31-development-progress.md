@@ -20,7 +20,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
-| 4 | Online booking, payment/refund/payout | [Transactional mock holds/refunds](46-booking-holds.md) баталгаажсан; [бүрэн урсгалын local candidate](47-booking-completion-candidate.md) нэмэгдсэн. Шинэ candidate-ийн PostgreSQL CI, нийтлэлт хүлээгдэж байна |
+| 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
 | 5 | Minibar, Restaurant, Operation | Reception-д хэрэгтэй mock boundary бэлэн; бүтэн module үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
@@ -185,13 +185,18 @@ browser/API-contract/design/token шалгалтууд тэнцсэн. Source `4
 [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34206181125).
 Post-completion correction/chargeback, no-show, hotel cancellation, payout болон UI үлдсэн.
 
-## 2026-09-08 — Stage-four local candidate
+## 2026-09-09 — Stage-four mock implementation verified
 
 No-show/hotel cancellation/upgrade, booker account/public listing, settlement,
 chargeback adjustment, mock bank payout and three booking interface variants
-are implemented locally. There are **506 discovered backend tests**: **100 ran
+are published to the public feature branch with explicit user approval. There are **506 discovered backend tests**: **100 ran
 and passed locally, 406 require PostgreSQL and were skipped**. Staff, Reception
 and Booking browser suites passed; captured browser commands match API models.
-This is not new PostgreSQL CI evidence. The last remote result remains 480/480.
-New source publication was rejected by automatic approval review; no remote
-branch update or merge was performed for this candidate. [Scope and gates](47-booking-completion-candidate.md).
+The initial PostgreSQL runs executed all 506 tests. They exposed shared global
+booker fixture identities and inconsistent create/retry tenant scope; both were
+fixed. Final source `5493c788eceb5a13dfa469de12597b5e570fbfee` passed
+**506/506 backend tests without skips in 367.685 seconds**, all three browser
+suites, generated request/API validation, design lint and token checks in
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34292660548).
+The follow-up commit records evidence in documentation only.
+No merge or deployment was performed. [Scope and gates](47-booking-completion-candidate.md).
