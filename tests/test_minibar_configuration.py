@@ -72,8 +72,9 @@ class MinibarConfigurationTests(GuestFinanceCase):
         self.assertEqual(req['state'],'READY_FOR_RECONCILIATION')
         self.assertEqual(req['source_snapshot']['mode'],'OFF')
         self.assertEqual(req['target_snapshot']['items'][0]['target_quantity'],2)
-        self.assertEqual(self.checkin().json()['code'],'CONFIGURATION_PENDING')
-        self.assertEqual(self.checkin(actual_checkin_at=req['recorded_at'],backdate_reason='Өмнө ирсэн').json()['code'],'CONFIGURATION_PENDING')
+        deposit=dict(channel='CASH',amount_mnt=60000,received=True)
+        self.assertEqual(self.checkin(deposit=deposit).json()['code'],'CONFIGURATION_PENDING')
+        self.assertEqual(self.checkin(deposit=deposit,actual_checkin_at=req['recorded_at'],backdate_reason='Өмнө ирсэн').json()['code'],'CONFIGURATION_PENDING')
         data = self.assert_status(self.read(self.worker_token),200)
         self.assertEqual(data['current']['mode'],'OFF')
         self.assertEqual(data['pending'],req)
@@ -133,6 +134,9 @@ class MinibarConfigurationTests(GuestFinanceCase):
         req=self.assert_status(self.request(expected_room_revision=revision,idempotency_key='request'),201)
         with psycopg.connect(self.owner_dsn) as conn:
             conn.execute("UPDATE prsystem.staff_membership SET roles=ARRAY['RECEPTION'] WHERE tenant_id=%s AND account_id=%s",(self.tenant,self.manager))
+        self.assert_status(self.request(expected_room_revision=revision,idempotency_key='request'),401)
+        self.assert_status(self.cancel(req),401)
+        self.manager_token=self.assert_status(self.client.post('/auth/login',json=dict(email=self.manager+'@example.test',password=self.password,tenant_id=self.tenant)),200)['access_token']
         self.assert_status(self.request(expected_room_revision=revision,idempotency_key='request'),403)
         self.assert_status(self.cancel(req),403)
         self.assert_status(self.read(),200)
