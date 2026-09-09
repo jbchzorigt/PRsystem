@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '@prsystem/contracts';
+import type { ReconciliationOutcome } from '../../operation/domain/operation';
 import type { UnitOfWork } from '@prsystem/db';
 import { recordPlatformAudit } from '@prsystem/db';
 import { decryptValue, encryptValue } from '@prsystem/ports';
@@ -878,16 +879,19 @@ export class ProvisioningService extends OnboardingServiceBase {
    * doc 15 §4.1: closes an onboarding reconciliation case.
    *
    * `SUBSCRIPTION_PAYMENT_RECONCILE` plus a recent step-up, in the Operation
-   * realm. The only thing this can write is the outcome, the account and the
-   * reason: no parameter exists for a package, a term, an entitlement, a
-   * provisioning result or a date.
+   * realm. The only thing this can write is one of doc 14 §4.2's four terminal
+   * outcomes, the account, the mandatory note and the mandatory provider, bank
+   * or finance reference: no parameter exists for a package, a term, an
+   * entitlement, a provisioning result or a date (`OPS-DEC-017`).
    */
   async closeReconciliation(
     input: {
       applicationId: string;
       attemptId: string;
-      outcome: 'PROVIDER_CORRECTED_NOT_PAID' | 'EXTERNALLY_VOIDED' | 'FINANCE_CLOSED_EXCEPTION';
+      outcome: ReconciliationOutcome;
       reason: string;
+      /** doc 14 §4.2: the provider, bank or finance reference. Mandatory. */
+      reference: string;
     },
     actor: CommandActor,
     request: RequestContext,
@@ -913,6 +917,7 @@ export class ProvisioningService extends OnboardingServiceBase {
           outcome: input.outcome,
           accountId,
           reason: input.reason,
+          reference: input.reference,
         });
         if (!closed) throw new ApiError('CONFLICT', 'the case changed concurrently');
         await recordPlatformAudit(uow, {
@@ -920,7 +925,7 @@ export class ProvisioningService extends OnboardingServiceBase {
           outcome: 'allowed',
           targetType: 'onboarding_payment_attempt',
           targetRef: input.attemptId,
-          payload: { outcome: input.outcome, accountId },
+          payload: { outcome: input.outcome, accountId, reference: input.reference },
         });
       },
     );

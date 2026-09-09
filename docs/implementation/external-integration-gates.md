@@ -35,7 +35,7 @@ timeout-then-late-success callbacks. Development-ready does **not** mean product
 | EXT-02 | e-Mongolia | Guest registration and login channel | **BLOCKED** | 12 — canonical port and simulator, conformance-gated | 20 |
 | EXT-03 | QPay | Booking, subscription and restaurant payments | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
 | EXT-04 | Khaan Bank | Booking and subscription gateway, POS | **BLOCKED** | 05 — canonical port and simulator, conformance-gated | 20 |
-| EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18 — canonical port and simulator, conformance-gated | 20 |
+| EXT-05 | CallPro | Operation SMS reminders and Police Match SMS | **BLOCKED** | 18, 19 — canonical port and simulator, conformance-gated | 20 |
 | EXT-06 | Google Maps | Hotel location capture, distance and nearby search | **BLOCKED** | 12 — canonical port and simulator, geocoding gated; distance is server-side and provider-free | 20 |
 | EXT-07 | Platform central account | Aggregated guest payments and hotel settlement | **BLOCKED** | 14 — canonical port and simulator, execution gated | 20 |
 | EXT-08 | Personal data | Privacy notice, consent, controller and processor roles | **BLOCKED** | 17 — retention policy, snapshot and legal hold implemented; the written basis is still absent | 20 |
@@ -153,9 +153,19 @@ holds CallPro credentials. Full SMS bodies and full registration numbers are nev
 application logs, delivery logs or provider callback records (doc 13 §10.2).
 **Open configuration.** Per-job recipient cap and retry policy remain P1-07.
 
-**Consumed by.** Phase 18 (Match alert SMS) — canonical port `SmsPort` with a deterministic
-simulator; the production adapter answers `DISABLED` and sends nothing. Phase 19 (subscription
-reminders).
+**Consumed by.** Phase 18 (Match alert SMS) and Phase 19 (subscription reminders, and the two
+one-time codes of a subscription contact change) — canonical port `SmsPort` with a deterministic
+simulator; the production adapter answers `DISABLED` and sends nothing.
+
+**What Phase 19 leaves closed.** The **tariff** is a term of the agreement, so
+`platform.sms_tariff` is empty and the estimated cost is absent rather than invented (doc 14 §5.4
+shows it "боломжтой бол"). The **segment count** divides by the two capacities doc 14 §5.3
+publishes and rounds up; the concatenated-message headers a real provider applies are not modelled,
+and the figure is presented as an estimate everywhere (`A-P19-8`). No **callback route exists at
+all**: no signature scheme is approved, so delivery status is asked for through
+`queryStatus` and never accepted unsolicited. With the adapter disabled, a confirmed send records
+every recipient message `FAILED` with the gate as its reason — the job exists, the audit exists, and
+nothing was sent.
 
 ---
 

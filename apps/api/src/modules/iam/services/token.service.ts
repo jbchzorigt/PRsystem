@@ -34,7 +34,14 @@ export type TokenPurpose =
   | 'hotel_admin_activation'
   | 'phone_otp'
   | 'guest_otp'
-  | 'onboarding_draft';
+  | 'onboarding_draft'
+  /**
+   * Phase 19. The Operation account's one-time enrolment link and the two
+   * six-digit codes a subscription contact change is verified with (doc 14 §2,
+   * §2.3). Each has its own scope for the reason all the others do.
+   */
+  | 'operation_enrolment'
+  | 'contact_otp';
 
 const SCOPE_BY_PURPOSE: Readonly<Record<TokenPurpose, HmacScope>> = {
   session: 'auth.session_token',
@@ -44,6 +51,8 @@ const SCOPE_BY_PURPOSE: Readonly<Record<TokenPurpose, HmacScope>> = {
   phone_otp: 'auth.phone_otp',
   guest_otp: 'auth.guest_otp',
   onboarding_draft: 'auth.onboarding_draft',
+  operation_enrolment: 'auth.operation_enrolment_token',
+  contact_otp: 'auth.subscription_contact_otp',
 };
 
 export interface TokenDigest {
@@ -90,7 +99,7 @@ export class TokenService {
   async issueNumericCode(
     subject: string,
     digits: number,
-    purpose: 'phone_otp' | 'guest_otp' = 'phone_otp',
+    purpose: 'phone_otp' | 'guest_otp' | 'contact_otp' = 'phone_otp',
   ): Promise<IssuedToken> {
     if (!Number.isInteger(digits) || digits < 4 || digits > 10) {
       throw new Error('a one-time code is 4 to 10 digits');

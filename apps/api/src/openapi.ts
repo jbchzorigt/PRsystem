@@ -80,6 +80,7 @@ async function generate(): Promise<void> {
       restaurant: { pool: new Pool({ max: 1 }), keys: new UnavailableKeyManagement() },
       review: { pool: new Pool({ max: 1 }) },
       reporting: { pool: new Pool({ max: 1 }), storage: new UnavailableObjectStorage() },
+      operation: { pool: new Pool({ max: 1 }), keys: new UnavailableKeyManagement() },
       stay: {
         pool: new Pool({ max: 1 }),
         keys: new UnavailableKeyManagement(),

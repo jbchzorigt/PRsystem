@@ -905,6 +905,17 @@ export const staffMembership = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('operation_suspension_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+      pgPolicy('operation_suspension_write', {
+        for: 'update',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+        withCheck: sql`true`,
+      }),
     ],
   )
   .enableRLS();
@@ -959,6 +970,17 @@ export const sessionScopeGrant = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('operation_suspension_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
+      pgPolicy('operation_suspension_write', {
+        for: 'update',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+        withCheck: sql`true`,
       }),
     ],
   )
@@ -1161,7 +1183,7 @@ export const passwordResetIntake = platform.table(
     ),
     check(
       'password_reset_intake_initiator_known',
-      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text]))`,
+      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text, 'operation'::text]))`,
     ),
     check(
       'password_reset_intake_initiator_recorded',
@@ -1228,7 +1250,7 @@ export const passwordResetRequest = platform.table(
     check('password_reset_request_expiry_after_creation', sql`(expires_at > created_at)`),
     check(
       'password_reset_request_initiator_known',
-      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text]))`,
+      sql`(initiated_by = ANY (ARRAY['self'::text, 'hotel_admin'::text, 'operation'::text]))`,
     ),
     check(
       'password_reset_request_initiator_recorded',
@@ -2087,6 +2109,7 @@ export const onboardingPaymentAttempt = platform
       reconciledByAccountId: uuid('reconciled_by_account_id'),
       reconciliationOutcome: text('reconciliation_outcome'),
       reconciliationReason: text('reconciliation_reason'),
+      reconciliationReference: text('reconciliation_reference'),
       revision: integer('revision')
         .notNull()
         .default(sql`0`),
@@ -2126,11 +2149,15 @@ export const onboardingPaymentAttempt = platform
       ),
       check(
         'onboarding_payment_attempt_reconciled_complete',
-        sql`(num_nonnulls(reconciliation_outcome, reconciled_by_account_id, reconciled_at) = ANY (ARRAY[0, 3]))`,
+        sql`(num_nonnulls(reconciliation_outcome, reconciled_by_account_id, reconciled_at, reconciliation_reason, reconciliation_reference) = ANY (ARRAY[0, 5]))`,
+      ),
+      check(
+        'onboarding_payment_attempt_reconciliation_evidence_bounded',
+        sql`(((reconciliation_reference IS NULL) OR ((length(reconciliation_reference) >= 3) AND (length(reconciliation_reference) <= 120))) AND ((reconciliation_reason IS NULL) OR ((length(reconciliation_reason) >= 10) AND (length(reconciliation_reason) <= 1000))))`,
       ),
       check(
         'onboarding_payment_attempt_reconciliation_outcome_known',
-        sql`((reconciliation_outcome IS NULL) OR (reconciliation_outcome = ANY (ARRAY['PROVIDER_CORRECTED_NOT_PAID'::text, 'EXTERNALLY_VOIDED'::text, 'FINANCE_CLOSED_EXCEPTION'::text])))`,
+        sql`((reconciliation_outcome IS NULL) OR (reconciliation_outcome = ANY (ARRAY['PROVIDER_STATUS_CORRECTED_NOT_PAID'::text, 'DUPLICATE_OR_SYSTEM_PAYMENT_EXTERNAL_REVERSAL'::text, 'CHARGEBACK_LINKED'::text, 'FINANCE_EXCEPTION_CLOSED'::text])))`,
       ),
       check('onboarding_payment_attempt_revision_non_negative', sql`(revision >= 0)`),
       check(
@@ -2341,6 +2368,11 @@ export const hotelOwnerLink = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('operation_dashboard_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
     ],
   )
   .enableRLS();
@@ -2428,6 +2460,15 @@ export const hotelSubscription = platform
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
       }),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('operation_dashboard_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
+      }),
       pgPolicy('public_listing_read', {
         for: 'select',
         to: ['prsystem_maintenance_fn'],
@@ -2478,6 +2519,7 @@ export const subscriptionBillingIntent = platform
       reconciledByAccountId: uuid('reconciled_by_account_id'),
       reconciliationOutcome: text('reconciliation_outcome'),
       reconciliationReason: text('reconciliation_reason'),
+      reconciliationReference: text('reconciliation_reference'),
       remainingServiceMonths: integer('remaining_service_months'),
       revision: integer('revision')
         .notNull()
@@ -2520,11 +2562,15 @@ export const subscriptionBillingIntent = platform
       ),
       check(
         'subscription_billing_intent_reconciled_complete',
-        sql`(num_nonnulls(reconciliation_outcome, reconciled_by_account_id, reconciled_at) = ANY (ARRAY[0, 3]))`,
+        sql`(num_nonnulls(reconciliation_outcome, reconciled_by_account_id, reconciled_at, reconciliation_reason, reconciliation_reference) = ANY (ARRAY[0, 5]))`,
+      ),
+      check(
+        'subscription_billing_intent_reconciliation_evidence_bounded',
+        sql`(((reconciliation_reference IS NULL) OR ((length(reconciliation_reference) >= 3) AND (length(reconciliation_reference) <= 120))) AND ((reconciliation_reason IS NULL) OR ((length(reconciliation_reason) >= 10) AND (length(reconciliation_reason) <= 1000))))`,
       ),
       check(
         'subscription_billing_intent_reconciliation_outcome_known',
-        sql`((reconciliation_outcome IS NULL) OR (reconciliation_outcome = ANY (ARRAY['PROVIDER_CORRECTED_NOT_PAID'::text, 'EXTERNALLY_VOIDED'::text, 'FINANCE_CLOSED_EXCEPTION'::text])))`,
+        sql`((reconciliation_outcome IS NULL) OR (reconciliation_outcome = ANY (ARRAY['PROVIDER_STATUS_CORRECTED_NOT_PAID'::text, 'DUPLICATE_OR_SYSTEM_PAYMENT_EXTERNAL_REVERSAL'::text, 'CHARGEBACK_LINKED'::text, 'FINANCE_EXCEPTION_CLOSED'::text])))`,
       ),
       check(
         'subscription_billing_intent_renewal_not_below_floor',
@@ -3016,6 +3062,11 @@ export const hotelAdminActivation = platform
       pgPolicy('tenant_isolation', {
         using: sql`(hotel_id = platform.current_hotel_id())`,
         withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+      pgPolicy('operation_dashboard_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`true`,
       }),
     ],
   )
@@ -11760,6 +11811,776 @@ export const policeContact = policeSchema
   )
   .enableRLS();
 
+// ---------------------------------------------------------------- Phase 19
+//
+// Platform Operation: the named Operation account and its second factor, the
+// offline recovery handoff, the subscription contact and its two challenges,
+// the suspension history, and manual-only SMS. The four SMS tables and the
+// preview are isolated by realm rather than by tenant — a reminder spans every
+// hotel the filter matched, and a recipient message's `hotel_id` says who was
+// written to, not whose row it is.
+
+export const operationTotpFactor = platform.table(
+  'operation_totp_factor',
+  {
+    accountId: uuid('account_id').primaryKey().notNull(),
+    digits: integer('digits')
+      .notNull()
+      .default(sql`6`),
+    enrolledAt: timestamp('enrolled_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    lastAcceptedStep: bigint('last_accepted_step', { mode: 'bigint' }),
+    periodSeconds: integer('period_seconds')
+      .notNull()
+      .default(sql`30`),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    secretCiphertext: bytea('secret_ciphertext').notNull(),
+    secretKeyVersion: text('secret_key_version').notNull(),
+    secretWrappedDek: bytea('secret_wrapped_dek').notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'operation_totp_factor_account_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    check('operation_totp_factor_digits_known', sql`(digits = 6)`),
+    check('operation_totp_factor_period_known', sql`(period_seconds = 30)`),
+    check('operation_totp_factor_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'operation_totp_factor_step_non_negative',
+      sql`((last_accepted_step IS NULL) OR (last_accepted_step >= 0))`,
+    ),
+  ],
+);
+
+export const operationAccountEnrolment = platform.table(
+  'operation_account_enrolment',
+  {
+    accountId: uuid('account_id').notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    createdByAccountId: uuid('created_by_account_id').notNull(),
+    enrolmentId: uuid('enrolment_id')
+      .primaryKey()
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    state: text('state')
+      .notNull()
+      .default(sql`'PENDING'::text`),
+    tokenHash: text('token_hash'),
+    tokenKeyVersion: text('token_key_version'),
+  },
+  (table) => [
+    foreignKey({
+      name: 'operation_account_enrolment_account_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    check(
+      'operation_account_enrolment_completed_has_time',
+      sql`((state = 'COMPLETED'::text) = (completed_at IS NOT NULL))`,
+    ),
+    foreignKey({
+      name: 'operation_account_enrolment_creator_fkey',
+      columns: [table.createdByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    check('operation_account_enrolment_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'operation_account_enrolment_state_known',
+      sql`(state = ANY (ARRAY['PENDING'::text, 'COMPLETED'::text, 'CANCELLED'::text]))`,
+    ),
+    check(
+      'operation_account_enrolment_token_complete',
+      sql`(num_nonnulls(token_hash, token_key_version, expires_at) = ANY (ARRAY[0, 3]))`,
+    ),
+    check(
+      'operation_account_enrolment_token_only_while_pending',
+      sql`((token_hash IS NULL) OR (state = 'PENDING'::text))`,
+    ),
+    check(
+      'operation_account_enrolment_token_shape',
+      sql`((token_hash IS NULL) OR (token_hash ~ '^[0-9a-f]{64}$'::text))`,
+    ),
+    unique('operation_account_enrolment_token_uq').on(table.tokenHash),
+    uniqueIndex('operation_account_enrolment_pending_uq')
+      .on(table.accountId)
+      .where(sql`state = 'PENDING'::text`),
+  ],
+);
+
+export const accountRecoveryRequest = platform.table(
+  'account_recovery_request',
+  {
+    accountId: uuid('account_id').notNull(),
+    caseReference: text('case_reference').notNull(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decidedByAccountId: uuid('decided_by_account_id'),
+    decisionReason: text('decision_reason'),
+    requestId: uuid('request_id')
+      .primaryKey()
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+    requestNote: text('request_note').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    requestedByAccountId: uuid('requested_by_account_id').notNull(),
+    revision: integer('revision')
+      .notNull()
+      .default(sql`0`),
+    state: text('state')
+      .notNull()
+      .default(sql`'PENDING'::text`),
+  },
+  (table) => [
+    foreignKey({
+      name: 'account_recovery_request_account_fkey',
+      columns: [table.accountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'account_recovery_request_decider_fkey',
+      columns: [table.decidedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    check(
+      'account_recovery_request_decision_complete',
+      sql`(num_nonnulls(decided_by_account_id, decision_reason, decided_at) =
+CASE
+    WHEN (state = 'PENDING'::text) THEN 0
+    ELSE 3
+END)`,
+    ),
+    check(
+      'account_recovery_request_note_bounded',
+      sql`((length(request_note) >= 10) AND (length(request_note) <= 1000))`,
+    ),
+    check(
+      'account_recovery_request_reason_bounded',
+      sql`((decision_reason IS NULL) OR ((length(decision_reason) >= 10) AND (length(decision_reason) <= 1000)))`,
+    ),
+    check(
+      'account_recovery_request_reference_bounded',
+      sql`((length(case_reference) >= 3) AND (length(case_reference) <= 120))`,
+    ),
+    foreignKey({
+      name: 'account_recovery_request_requester_fkey',
+      columns: [table.requestedByAccountId],
+      foreignColumns: [userAccount.accountId],
+    }).onDelete('restrict'),
+    check('account_recovery_request_revision_non_negative', sql`(revision >= 0)`),
+    check(
+      'account_recovery_request_state_known',
+      sql`(state = ANY (ARRAY['PENDING'::text, 'APPROVED'::text, 'REFUSED'::text]))`,
+    ),
+    check(
+      'account_recovery_request_two_people',
+      sql`((decided_by_account_id IS NULL) OR (decided_by_account_id <> requested_by_account_id))`,
+    ),
+    uniqueIndex('account_recovery_request_open_uq')
+      .on(table.accountId)
+      .where(sql`state = 'PENDING'::text`),
+  ],
+);
+
+export const subscriptionContact = platform
+  .table(
+    'subscription_contact',
+    {
+      changeRequestId: uuid('change_request_id'),
+      changedByAccountId: uuid('changed_by_account_id'),
+      contactId: uuid('contact_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      effectiveFrom: timestamp('effective_from', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      hotelId: uuid('hotel_id').notNull(),
+      isCurrent: boolean('is_current')
+        .notNull()
+        .default(sql`true`),
+      phone: text('phone').notNull(),
+      source: text('source').notNull(),
+      subscriptionId: uuid('subscription_id').notNull(),
+      supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    },
+    (table) => [
+      foreignKey({
+        name: 'subscription_contact_actor_fkey',
+        columns: [table.changedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'subscription_contact_change_shape',
+        sql`
+CASE source
+    WHEN 'CONTACT_CHANGE'::text THEN ((change_request_id IS NOT NULL) AND (changed_by_account_id IS NOT NULL))
+    ELSE ((change_request_id IS NULL) AND (changed_by_account_id IS NULL))
+END`,
+      ),
+      check('subscription_contact_current_has_no_end', sql`(is_current = (superseded_at IS NULL))`),
+      check('subscription_contact_phone_shape', sql`(phone ~ '^\\+976[0-9]{8}$'::text)`),
+      unique('subscription_contact_scope_uq').on(table.hotelId, table.contactId),
+      check(
+        'subscription_contact_source_known',
+        sql`(source = ANY (ARRAY['PROVISIONING'::text, 'CONTACT_CHANGE'::text]))`,
+      ),
+      foreignKey({
+        name: 'subscription_contact_subscription_fkey',
+        columns: [table.hotelId, table.subscriptionId],
+        foreignColumns: [hotelSubscription.hotelId, hotelSubscription.subscriptionId],
+      }).onDelete('restrict'),
+      uniqueIndex('subscription_contact_current_uq')
+        .on(table.subscriptionId)
+        .where(sql`is_current IS TRUE`),
+      pgPolicy('operation_dashboard_read', {
+        for: 'select',
+        to: ['prsystem_maintenance_fn'],
+        using: sql`(is_current IS TRUE)`,
+      }),
+      pgPolicy('provisioning_seed', {
+        for: 'insert',
+        to: ['prsystem_maintenance_fn'],
+        withCheck: sql`(source = 'PROVISIONING'::text)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const subscriptionContactChangeRequest = platform
+  .table(
+    'subscription_contact_change_request',
+    {
+      appliedContactId: uuid('applied_contact_id'),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      exceptionApprovedAt: timestamp('exception_approved_at', { withTimezone: true }),
+      exceptionApprovedByAccountId: uuid('exception_approved_by_account_id'),
+      exceptionReason: text('exception_reason'),
+      exceptionReference: text('exception_reference'),
+      hotelId: uuid('hotel_id').notNull(),
+      newPhone: text('new_phone').notNull(),
+      newPhoneVerifiedAt: timestamp('new_phone_verified_at', { withTimezone: true }),
+      oldPhone: text('old_phone').notNull(),
+      oldPhoneVerifiedAt: timestamp('old_phone_verified_at', { withTimezone: true }),
+      requestId: uuid('request_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      requestedByAccountId: uuid('requested_by_account_id').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'AWAITING_OLD_PHONE'::text`),
+      subscriptionId: uuid('subscription_id').notNull(),
+      terminalAt: timestamp('terminal_at', { withTimezone: true }),
+      terminalReason: text('terminal_reason'),
+    },
+    (table) => [
+      foreignKey({
+        name: 'subscription_contact_change_applied_fkey',
+        columns: [table.hotelId, table.appliedContactId],
+        foreignColumns: [subscriptionContact.hotelId, subscriptionContact.contactId],
+      }).onDelete('restrict'),
+      check(
+        'subscription_contact_change_applied_is_verified',
+        sql`((state <> 'APPLIED'::text) OR ((new_phone_verified_at IS NOT NULL) AND ((old_phone_verified_at IS NOT NULL) OR (exception_approved_at IS NOT NULL))))`,
+      ),
+      check(
+        'subscription_contact_change_applied_shape',
+        sql`((state = 'APPLIED'::text) = (applied_contact_id IS NOT NULL))`,
+      ),
+      foreignKey({
+        name: 'subscription_contact_change_approver_fkey',
+        columns: [table.exceptionApprovedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'subscription_contact_change_exception_complete',
+        sql`(num_nonnulls(exception_approved_by_account_id, exception_reference, exception_reason, exception_approved_at) = ANY (ARRAY[0, 4]))`,
+      ),
+      check(
+        'subscription_contact_change_exception_reason_bounded',
+        sql`((exception_reason IS NULL) OR ((length(exception_reason) >= 10) AND (length(exception_reason) <= 1000)))`,
+      ),
+      check(
+        'subscription_contact_change_exception_reference_bounded',
+        sql`((exception_reference IS NULL) OR ((length(exception_reference) >= 3) AND (length(exception_reference) <= 120)))`,
+      ),
+      check('subscription_contact_change_is_a_change', sql`(old_phone <> new_phone)`),
+      check(
+        'subscription_contact_change_phone_shape',
+        sql`((old_phone ~ '^\\+976[0-9]{8}$'::text) AND (new_phone ~ '^\\+976[0-9]{8}$'::text))`,
+      ),
+      foreignKey({
+        name: 'subscription_contact_change_requester_fkey',
+        columns: [table.requestedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check('subscription_contact_change_revision_non_negative', sql`(revision >= 0)`),
+      unique('subscription_contact_change_scope_uq').on(table.hotelId, table.requestId),
+      check(
+        'subscription_contact_change_state_known',
+        sql`(state = ANY (ARRAY['AWAITING_OLD_PHONE'::text, 'AWAITING_NEW_PHONE'::text, 'APPLIED'::text, 'CANCELLED'::text, 'EXPIRED'::text]))`,
+      ),
+      foreignKey({
+        name: 'subscription_contact_change_subscription_fkey',
+        columns: [table.hotelId, table.subscriptionId],
+        foreignColumns: [hotelSubscription.hotelId, hotelSubscription.subscriptionId],
+      }).onDelete('restrict'),
+      check(
+        'subscription_contact_change_terminal_has_time',
+        sql`((state = ANY (ARRAY['AWAITING_OLD_PHONE'::text, 'AWAITING_NEW_PHONE'::text])) = (terminal_at IS NULL))`,
+      ),
+      check(
+        'subscription_contact_change_waiver_is_not_a_pass',
+        sql`((exception_approved_at IS NULL) OR (old_phone_verified_at IS NULL))`,
+      ),
+      uniqueIndex('subscription_contact_change_open_uq')
+        .on(table.subscriptionId)
+        .where(sql`state = ANY (ARRAY['AWAITING_OLD_PHONE'::text, 'AWAITING_NEW_PHONE'::text])`),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const subscriptionContactCode = platform
+  .table(
+    'subscription_contact_code',
+    {
+      attempts: integer('attempts')
+        .notNull()
+        .default(sql`0`),
+      challenge: text('challenge').notNull(),
+      codeHash: text('code_hash').notNull(),
+      codeId: uuid('code_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      codeKeyVersion: text('code_key_version').notNull(),
+      consumedAt: timestamp('consumed_at', { withTimezone: true }),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      isCurrent: boolean('is_current')
+        .notNull()
+        .default(sql`true`),
+      issuedAt: timestamp('issued_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      maxAttempts: integer('max_attempts')
+        .notNull()
+        .default(sql`5`),
+      phone: text('phone').notNull(),
+      requestId: uuid('request_id').notNull(),
+      supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    },
+    (table) => [
+      check(
+        'subscription_contact_code_attempts_bounded',
+        sql`((attempts >= 0) AND (attempts <= max_attempts))`,
+      ),
+      check(
+        'subscription_contact_code_challenge_known',
+        sql`(challenge = ANY (ARRAY['OLD_PHONE'::text, 'NEW_PHONE'::text]))`,
+      ),
+      check(
+        'subscription_contact_code_current_is_live',
+        sql`(is_current = ((consumed_at IS NULL) AND (superseded_at IS NULL)))`,
+      ),
+      check('subscription_contact_code_expiry_after_issue', sql`(expires_at > issued_at)`),
+      check('subscription_contact_code_hash_shape', sql`(code_hash ~ '^[0-9a-f]{64}$'::text)`),
+      check('subscription_contact_code_max_attempts_known', sql`(max_attempts = 5)`),
+      check('subscription_contact_code_phone_shape', sql`(phone ~ '^\\+976[0-9]{8}$'::text)`),
+      foreignKey({
+        name: 'subscription_contact_code_request_fkey',
+        columns: [table.hotelId, table.requestId],
+        foreignColumns: [
+          subscriptionContactChangeRequest.hotelId,
+          subscriptionContactChangeRequest.requestId,
+        ],
+      }).onDelete('restrict'),
+      uniqueIndex('subscription_contact_code_current_uq')
+        .on(table.requestId, table.challenge)
+        .where(sql`is_current IS TRUE`),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const subscriptionSuspensionEvent = platform
+  .table(
+    'subscription_suspension_event',
+    {
+      action: text('action').notNull(),
+      actorAccountId: uuid('actor_account_id').notNull(),
+      eventId: uuid('event_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      expiresAtSnapshot: timestamp('expires_at_snapshot', { withTimezone: true }).notNull(),
+      hotelId: uuid('hotel_id').notNull(),
+      note: text('note').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      reasonCode: text('reason_code').notNull(),
+      sessionsRevoked: integer('sessions_revoked')
+        .notNull()
+        .default(sql`0`),
+      startsAtSnapshot: timestamp('starts_at_snapshot', { withTimezone: true }).notNull(),
+      subscriptionId: uuid('subscription_id').notNull(),
+      suspendedAfter: boolean('suspended_after').notNull(),
+      suspendedBefore: boolean('suspended_before').notNull(),
+    },
+    (table) => [
+      check(
+        'subscription_suspension_event_action_known',
+        sql`(action = ANY (ARRAY['SUSPEND'::text, 'REACTIVATE'::text]))`,
+      ),
+      check(
+        'subscription_suspension_event_action_matches',
+        sql`(suspended_after = (action = 'SUSPEND'::text))`,
+      ),
+      foreignKey({
+        name: 'subscription_suspension_event_actor_fkey',
+        columns: [table.actorAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'subscription_suspension_event_is_a_transition',
+        sql`(suspended_before <> suspended_after)`,
+      ),
+      check(
+        'subscription_suspension_event_note_bounded',
+        sql`((length(note) >= 10) AND (length(note) <= 1000))`,
+      ),
+      check(
+        'subscription_suspension_event_reason_code_shape',
+        sql`(reason_code ~ '^[A-Z][A-Z0-9_]{2,39}$'::text)`,
+      ),
+      check('subscription_suspension_event_sessions_non_negative', sql`(sessions_revoked >= 0)`),
+      foreignKey({
+        name: 'subscription_suspension_event_subscription_fkey',
+        columns: [table.hotelId, table.subscriptionId],
+        foreignColumns: [hotelSubscription.hotelId, hotelSubscription.subscriptionId],
+      }).onDelete('restrict'),
+      index('subscription_suspension_event_subscription_idx').on(
+        table.subscriptionId,
+        table.occurredAt.desc().nullsFirst(),
+      ),
+      pgPolicy('operation_review', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+      pgPolicy('tenant_isolation', {
+        using: sql`(hotel_id = platform.current_hotel_id())`,
+        withCheck: sql`(hotel_id = platform.current_hotel_id())`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const smsTariff = platform.table(
+  'sms_tariff',
+  {
+    agreementReference: text('agreement_reference').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    currency: text('currency')
+      .notNull()
+      .default(sql`'MNT'::text`),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+    pricePerSegmentMnt: bigint('price_per_segment_mnt', { mode: 'bigint' }).notNull(),
+    provider: text('provider').notNull(),
+    tariffId: uuid('tariff_id')
+      .primaryKey()
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+  },
+  (table) => [
+    check('sms_tariff_currency_known', sql`(currency = 'MNT'::text)`),
+    check('sms_tariff_price_positive', sql`(price_per_segment_mnt > 0)`),
+    check('sms_tariff_provider_known', sql`(provider = 'CALLPRO'::text)`),
+    check(
+      'sms_tariff_reference_bounded',
+      sql`((length(agreement_reference) >= 3) AND (length(agreement_reference) <= 120))`,
+    ),
+    check(
+      'sms_tariff_window_ordered',
+      sql`((effective_to IS NULL) OR (effective_to > effective_from))`,
+    ),
+    uniqueIndex('sms_tariff_live_uq')
+      .on(table.provider)
+      .where(sql`effective_to IS NULL`),
+  ],
+);
+
+export const smsPreview = platform
+  .table(
+    'sms_preview',
+    {
+      body: text('body').notNull(),
+      bodyHash: text('body_hash').notNull(),
+      consumedAt: timestamp('consumed_at', { withTimezone: true }),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      createdByAccountId: uuid('created_by_account_id').notNull(),
+      estimatedCostMnt: bigint('estimated_cost_mnt', { mode: 'bigint' }),
+      excludedCount: integer('excluded_count').notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      filterSnapshot: jsonb('filter_snapshot').notNull(),
+      previewId: uuid('preview_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      recipientCount: integer('recipient_count').notNull(),
+      recipientHash: text('recipient_hash').notNull(),
+      segmentsPerRecipient: integer('segments_per_recipient').notNull(),
+      tariffId: uuid('tariff_id'),
+      totalSegments: integer('total_segments').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'sms_preview_author_fkey',
+        columns: [table.createdByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'sms_preview_body_bounded',
+        sql`((length(btrim(body)) >= 1) AND (length(btrim(body)) <= 300))`,
+      ),
+      check('sms_preview_body_is_trimmed', sql`(body = btrim(body))`),
+      check(
+        'sms_preview_cost_needs_a_tariff',
+        sql`(num_nonnulls(estimated_cost_mnt, tariff_id) = ANY (ARRAY[0, 2]))`,
+      ),
+      check(
+        'sms_preview_cost_non_negative',
+        sql`((estimated_cost_mnt IS NULL) OR (estimated_cost_mnt >= 0))`,
+      ),
+      check(
+        'sms_preview_counts_non_negative',
+        sql`((recipient_count >= 0) AND (excluded_count >= 0) AND (segments_per_recipient >= 0))`,
+      ),
+      check('sms_preview_expiry_after_creation', sql`(expires_at > created_at)`),
+      check(
+        'sms_preview_hash_shape',
+        sql`((body_hash ~ '^[0-9a-f]{64}$'::text) AND (recipient_hash ~ '^[0-9a-f]{64}$'::text))`,
+      ),
+      foreignKey({
+        name: 'sms_preview_tariff_fkey',
+        columns: [table.tariffId],
+        foreignColumns: [smsTariff.tariffId],
+      }).onDelete('restrict'),
+      check(
+        'sms_preview_total_is_product',
+        sql`(total_segments = (recipient_count * segments_per_recipient))`,
+      ),
+      pgPolicy('operation_realm_only', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const smsSendJob = platform
+  .table(
+    'sms_send_job',
+    {
+      body: text('body').notNull(),
+      confirmedAt: timestamp('confirmed_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      confirmedByAccountId: uuid('confirmed_by_account_id').notNull(),
+      dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+      estimatedCostMnt: bigint('estimated_cost_mnt', { mode: 'bigint' }),
+      excludedCount: integer('excluded_count').notNull(),
+      filterSnapshot: jsonb('filter_snapshot').notNull(),
+      jobId: uuid('job_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      lastError: text('last_error'),
+      previewId: uuid('preview_id').notNull(),
+      providerReference: text('provider_reference'),
+      recipientCount: integer('recipient_count').notNull(),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      state: text('state')
+        .notNull()
+        .default(sql`'CONFIRMED'::text`),
+      totalSegments: integer('total_segments').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'sms_send_job_actor_fkey',
+        columns: [table.confirmedByAccountId],
+        foreignColumns: [userAccount.accountId],
+      }).onDelete('restrict'),
+      check(
+        'sms_send_job_body_bounded',
+        sql`((length(btrim(body)) >= 1) AND (length(btrim(body)) <= 300))`,
+      ),
+      check(
+        'sms_send_job_counts_non_negative',
+        sql`((recipient_count >= 0) AND (excluded_count >= 0) AND (total_segments >= 0))`,
+      ),
+      check(
+        'sms_send_job_dispatched_has_time',
+        sql`((state = 'CONFIRMED'::text) = (dispatched_at IS NULL))`,
+      ),
+      foreignKey({
+        name: 'sms_send_job_preview_fkey',
+        columns: [table.previewId],
+        foreignColumns: [smsPreview.previewId],
+      }).onDelete('restrict'),
+      unique('sms_send_job_preview_uq').on(table.previewId),
+      check('sms_send_job_revision_non_negative', sql`(revision >= 0)`),
+      check(
+        'sms_send_job_state_known',
+        sql`(state = ANY (ARRAY['CONFIRMED'::text, 'DISPATCHED'::text, 'FAILED'::text]))`,
+      ),
+      pgPolicy('operation_realm_only', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const smsRecipientMessage = platform
+  .table(
+    'sms_recipient_message',
+    {
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      failureCode: text('failure_code'),
+      hotelId: uuid('hotel_id').notNull(),
+      jobId: uuid('job_id').notNull(),
+      messageId: uuid('message_id')
+        .primaryKey()
+        .notNull()
+        .default(sql`gen_random_uuid()`),
+      phone: text('phone').notNull(),
+      providerMessageId: text('provider_message_id'),
+      revision: integer('revision')
+        .notNull()
+        .default(sql`0`),
+      segments: integer('segments').notNull(),
+      state: text('state')
+        .notNull()
+        .default(sql`'PENDING'::text`),
+      stateChangedAt: timestamp('state_changed_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      subscriptionId: uuid('subscription_id').notNull(),
+    },
+    (table) => [
+      check(
+        'sms_recipient_message_failure_shape',
+        sql`((failure_code IS NULL) OR (state = 'FAILED'::text))`,
+      ),
+      foreignKey({
+        name: 'sms_recipient_message_job_fkey',
+        columns: [table.jobId],
+        foreignColumns: [smsSendJob.jobId],
+      }).onDelete('restrict'),
+      unique('sms_recipient_message_job_phone_uq').on(table.jobId, table.phone),
+      check('sms_recipient_message_phone_shape', sql`(phone ~ '^\\+976[0-9]{8}$'::text)`),
+      check('sms_recipient_message_revision_non_negative', sql`(revision >= 0)`),
+      check('sms_recipient_message_segments_positive', sql`(segments >= 1)`),
+      check(
+        'sms_recipient_message_sent_has_provider_id',
+        sql`((state = ANY (ARRAY['SENT'::text, 'DELIVERED'::text])) <= (provider_message_id IS NOT NULL))`,
+      ),
+      check(
+        'sms_recipient_message_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'SENT'::text, 'DELIVERED'::text, 'FAILED'::text]))`,
+      ),
+      index('sms_recipient_message_month_idx').on(table.createdAt, table.state),
+      uniqueIndex('sms_recipient_message_provider_uq')
+        .on(table.providerMessageId)
+        .where(sql`provider_message_id IS NOT NULL`),
+      pgPolicy('operation_realm_only', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const smsMessageEvent = platform
+  .table(
+    'sms_message_event',
+    {
+      detail: text('detail'),
+      eventId: bigint('event_id', { mode: 'bigint' }).primaryKey().generatedAlwaysAsIdentity(),
+      messageId: uuid('message_id').notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true })
+        .notNull()
+        .default(sql`now()`),
+      providerMessageId: text('provider_message_id'),
+      source: text('source').notNull(),
+      state: text('state').notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: 'sms_message_event_message_fkey',
+        columns: [table.messageId],
+        foreignColumns: [smsRecipientMessage.messageId],
+      }).onDelete('restrict'),
+      check(
+        'sms_message_event_source_known',
+        sql`(source = ANY (ARRAY['CONFIRMATION'::text, 'PROVIDER_SEND'::text, 'PROVIDER_STATUS_QUERY'::text]))`,
+      ),
+      check(
+        'sms_message_event_state_known',
+        sql`(state = ANY (ARRAY['PENDING'::text, 'SENT'::text, 'DELIVERED'::text, 'FAILED'::text]))`,
+      ),
+      index('sms_message_event_message_idx').on(table.messageId, table.eventId),
+      pgPolicy('operation_realm_only', {
+        using: sql`(platform.current_realm() = 'operation'::text)`,
+        withCheck: sql`(platform.current_realm() = 'operation'::text)`,
+      }),
+    ],
+  )
+  .enableRLS();
+
 export const DECLARED_TABLES = [
   idempotencyKey,
   outboxEvent,
@@ -11937,4 +12758,17 @@ export const DECLARED_TABLES = [
   wantedExportGrant,
   exactSearchAttempt,
   policeContact,
+  // Phase 19.
+  operationTotpFactor,
+  operationAccountEnrolment,
+  accountRecoveryRequest,
+  subscriptionContact,
+  subscriptionContactChangeRequest,
+  subscriptionContactCode,
+  subscriptionSuspensionEvent,
+  smsTariff,
+  smsPreview,
+  smsSendJob,
+  smsRecipientMessage,
+  smsMessageEvent,
 ] as const;

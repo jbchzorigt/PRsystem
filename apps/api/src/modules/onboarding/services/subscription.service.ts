@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PackageCode, SubscriptionStatePort } from '@prsystem/authz';
 import { isPackageCode } from '@prsystem/authz';
 import { ApiError } from '@prsystem/contracts';
+import type { ReconciliationOutcome } from '../../operation/domain/operation';
 import type { UnitOfWork } from '@prsystem/db';
 import {
   claimIdempotencyKey,
@@ -1034,8 +1035,10 @@ export class SubscriptionService extends OnboardingServiceBase {
     input: {
       hotelId: string;
       intentId: string;
-      outcome: 'PROVIDER_CORRECTED_NOT_PAID' | 'EXTERNALLY_VOIDED' | 'FINANCE_CLOSED_EXCEPTION';
+      outcome: ReconciliationOutcome;
       reason: string;
+      /** doc 14 §4.2: the provider, bank or finance reference. Mandatory. */
+      reference: string;
     },
     actor: CommandActor,
     request: RequestContext,
@@ -1070,6 +1073,7 @@ export class SubscriptionService extends OnboardingServiceBase {
           outcome: input.outcome,
           accountId,
           reason: input.reason,
+          reference: input.reference,
         });
         if (!closed) throw new ApiError('CONFLICT', 'the case changed concurrently');
         await recordPlatformAudit(uow, {

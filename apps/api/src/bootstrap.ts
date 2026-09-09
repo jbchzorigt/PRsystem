@@ -137,6 +137,16 @@ export async function createApp(
       reporting: {
         config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
       },
+      // Phase 19. Platform Operation runs on the API's own login: its realm is
+      // a population, not a second deployment credential (doc 14 §2).
+      operation: {
+        config: { databaseUrl: config.DATABASE_URL, appEnv: config.APP_ENV },
+        keys: selectKeyManagement({
+          appEnv: config.APP_ENV,
+          kmsAdapter: config.KMS_ADAPTER,
+          ...(config.KMS_SEED === undefined ? {} : { seed: config.KMS_SEED }),
+        }),
+      },
       // Phase 18. Only when this deployment holds the Police credential, and
       // then on that credential — never on the API's own (doc 13 §3).
       ...(config.police.enabled

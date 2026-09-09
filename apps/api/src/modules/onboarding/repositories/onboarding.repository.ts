@@ -1,4 +1,5 @@
 import type { UnitOfWork } from '@prsystem/db';
+import type { ReconciliationOutcome } from '../../operation/domain/operation';
 import type { PackageCode } from '@prsystem/authz';
 import type { PaymentProvider } from '@prsystem/ports';
 
@@ -1082,19 +1083,29 @@ export class OnboardingRepository {
   async closeReconciliation(input: {
     attemptId: string;
     expectedRevision: number;
-    outcome: 'PROVIDER_CORRECTED_NOT_PAID' | 'EXTERNALLY_VOIDED' | 'FINANCE_CLOSED_EXCEPTION';
+    // `OPS-DEC-017` fixes the vocabulary in doc 14 §4.2 and Phase 19 adopts it.
+    outcome: ReconciliationOutcome;
     accountId: string;
     reason: string;
+    /** doc 14 §4.2: the provider, bank or finance reference. Mandatory. */
+    reference: string;
   }): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.onboarding_payment_attempt
           SET reconciliation_outcome = $3, reconciled_by_account_id = $4,
               reconciled_at = now(), reconciliation_reason = $5,
-              revision = revision + 1
+              reconciliation_reference = $6, revision = revision + 1
         WHERE attempt_id = $1 AND revision = $2
           AND state = 'PAID_REQUIRES_RECONCILIATION'
           AND reconciliation_outcome IS NULL`,
-      [input.attemptId, input.expectedRevision, input.outcome, input.accountId, input.reason],
+      [
+        input.attemptId,
+        input.expectedRevision,
+        input.outcome,
+        input.accountId,
+        input.reason,
+        input.reference,
+      ],
     );
     return result.rowCount === 1;
   }

@@ -138,6 +138,8 @@ export type {
   NotificationMessage,
   NotificationPort,
   OwnerChallengeMessage,
+  OperationEnrolmentMessage,
+  SubscriptionContactChangedMessage,
   PasswordResetMessage,
   StaffInvitationMessage,
   StaffNotification,

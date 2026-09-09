@@ -1149,8 +1149,9 @@ describe('5 — authorization at the final mutation', () => {
           {
             hotelId: hotel.hotelId,
             intentId: quote.intentId,
-            outcome: 'EXTERNALLY_VOIDED',
-            reason: 'trap',
+            outcome: 'DUPLICATE_OR_SYSTEM_PAYMENT_EXTERNAL_REVERSAL',
+            reference: 'QPAY-REV-0001',
+            reason: 'the remediation two trap, described at length',
           },
           operator.actor,
           request(),
@@ -1170,8 +1171,9 @@ describe('5 — authorization at the final mutation', () => {
       {
         hotelId: hotel.hotelId,
         intentId: quote.intentId,
-        outcome: 'EXTERNALLY_VOIDED',
-        reason: 'voided',
+        outcome: 'DUPLICATE_OR_SYSTEM_PAYMENT_EXTERNAL_REVERSAL',
+        reference: 'QPAY-REV-0001',
+        reason: 'externally voided by the provider, recorded in full',
       },
       operator.actor,
       request(),

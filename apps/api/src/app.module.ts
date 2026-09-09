@@ -44,6 +44,9 @@ import type { ReportingModuleOptions } from './modules/reporting/reporting.modul
 import { ReportingModule } from './modules/reporting/reporting.module';
 import type { PoliceModuleOptions } from './modules/police/police.module';
 import { PoliceModule } from './modules/police/police.module';
+import type { OperationModuleOptions } from './modules/operation/operation.module';
+import { OperationModule } from './modules/operation/operation.module';
+import { RepositoryOperationAccounts } from './modules/iam/contracts/operation-accounts';
 import { RepositoryRegistryFacts } from './modules/stay/contracts/registry-reads';
 import { RepositoryExpenseClassification } from './modules/reporting/contracts/expense-classification';
 import { RepositoryFinancialReads } from './modules/billing/contracts/financial-reads';
@@ -152,6 +155,13 @@ export interface AppModuleOptions {
    * Police route at all rather than serving them on the API's own login.
    */
   readonly police?: PoliceModuleOptions;
+  /**
+   * Phase 19. Platform Operation: the named accounts and their second factor,
+   * the dashboard, subscription suspension, the contact change and manual-only
+   * SMS. It reaches the account kernel through the IAM module's contract, so
+   * there is exactly one place an account and a session come into existence.
+   */
+  readonly operation: OperationModuleOptions;
   /**
    * A pool the application should close on shutdown.
    *
@@ -276,6 +286,12 @@ export class AppModule {
         }),
         // Phase 18. Absent unless the deployment holds the Police credential.
         ...(options.police === undefined ? [] : [PoliceModule.forRoot({ ...options.police, iam })]),
+        // Phase 19. The account half comes from the module that owns accounts.
+        OperationModule.forRoot({
+          accounts: new RepositoryOperationAccounts(),
+          ...options.operation,
+          iam,
+        }),
         SettlementModule.forRoot({
           ...options.settlement,
           bookings: options.settlement?.bookings ?? new RepositoryBookingRefundAxis(),

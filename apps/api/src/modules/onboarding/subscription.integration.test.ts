@@ -687,7 +687,8 @@ describe('LIFE-DEC-006 — one live intent, and stale quotes', () => {
       {
         hotelId: hotel.hotelId,
         intentId: renewal.intentId,
-        outcome: 'EXTERNALLY_VOIDED',
+        outcome: 'DUPLICATE_OR_SYSTEM_PAYMENT_EXTERNAL_REVERSAL',
+        reference: 'QPAY-REV-0001',
         reason: 'refunded by the provider outside the platform',
       },
       operator.actor,
@@ -708,12 +709,19 @@ describe('LIFE-DEC-006 — one live intent, and stale quotes', () => {
       startsAt: before?.startsAt,
     });
 
-    const closed = await env.admin.query<{ outcome: string; account: string }>(
-      `SELECT reconciliation_outcome AS outcome, reconciled_by_account_id::text AS account
+    const closed = await env.admin.query<{ outcome: string; account: string; reference: string }>(
+      `SELECT reconciliation_outcome AS outcome, reconciled_by_account_id::text AS account,
+              reconciliation_reference AS reference
          FROM platform.subscription_billing_intent WHERE intent_id = $1`,
       [renewal.intentId],
     );
-    expect(closed.rows[0]).toEqual({ outcome: 'EXTERNALLY_VOIDED', account: accountId });
+    // `OPS-DEC-017`: the outcome, the decider and the provider reference are one
+    // closure; the row's own CHECK refuses any of them without the others.
+    expect(closed.rows[0]).toEqual({
+      outcome: 'DUPLICATE_OR_SYSTEM_PAYMENT_EXTERNAL_REVERSAL',
+      account: accountId,
+      reference: 'QPAY-REV-0001',
+    });
   });
 });
 

@@ -22,7 +22,16 @@ export type TableClass =
    * snapshot of where a match happened, never a tenant axis — which is why the
    * tenant rule does not apply and this class exists to say so.
    */
-  | 'POLICE_REALM_RLS';
+  | 'POLICE_REALM_RLS'
+  /**
+   * Phase 19. An Operation-realm table: it belongs to the platform's own
+   * operations rather than to a hotel, and a reminder SMS spans every hotel the
+   * filter matched — so its isolation is the realm. RLS is enabled and forced
+   * and **every** policy on it names `platform.current_realm()`, which is what
+   * distinguishes this from a tenant table that merely also admits the realm.
+   * A `hotel_id` here says who was written to, not whose row it is.
+   */
+  | 'OPERATION_REALM_RLS';
 
 export interface ClassifiedTable {
   readonly schema: string;
@@ -1011,6 +1020,80 @@ export const TABLE_CLASSIFICATION: readonly ClassifiedTable[] = [
     classification: 'POLICE_REALM_RLS',
     why: 'one short-lived download link, append-only (doc 13 §12.3)',
   },
+
+  // ---------------------------------------------------------------- Phase 19
+  {
+    schema: 'platform',
+    table: 'operation_totp_factor',
+    classification: 'ACCOUNT_GLOBAL',
+    why: "the Operation account's second factor; belongs to an account, not a hotel (doc 14 §2)",
+  },
+  {
+    schema: 'platform',
+    table: 'operation_account_enrolment',
+    classification: 'ACCOUNT_GLOBAL',
+    why: 'one-time enrolment token for a named Operation account (doc 14 §2)',
+  },
+  {
+    schema: 'platform',
+    table: 'account_recovery_request',
+    classification: 'ACCOUNT_GLOBAL',
+    why: 'the offline ownership-recovery handoff; carries no destination at all (OPS-DEC-009)',
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_contact',
+    classification: 'TENANT_RLS',
+    why: "carries hotel_id; the subscription's one confirmed number (doc 14 §5.1)",
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_contact_change_request',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; the Super Admin exception is approved on this row (OPS-DEC-015)',
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_contact_code',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; keyed digests of the two six-digit challenges (doc 14 §2.3)',
+  },
+  {
+    schema: 'platform',
+    table: 'subscription_suspension_event',
+    classification: 'TENANT_RLS',
+    why: 'carries hotel_id; append-only suspend/reactivate history (OPS-DEC-016)',
+  },
+  {
+    schema: 'platform',
+    table: 'sms_tariff',
+    classification: 'GLOBAL',
+    why: 'CallPro agreement configuration; empty until EXT-05 clears (doc 14 §5.3)',
+  },
+  {
+    schema: 'platform',
+    table: 'sms_preview',
+    classification: 'OPERATION_REALM_RLS',
+    why: 'the preview a send is confirmed against; spans hotels by design (OPS-DEC-010)',
+  },
+  {
+    schema: 'platform',
+    table: 'sms_send_job',
+    classification: 'OPERATION_REALM_RLS',
+    why: 'one confirmed send across many hotels; belongs to the Operation realm (doc 14 §6)',
+  },
+  {
+    schema: 'platform',
+    table: 'sms_recipient_message',
+    classification: 'OPERATION_REALM_RLS',
+    why: 'hotel_id names the recipient of a platform message, not a tenant axis (doc 14 §3.1)',
+  },
+  {
+    schema: 'platform',
+    table: 'sms_message_event',
+    classification: 'OPERATION_REALM_RLS',
+    why: 'append-only delivery history of one recipient message (doc 14 §5.5)',
+  },
 ];
 
 /** Roles that must never own a kernel object or hold a direct audit grant. */
@@ -1046,6 +1129,9 @@ export interface ClassificationViolation {
     | 'unauthorised_audit_grant'
     | 'police_realm_not_forced'
     | 'police_realm_grant_outside_realm'
+    | 'operation_realm_not_forced'
+    | 'operation_realm_policy_is_not_realm_gated'
+    | 'operation_realm_grant_outside_api'
     | 'runtime_role_owns_object';
   readonly detail: string;
 }

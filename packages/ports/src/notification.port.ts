@@ -83,8 +83,49 @@ export interface OwnerChallengeMessage {
   readonly code: string;
 }
 
+/**
+ * doc 14 §2: a named Operation account's one-time enrolment link.
+ *
+ * The account exists — a Platform Super Admin created it — but has no password
+ * and no second factor until the person named on it opens this link. Nothing in
+ * the message says which permissions were granted: what it carries is the
+ * one-time token and nothing else.
+ */
+export interface OperationEnrolmentMessage {
+  readonly kind: 'operation_enrolment';
+  readonly deliveryId: string;
+  readonly accountId: string;
+  readonly emailNormalized: string;
+  readonly expiresAt: Date;
+  readonly token: string;
+}
+
+/**
+ * doc 14 §2.3: the notice a subscription contact change sends to the account's
+ * registered address when the old number's challenge was waived by a Platform
+ * Super Admin.
+ *
+ * Both numbers are masked in the model, because the point of the message is
+ * that a change happened and who approved it — not what the numbers are.
+ */
+export interface SubscriptionContactChangedMessage {
+  readonly kind: 'subscription_contact_changed';
+  readonly deliveryId: string;
+  readonly hotelId: string;
+  readonly emailNormalized: string;
+  readonly oldPhoneMasked: string;
+  readonly newPhoneMasked: string;
+  readonly approvedByException: boolean;
+  readonly changedAt: Date;
+}
+
 export type NotificationMessage =
-  StaffInvitationMessage | PasswordResetMessage | EBarimtReceiptMessage | OwnerChallengeMessage;
+  | StaffInvitationMessage
+  | PasswordResetMessage
+  | EBarimtReceiptMessage
+  | OwnerChallengeMessage
+  | OperationEnrolmentMessage
+  | SubscriptionContactChangedMessage;
 /** The Phase 04 name for the same union. */
 export type StaffNotification = NotificationMessage;
 
@@ -254,6 +295,25 @@ export class SimulatedNotification extends NotificationBase {
       if (message?.kind === 'staff_invitation' && message.emailNormalized === emailNormalized) {
         return message;
       }
+    }
+    return undefined;
+  }
+
+  lastContactNoticeFor(hotelId: string): SubscriptionContactChangedMessage | undefined {
+    for (let index = this.delivered.length - 1; index >= 0; index -= 1) {
+      const message = this.delivered[index];
+      if (message?.kind === 'subscription_contact_changed' && message.hotelId === hotelId) {
+        return message;
+      }
+    }
+    return undefined;
+  }
+
+  lastEnrolmentFor(accountId: string): OperationEnrolmentMessage | undefined {
+    for (let index = this.delivered.length - 1; index >= 0; index -= 1) {
+      const message = this.delivered[index];
+      if (message?.kind === 'operation_enrolment' && message.accountId === accountId)
+        return message;
     }
     return undefined;
   }

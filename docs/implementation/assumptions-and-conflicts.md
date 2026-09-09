@@ -1159,6 +1159,72 @@ recorded so a reviewer can see where a judgement was made.
   whole operation and disabled by the absence of its row, so production cannot acquire either by
   deploying code — and neither can be enabled without an approved value being recorded.
 
+### 3.23 Phase 19 scope alignments — approved requirements, implemented
+
+- **A-P19-1 — TOTP is implemented rather than gated.** doc 14 §2 and architecture 05 §2 require
+  `password + TOTP or approved SSO/MFA` for the Operation realm. TOTP is RFC 6238 and needs no
+  provider, contract or credential, so it is the half that can be built now; SSO would need an
+  approved identity provider and is not attempted. The secret is held under envelope encryption in
+  its own key scope, the accepted counter step is stored so a code is single-use, and the step-up of
+  doc 18 §5 is a fresh code rather than a re-typed password.
+- **A-P19-2 — the enrolment ceremony follows Phase 05's activation, because doc 14 does not
+  describe one.** doc 14 §2 says a Platform Super Admin creates an Operation account and that the
+  account holder uses a password and a factor; it does not say how either comes into existence. The
+  account is therefore created with no credential and no factor, and a one-time hashed link — the
+  shape `hotel_admin_activation` already uses, with the same seven-day life — is what the named
+  person redeems to set their own password and receive their own secret. The secret is returned
+  exactly once, at that moment, and by no other surface.
+- **A-P19-3 — an Operation account may not administer itself.** doc 14 §2 gives account and
+  permission management to a Platform Super Admin holding
+  `PLATFORM_OPERATION_ACCESS_MANAGE` and does not say whether its holder may use it on their own
+  account. Left open, that permission would be a self-elevation permission: its holder could grant
+  themselves every other row of doc 18 §5. The command refuses a subject equal to the actor, which
+  is the reading that keeps the other rows meaningful.
+- **A-P19-4 — a suspension is not a billing event.** Phase 05's `hotel_subscription_guard` required
+  `billing_revision` to increase on every update, which was right while every update was a billing
+  one. `OPS-DEC-016` adds one that is not, and bumping the billing revision would stale an
+  outstanding renewal quote whose `quoted_billing_revision` names the current one. The guard now
+  requires the increase when a billing-bearing column moves and refuses a decrease otherwise;
+  nothing else it enforced changed.
+- **A-P19-5 — the escalation half of the ownership recovery has no permission of its own.** doc 18
+  §5 names `ACCOUNT_OWNERSHIP_RECOVERY_APPROVE` for the decision and names nothing for referring a
+  case to it. Rather than invent a row the matrix does not carry, the referral runs under
+  `SUBSCRIPTION_PASSWORD_RESET_INITIATE` — the permission that already lets an operator act on that
+  account's access — and the decision under its own. The two must be different accounts, checked by
+  the service and by a CHECK on the row.
+- **A-P19-6 — the Operation realm issues no one-time code, so the contact notice is sent from the
+  hotel's side.** doc 14 §2.3 requires a notice to the registered address and the old number when a
+  Platform Super Admin waives the old number's challenge. The registered address lives behind the
+  hotel's tenant policy and the Operation realm cannot read it — which is the boundary working. So
+  the waiver sends the old number an SMS from the Operation transaction, and the address is told
+  from the hotel-scoped transaction that applies the change, where it is legitimately readable. The
+  new number's code is likewise issued by the Hotel Admin's own resend, never by the approver.
+- **A-P19-7 — a preview's life is bounded by a hash, and by fifteen minutes.** doc 14 §5.4 requires
+  a fresh preview when the text or the recipients move and says nothing about elapsed time. The
+  body's hash and the hash of the resolved recipient set are what actually enforce the rule; the
+  fifteen-minute expiry bounds the window in which a filter could drift unnoticed and is a
+  parameter, not a requirement.
+- **A-P19-8 — the multipart SMS segment count is an estimate, and says so.** doc 14 §5.3 publishes
+  the two single-segment capacities — 70 Cyrillic, 160 Latin — and states in the same section that
+  the final algorithm follows CallPro's contract, which `EXT-05` has not produced. The count divides
+  by the published capacity and rounds up; the concatenated-message headers a real provider applies
+  are not invented. The estimated **cost** is absent entirely until a tariff row exists, because
+  doc 14 §5.4 asks for it only where possible and a made-up figure would be worse than none.
+- **A-P19-9 — a suspension reason code is shape-checked, not enumerated.** doc 14 §4.1 requires a
+  reason code and a mandatory note and does not list the codes. The shape is enforced by a CHECK,
+  the value is recorded verbatim on the append-only event, and the approved vocabulary is a P1
+  configuration item rather than a list invented here.
+- **A-P19-10 — the reconciliation vocabulary becomes doc 14's, and the reference becomes a column.**
+  Phase 05 implemented three outcome names of its own and required only a note. `OPS-DEC-017` names
+  four and requires a provider, bank or finance reference beside the note. The values are renamed,
+  `CHARGEBACK_LINKED` is added, and `reconciliation_reference` is a column the completeness CHECK
+  now includes — so a closure with no evidence is unrepresentable. A database that already held a
+  closed case would stop the migration rather than acquire an invented reference; none does.
+- **A-P19-11 — the commission contract and the payable review still have no permission.** The two
+  Operation surfaces `A-P14-1` and `A-P14-6` describe need rows doc 18 §5 does not carry, and this
+  phase did not add them. They remain open, and closing them needs an approved decision rather than
+  an implementation.
+
 ---
 
 ## 4. P1 configuration register

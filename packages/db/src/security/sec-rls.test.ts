@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import type { ProvisionedDatabase } from '../test-support/provision';
 import { provisionKernelDatabase } from '../test-support/provision';
+import type { ClassifiedTable } from '../classification';
 import { TABLE_CLASSIFICATION } from '../classification';
 import { validateClassification } from '../classification-check';
 import { PLATFORM_SCOPE, assertTenantContext } from '../tenant-context';
@@ -120,11 +121,33 @@ describe('classification manifest', () => {
                          AND a.attnum > 0 AND NOT a.attisdropped)`,
     );
     const declared = new Set(TENANT_TABLES.map((t) => `${t.schema}.${t.table}`));
-    // audit.platform_event carries hotel_id but is an audit stream, not tenant
-    // storage: it is classified PLATFORM_AUDIT and protected by grant, not RLS.
-    const expected = bearing.rows
-      .map((r) => r.qualified)
-      .filter((q) => q !== 'audit.platform_event');
+
+    // Two classes are exempt, and each is exempt because something *else*
+    // protects the row — which `validateClassification` above checks rather
+    // than takes on trust. `audit.platform_event` carries hotel_id so an
+    // investigation can be scoped, and no runtime role holds any privilege on
+    // it at all. Phase 19's `sms_recipient_message` carries hotel_id because a
+    // platform reminder names the hotel it was sent to; the row belongs to the
+    // Operation realm, its policies compare `platform.current_realm()`, and the
+    // API role is the only runtime with anything on it.
+    //
+    // The exemption is named per table rather than per class, so a new table
+    // cannot acquire it by being declared with the same class.
+    const EXEMPT: Readonly<Record<string, ClassifiedTable['classification']>> = {
+      'audit.platform_event': 'PLATFORM_AUDIT',
+      'platform.sms_preview': 'OPERATION_REALM_RLS',
+      'platform.sms_send_job': 'OPERATION_REALM_RLS',
+      'platform.sms_recipient_message': 'OPERATION_REALM_RLS',
+      'platform.sms_message_event': 'OPERATION_REALM_RLS',
+    };
+    const byName = new Map(
+      TABLE_CLASSIFICATION.map((entry) => [`${entry.schema}.${entry.table}`, entry.classification]),
+    );
+    for (const [qualified, classification] of Object.entries(EXEMPT)) {
+      expect(byName.get(qualified), qualified).toBe(classification);
+    }
+
+    const expected = bearing.rows.map((r) => r.qualified).filter((q) => EXEMPT[q] === undefined);
     expect(expected.filter((q) => !declared.has(q))).toEqual([]);
   });
 });

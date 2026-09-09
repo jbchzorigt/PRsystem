@@ -72,11 +72,15 @@ export async function validateClassification(pool: Pool): Promise<Classification
           )
         : { rows: [] };
 
-      if (entry.classification === 'POLICE_REALM_RLS') {
-        // A Police table's `hotel_id` says where a match happened. It is not a
-        // tenant axis, and isolating on it would be wrong: a match belongs to
-        // the Police realm, not to the hotel it names. The realm rule below is
-        // what protects the row.
+      if (
+        entry.classification === 'POLICE_REALM_RLS' ||
+        entry.classification === 'OPERATION_REALM_RLS'
+      ) {
+        // A Police table's `hotel_id` says where a match happened, and an
+        // Operation one's says who a platform message was sent to. Neither is a
+        // tenant axis, and isolating on it would be wrong: the row belongs to
+        // its realm, not to the hotel it names. The realm rules below are what
+        // protect these rows.
       } else if (!isAuditClass) {
         violations.push({
           kind: 'tenant_column_not_tenant_rls',
@@ -179,6 +183,57 @@ export async function validateClassification(pool: Pool): Promise<Classification
         violations.push({
           kind: 'police_realm_grant_outside_realm',
           detail: `${row.qualified} is Police-isolated, but ${grant.grantee} holds ${grant.privilege_type} on it`,
+        });
+      }
+    }
+
+    // An Operation-realm table is isolated by realm too, and the check is
+    // sharper than the Police one because the realm here shares a login with
+    // every other Hotel and Guest request: the API role is the only runtime
+    // role that may hold anything on it, and *every* policy on it must name
+    // `current_realm`. One policy that did not would be a Hotel-scoped session
+    // reading the platform's own operations, because PostgreSQL composes
+    // permissive policies with OR.
+    if (entry.classification === 'OPERATION_REALM_RLS') {
+      if (!(row.rls_enabled && row.rls_forced)) {
+        violations.push({
+          kind: 'operation_realm_not_forced',
+          detail: `${row.qualified} is OPERATION_REALM_RLS but RLS is enabled=${String(row.rls_enabled)} forced=${String(row.rls_forced)}`,
+        });
+      }
+      const policies = await pool.query<{ policyname: string; qual: string; withcheck: string }>(
+        `SELECT policyname, COALESCE(qual, '') AS qual, COALESCE(with_check, '') AS withcheck
+           FROM pg_policies WHERE schemaname = $1 AND tablename = $2`,
+        [entry.schema, entry.table],
+      );
+      if (policies.rows.length === 0) {
+        violations.push({
+          kind: 'operation_realm_policy_is_not_realm_gated',
+          detail: `${row.qualified} is OPERATION_REALM_RLS but carries no policy at all`,
+        });
+      }
+      for (const policy of policies.rows) {
+        if (!`${policy.qual} ${policy.withcheck}`.includes('current_realm')) {
+          violations.push({
+            kind: 'operation_realm_policy_is_not_realm_gated',
+            detail: `${row.qualified} policy ${policy.policyname} does not compare platform.current_realm()`,
+          });
+        }
+      }
+      const grants = await pool.query<{ grantee: string; privilege_type: string }>(
+        `SELECT pg_get_userbyid(a.grantee) AS grantee, a.privilege_type
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS a
+          WHERE n.nspname = $1 AND c.relname = $2
+            AND pg_get_userbyid(a.grantee) = ANY($3)
+            AND pg_get_userbyid(a.grantee) <> 'prsystem_api'`,
+        [entry.schema, entry.table, RUNTIME_ROLES],
+      );
+      for (const grant of grants.rows) {
+        violations.push({
+          kind: 'operation_realm_grant_outside_api',
+          detail: `${row.qualified} is Operation-realm, but ${grant.grantee} holds ${grant.privilege_type} on it`,
         });
       }
     }

@@ -8,6 +8,31 @@ import { EBarimtService } from '../services/ebarimt.service';
 import { ProvisioningService } from '../services/provisioning.service';
 import { SubscriptionService } from '../services/subscription.service';
 import { newOnboardingRequest } from '../services/onboarding-context';
+import type { ReconciliationOutcome } from '../../operation/domain/operation';
+import { isReconciliationOutcome } from '../../operation/domain/operation';
+
+function requireOutcome(value: unknown): ReconciliationOutcome {
+  const outcome = requireString(value, 'outcome', 60);
+  if (!isReconciliationOutcome(outcome)) {
+    throw new ApiError('VALIDATION_FAILED', 'the request is not valid', [
+      { field: 'outcome', issue: 'unknown reconciliation outcome' },
+    ]);
+  }
+  return outcome;
+}
+
+/** doc 14 §4.2: both the reference and the note are mandatory and bounded. */
+function requireEvidence(payload: Record<string, unknown>): { reason: string; reference: string } {
+  const reason = requireString(payload['reason'], 'reason', 1000);
+  const reference = requireString(payload['reference'], 'reference', 120);
+  if (reason.trim().length < 10 || reference.trim().length < 3) {
+    throw new ApiError('VALIDATION_FAILED', 'the request is not valid', [
+      { field: 'reason', issue: 'a note of at least ten characters is required' },
+      { field: 'reference', issue: 'a provider, bank or finance reference is required' },
+    ]);
+  }
+  return { reason: reason.trim(), reference: reference.trim() };
+}
 
 /**
  * The Operation surface of Phase 05 (doc 14; doc 18 §5).
@@ -23,23 +48,6 @@ import { newOnboardingRequest } from '../services/onboarding-context';
  * and the offline ownership verification of doc 15 §3.1 (3) — that surface is
  * Phase 19's, and until it exists the production action is not reachable.
  */
-const RECONCILIATION_OUTCOMES = [
-  'PROVIDER_CORRECTED_NOT_PAID',
-  'EXTERNALLY_VOIDED',
-  'FINANCE_CLOSED_EXCEPTION',
-] as const;
-
-function requireOutcome(value: unknown): (typeof RECONCILIATION_OUTCOMES)[number] {
-  const outcome = requireString(value, 'outcome', 40);
-  const known = RECONCILIATION_OUTCOMES.find((candidate) => candidate === outcome);
-  if (known === undefined) {
-    throw new ApiError('VALIDATION_FAILED', 'the request is not valid', [
-      { field: 'outcome', issue: 'unknown reconciliation outcome' },
-    ]);
-  }
-  return known;
-}
-
 @ApiTags('operation')
 @Controller('operation')
 export class OperationController {
@@ -116,7 +124,7 @@ export class OperationController {
         applicationId: requireUuid(applicationIdParam, 'applicationId'),
         attemptId: requireUuid(attemptIdParam, 'attemptId'),
         outcome: requireOutcome(payload['outcome']),
-        reason: requireString(payload['reason'], 'reason', 500),
+        ...requireEvidence(payload),
       },
       actorOf(request),
       newOnboardingRequest(principalOf(request).accountId),
@@ -139,7 +147,7 @@ export class OperationController {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
         intentId: requireUuid(intentIdParam, 'intentId'),
         outcome: requireOutcome(payload['outcome']),
-        reason: requireString(payload['reason'], 'reason', 500),
+        ...requireEvidence(payload),
       },
       actorOf(request),
       newOnboardingRequest(principalOf(request).accountId),

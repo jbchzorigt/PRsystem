@@ -34,7 +34,17 @@ export type KeyScope =
    * deliberately different records (doc 09 §6.4), collected by different parties
    * under different retention, and one compromise must not open both.
    */
-  | 'pii.guest_account';
+  | 'pii.guest_account'
+  /**
+   * Phase 19. The Operation account's TOTP shared secret (doc 14 §2).
+   *
+   * Its own scope, because it is the only long-lived authentication secret the
+   * platform stores at all: unlike a reset link it is not consumed, and unlike
+   * a password it is recoverable by design — the account holder's authenticator
+   * needs the same bytes. Compromise of any PII key must not also hand over a
+   * second factor.
+   */
+  | 'auth.operation_totp';
 
 /**
  * Lookup scopes are separate from encryption scopes, and Police lookup has its
@@ -94,7 +104,19 @@ export type HmacScope =
    * minutes, one use — are only as separate as the key that binds the digest to
    * this purpose.
    */
-  | 'auth.police_bootstrap_code';
+  | 'auth.police_bootstrap_code'
+  /**
+   * Phase 19, two more artefacts with two more scopes (doc 14 §2, §2.3).
+   *
+   * `auth.operation_enrolment_token` is the one-time link a named Operation
+   * account is created with; `auth.subscription_contact_otp` is the six-digit
+   * code sent to the old and the new number of a contact change. The contact
+   * code is deliberately not the onboarding phone OTP's scope: the two are
+   * issued by different realms about different subjects, and a digest produced
+   * for one must never verify as the other.
+   */
+  | 'auth.operation_enrolment_token'
+  | 'auth.subscription_contact_otp';
 
 export const KEY_SCOPES: readonly KeyScope[] = [
   'pii.hotel_guest',
@@ -102,6 +124,7 @@ export const KEY_SCOPES: readonly KeyScope[] = [
   'auth.delivery_secret',
   'pii.subscription_owner',
   'pii.guest_account',
+  'auth.operation_totp',
 ];
 export const HMAC_SCOPES: readonly HmacScope[] = [
   'lookup.identity',
@@ -119,6 +142,8 @@ export const HMAC_SCOPES: readonly HmacScope[] = [
   'auth.guest_access_code',
   'auth.restaurant_guest_session',
   'auth.police_bootstrap_code',
+  'auth.operation_enrolment_token',
+  'auth.subscription_contact_otp',
 ];
 
 export interface WrappedKey {

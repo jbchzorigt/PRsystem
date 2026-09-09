@@ -1,5 +1,6 @@
 import type { PackageCode } from '@prsystem/authz';
 import type { UnitOfWork } from '@prsystem/db';
+import type { ReconciliationOutcome } from '../../operation/domain/operation';
 import type { PaymentProvider } from '@prsystem/ports';
 
 /**
@@ -503,14 +504,17 @@ export class SubscriptionRepository {
   async closeIntentReconciliation(input: {
     intentId: string;
     expectedRevision: number;
-    outcome: 'PROVIDER_CORRECTED_NOT_PAID' | 'EXTERNALLY_VOIDED' | 'FINANCE_CLOSED_EXCEPTION';
+    outcome: ReconciliationOutcome;
     accountId: string;
     reason: string;
+    /** doc 14 §4.2: the provider, bank or finance reference. Mandatory. */
+    reference: string;
   }): Promise<boolean> {
     const result = await this.uow.query(
       `UPDATE platform.subscription_billing_intent
           SET reconciliation_outcome = $3, reconciled_by_account_id = $4,
-              reconciled_at = now(), reconciliation_reason = $5, revision = revision + 1
+              reconciled_at = now(), reconciliation_reason = $5,
+              reconciliation_reference = $7, revision = revision + 1
         WHERE hotel_id = $1 AND intent_id = $2 AND revision = $6
           AND state = 'PAID_REQUIRES_RECONCILIATION' AND reconciliation_outcome IS NULL`,
       [
@@ -520,6 +524,7 @@ export class SubscriptionRepository {
         input.accountId,
         input.reason,
         input.expectedRevision,
+        input.reference,
       ],
     );
     return result.rowCount === 1;

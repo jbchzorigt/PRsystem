@@ -3284,6 +3284,138 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
       values: [hotelId],
     }),
   },
+
+  // ---------------------------------------------------------------- Phase 19
+  {
+    name: 'platform.subscription_contact',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    // One current contact per subscription is a partial unique index, so the
+    // fixture asks the database which shape is still free rather than counting
+    // on `n`: the first row for a tenant is the current one and every later row
+    // is already superseded. Under another tenant's scope the parent is
+    // invisible, so the row is built current and refused by `WITH CHECK`.
+    insert: (hotelId, n) => ({
+      sql: `WITH sub AS (
+              SELECT coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                                WHERE s.hotel_id = $1), ${ABSENT_UUID}) AS subscription_id
+            ),
+            taken AS (
+              SELECT EXISTS (SELECT 1 FROM platform.subscription_contact c, sub
+                              WHERE c.subscription_id = sub.subscription_id
+                                AND c.is_current IS TRUE) AS current_exists
+            )
+            INSERT INTO platform.subscription_contact
+              (hotel_id, subscription_id, phone, source, is_current, superseded_at)
+            SELECT $1, sub.subscription_id, $2, 'PROVISIONING',
+                   NOT taken.current_exists,
+                   CASE WHEN taken.current_exists THEN now() ELSE NULL END
+              FROM sub, taken`,
+      values: [hotelId, `+9769${String(1000000 + (n % 1000000)).slice(-7)}`],
+    }),
+    // The only transition the supersede guard accepts, applied to the one row
+    // that is still current.
+    probeWhere: 'is_current IS TRUE',
+    updateColumn: 'superseded_at',
+    updateSet: 'is_current = false, superseded_at = now()',
+  },
+  {
+    name: 'platform.subscription_contact_change_request',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    // Seeded terminal. One non-terminal request per subscription is a partial
+    // unique index, so live fixtures could seed only a single row and the
+    // INSERT cell would collide with it.
+    insert: (hotelId, n) => ({
+      sql: `WITH acct AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('hotel', $3) RETURNING account_id
+            ),
+            sub AS (
+              SELECT coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                                WHERE s.hotel_id = $1), ${ABSENT_UUID}) AS subscription_id
+            )
+            INSERT INTO platform.subscription_contact_change_request
+              (hotel_id, subscription_id, state, old_phone, new_phone,
+               requested_by_account_id, terminal_at, terminal_reason)
+            SELECT $1, sub.subscription_id, 'CANCELLED', '+97699000000', $2,
+                   acct.account_id, now(), 'fixture'
+              FROM sub, acct`,
+      values: [
+        hotelId,
+        `+9769${String(2000000 + (n % 1000000)).slice(-7)}`,
+        `fixture-contact-${String(n)}@example.test`,
+      ],
+    }),
+    updateColumn: 'terminal_reason',
+    updateSet: 'revision = revision + 1',
+  },
+  {
+    name: 'platform.subscription_contact_code',
+    grants: { api: ['SELECT', 'INSERT', 'UPDATE'], worker: [], police: [] },
+    // Seeded superseded, for the same reason: one live code per challenge is a
+    // partial unique index. The request it hangs from is created here rather
+    // than borrowed, so the two fixtures never depend on each other's order.
+    insert: (hotelId, n) => ({
+      sql: `WITH acct AS (
+              INSERT INTO platform.user_account (realm, email_normalized)
+              VALUES ('hotel', $3) RETURNING account_id
+            ),
+            sub AS (
+              SELECT coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                                WHERE s.hotel_id = $1), ${ABSENT_UUID}) AS subscription_id
+            ),
+            req AS (
+              INSERT INTO platform.subscription_contact_change_request
+                (hotel_id, subscription_id, state, old_phone, new_phone,
+                 requested_by_account_id, terminal_at, terminal_reason)
+              SELECT $1, sub.subscription_id, 'CANCELLED', '+97699000000', $2,
+                     acct.account_id, now(), 'fixture'
+                FROM sub, acct
+              RETURNING hotel_id, request_id
+            )
+            INSERT INTO platform.subscription_contact_code
+              (hotel_id, request_id, challenge, phone, code_hash, code_key_version,
+               is_current, expires_at, superseded_at)
+            SELECT req.hotel_id, req.request_id, 'NEW_PHONE', $2,
+                   encode(digest(req.request_id::text, 'sha256'), 'hex'), 'v1',
+                   false, now() + interval '5 minutes', now()
+              FROM req`,
+      values: [
+        hotelId,
+        `+9769${String(3000000 + (n % 1000000)).slice(-7)}`,
+        `fixture-code-${String(n)}@example.test`,
+      ],
+    }),
+    updateColumn: 'attempts',
+    updateSet: 'attempts = attempts + 1',
+  },
+  {
+    name: 'platform.subscription_suspension_event',
+    // Append-only: no runtime holds UPDATE or DELETE, and the trigger refuses
+    // both even to the owner.
+    grants: { api: ['SELECT', 'INSERT'], worker: [], police: [] },
+    insert: (hotelId, n) => ({
+      sql: `WITH acct AS (
+              INSERT INTO platform.user_account (realm, realm_role, email_normalized)
+              VALUES ('operation', 'PLATFORM_SUPER_ADMIN', $2) RETURNING account_id
+            ),
+            sub AS (
+              SELECT coalesce((SELECT s.subscription_id FROM platform.hotel_subscription s
+                                WHERE s.hotel_id = $1), ${ABSENT_UUID}) AS subscription_id,
+                     coalesce((SELECT s.starts_at FROM platform.hotel_subscription s
+                                WHERE s.hotel_id = $1), now()) AS starts_at,
+                     coalesce((SELECT s.expires_at FROM platform.hotel_subscription s
+                                WHERE s.hotel_id = $1), now() + interval '30 days') AS expires_at
+            )
+            INSERT INTO platform.subscription_suspension_event
+              (hotel_id, subscription_id, action, reason_code, note, actor_account_id,
+               suspended_before, suspended_after, starts_at_snapshot, expires_at_snapshot)
+            SELECT $1, sub.subscription_id, 'SUSPEND', 'FIXTURE_REASON',
+                   'Синтетик түдгэлзүүлэлтийн тайлбар.', acct.account_id,
+                   false, true, sub.starts_at, sub.expires_at
+              FROM sub, acct`,
+      values: [hotelId, `fixture-suspension-${String(n)}@operation.test`],
+    }),
+  },
 ];
 
 /** Errors that mean "the row was malformed", never "the policy refused it". */

@@ -141,6 +141,13 @@
       "when": 1757376000008,
       "tag": "0019_police_monitoring",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1757376000009,
+      "tag": "0020_platform_operation",
+      "breakpoints": true
     }
   ]
 }

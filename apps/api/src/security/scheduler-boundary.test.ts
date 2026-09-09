@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { Pool } from 'pg';
 import { resetEnvCache } from '@prsystem/config';
-import { selectPaymentGateways } from '@prsystem/ports';
+import { UnavailableKeyManagement, selectPaymentGateways } from '@prsystem/ports';
 import { TEST_LOGIN_PASSWORD, TEST_LOGIN_PRINCIPALS, createTestDatabase } from '@prsystem/testing';
 import type { TestDatabase } from '@prsystem/testing';
 import { LOGIN_PRINCIPALS, bootstrapCluster, runMigrations } from '@prsystem/db';
@@ -375,6 +375,10 @@ describe('the scheduler capability is a decision, not a leftover variable', () =
           settlement: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
           review: { config: { databaseUrl: apiUrl } },
           reporting: { config: { databaseUrl: apiUrl, appEnv: 'test' } },
+          operation: {
+            config: { databaseUrl: apiUrl, appEnv: 'test' },
+            keys: new UnavailableKeyManagement(),
+          },
           restaurant: {
             config: {
               databaseUrl: apiUrl,

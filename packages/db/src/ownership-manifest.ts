@@ -21,6 +21,12 @@ const POLICE_MATCHER =
 const POLICE_CHECK_IN_LIST =
   'police.check_in_list(p_from timestamp with time zone, p_to timestamp with time zone, p_active_only boolean, p_limit integer, p_offset integer)';
 
+/** The Phase 19 subscription page, for the same reason. */
+const OPERATION_SUBSCRIPTION_PAGE =
+  'platform.operation_subscription_page(p_name text, p_phone text, p_email text, p_owner_type text, p_district text, p_package text, p_term_months integer, p_status text, p_expires_from timestamp with time zone, p_expires_to timestamp with time zone, p_as_of timestamp with time zone, p_limit integer, p_offset integer)';
+const OPERATION_SMS_RECIPIENTS =
+  'platform.operation_sms_recipients(p_hotel_ids uuid[], p_package text, p_status text, p_expires_from timestamp with time zone, p_expires_to timestamp with time zone, p_as_of timestamp with time zone)';
+
 export const KERNEL_OWNERS = {
   /** DDL owner. Owns everything not listed as an exception below. */
   migrate: 'prsystem_migrate',
@@ -187,6 +193,23 @@ export const FUNCTION_OWNERSHIP_MANIFEST: Readonly<Record<string, string>> = {
   'police.stale_match_locations(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   'police.pending_check_in_events(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
   [POLICE_CHECK_IN_LIST]: KERNEL_OWNERS.maintenanceFn,
+
+  // Phase 19. The Operation dashboard's resolvers, and the two commands that
+  // reach past a tenant. The dashboard ones exist so the registered address is
+  // masked *before* it leaves the database rather than after it reaches the
+  // application (doc 14 §3.2); the password-reset one queues a link to an
+  // address the operator never receives; and the scope revocation closes one
+  // hotel's staff authority without touching the same person's other hotels.
+  'platform.operation_kpi(p_as_of timestamp with time zone)': KERNEL_OWNERS.maintenanceFn,
+  [OPERATION_SUBSCRIPTION_PAGE]: KERNEL_OWNERS.maintenanceFn,
+  'platform.operation_application_queue(p_group text, p_limit integer, p_offset integer)':
+    KERNEL_OWNERS.maintenanceFn,
+  [OPERATION_SMS_RECIPIENTS]: KERNEL_OWNERS.maintenanceFn,
+  'platform.operation_reconciliation_queue(p_limit integer)': KERNEL_OWNERS.maintenanceFn,
+  'platform.operation_queue_password_reset(p_hotel_id uuid, p_initiator_account_id uuid)':
+    KERNEL_OWNERS.maintenanceFn,
+  'platform.operation_revoke_hotel_scope(p_hotel_id uuid)': KERNEL_OWNERS.maintenanceFn,
+  'platform.operation_subscription_account(p_hotel_id uuid)': KERNEL_OWNERS.maintenanceFn,
 
   // Phase 07. The inventory ledger's two triggers: the only path by which a
   // warehouse or room balance changes, on tables no runtime may write. They

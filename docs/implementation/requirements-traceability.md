@@ -1,7 +1,7 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.31 (Phase 18 — the twenty-two Police-monitoring decisions and the reception match
-boundary move to `COVERED` with code and test references; 263 of 279 `COVERED`)
+**Version:** 1.32 (Phase 19 — the sixteen Platform Operation decisions move to `COVERED` with code
+and test references; 279 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -380,24 +380,24 @@ and `validate-governance` check 3 refuses a `COVERED` row that names neither.
 
 | ID | Subject | Phase | Status | Code | Tests |
 | --- | --- | --- | --- | --- | --- |
-| OPS-DEC-001 | Dashboard purpose | 19 | PENDING | — | — |
-| OPS-DEC-002 | SMS reminder tab | 19 | PENDING | — | — |
-| OPS-DEC-003 | CallPro as SMS provider | 19 | PENDING | — | — |
-| OPS-DEC-004 | One-way SMS | 19 | PENDING | — | — |
-| OPS-DEC-005 | Seven-day expiring-soon threshold | 19 | PENDING | — | — |
+| OPS-DEC-001 | Dashboard purpose | 19 | COVERED | `apps/api/src/modules/operation/services/dashboard.service.ts`, `apps/api/src/modules/operation/http/operation.controller.ts`, `packages/db/migrations/0020_platform_operation.sql` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.http.test.ts` |
+| OPS-DEC-002 | SMS reminder tab | 19 | COVERED | `apps/api/src/modules/operation/services/sms.service.ts`, `apps/api/src/modules/operation/domain/operation.ts`, `packages/db/migrations/0020_platform_operation.sql` | `apps/api/src/modules/operation/domain/operation.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts` |
+| OPS-DEC-003 | CallPro as SMS provider | 19 | COVERED | `packages/ports/src/sms.port.ts`, `apps/api/src/modules/operation/services/sms.service.ts`, `docs/implementation/external-integration-gates.md` | `packages/ports/src/conformance.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts` |
+| OPS-DEC-004 | One-way SMS | 19 | COVERED | `packages/ports/src/sms.port.ts`, `apps/api/src/modules/operation/services/sms.service.ts`, `apps/api/src/modules/operation/http/operation.controller.ts` | `apps/api/src/modules/operation/operation.http.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts` |
+| OPS-DEC-005 | Seven-day expiring-soon threshold | 19 | COVERED | `apps/api/src/modules/operation/domain/operation.ts`, `packages/db/migrations/0020_platform_operation.sql` | `apps/api/src/modules/operation/domain/operation.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts` |
 | OPS-DEC-006 | Subscription start and expiry computation | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `packages/db/migrations/0003_onboarding_subscription.sql`, `apps/api/src/modules/onboarding/services/provisioning.service.ts` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/onboarding.integration.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
 | OPS-DEC-007 | Renewal period computation with grace | 05 | COVERED | `apps/api/src/modules/onboarding/domain/lifecycle.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts`, `packages/db/migrations/0005_onboarding_remediation2.sql` | `apps/api/src/modules/onboarding/domain/lifecycle.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts`, `apps/api/src/modules/onboarding/subscription.remediation1.test.ts`, `apps/api/src/modules/onboarding/onboarding.remediation2.test.ts` |
-| OPS-DEC-008 | Operation-initiated password reset | 19 | PENDING | — | — |
-| OPS-DEC-009 | Inaccessible-email recovery boundary | 19 | PENDING | — | — |
-| OPS-DEC-010 | Manual-only SMS sending | 19 | PENDING | — | — |
-| OPS-DEC-011 | Subscription list columns and default order | 19 | PENDING | — | — |
-| OPS-DEC-012 | Subscription list filters and search | 19 | PENDING | — | — |
-| OPS-DEC-013 | Application versus Hotel KPI boundary | 19 | PENDING | — | — |
-| OPS-DEC-014 | KPI formulas and card filters | 19 | PENDING | — | — |
-| OPS-DEC-015 | Operation security and contact change | 19 | PENDING | — | — |
-| OPS-DEC-016 | Subscription state and suspension | 19 | PENDING | — | — |
-| OPS-DEC-017 | Paid reconciliation permission and outcomes | 19 | PENDING | — | — |
-| OPS-DEC-018 | Provisioning retry and recovery permissions | 19 | PENDING | — | — |
+| OPS-DEC-008 | Operation-initiated password reset | 19 | COVERED | `apps/api/src/modules/operation/services/subscription.service.ts`, `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/iam/repositories/account.repository.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.security.test.ts` |
+| OPS-DEC-009 | Inaccessible-email recovery boundary | 19 | COVERED | `apps/api/src/modules/operation/services/recovery.service.ts`, `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/http/operation.controller.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.concurrency.test.ts`, `apps/api/src/modules/operation/operation.http.test.ts` |
+| OPS-DEC-010 | Manual-only SMS sending | 19 | COVERED | `apps/api/src/modules/operation/services/sms.service.ts`, `packages/db/migrations/0020_platform_operation.sql` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.security.test.ts`, `apps/api/src/modules/operation/operation.concurrency.test.ts` |
+| OPS-DEC-011 | Subscription list columns and default order | 19 | COVERED | `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/services/dashboard.service.ts`, `apps/api/src/modules/operation/domain/operation.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/domain/operation.test.ts` |
+| OPS-DEC-012 | Subscription list filters and search | 19 | COVERED | `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/services/dashboard.service.ts`, `apps/api/src/modules/operation/http/operation-validation.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.http.test.ts` |
+| OPS-DEC-013 | Application versus Hotel KPI boundary | 19 | COVERED | `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/domain/operation.ts`, `apps/api/src/modules/operation/services/dashboard.service.ts` | `apps/api/src/modules/operation/domain/operation.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts` |
+| OPS-DEC-014 | KPI formulas and card filters | 19 | COVERED | `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/services/dashboard.service.ts`, `apps/api/src/modules/operation/repositories/operation.repository.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.http.test.ts` |
+| OPS-DEC-015 | Operation security and contact change | 19 | COVERED | `apps/api/src/modules/operation/services/contact.service.ts`, `apps/api/src/modules/operation/services/access.service.ts`, `packages/db/migrations/0020_platform_operation.sql`, `packages/authz/src/operation.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.security.test.ts`, `apps/api/src/modules/operation/operation.concurrency.test.ts` |
+| OPS-DEC-016 | Subscription state and suspension | 19 | COVERED | `apps/api/src/modules/operation/services/subscription.service.ts`, `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/domain/operation.ts` | `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.concurrency.test.ts`, `apps/api/src/modules/operation/operation.security.test.ts` |
+| OPS-DEC-017 | Paid reconciliation permission and outcomes | 19 | COVERED | `packages/db/migrations/0020_platform_operation.sql`, `apps/api/src/modules/operation/domain/operation.ts`, `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `apps/api/src/modules/onboarding/services/subscription.service.ts` | `apps/api/src/modules/operation/domain/operation.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/onboarding/subscription.integration.test.ts` |
+| OPS-DEC-018 | Provisioning retry and recovery permissions | 19 | COVERED | `apps/api/src/modules/onboarding/services/provisioning.service.ts`, `apps/api/src/modules/onboarding/services/ebarimt.service.ts`, `apps/api/src/modules/operation/services/recovery.service.ts`, `packages/authz/src/operation.ts` | `apps/api/src/modules/onboarding/onboarding.remediation2.test.ts`, `apps/api/src/modules/operation/operation.integration.test.ts`, `apps/api/src/modules/operation/operation.security.test.ts` |
 
 ## 13. ONB-DEC — Onboarding (doc 15, 8)
 
