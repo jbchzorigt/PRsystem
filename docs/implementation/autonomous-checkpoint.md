@@ -1,13 +1,18 @@
-# Autonomous checkpoint — Phase 18 complete, Phase 19 authorized
+# Autonomous checkpoint — Phase 19 complete, Phase 20 authorized
 
-**Written:** 2026-09-09, at the close of Phase 18 under the standing progression authorization.
+**Written:** 2026-09-09, at the close of Phase 19 under the standing progression authorization.
 **Status of this document:** a handoff. It records what is true in the checkout, not what was
 intended. Nothing below claims a gate that was not run.
 
-**Phase 18 needed one commit.** Its governed battery passed on the implementation commit at the
-first attempt, all 28 executions exiting 0 — as Phases 09 to 12, 14, 15 and 17 did. Phases 08, 13 and
-16 each needed a correction first. Implementation completion is not customer acceptance and not
-release approval.
+**Phase 19 needed one commit.** Its governed battery passed on the implementation commit at the
+first attempt, all 28 executions exiting 0 — as Phases 09 to 12, 14, 15, 17 and 18 did. Phases 08,
+13 and 16 each needed a correction first. Implementation completion is not customer acceptance and
+not release approval.
+
+**Requirement coverage is now complete; release readiness is not.** All 279 canonical decisions are
+`COVERED`. Eleven EXT gates and two internal controls are open, seventeen P1 configuration items are
+open, two dependency advisories are contained rather than closed, no phase since Phase 05 has been
+accepted, and Phases 20 to 23 have not run.
 
 ---
 
@@ -30,8 +35,9 @@ release approval.
 | Phase 15 commits | implementation `ff121ef641ac36d5087ec9cd3823bbe8056e71c3` (the measured tree), record `ab1640c` |
 | Phase 16 commits | implementation `d5cf786d4c52de1e1e076a840bf00bc08709d232`, correction `fbb498bd4e832e868fbeaa4ae8d39a9523612cfb` (the measured tree), record `65f6e75` |
 | Phase 17 commits | implementation `e2b7bf8f4dc637d6c214ca9a59caf872a0927549` (the measured tree), record `15187e9` |
-| Phase 18 commits | implementation `3758aeb345a84242222657496ea290736de6ad98` (the measured tree) |
-| Phase 18 record commit | the commit that carries this checkpoint (see `git log -1`) |
+| Phase 18 commits | implementation `3758aeb345a84242222657496ea290736de6ad98` (the measured tree), record `9d13d7d` |
+| Phase 19 commits | implementation `e913a9aec886c224dacf24b25892f73bf8e3e115` (the measured tree) |
+| Phase 19 record commit | the commit that carries this checkpoint (see `git log -1`) |
 
 **Where the work lives, and why.** Unchanged since the Phase 06 checkpoint: the work is on this
 worktree's branch. The main checkout at `/Users/zorigtgantumur/Documents/Work/prsystem` still holds
@@ -63,43 +69,46 @@ Declared in [`tools/programme-state.mjs`](../../tools/programme-state.mjs):
 | 16 — Verified reviews | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | 17 — Guest registry, exports, and Hotel Admin reports | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | 18 — Police monitoring | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
-| 19 — Platform Operation | `NOT STARTED` | — (authorized to begin) |
+| 19 — Platform Operation | `DONE` | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| 20 — External adapters | `NOT STARTED` | — (authorized to begin) |
 
 The standing progression authorization of 2026-09-03 is unchanged: implementation authorization for
-Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phases 06 to 18
+Phases 06–23, sequential; not acceptance, not release approval, no gate weakened. Phases 06 to 19
 are the entries of `PROGRESSED_PHASES`; governance check 17 holds each manifest, governed entry and
 record to one another.
 
-## 3. What Phase 18 delivered
+## 3. What Phase 19 delivered
 
-See the [Phase 18 record](phase-status.md#phase-18-record). Migration `0019_police_monitoring` puts
-the first rows in the `police` schema, which had been empty since the kernel so that the separation
-would be a database fact before it was a feature.
+See the [Phase 19 record](phase-status.md#phase-19-record). Migration `0020_platform_operation` adds
+eleven tables and seven `SECURITY DEFINER` resolvers, and the shape of the module is the security
+model.
 
-**A person, a case and a match are three things** (`POL-DEC-017`). A Wanted Person is an identity
-and holds no `FOUND` or `CLOSED` state; a Wanted Case is one legal basis with its own lifecycle; a
-Match is unique on `(stay_id, wanted_person_id)`, which is what makes a replayed event, a second
-worker or a retried job produce one alert.
+**A role name grants nothing, and a name is not an account** (`OPS-DEC-015`). Every action names an
+explicitly granted permission from doc 18 §5, evaluated by the Phase 04 pipeline against the realm,
+the role column, the grant and a step-up no older than ten minutes, inside the transaction that
+applies the effect. The second factor is real — RFC 6238 TOTP with the accepted counter step written
+under a compare-and-set — and a password re-proves nothing.
 
-**Matching is exact, or it does not happen.** Two keyed tokens of one registration number, of the
-same namespace and the same key version. There is no fuzzy path in the schema for a name, a birth
-date or an address to travel down, and a passport, another government id or no document has no
-exact-match path at all.
+**The operator never holds the secret.** A reset names a hotel; a resolver reads the registered
+address, queues the link and returns it masked, so the address never reaches this process. The
+subscription list masks it the same way and compares an exact search inside the function. There is
+no route that changes an address at all (`OPS-DEC-009`), and naming one in a body is refused rather
+than ignored.
 
-**Nobody owns a match** (`POL-DEC-016`, `POL-DEC-020`). No `responsible_user_id`, no assignee, no
-transfer — not as a nullable column and not as a state. The first acknowledgement is an audit fact
-that confers nothing.
+**The KPI partition is one expression at one instant** (`OPS-DEC-014`), so the five status cards and
+the three package cards each sum to the total by construction, and every card's filter returns
+exactly what it counted. `Идэвхжээгүй` is outside the total by design (`OPS-DEC-013`).
 
-**Two people, compared on account ids.** A manual identity, a Found correction and a False Match each
-need a second account, checked by the pipeline, by the service and by a CHECK on the row. A False
-Match cannot be approved over a Found.
+**Suspension never pauses the calendar** (`OPS-DEC-016`). The append-only event snapshots
+`starts_at` and `expires_at` on both sides, so the rule is checked by comparing two rows; the hotel's
+staff scope grants are revoked and no other hotel's are; nothing auto-reactivates.
 
-**Three functions cross between the hotel world and the Police one, and nothing else does**
-(`A-P18-3`). The worker may call two of them and holds no privilege on any Police table; the Police
-role may name the platform schema and holds only the account, idempotency and outbox tables it signs
-in and issues commands with — no stay, no folio, no booking, no guest.
+**Nothing sends an SMS but a person confirming a preview** (`OPS-DEC-010`).
+`confirmed_by_account_id` is `NOT NULL`, the preview stores the hash of the body and of the resolved
+recipients, and one message per phone per job is a unique index. Delivery is one-way, with no inbound
+route and no callback route of any kind.
 
-Traceability v1.31 (twenty-three decisions; 263 of 279 `COVERED`); assumptions `A-P18-1`…`A-P18-13`.
+Traceability v1.32 (sixteen decisions; **279 of 279 `COVERED`**); assumptions `A-P19-1`…`A-P19-11`.
 
 ## 4. Working tree at this checkpoint
 
@@ -113,83 +122,86 @@ Everything is committed except the untracked
 
 | Command | Result |
 | --- | --- |
-| Phase 18 `police/domain/police` unit suite | 14 passed |
-| `police.integration` / `police.concurrency` / `police.security` / `police.http` | 13 / 5 / 10 / 8 passed |
-| api `test:unit` / `test:security` / `test:integration` / `test:concurrency` | 323 / 131 / 531 / 75 |
-| `@prsystem/db` `test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 2,425 / 88 / 41 / 16 / 51 |
+| Phase 19 `operation/domain/operation` unit suite | 23 passed |
+| `operation.integration` / `operation.concurrency` / `operation.security` / `operation.http` | 21 / 6 / 15 / 7 passed |
+| api `test:unit` / `test:security` / `test:integration` / `test:concurrency` | 346 / 146 / 559 / 81 |
+| `@prsystem/db` `test:migrations` / `test:security` / `test:unit` / `test:integration` / `test:concurrency` / `test:regression` | 148 / 2,496 / 88 / 41 / 16 / 51 |
 | `@prsystem/ports` / `@prsystem/authz` unit | 65 / 943 |
-| worker `test:unit` / `test:integration` / `test:security` | 21 / 2 / 8 |
+| worker `test:unit` | 21 |
 | `pnpm run lint` / `typecheck` / `format:check` | exit 0 |
-| the eight governance validators on the final tree | all exit 0; governance 17/17, drift fixtures 301/301 |
+| the eight governance validators on the final tree | all exit 0; governance 17/17, drift fixtures 313/313 |
 
-**Three kernel assertions had to be re-stated rather than satisfied**, because Phase 18 is where the
-thing they anticipated actually happens.
+**One kernel assertion was re-stated, and one Phase 05 guard sharpened.**
 
-- `sec-police-isolation` asserted that *no* principal spans the platform and police schemas. Two now
-  do, and the test asserts the sharper rule instead: the worker may name the police schema and holds
-  no privilege on any table in it, and the Police role may name the platform schema and holds
-  privileges on exactly eight account, idempotency and outbox tables — the list is exact, not a
-  subset.
-- `sec-rls` asserted that the Police realm is refused at the platform sentinel. Its work is
-  platform-wide by nature, so the test now asserts which realms are admitted and why the sentinel
-  still widens nothing there.
-- The ACL matrix gave the Police role no grants at all. It now names the four platform tables the
-  realm reads and writes through the kernel, with a comment for each.
+- `sec-rls`'s tenant-bearing rule asserted that every `platform` table carrying `hotel_id` is
+  `TENANT_RLS`, with one named exemption. Phase 19's `sms_recipient_message` carries `hotel_id`
+  because a platform reminder names the hotel it was sent to, and the row belongs to the Operation
+  realm. The assertion now names each exemption per table with the class that protects it, and
+  `validateClassification` — which the same suite runs — checks that class: RLS enabled and forced,
+  every policy comparing `platform.current_realm()`, and no runtime role but the API's holding
+  anything on it.
+- `platform.hotel_subscription_guard` required `billing_revision` to increase on every update, which
+  was right while every update was a billing one. A suspension is not, and bumping the revision would
+  stale an outstanding renewal quote that names the current one. The guard now requires the increase
+  when a billing-bearing column moves and refuses a decrease otherwise (`A-P19-4`).
 
-**One fixture defect was found and fixed.** The `restaurant_schedule` ACL fixture chose a weekday by
-`sequence % 7`, which collided with a seeded row as soon as the sequence shifted. It now picks the
-next unused weekday.
+**Four new tenant-row fixtures** were added for the Phase 19 `TENANT_RLS` tables, each producing a
+row the database would otherwise accept, so the RLS and ACL suites test the policy rather than a
+NOT NULL constraint.
 
-**The governed battery** ran in a clean detached checkout of the Phase 18 implementation commit
-`3758aeb` with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true`, after a preparatory
+**The governed battery** ran in a clean detached checkout of the Phase 19 implementation commit
+`e913a9a` with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true`, after a preparatory
 `pnpm run build`. **All 28 executions exited 0 on the first attempt.** Exit codes and durations are
-in [`phase-18-battery-log.md`](phase-18-battery-log.md), results in
-[`phase-18-evidence.json`](phase-18-evidence.json), restated in the Phase 18 record.
+in [`phase-19-battery-log.md`](phase-19-battery-log.md), results in
+[`phase-19-evidence.json`](phase-19-evidence.json), restated in the Phase 19 record.
 
-**`pnpm run audit:tree` moved from one moderate to three.** The new pair is `GHSA-82fw-gwwq-j7x9`,
-published after the Phase 17 battery of 2026-09-06, and it is registered as `DSR-02`: dev-only,
-unreachable because no suite declares a module mock, patched only in a Vitest major, and due for
-review in Phase 22. `pnpm run audit:prod` is clean, and the gate's threshold is unchanged.
+**`pnpm run audit:tree` is unchanged from Phase 18**: three moderate advisories, `DSR-01` and
+`DSR-02`, both contained and both due for review in Phase 22. `pnpm run audit:prod` is clean and the
+gate's threshold is unchanged.
 
 **Still true of how these runs must be made.** The api and db suites must not run against the same
-PostgreSQL cluster at once. Every count above is from a serial run; one api security suite failed
-once under a parallel run and passed on its own, which is that same contention.
+PostgreSQL cluster at once. Every count above is from a serial run.
 
-**Historical evidence (unchanged, not re-measured):** the Phase 03 to 17 batteries and the Phase 05
+**Historical evidence (unchanged, not re-measured):** the Phase 03 to 18 batteries and the Phase 05
 CI ledger are frozen records of earlier trees.
 
 ## 6. Integration obligations now open on later phases
 
-**Phase 18 discharged what the last checkpoint named of it.** `stay.checked_in` is consumed exactly
-as Phase 08 emits it, and the retention purge's effect on matching is asserted rather than assumed:
-an anonymised stay is marked `NOT_ELIGIBLE_EXACT_RD`, so it has no registration number left to match.
+**Phase 19 discharged three of the five items the last checkpoint named of it** and left two open
+for a reason that has not changed:
 
-- **Phase 19 (Platform Operation)** carries the same four open items, unchanged: an Operation surface
-  for administering a commission contract and one for reviewing a `HELD` or `ADJUSTMENT_DUE` payable
-  (both `A-P14-1`); the Restaurant Manager invitation flow, which is Phase 04's existing
-  `hotel.restaurant.manager_invite` (`A-P15-2`); and the Operation screens for the Phase 16
-  moderation queue, whose API exists and whose portal does not. Phase 18 adds a fifth: the **Police
-  account provisioning surface**. The service and the four-digit bootstrap exist and are tested, and
-  no HTTP route creates a Police account — the first Police Admin is a deployment concern, and doc 13
-  §5.1's Admin-creates-account screen belongs to a portal Phase 19 owns.
-- **Also open, and recorded rather than assumed:** wiring Phase 09's overdue-conflict
-  `CANCELLED_HOTEL` resolution to the booking command Phase 14 added (`A-P14-11`), and scheduling on
-  the worker's queues the two settlement jobs, the Phase 13 expiry sweep and Phase 15's
-  invoice-expiry and refund-SLA sweeps — five services with tests and no scheduler entry yet. Phase
-  18 removes nothing from that list and adds nothing to it: its matcher is wired into the worker
-  deployment on its own queue, as Phase 17's three sweeps are.
-- **Two Police sweeps are implemented and not yet scheduled**: the stale-location sweep and the SMS
-  delivery drain. Both are service methods with tests, called by the Police module rather than by a
-  queue, and both belong on the worker's queues when Phase 19 or 22 wires the outstanding five.
-- **`EXT-09` and `EXT-10` bound what Phase 18 can be.** The escalation timer and the Police Admin's
-  historical check-in search are configuration rows that do not exist, so neither runs; the
-  four-digit bootstrap and the full-registration-number SMS are security exceptions ЦЕГ has not
-  approved. All four are Phase 20 gates and none of them is a code change.
-- Every phase that resolves a lifecycle blocker keeps calling `LifecycleService.finalizeIfClear`.
+- The **Police account provisioning surface** is *not* one of them and stays open in a narrower
+  form: doc 13 §5.1's Admin-creates-account screen is a portal, and portals are Phase 21. The
+  service and the four-digit bootstrap exist and are tested.
+- **Administering a commission contract** and **reviewing a `HELD` or `ADJUSTMENT_DUE` payable**
+  (both `A-P14-1`) need a permission doc 18 §5 does not name. Phase 19 did not invent one
+  (`A-P19-11`). Closing either needs an approved decision, not an implementation.
+- The **Restaurant Manager invitation flow** (`A-P15-2`) is Phase 04's existing
+  `hotel.restaurant.manager_invite` and needs only a screen — Phase 21.
+- The **Operation screens** for the Phase 16 moderation queue, the Phase 19 dashboard, the SMS tab
+  and the contact change are all Phase 21's: every one of their APIs now exists.
+
+**Also open, and recorded rather than assumed:** wiring Phase 09's overdue-conflict
+`CANCELLED_HOTEL` resolution to the booking command Phase 14 added (`A-P14-11`), and scheduling on
+the worker's queues the two settlement jobs, the Phase 13 expiry sweep, Phase 15's invoice-expiry and
+refund-SLA sweeps, and Phase 18's two Police sweeps — nine service methods with tests and no
+scheduler entry yet. Phase 19 adds a tenth: **the SMS delivery-status refresh**, which is an
+Operation-realm command with a route rather than a queue, because doc 14 §5.4 forbids a scheduler
+from *sending* and says nothing about one asking a provider what happened. Wiring it is Phase 20's
+or Phase 22's, alongside the other nine.
+
+**`EXT-05` bounds what the SMS tab can be.** The tariff table is empty, so no cost estimate is
+shown; the segment count follows the two capacities doc 14 §5.3 publishes and is labelled an
+estimate; there is no callback route because no signature scheme is approved; and with the production
+adapter disabled a confirmed send records every recipient message `FAILED` with the gate as its
+reason. `INT-MAIL-01` bounds the enrolment link, the reset delivery and the contact notice the same
+way.
+
+Every phase that resolves a lifecycle blocker keeps calling `LifecycleService.finalizeIfClear`.
 
 ## 7. Processes, containers and services
 
-- **No task-owned process is running.** The Phase 18 battery checkout was removed after its run, so
+- **No task-owned process is running.** The Phase 19 battery checkout was removed after its run, so
   `git worktree list` shows the main checkout, this worktree and the earlier task-owned detached
   checkouts (`battery-wt-08b` through `battery-wt-14`) — all safe to remove with `git worktree
   remove --force`.
@@ -208,48 +220,44 @@ an anonymised stay is marked `NOT_ELIGIBLE_EXACT_RD`, so it has no registration 
 ## 8. Blockers and pending customer choices
 
 - Unchanged and still open: `EXT-01`, `EXT-02`, `EXT-03`, `EXT-04`, `EXT-06`, `EXT-07`, `EXT-08`,
-  `EXT-11` (BLOCKED, conformance-gated simulators), `INT-OTP-01`, `INT-MAIL-01`, `INT-STORAGE-01`,
-  the Phase 19 offline verification surface, 17 P1 configuration items, and selecting `GATE-SEC` as a
-  required GitHub status check.
-- **`EXT-05` (CallPro) is now consumed and stays BLOCKED.** The canonical `SmsPort` and its
-  deterministic simulator exist; the production adapter answers `DISABLED`, so a Match alert's SMS is
-  recorded as undelivered rather than sent. The endpoint, the authentication scheme, the callback
-  signature and the segment billing are all still unapproved.
-- **`EXT-09` (ЦЕГ) and `EXT-10` (Police security) are what this phase is most bounded by.** Four
-  things wait on written approval and none of them is a code change: the escalation minutes; the
-  check-in retention period that enables the historical search; the four-digit bootstrap security
-  exception; and the legal basis for putting a full registration number in an SMS. The first two are
-  configuration rows that do not exist, so the features do not run.
-- **`DSR-02` is new.** `GHSA-82fw-gwwq-j7x9` affects Vitest below 4.1.11; the workspace pins 3.2.7.
-  It is a devDependency, unreachable without a module mock, and patched only in a major upgrade that
-  is a change of its own. Recorded, contained and due for review in Phase 22.
-- **Three items are recorded for the customer's attention.** A Match SMS carries a person's full
-  registration number to a phone (`POL-DEC-009`), which is a deliberate exception ЦЕГ must accept in
-  writing. The all-hotel check-in list shows every hotel's guests, unmasked, to a Police Admin
-  (`POL-DEC-010`), which needs its own written legal basis. And a four-digit bootstrap code is ten
-  thousand guesses (`POL-DEC-022`): every compensating control doc 13 §5.3 requires is implemented,
-  and the exception itself is still unapproved.
+  `EXT-09`, `EXT-10`, `EXT-11` (BLOCKED, conformance-gated simulators), `INT-OTP-01`,
+  `INT-MAIL-01`, `INT-STORAGE-01`, 17 P1 configuration items, and selecting `GATE-SEC` as a required
+  GitHub status check.
+- **`EXT-05` (CallPro) is now consumed by two phases and stays BLOCKED.** The endpoint, the
+  authentication scheme, the callback signature, the segment algorithm and the tariff are all
+  unapproved. What that costs is written into the behaviour rather than around it: no cost estimate,
+  no callback route, and a confirmed send that records every message as undelivered.
+- **The Phase 19 offline verification surface is no longer a pending item — it is a recorded
+  boundary.** doc 14 §2.2 keeps email-ownership recovery outside the MVP, so what exists is a
+  two-person handoff that records a decision and changes no address. The procedure the decision
+  follows is a production support and security document the customer still owes.
+- **Two Operation surfaces need a doc 18 §5 row before they can exist**: the commission contract and
+  the payable review (`A-P14-1`, `A-P19-11`). This is a requirement decision, not an implementation gap.
+- **`DSR-01` and `DSR-02` are unchanged** and both due for review in Phase 22.
+- **Three Police items are still recorded for the customer's attention**: the full registration
+  number in a Match SMS, the all-hotel check-in list, and the four-digit bootstrap exception.
 - The main-checkout reconciliation of §1 remains the one decision this checkpoint asks of the
   customer.
 
 ## 9. Exact next action
 
-**Phase 19 — Platform Operation — is the current phase and is authorized to begin under the standing
+**Phase 20 — External adapters — is the current phase and is authorized to begin under the standing
 authorization.** Before editing: reread `CLAUDE.md`, this checkpoint, `phase-status.md` (current
-position, ledger, the Phase 17 and 18 records), `build-plan.md` §"Phase 19", and the requirement
-files that phase assigns; list its owned DEC IDs from `requirements-traceability.md` §2 and the
-family tables. Then verify `git status` matches §4.
+position, ledger, the Phase 18 and 19 records), `build-plan.md` §"Phase 20", and
+`external-integration-gates.md` in full — that register, not the build plan, is what decides which
+adapters may be enabled at all. Then verify `git status` matches §4.
 
 **The exact next command.**
 
 ```
 cd /Users/zorigtgantumur/Documents/Work/prsystem/.claude/worktrees/prsystem-phases-06-23-d506eb \
   && git log --oneline -3 && git status --porcelain \
-  && sed -n '/^### Phase 19/,/^### Phase 20/p' docs/implementation/build-plan.md
+  && sed -n '/^### Phase 20/,/^### Phase 21/p' docs/implementation/build-plan.md
 ```
 
-Begin from the permission model, not from the screens. doc 14's Operation actions are
-explicit-grant-only with step-up — a role name grants nothing — and the five open items §6 lists are
-Operation surfaces over commands other phases already built. Establishing which named permission
-each screen runs under, and which of them are new rows of doc 18 §5, decides most of the phase before
-any dashboard is drawn.
+Begin from the gate register, not from the adapters. Phase 20 owns no DEC ID: its scope is eleven
+external systems whose contracts, credentials and signature rules are mostly still missing, and the
+phase's honest output is a set of adapters that are *either* enabled with their gate cleared *or*
+explicitly recorded as still blocked. An adapter written against an invented endpoint would be worse
+than no adapter, and CLAUDE.md §9 says so directly. Expect most of the eleven to stay disabled, and
+expect the phase's real work to be the conformance suite that proves a disabled adapter fails closed.

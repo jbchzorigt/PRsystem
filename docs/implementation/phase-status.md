@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 19 — Platform Operation |
+| Current phase | 20 — External adapters |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -49,6 +49,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 17 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 18 state | `DONE` |
 | Phase 18 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 19 state | `DONE` |
+| Phase 19 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -80,7 +82,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 16 | Verified reviews | `DONE` | `0017_verified_reviews` | the Phase 16 battery — counts in [Phase 16 record](#phase-16-record) | implemented and corrected at the commits named in the record; the record and its evidence are the commit after them |
 | 17 | Guest registry, exports, and Hotel Admin reports | `DONE` | `0018_registry_reporting` | the Phase 17 battery — counts in [Phase 17 record](#phase-17-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 18 | Police monitoring | `DONE` | `0019_police_monitoring` | the Phase 18 battery — counts in [Phase 18 record](#phase-18-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
-| 19 | Platform Operation | `NOT STARTED` | — | — | — |
+| 19 | Platform Operation | `DONE` | `0020_platform_operation` | the Phase 19 battery — counts in [Phase 19 record](#phase-19-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 20 | External adapters | `NOT STARTED` | — | — | — |
 | 21 | Responsive UI and accessibility | `NOT STARTED` | — | — | — |
 | 22 | Security, concurrency, recovery, and full E2E | `NOT STARTED` | — | — | — |
@@ -5572,4 +5574,186 @@ The per-command exit codes, durations and execution environment are recorded in
 [phase-18-battery-log.md](phase-18-battery-log.md).
 
 Phase 18 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 19 is authorized to begin under the
+standing progression authorization and has **not** started.
+
+---
+
+## Phase 19 record
+
+Platform Operation: the named accounts that may act at all, the dashboard they act from,
+subscription suspension, the subscription contact change, the offline ownership handoff, and the
+reminder SMS nothing but a person can send. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 18 tree. Phase 19 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 20 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** the sixteen this phase owns — `OPS-DEC-001`–`005` and `OPS-DEC-008`–`018`.
+With the 263 already closed, **279 of the 279 canonical decisions are now `COVERED`**. Coverage
+being complete is not release readiness: eleven EXT gates, seventeen P1 items and two dependency
+advisories are still open, and no phase has been accepted since Phase 05.
+
+### Scope completed
+
+- **Migration `0020_platform_operation`** — eleven tables in `platform`: the Operation account's
+  TOTP factor and its one-time enrolment; the offline ownership-recovery handoff; the subscription
+  contact, its change request and the two challenges that move it; the append-only suspension
+  history; and the SMS tariff, preview, send job, recipient message and delivery history. Seven
+  `SECURITY DEFINER` resolvers, a seeding trigger, and the forward-only guards the histories need.
+- **A role name grants nothing, and a name is not an account** (`OPS-DEC-015`). Every action names
+  an explicitly granted permission from doc 18 §5, evaluated by the Phase 04 pipeline in the
+  Operation realm against the realm, the role column, the grant and a step-up no older than ten
+  minutes — inside the transaction that applies the effect. `account_permission_grant`'s composite
+  key to the account's own role makes a Platform-Super-Admin permission on an Operation Admin
+  unrepresentable; the CHECK refuses it again on the account's real role.
+- **The second factor is real, and it is what a step-up re-proves** (`A-P19-1`). RFC 6238 TOTP,
+  20-byte secret under envelope encryption in its own key scope, verified in constant time, with
+  the accepted counter step written under a compare-and-set — so the same six digits presented twice
+  inside their thirty seconds produce one session, not two. A password refreshes nothing.
+- **The operator never holds the secret** (`OPS-DEC-008`). A password reset names a hotel and
+  nothing else: a resolver reads the registered address, queues it through the same durable path a
+  self-service request uses, and returns it masked. The address does not reach this process, the
+  response, the audit or a log. There is no parameter anywhere that could redirect the link.
+- **There is no route that changes an address** (`OPS-DEC-009`). An inaccessible-email case is
+  recorded and handed to a Platform Super Admin holding `ACCOUNT_OWNERSHIP_RECOVERY_APPROVE`; the
+  two must be different accounts, checked by the service and by a CHECK on the row; and an approval
+  records that the offline procedure concluded rather than performing one. Naming a `newEmail` in
+  the request body is refused rather than ignored.
+- **The KPI partition is one expression at one instant** (`OPS-DEC-014`). The five status cards are
+  arms of one `CASE` evaluated at a single `as_of`, so they sum to the total by construction rather
+  than by two queries agreeing; the three package cards sum to it as well; and every card's filter
+  returns exactly the rows it counted. `Идэвхжээгүй` is the paid-but-unprovisioned application count
+  and is deliberately outside the total (`OPS-DEC-013`) — a `PROVISIONED` application appears in
+  neither queue, so nothing is counted twice.
+- **The subscription list is the thirteen approved columns** (`OPS-DEC-011`, `OPS-DEC-012`), ordered
+  soonest-to-expire then by name, filtered and paginated on the server, with the registered address
+  masked *inside the resolver*. An exact address or phone search is audited with its operator and
+  with which kinds of filter were used — never with the term.
+- **Suspension is an access override, never a pause** (`OPS-DEC-016`). It writes `suspended_at` and
+  an append-only event that snapshots `starts_at` and `expires_at` on both the suspension and the
+  reactivation, so the rule can be checked by comparing two rows. It revokes the hotel's live scope
+  grants and bumps each membership's revision — the pair the pipeline re-reads at commit — and
+  leaves the same person's other hotels alone. Nothing auto-reactivates.
+- **Nothing sends an SMS but an operator confirming a preview** (`OPS-DEC-010`).
+  `sms_send_job.confirmed_by_account_id` is `NOT NULL`, so a job no person confirmed is not a row
+  this schema can hold. The preview stores the hash of the body and of the resolved recipient set,
+  and the confirmation recomputes both — a drifted filter or an edited text is refused and a fresh
+  preview required. One message per phone per job is a unique index; a repeated confirmation finds
+  the job that exists.
+- **Delivery is one-way** (`OPS-DEC-004`). There is no inbound route, no inbox, no reply surface and
+  no callback route at all — no signature scheme is approved, so status is asked for through
+  `queryStatus` and never accepted unsolicited. A message moves forward only, enforced by a trigger,
+  so a late or repeated answer cannot rewrite its history.
+- **The contact change belongs to the Hotel Admin** (`OPS-DEC-015`). Both numbers are challenged
+  with six-digit codes stored as keyed digests — five minutes, five attempts, sixty seconds between
+  sends, one live code per challenge — and the swap is one transaction that supersedes and inserts.
+  A Platform Super Admin may waive the **old** number's challenge with a reference, a reason and a
+  recent step-up, and nothing else: the waiver is not a pass, the new number's challenge still has
+  to be issued by the Hotel Admin's own side and passed, and the row's CHECK refuses an applied
+  change that skipped it.
+- **`OPS-DEC-017` adopts doc 14 §4.2's vocabulary.** The three names Phase 05 invented become the
+  four the document states, `CHARGEBACK_LINKED` is added, and the provider, bank or finance
+  reference becomes a column the completeness CHECK includes — so a closure with no evidence is
+  unrepresentable. The queue itself is a read; the closure stays where Phase 05 built it, so there
+  is one writer rather than two.
+
+### Gates this phase had to pass, and what they measured
+
+- **The partition.** With one hotel in each of the five statuses and three packages present, the
+  status counts and the package counts each summed to the total, the unfiltered list matched the
+  total, and each of the eight card filters returned exactly the number its card had counted.
+- **No scheduler can send.** Asserted against the database rather than the service: an insert of a
+  send job with a null confirming account is refused, and no such row exists.
+- **A duplicate confirm sends one message per number.** Two concurrent confirmations of one preview
+  under different idempotency keys produced one job, one message per phone, and one provider send.
+- **An operator can read no token, no password and no unmasked address.** The list, the reset result
+  and the application queue were serialised together and searched: the registered address is absent
+  and its masked form is present; the queued intake carries the registered address the operator
+  never saw.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 19 in `PROGRESSED_PHASES`, the current phase
+  advanced to 20), `docs/implementation/phase-19-evidence.json`, and the drift fixtures retargeted
+  to the new current phase. Check 17 binds the manifest, the governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.32 — the sixteen decisions `COVERED` with code
+  and test references; 279 of 279.
+- **Assumptions:** `A-P19-1`…`A-P19-11` in `assumptions-and-conflicts.md` §3.23.
+
+### One kernel assertion re-stated, and one guard sharpened
+
+`sec-rls`'s tenant-bearing rule asserted that every table in `platform` carrying `hotel_id` is
+`TENANT_RLS`, with one named exemption. Phase 19's `sms_recipient_message` carries `hotel_id`
+because a platform reminder names the hotel it was sent to; the row belongs to the Operation realm.
+The assertion now names each exemption **per table** with the class that protects it instead, and
+`validateClassification` — which it also runs — checks that class: RLS enabled and forced, every
+policy comparing `platform.current_realm()`, and no runtime role but the API's holding anything.
+
+Phase 05's `hotel_subscription_guard` required `billing_revision` to increase on every update.
+`OPS-DEC-016` adds an update that is not a billing change, and bumping the revision would stale an
+outstanding renewal quote that names the current one. The guard now requires the increase when a
+billing-bearing column moves and refuses a decrease otherwise (`A-P19-4`).
+
+### External gates
+
+`EXT-05` (CallPro) is consumed by this phase and stays BLOCKED. The tariff table is empty, so the
+estimated cost is absent rather than invented; the segment count divides by the two capacities
+doc 14 §5.3 publishes and is presented as an estimate; there is no callback route at all; and with
+the production adapter disabled a confirmed send records every recipient message `FAILED` with the
+gate as its reason — the job exists, the audit exists, and nothing was sent. `INT-MAIL-01` is
+likewise consumed by the enrolment link, the reset delivery and the contact notice, and likewise
+answers `DISABLED` in production. Otherwise unchanged: `EXT-01`, `EXT-02`, `EXT-03`, `EXT-04`,
+`EXT-06`, `EXT-07`, `EXT-08`, `EXT-09`, `EXT-10`, `EXT-11`; `INT-OTP-01`, `INT-STORAGE-01`; 17 P1
+items; `DSR-01` and `DSR-02`; and selecting `GATE-SEC` as a required GitHub status check.
+**Phase 19 adds no new EXT gate.**
+
+### What Phase 19 was asked to carry and did not
+
+Two Operation surfaces named by earlier phases stay open, and both need a decision rather than an
+implementation: administering a hotel's commission contract and reviewing a `HELD` or `ADJUSTMENT_DUE` payable
+(both `A-P14-1`). doc 18 §5 names no permission for either, and this phase did
+not invent one (`A-P19-11`). The Operation *screens* for the Phase 16 moderation queue are Phase
+21's, not this phase's: `REVIEW_MODERATE` and its API already exist.
+
+### Evidence
+
+<!-- phase-19-evidence:begin -->
+
+Measured at implementation commit e913a9aec886c224dacf24b25892f73bf8e3e115, in a clean detached
+checkout with a fresh install, a fresh Turborepo cache and forced task execution. All 28 executions
+exited 0, each on its first attempt. The two governance rows are from the final tree, which carries
+this record and the twelve new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 301 of 301 drift fixtures caught at the measured commit; 313 of 313 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 842 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 17 of 17 projects |
+| `pnpm run typecheck` | PASS | 28 of 28 graphs |
+| `pnpm run test:unit` | PASS | 1,618 across 11 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, three upgrade paths including Phase 05 → 19, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 607: outbox 5, db 41, worker 2, api 559 |
+| `pnpm run test:concurrency` | PASS | 97 each run: db 16, api 81 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 19 of 19 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 15 passed |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; three moderate, DSR-01 and DSR-02 |
+| `pnpm run build` | PASS | 17 of 17 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-19-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-19-battery-log.md](phase-19-battery-log.md).
+
+Phase 19 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 20 is authorized to begin under the
 standing progression authorization and has **not** started.

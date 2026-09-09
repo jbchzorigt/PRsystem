@@ -1221,7 +1221,8 @@ recorded so a reviewer can see where a judgement was made.
   now includes — so a closure with no evidence is unrepresentable. A database that already held a
   closed case would stop the migration rather than acquire an invented reference; none does.
 - **A-P19-11 — the commission contract and the payable review still have no permission.** The two
-  Operation surfaces `A-P14-1` and `A-P14-6` describe need rows doc 18 §5 does not carry, and this
+  Operation surfaces `A-P14-1` describes — administering a rate, and reviewing a payable it put
+  `HELD` — need rows doc 18 §5 does not carry, and this
   phase did not add them. They remain open, and closing them needs an approved decision rather than
   an implementation.
 
