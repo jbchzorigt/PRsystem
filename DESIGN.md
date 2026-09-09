@@ -131,3 +131,8 @@ Template authoring uses the same operational rows, bounded lists and shared
 forms. Exact version numbers and the named Default state identify the current
 choice; a compact product/quantity table is the review surface before Publish.
 No new palette, typography, overlay or local form owner is introduced.
+
+Room configuration requests appear beside the existing room facts. Current mode,
+exact target version and pending state have separate text labels. The existing
+shared table and form display the target items and reason, with the assignment
+warning before confirmation. This extension adds no new visual tokens.

@@ -83,3 +83,6 @@ Authoring commands neither touch existing Reception mock minibar nor create room
 pointers, readiness blockers, stock movements, Cleaner tasks, guest charges or
 price books. Reception/Cleaner exact-version read access belongs to their future
 room/task scope; these authoring endpoints remain Manager-only. No deployment.
+
+Room request/blocker continuation: [docs/50](50-minibar-configuration-requests.md).
+Physical reconciliation and stock transfer remain separate.

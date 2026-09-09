@@ -124,6 +124,9 @@ class StayService(RoomService):
                 raise DomainError('WORK_SOURCE_NOT_FOUND')
             if (row[5], row[6], row[18]) != ('ACTIVE', 'CLEAN', 'ACTIVE'):
                 raise DomainError('ROOM_NOT_READY')
+            from prsystem.minibar_configuration import MinibarConfiguration
+            if MinibarConfiguration.pending(conn,tenant,row[0]):
+                raise DomainError('CONFIGURATION_PENDING')
             shift = self._shift(conn, tenant, actor)
             recorded = conn.execute('SELECT clock_timestamp()').fetchone()[0]
             # Recheck expiry after potentially waiting on the serialization locks.

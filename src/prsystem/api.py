@@ -28,6 +28,7 @@ from prsystem.opening import OpeningService
 from prsystem.rooms import RoomService
 from prsystem.minibar import MinibarWarehouse
 from prsystem.minibar_templates import MinibarTemplates
+from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -87,6 +88,28 @@ class MinibarTemplateItem(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     product_id: str = Field(min_length=1, max_length=128)
     target_quantity: int = Field(ge=1, le=2**63-1)
+
+
+class MinibarConfigurationRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    target_mode: Literal['ON','OFF']
+    target_template_id: str | None = Field(default=None,min_length=1,max_length=128)
+    target_version_id: str | None = Field(default=None,min_length=1,max_length=128)
+    expected_room_revision: int = Field(ge=1,le=2**63-1)
+    reason: str = Field(min_length=1,max_length=1000)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+    @model_validator(mode='after')
+    def exact_target(self):
+        if self.target_mode=='ON' and (self.target_template_id is None or self.target_version_id is None):
+            raise ValueError('An exact template version is required')
+        if self.target_mode=='OFF' and (self.target_template_id is not None or self.target_version_id is not None):
+            raise ValueError('OFF has no target template')
+        return self
+
+
+class MinibarConfigurationCancel(MinibarTemplateCommand):
+    reason: str = Field(min_length=1,max_length=1000)
 
 
 class MinibarDraftSave(MinibarTemplateCommand):
@@ -734,6 +757,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     rooms = RoomService(service)
     minibar = MinibarWarehouse(service)
     templates = MinibarTemplates(service)
+    configuration = MinibarConfiguration(service)
     room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service,runtime_mode)
     stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
@@ -820,7 +844,8 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422,
                           'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409,
                           'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_VERSION_IMMUTABLE':409,
-                          'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409}
+                          'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409,
+                          'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -863,6 +888,19 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/templates', status_code=201)
     def minibar_template_create(tenant_id: str, body: MinibarTemplateCreate, secret: Annotated[str, Depends(token)]):
         return templates.create_template(secret, tenant_id, body.name, body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/rooms/{room_id}/minibar-configuration/requests', status_code=201)
+    def minibar_configuration_request(tenant_id: str,room_id: str,body: MinibarConfigurationRequest,secret: Annotated[str,Depends(token)]):
+        return configuration.request(secret,tenant_id,room_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/rooms/{room_id}/minibar-configuration')
+    def minibar_room_configuration(tenant_id: str,room_id: str,secret: Annotated[str,Depends(token)],
+                                   after: str=Query(default='',max_length=128),limit: int=Query(default=20,ge=1,le=100)):
+        return configuration.room_configuration(secret,tenant_id,room_id,after,limit)
+
+    @app.post('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/cancel')
+    def minibar_configuration_cancel(tenant_id: str,request_id: str,body: MinibarConfigurationCancel,secret: Annotated[str,Depends(token)]):
+        return configuration.cancel(secret,tenant_id,request_id,body.expected_revision,body.reason,body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/minibar/templates')
     def minibar_templates(tenant_id: str, secret: Annotated[str, Depends(token)],

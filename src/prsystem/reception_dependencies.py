@@ -32,6 +32,8 @@ class ReceptionDependencies(GuestFinance):
             self._catalog_lock(conn,tenant)
             row=conn.execute('SELECT revision,status FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,room)).fetchone()
             if not row or row[0]!=revision:raise DomainError('REVISION_CONFLICT')
+            from prsystem.minibar_configuration import MinibarConfiguration
+            if MinibarConfiguration.pending(conn,tenant,room):raise DomainError('CONFIGURATION_PENDING')
             if row[1]!='ACTIVE' and items:raise DomainError('ROOM_NOT_READY')
             if conn.execute("SELECT 1 FROM prsystem.stay WHERE tenant_id=%s AND room_id=%s AND state='ACTIVE'",(tenant,room)).fetchone() or conn.execute("SELECT 1 FROM prsystem.room_cleaning_request WHERE tenant_id=%s AND room_id=%s AND state='OPEN'",(tenant,room)).fetchone():raise DomainError('LIFECYCLE_BLOCKED')
             conn.execute('INSERT INTO prsystem.mock_minibar_configuration(tenant_id,room_id,revision,items) VALUES(%s,%s,%s,%s)',(tenant,room,revision+1,Jsonb(items)))

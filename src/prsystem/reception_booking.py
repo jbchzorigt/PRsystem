@@ -26,6 +26,8 @@ class ReceptionBooking(StayService):
                 FROM prsystem.room r JOIN prsystem.room_category c ON(c.tenant_id,c.id)=(r.tenant_id,r.category_id)
                 JOIN prsystem.room_hotel_settings h ON h.tenant_id=r.tenant_id WHERE r.tenant_id=%s AND r.id=%s FOR UPDATE OF r''',(tenant,room)).fetchone()
             if not row or row[1:3]!=('ACTIVE','ACTIVE'):raise DomainError('ROOM_NOT_READY')
+            from prsystem.minibar_configuration import MinibarConfiguration
+            if MinibarConfiguration.pending(conn,tenant,room):raise DomainError('CONFIGURATION_PENDING')
             offset=3 if kind=='HOURLY' else 4
             price=next((row[n] for n in (offset+2,offset+4) if row[n] is not None),None)
             if price is None:raise DomainError('STAY_SETTINGS_REQUIRED')

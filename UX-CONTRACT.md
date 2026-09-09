@@ -133,3 +133,23 @@ publish and default refresh the same exact version and announce server success.
 Conflict preserves input and requires explicit reload/discard. Detail/picker
 loads ignore stale responses; failed picker loads have an explicit retry.
 Verification: tests/browser/minibar-templates.cjs and test_minibar_templates.py.
+
+## Pending room minibar configuration
+
+Docs/26 §§14–22 own the request/blocker boundary. An exact Published version
+opens a bounded 100-room native chooser, reason and explicit new-assignment
+warning. No live stock count or price is inferred from target quantities.
+Requests leave current mode and active stay intact. Room cards name the pending
+blocker and suppress new check-in; walk-in and assignment pickers exclude it.
+Manager can request/cancel, Reception reads current/pending and bounded history.
+OFF and cancel forms use the same owners and server revisions as ON requests.
+Successful writes refresh rooms and announce the result. Lost responses preserve
+the idempotency key; stale revisions retain input until explicit reload. Local
+panels discard detached/stale responses and provide named load retries.
+Request creation, pre-movement cancellation and read are the implemented surface;
+physical reconciliation/apply has no UI command yet. A pending request is not a
+claim that the room is configured or that stock moved. Source request state is
+recorded at creation, not inferred from planned checkout time.
+Verification: test_minibar_configuration.py and the extended
+ tests/browser/minibar-templates.cjs (request, retry, blocker, read/cancel,
+OFF, Reception read-only, keyboard and mobile checks).

@@ -40,6 +40,8 @@ class RoomLifecycle(RoomService):
                 if row[0]!=('INACTIVE' if action=='REACTIVATE' else 'RETIRING'):raise DomainError('INVALID_LIFECYCLE_TRANSITION')
                 status='ACTIVE'
             else:
+                from prsystem.minibar_configuration import MinibarConfiguration
+                if MinibarConfiguration.pending(conn,tenant,entity):raise DomainError('CONFIGURATION_PENDING')
                 if conn.execute("SELECT 1 FROM prsystem.stay WHERE tenant_id=%s AND room_id=%s AND state='ACTIVE'",(tenant,entity)).fetchone():raise DomainError('LIFECYCLE_BLOCKED')
             if kind=='room' and (status=='ACTIVE' or category):
                 target=category or conn.execute('SELECT category_id FROM prsystem.room WHERE tenant_id=%s AND id=%s',(tenant,entity)).fetchone()[0]
