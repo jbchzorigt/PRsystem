@@ -95,7 +95,7 @@ BEGIN
    SELECT state,room_id INTO request_state,request_room FROM prsystem.minibar_configuration_request
      WHERE tenant_id=NEW.tenant_id AND id=NEW.source_id;
    IF request_state IS NULL OR request_room<>NEW.room_id
-     OR NEW.state<>CASE WHEN request_state='CANCELLED' THEN 'DONE' ELSE 'OPEN' END
+     OR NEW.state IS DISTINCT FROM (CASE WHEN request_state='CANCELLED' THEN 'DONE' ELSE 'OPEN' END)
    THEN RAISE EXCEPTION 'Configuration blocker disagrees with source' USING ERRCODE='23514'; END IF;
  END IF;
  RETURN NEW;
