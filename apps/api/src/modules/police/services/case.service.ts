@@ -34,6 +34,8 @@ export interface CaseView {
   readonly crimeCategory: string;
   readonly owningUnitRef: string;
   readonly activatedAt: Date | null;
+  /** The compare-and-set token the next lifecycle move must carry. */
+  readonly revision: number;
 }
 
 export interface ActivationOutcome extends CaseView {
@@ -282,6 +284,7 @@ export class WantedCaseService extends PoliceServiceBase {
     crimeCategory: string;
     owningUnitRef: string;
     activatedAt: Date | null;
+    revision: number;
   }): CaseView {
     return {
       caseId: row.caseId,
@@ -290,6 +293,7 @@ export class WantedCaseService extends PoliceServiceBase {
       crimeCategory: row.crimeCategory,
       owningUnitRef: row.owningUnitRef,
       activatedAt: row.activatedAt,
+      revision: row.revision,
     };
   }
 }

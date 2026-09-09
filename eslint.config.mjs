@@ -35,6 +35,60 @@ export const moduleBoundaryRule = /** @type {const} */ ([
   },
 ]);
 
+/**
+ * Web boundary rule — CLAUDE.md §3 (a web application contains no authoritative
+ * business rule) and build-plan Phase 21's architecture gate.
+ *
+ * A portal, and the kit the portals share, reach the platform through
+ * `@prsystem/contracts` types and the kit's HTTP client only. The database,
+ * the authorization matrix, the ports, the configuration loader, the API and
+ * the worker are not importable from web code — neither by package name nor by
+ * a relative path into another workspace. `packages/testing/src/web-boundary.test.ts`
+ * proves the rule fires and scans every web import besides.
+ */
+export const webBoundaryRule = /** @type {const} */ ([
+  'error',
+  {
+    patterns: [
+      ...moduleBoundaryRule[1].patterns,
+      {
+        group: [
+          '@prsystem/db',
+          '@prsystem/db/*',
+          '@prsystem/authz',
+          '@prsystem/authz/*',
+          '@prsystem/ports',
+          '@prsystem/ports/*',
+          '@prsystem/config',
+          '@prsystem/config/*',
+          '@prsystem/telemetry',
+          '@prsystem/telemetry/*',
+          '@prsystem/testing',
+          '@prsystem/testing/*',
+          '@prsystem/api',
+          '@prsystem/api/*',
+          '@prsystem/worker',
+          '@prsystem/worker/*',
+          'pg',
+          'pg/*',
+          'drizzle-orm',
+          'drizzle-orm/*',
+          '@nestjs/*',
+          '**/apps/api/**',
+          '**/apps/worker/**',
+          '**/packages/db/**',
+          '**/packages/authz/**',
+          '**/packages/ports/**',
+          '**/packages/config/**',
+          '**/modules/**',
+        ],
+        message:
+          'Web code imports only @prsystem/contracts and @prsystem/web-kit (CLAUDE.md §3): never db, authz internals, ports, config or module services.',
+      },
+    ],
+  },
+]);
+
 export default tseslint.config(
   {
     ignores: [
@@ -66,6 +120,17 @@ export default tseslint.config(
           ignoreRestSiblings: true,
         },
       ],
+    },
+  },
+  {
+    files: [
+      'apps/web-*/**/*.ts',
+      'apps/web-*/**/*.tsx',
+      'packages/web-kit/**/*.ts',
+      'packages/web-kit/**/*.tsx',
+    ],
+    rules: {
+      'no-restricted-imports': webBoundaryRule,
     },
   },
   {

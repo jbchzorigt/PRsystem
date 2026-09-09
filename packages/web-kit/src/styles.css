@@ -1,0 +1,506 @@
+/*
+ * The portal stylesheet (Phase 21). One palette, chosen for WCAG AA contrast
+ * on every text/background pair it combines; visible focus everywhere; touch
+ * targets no smaller than 44 px; no layout that needs horizontal scrolling on
+ * a phone. Mobile-first: the phone layout is the default, wider screens add.
+ */
+:root {
+  --ink: #14202b;
+  --ink-muted: #3f4d5a;
+  --paper: #ffffff;
+  --paper-muted: #f1f4f7;
+  --line: #b9c4cf;
+  --accent: #0b4f8a;
+  --accent-ink: #ffffff;
+  --danger: #a3271f;
+  --danger-paper: #fbe9e7;
+  --warn: #6b4f00;
+  --warn-paper: #fff4d6;
+  --ok: #1a5a2c;
+  --ok-paper: #e6f4ea;
+  --focus: #ffbf00;
+  --radius: 6px;
+  --gap: 12px;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Noto Sans',
+    sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  line-height: 1.45;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-size: 16px;
+  min-height: 100vh;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+  margin: 0 0 var(--gap);
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.2rem;
+  margin-top: calc(var(--gap) * 2);
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  z-index: 10;
+}
+
+.skip-link:focus {
+  left: 8px;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.shell-header {
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: var(--gap);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shell-header a {
+  color: var(--accent-ink);
+}
+
+.brand {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.brand small {
+  display: block;
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+.shell-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.shell-nav a {
+  display: inline-block;
+  min-height: 44px;
+  line-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  text-decoration: none;
+}
+
+.shell-nav a[aria-current='page'] {
+  background: var(--accent-ink);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.shell-user {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  font-size: 0.9rem;
+}
+
+main {
+  padding: var(--gap);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.banner {
+  border: 1px solid var(--line);
+  border-left-width: 6px;
+  border-radius: var(--radius);
+  padding: var(--gap);
+  margin: 0 0 var(--gap);
+}
+
+.banner-warn {
+  background: var(--warn-paper);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.banner-danger {
+  background: var(--danger-paper);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.banner-ok {
+  background: var(--ok-paper);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.banner-info {
+  background: var(--paper-muted);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.field {
+  display: block;
+  margin: 0 0 var(--gap);
+}
+
+.field > span,
+.field > label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.field .hint {
+  font-weight: 400;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+
+.field .error {
+  color: var(--danger);
+  font-size: 0.9rem;
+  margin-top: 4px;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink-muted);
+  border-radius: var(--radius);
+  min-height: 44px;
+  padding: 8px 10px;
+  width: 100%;
+  max-width: 100%;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  border: 2px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.button-secondary {
+  background: var(--paper);
+  color: var(--accent);
+}
+
+.button-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.button-link {
+  background: none;
+  border-color: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 0 4px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: var(--gap) 0;
+}
+
+.card-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .card-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .card-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--gap);
+  background: var(--paper);
+}
+
+.card h3 {
+  font-size: 1.05rem;
+  margin: 0 0 6px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper-muted);
+  font-size: 0.85rem;
+  color: var(--ink);
+  margin: 2px 4px 2px 0;
+}
+
+.badge-ok {
+  background: var(--ok-paper);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.badge-warn {
+  background: var(--warn-paper);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.badge-danger {
+  background: var(--danger-paper);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap);
+  margin: 0 0 var(--gap);
+}
+
+@media (min-width: 768px) {
+  .kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.kpi {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--gap);
+  text-align: left;
+}
+
+.kpi .kpi-value {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.kpi a {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+dl.kv {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px 12px;
+  margin: 0 0 var(--gap);
+}
+
+@media (min-width: 640px) {
+  dl.kv {
+    grid-template-columns: max-content 1fr;
+  }
+}
+
+dl.kv dt {
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+dl.kv dd {
+  margin: 0 0 8px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 480px;
+}
+
+th,
+td {
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 8px;
+  vertical-align: top;
+}
+
+th {
+  background: var(--paper-muted);
+}
+
+@media (max-width: 767px) {
+  table.stack {
+    min-width: 0;
+  }
+
+  table.stack thead {
+    position: absolute;
+    left: -9999px;
+  }
+
+  table.stack tr {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: var(--gap);
+    padding: 6px;
+  }
+
+  table.stack td {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 8px;
+    border: 0;
+    padding: 4px 6px;
+  }
+
+  table.stack td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--ink-muted);
+  }
+}
+
+.pager {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: var(--gap) 0;
+}
+
+.lock-screen {
+  border: 2px solid var(--danger);
+  border-radius: var(--radius);
+  padding: calc(var(--gap) * 2);
+  background: var(--danger-paper);
+}
+
+form.inline {
+  display: inline;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 var(--gap);
+}
+
+@media (min-width: 768px) {
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .form-grid .span-2 {
+    grid-column: span 2;
+  }
+}
+
+.counter {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}

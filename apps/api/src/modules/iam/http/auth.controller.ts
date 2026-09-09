@@ -1,6 +1,12 @@
 import { Controller, Get, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { effectiveHotelPermissions } from '@prsystem/authz';
+import {
+  OPERATION_ACTIONS,
+  POLICE_ACTIONS,
+  authorize,
+  effectiveHotelPermissions,
+} from '@prsystem/authz';
+import type { Principal } from '@prsystem/authz';
 import type { FastifyReply } from 'fastify';
 import type { AuthenticatedRequest } from './session.guard';
 import { SessionGuard, principalOf, sessionIdOf } from './session.guard';
@@ -62,6 +68,11 @@ export class AuthController {
   async session(@Req() request: AuthenticatedRequest): Promise<{
     accountId: string;
     realm: string;
+    realmRole?: string;
+    /** Operation and Police realms only: the action ids this account can hold. */
+    effectivePermissions?: readonly string[];
+    /** The subset of those that also need a step-up no older than ten minutes. */
+    stepUpRequired?: readonly string[];
     memberships: {
       membershipId: string;
       hotelId: string;
@@ -90,7 +101,13 @@ export class AuthController {
         subscriptionState: snapshot?.state ?? null,
       });
     }
-    return { accountId: principal.accountId, realm: principal.realm, memberships };
+    return {
+      accountId: principal.accountId,
+      realm: principal.realm,
+      ...(principal.realmRole === undefined ? {} : { realmRole: principal.realmRole }),
+      memberships,
+      ...realmProjection(principal, now),
+    };
   }
 
   @Post('sign-out')
@@ -150,4 +167,59 @@ export class AuthController {
     );
     return { sessionsClosed: result.sessionsClosed };
   }
+}
+
+/**
+ * A sentinel that is never an account id, so a separation-of-duties cell is
+ * evaluated as "does this account hold the named permission" rather than
+ * "is this account the counterpart of some particular approval".
+ */
+const SOMEONE_ELSE = '00000000-0000-4000-8000-00000000000f';
+
+/**
+ * What an Operation or Police account may do, as a **navigation projection**.
+ *
+ * Every id is decided by the same pure pipeline the commands run, with the two
+ * per-request facts a navigation cannot know — the resource's scope and the
+ * approval's counterpart — supplied as the account's own scope and a foreign
+ * counterpart. A step-up denial is listed rather than hidden, because the
+ * portal's answer to it is the step-up screen, not a missing tab. None of this
+ * grants anything: each command re-runs the pipeline against server state
+ * inside its own transaction (CLAUDE.md §4).
+ */
+function realmProjection(
+  principal: Principal,
+  now: Date,
+):
+  | { effectivePermissions: readonly string[]; stepUpRequired: readonly string[] }
+  | Record<string, never> {
+  const actions =
+    principal.realm === 'operation'
+      ? OPERATION_ACTIONS
+      : principal.realm === 'police'
+        ? POLICE_ACTIONS
+        : undefined;
+  if (actions === undefined) return {};
+  const effectivePermissions: string[] = [];
+  const stepUpRequired: string[] = [];
+  for (const action of actions) {
+    const decision = authorize({
+      endpointRealm: principal.realm,
+      permission: action.id,
+      principal,
+      target: {},
+      now,
+      separationCounterpartAccountId: SOMEONE_ELSE,
+      ...(principal.policeScopeRef === undefined
+        ? {}
+        : { resourceScopeRef: principal.policeScopeRef }),
+    });
+    if (decision.allowed) {
+      effectivePermissions.push(action.id);
+    } else if (decision.code === 'STEP_UP_REQUIRED') {
+      effectivePermissions.push(action.id);
+      stepUpRequired.push(action.id);
+    }
+  }
+  return { effectivePermissions, stepUpRequired };
 }

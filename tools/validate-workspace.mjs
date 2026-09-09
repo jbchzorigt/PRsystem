@@ -34,6 +34,7 @@ const APPROVED_PACKAGES = [
   'telemetry',
   'testing',
   'time',
+  'web-kit',
 ];
 
 const results = [];

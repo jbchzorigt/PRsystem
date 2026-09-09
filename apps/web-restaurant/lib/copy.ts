@@ -1,0 +1,42 @@
+/** Restaurant guest portal copy (doc 08 §5–§9, doc 02 §3.8). */
+export const RESTAURANT = {
+  portal: 'Restaurant', // doc 02 §5 tab 4
+  brand: 'PRsystem',
+  enter: {
+    title: 'Өрөөний QR-аар нэвтрэх',
+    roomToken: 'Өрөөний QR код',
+    code: 'Нэг удаагийн guest access код',
+    submit: 'Нэвтрэх',
+    hint: 'Кодыг Reception-оос авна; нэг stay-д олон төхөөрөмж нэвтэрч болно.',
+  },
+  menu: {
+    title: 'Цэс',
+    open: 'Захиалга авч байна',
+    closed: 'Захиалга авахгүй байна',
+    item: 'Хоол, уух зүйл',
+    price: 'Үнэ',
+    quantity: 'Тоо',
+    note: 'Тэмдэглэл',
+    order: 'Захиалах',
+    soldOut: 'Бэлэн бус',
+  },
+  orders: {
+    title: 'Миний захиалгууд',
+    orderNo: 'Захиалгын дугаар',
+    total: 'Нийт дүн',
+    state: 'Төлөв',
+    payment: 'Төлбөр',
+    fulfillment: 'Гүйцэтгэл',
+    refund: 'Буцаалт',
+    handoff: 'Хүргэлт',
+    eta: 'Бэлэн болох цаг',
+    pay: 'QPay-ээр төлөх',
+    payLink: 'Төлбөрийн холбоос нээх',
+    invoiceUntil: 'Нэхэмжлэл дуусах',
+    requestRefund: 'Цуцлах/буцаах хүсэлт гаргах',
+    contact: 'Ресторантай холбогдох',
+    none: 'Захиалга байхгүй байна.',
+    placed: 'Захиалга үүслээ. Төлбөрийг баталгаажуулна уу.',
+  },
+  signOut: 'Гарах',
+} as const;

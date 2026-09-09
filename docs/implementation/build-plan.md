@@ -34,6 +34,7 @@ packages/
   ports/               Typed external ports + deterministic simulators
   telemetry/           OpenTelemetry setup, structured logging with redaction
   testing/             Postgres testcontainer harness, concurrency helpers, synthetic identities
+  web-kit/             The portals' shared shell, fields, tables, HTTP client and session cookie (Phase 21)
 ```
 
 Module boundary rule (CLAUDE.md §3) is enforced by lint: a module may import another module's

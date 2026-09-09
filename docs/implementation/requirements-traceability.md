@@ -1,9 +1,8 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.33 (Phase 20 — no decision changes state; the phase owns no DEC ID and its
-traceable output is the per-adapter record in [external-integration-gates.md](external-integration-gates.md)
-§6, the code gate register, the `SEC-ADAPTERS` sub-gate and the `DSR-01` re-review; 279 of 279
-`COVERED`)
+**Version:** 1.34 (Phase 21 — no decision changes state; the phase owns no DEC ID and its
+traceable output is the five portals on the real API, the accessibility scan, the web boundary
+lint rule and test, and the four Phase 21 rows in §2.1; 279 of 279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -135,6 +134,10 @@ artefacts below are the traceable output.
 | 02 | Production dependency tree clean at moderate and above; dev-only tooling contained ([DSR-01](dependency-security-register.md)) | `package.json`, `.github/workflows/ci.yml` | `pnpm run audit:prod`, `validate-workspace` 12–15 |
 | 20 | Re-review `DSR-01` when external adapters are wired — **done**: Phase 20 added no third-party dependency (the S3 adapter uses `node:crypto` and the runtime's `fetch`), the transitive path is unchanged, and the entry stays `OPEN — contained` for its Phase 22 review | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod` |
 | 20 | Every external adapter enabled with its gate cleared or explicitly recorded as still blocked (CLAUDE.md §9); the register declared in code and held to the document and the database | [external-integration-gates.md](external-integration-gates.md) §6, `packages/ports/src/gates.ts`, `packages/ports/src/adapters/select-adapters.ts` | `GATE-SEC` / `SEC-ADAPTERS`, `packages/ports/src/gates.test.ts`, `SEC-SECRETS` |
+| 21 | Five portals wired to the real API with server-decided navigation, session in an httpOnly cookie, render-time idempotency keys, and no authoritative business rule in web code (CLAUDE.md §3, §4, §6) | `apps/web-public`, `apps/web-hotel`, `apps/web-restaurant`, `apps/web-police`, `apps/web-operation`, `packages/web-kit`; `A-P21-1`…`A-P21-5`, `A-P21-10`, `A-P21-11` | `pnpm run test:e2e` — Playwright flows per portal at phone, tablet and desktop viewports on the real API (`e2e/api-server.mjs`) |
+| 21 | Automated accessibility scan on every primary screen; no horizontal document scroll at any viewport (doc 02 §7) | `e2e/accessibility.spec.ts` (axe-core WCAG 2.0/2.1 A + AA, serious and critical fail), `packages/web-kit/src/styles.css`, `packages/web-kit/src/components/` | `pnpm run test:e2e` |
+| 21 | Architecture test: web packages import only `contracts` and the kit — never `db`, `authz` internals, `ports`, `config` or module services | `eslint.config.mjs` (`webBoundaryRule`), `packages/testing/src/web-boundary.test.ts`, `tools/validate-workspace.mjs` 3 | `pnpm run lint`, `pnpm run test:unit` |
+| 21 | Mongolian copy from the requirement documents; grace-period banners and the hard-lock screen rendered from the API's subscription state | `apps/web-*/lib/copy.ts`, `packages/web-kit/src/copy.ts`, `apps/web-hotel/lib/hotel-context.tsx`; `A-P21-5`, `A-P21-11` | `pnpm run test:e2e`, `pnpm run test:unit` (`packages/web-kit`) |
 | 20 | Per-environment adapter configuration that fails closed: no simulator above test, no production adapter behind a `BLOCKED` gate, no stale storage credential; provider callback source allowlisting | `packages/config/src/adapters-env.ts`, `apps/api/src/security/callback-source.ts` | `pnpm run test:unit`, `GATE-SEC` / `SEC-STARTUP`, `SEC-STARTUP-WORKER` |
 | 20 | The one standards-based production adapter (S3-compatible object storage, SigV4) verified against the published vectors and a real S3-compatible service, and disabled in production behind `INT-STORAGE-01` | `packages/ports/src/adapters/s3/` | `pnpm run test:unit`, `pnpm run test:integration` (`@prsystem/ports`) |
 | 20 | The Phase 14 provider jobs scheduled on the worker only when their adapters can run, and `DISABLED` treated as no decision | `apps/api/src/modules/settlement/worker/`, `apps/worker/src/jobs/settlement.ts` | `pnpm run test:integration`, `pnpm run test:unit` (`@prsystem/worker`) |

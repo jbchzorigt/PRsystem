@@ -63,7 +63,9 @@ not microservices.
 | `apps/web-operation` | 53104 | Platform Operation |
 
 Portal ports above are the ones the E2E harness binds; `pnpm run dev` uses each
-framework's own default.
+framework's own default. A portal reads two variables of its own: `PRSYSTEM_API_URL`, the API it
+calls from its server side, and `PRSYSTEM_PORTAL_ORIGIN`, its public origin (an https origin marks
+the session cookie `Secure`). The E2E harness sets both; `.env.example` documents them.
 
 ## Commands
 
@@ -74,7 +76,7 @@ framework's own default.
 | `pnpm run typecheck` | `tsc --noEmit` per project plus the E2E sources |
 | `pnpm run test:unit` | Vitest across apps and packages |
 | `pnpm run test:migrations` | applies the journal to real PostgreSQL, twice |
-| `pnpm run test:e2e` | builds the portals, then Playwright smoke tests |
+| `pnpm run test:e2e` | builds the API and the portals, starts the real API on a scratch database (`e2e/api-server.mjs`, seeded with synthetic people) and the five portals as production builds, then runs the Playwright flows and the axe accessibility scan at phone, tablet and desktop viewports |
 | `pnpm run build` | compiles all seven applications |
 | `pnpm run openapi` | writes `apps/api/openapi.json` (build artefact, not committed) |
 | `pnpm run migrate` | applies pending migrations to `DATABASE_URL` |
@@ -84,8 +86,8 @@ framework's own default.
 Governance checks — `validate:workspace`, `validate:governance`, `scan:secrets` —
 also run standalone and are the first thing CI executes.
 
-`pnpm run test:migrations` and `pnpm run test:e2e` need the compose stack and the
-Playwright browser respectively:
+`pnpm run test:migrations` and `pnpm run test:e2e` need the compose stack, and the latter
+also the Playwright browser:
 
 ```bash
 pnpm exec playwright install chromium

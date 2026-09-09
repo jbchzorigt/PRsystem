@@ -12,6 +12,9 @@ importers:
 
   .:
     devDependencies:
+      '@axe-core/playwright':
+        specifier: 4.10.2
+        version: 4.10.2(playwright-core@1.62.1)
       '@eslint/js':
         specifier: 9.39.5
         version: 9.39.5
@@ -133,6 +136,12 @@ importers:
 
   apps/web-hotel:
     dependencies:
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/web-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-kit
       next:
         specifier: 15.5.24
         version: 15.5.24(@playwright/test@1.62.1)(@types/node@22.20.1)(react-dom@19.0.8(react@19.0.8))(react@19.0.8)
@@ -158,6 +167,12 @@ importers:
 
   apps/web-operation:
     dependencies:
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/web-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-kit
       next:
         specifier: 15.5.24
         version: 15.5.24(@playwright/test@1.62.1)(@types/node@22.20.1)(react-dom@19.0.8(react@19.0.8))(react@19.0.8)
@@ -183,6 +198,12 @@ importers:
 
   apps/web-police:
     dependencies:
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/web-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-kit
       next:
         specifier: 15.5.24
         version: 15.5.24(@playwright/test@1.62.1)(@types/node@22.20.1)(react-dom@19.0.8(react@19.0.8))(react@19.0.8)
@@ -208,6 +229,12 @@ importers:
 
   apps/web-public:
     dependencies:
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/web-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-kit
       next:
         specifier: 15.5.24
         version: 15.5.24(@playwright/test@1.62.1)(@types/node@22.20.1)(react-dom@19.0.8(react@19.0.8))(react@19.0.8)
@@ -233,6 +260,12 @@ importers:
 
   apps/web-restaurant:
     dependencies:
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@prsystem/web-kit':
+        specifier: workspace:*
+        version: link:../../packages/web-kit
       next:
         specifier: 15.5.24
         version: 15.5.24(@playwright/test@1.62.1)(@types/node@22.20.1)(react-dom@19.0.8(react@19.0.8))(react@19.0.8)
@@ -481,7 +514,43 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
 
+  packages/web-kit:
+    dependencies:
+      '@prsystem/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.1
+        version: 22.20.1
+      '@types/react':
+        specifier: 19.2.18
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: 19.2.5
+        version: 19.2.5(@types/react@19.2.18)
+      next:
+        specifier: 15.5.24
+        version: 15.5.24(@playwright/test@1.62.1)(@types/node@22.20.1)(react-dom@19.0.8(react@19.0.8))(react@19.0.8)
+      react:
+        specifier: 19.0.8
+        version: 19.0.8
+      react-dom:
+        specifier: 19.0.8
+        version: 19.0.8(react@19.0.8)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.7
+        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.12)
+
 packages:
+
+  '@axe-core/playwright@4.10.2':
+    resolution: {integrity: sha512-6/b5BJjG6hDaRNtgzLIfKr5DfwyiLHO4+ByTLB0cJgWSM8Ll7KqtdblIS6bEkwSF642/Ex91vNqIl3GLXGlceg==}
+    peerDependencies:
+      playwright-core: '>= 1.0.0'
 
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
@@ -1697,6 +1766,10 @@ packages:
   avvio@9.3.0:
     resolution: {integrity: sha512-g2tQ7LE7oOSqDfwEm3M+ZCMTJc7KiZCdJ4UwyZJb5ckTKyYu50OYmvv0mCFXPuYXoM4zkSt8zM9XQ9KCvxA74A==}
 
+  axe-core@4.10.3:
+    resolution: {integrity: sha512-Xm7bpRXnDSX2YE2YFfBk2FnF0ep6tmG7xPh8iHee8MIcrgq762Nkce856dYtJYLkuIoYZvGfTs/PbZhideTcEg==}
+    engines: {node: '>=4'}
+
   balanced-match@1.0.2:
     resolution: {integrity: sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==}
 
@@ -2721,6 +2794,11 @@ packages:
 
 snapshots:
 
+  '@axe-core/playwright@4.10.2(playwright-core@1.62.1)':
+    dependencies:
+      axe-core: 4.10.3
+      playwright-core: 1.62.1
+
   '@borewit/text-codec@0.2.2': {}
 
   '@drizzle-team/brocli@0.10.2': {}
@@ -3598,6 +3676,8 @@ snapshots:
     dependencies:
       '@fastify/error': 4.2.0
       fastq: 1.20.1
+
+  axe-core@4.10.3: {}
 
   balanced-match@1.0.2: {}
 

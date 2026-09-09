@@ -207,9 +207,12 @@ reservation converts atomically into stay occupancy so the unit is never counted
 | `ports` | Typed external ports + deterministic simulators | `contracts`, `money`, `time` |
 | `telemetry` | OTel setup, redacting logger | nothing |
 | `testing` | Postgres harness, concurrency helpers, synthetic identity factory | all of the above |
+| `web-kit` | The portals' shared shell, form fields, responsive tables, Mongolian copy, typed HTTP client and httpOnly session cookie (Phase 21) | `contracts` |
 
 `money`, `time` and `contracts` have no internal dependencies so that every module can adopt them
-without creating a cycle.
+without creating a cycle. `web-kit` and the five portals import `contracts` and nothing else of the
+platform (CLAUDE.md §3): never `db`, `authz`, `ports`, `config` or a module's services — a lint rule
+and `packages/testing/src/web-boundary.test.ts` hold that boundary.
 
 ---
 

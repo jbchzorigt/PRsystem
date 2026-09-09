@@ -6,13 +6,15 @@
     "build": "NODE_ENV=production next build",
     "dev": "next dev",
     "start": "next start",
-    "lint": "eslint app",
+    "lint": "eslint app lib",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "next": "15.5.24",
     "react": "19.0.8",
-    "react-dom": "19.0.8"
+    "react-dom": "19.0.8",
+    "@prsystem/contracts": "workspace:*",
+    "@prsystem/web-kit": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

@@ -91,6 +91,13 @@ Journeys, not pages: onboarding → activation → configuration → check-in �
 close; search → book → pay → check-in → review; check-in → Police alert → acknowledge → Found;
 subscription expiry → grace → hard lock → renewal. Run at mobile, tablet and desktop viewports.
 
+Phase 21 stands the gate up on the real API: `e2e/api-server.mjs` provisions a scratch database
+through the API's own harness, seeds synthetic people, starts `createApp` in the `ci` environment
+(every external port its simulator) and serves the five portals as production builds; Playwright
+drives each portal's flows at a phone, a tablet and a desktop profile, and `e2e/accessibility.spec.ts`
+runs axe-core's WCAG 2.0/2.1 A and AA rules over every primary screen. The segments that reach a
+provider page or run a full checkout to settlement are Phase 22's full pass.
+
 ### `GATE-SEC`
 
 Canary scan across logs, traces, audit rows, outbox payloads, fixtures and seeds; dependency

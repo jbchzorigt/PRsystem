@@ -1292,6 +1292,94 @@ recorded so a reviewer can see where a judgement was made.
 
 ---
 
+### 3.25 Phase 21 scope alignments — approved requirements, implemented
+
+- **A-P21-1 — navigation is a projection of the API's authorization, never the authorization.**
+  Every portal decides what to render from `GET /auth/session`: the Hotel realm's per-membership
+  `effectivePermissions` and `subscriptionState`, and — new in this phase — the Operation and Police
+  realms' `realmRole`, `effectivePermissions` and `stepUpRequired`, computed by the same pure
+  pipeline the commands run (doc 18 §5, §6), with the two per-request facts a navigation cannot know
+  supplied as the account's own scope and a foreign counterpart. The projection grants nothing:
+  every command re-runs the pipeline against server state inside its own transaction, and the
+  end-to-end flows prove the difference — a Cleaner reaching the finance dashboard by URL is
+  answered `NOT_FOUND`, and a Police Officer reaching the all-hotel check-in list by URL is refused
+  (CLAUDE.md §4: UI hiding is never authorization).
+- **A-P21-2 — the session is the portal server's, and the browser never sees the API token.**
+  Each portal keeps the API bearer in an httpOnly, `SameSite=Lax` cookie of its own name, marked
+  `Secure` when the portal's origin is https, and every API call is made from the Next.js server
+  side (`packages/web-kit/src/server/session.ts`). Forms are Server Actions; a money- or
+  lifecycle-changing form carries an idempotency key minted when the form was *rendered*, so a
+  double submit or a retried request repeats the same key and the API answers the same result
+  (CLAUDE.md §6). No portal holds client state that decides an outcome.
+- **A-P21-3 — no personal identifier travels in a URL.** An action reports back through the query
+  string with an outcome code, an optional field name and the API's message only. A registration
+  number stays in the POST body: the Police exact search redirects to the match id it found, and
+  the wanted registration redirects to the case id. The number a guest is verifying during
+  registration lives in a ten-minute httpOnly cookie rather than in the page's address, which the
+  first draft had used. The stay, booking, case and match pages are addressed by their ids.
+- **A-P21-4 — where the API offers no read, the portal shows what the last command answered rather
+  than inventing one.** The Wanted Case has no read route, so its page carries the state and the
+  compare-and-set revision the last answer returned, and `CaseView` now includes `revision` so the
+  next move can name it. The Operation subscription detail shows the suspension history the API
+  keeps and the hotel name from the list link; the SMS preview page shows the preview the API just
+  computed, because previews expire. The gaps this leaves are recorded, not papered over: no
+  wanted-person list route for doc 13 §12.1 (the Excel export exists); no hotel-side order list or
+  staff list for the Hotel portal's Restaurant and Staff tabs beyond the commands that exist; no
+  Cleaner-readable product and count sheet (the configuration view is the Manager's), so the
+  Cleaner's count lines fall back to the task's own hints; no Police account-management route for
+  doc 13 §5; and no terminal-outcome route for doc 14 §4.2, so the reconciliation queue is read-only
+  in the portal. Each is an API addition for the phase that owns it, not a rule to write in web code.
+- **A-P21-5 — copy is the documents'.** Screen, tab, state and control names are taken from docs 02,
+  04, 06, 08, 09, 13 and 14 where they name them; a control the documents leave unnamed uses the
+  plainest Mongolian phrasing; state codes the documents themselves write in English (`ACTIVE`,
+  `DRAFT`, `P30`) are shown as written. The API's error vocabulary is rendered through one
+  translation table (`packages/web-kit/src/copy.ts`), and an unknown code falls back to the API's
+  own message.
+- **A-P21-6 — responsive and accessible by construction, measured by axe.** The shared shell carries
+  a skip link, landmark header and navigation with `aria-current`, and a `main` landmark; fields
+  bind their hint and error by `aria-describedby`; tables stack into labelled cards below 768px;
+  targets are 44px; focus is visible. The gate runs axe-core's WCAG 2.0/2.1 A and AA rules over the
+  primary screens of all five portals at three viewports — a phone (Pixel 7), a tablet (Galaxy Tab
+  S4) and a desktop — and fails on any serious or critical violation and on any horizontal document
+  scroll. All three profiles are Chromium; WebKit and Firefox are not installed in this environment
+  and are not part of the measured gate.
+- **A-P21-7 — the end-to-end harness is the real API on a scratch database.** `e2e/api-server.mjs`
+  provisions a database through the same harness the API suites use, seeds synthetic people with the
+  harness constants, starts `createApp` from the built API in the `ci` environment — where every
+  external port is its deterministic simulator — and then sets up over that API, with the seeded
+  people's own sessions, what a hotel configures before its first walk-in. A loopback-only console
+  tells the test runner the seeded ids and hands it the one-time codes the simulators "sent", the way
+  a recipient reads them off the message; the Operation authenticator codes are computed from the
+  seeded factor. The console binds 127.0.0.1, is started only by the Playwright web-server hook, is
+  not part of any deployable application, and logs nothing.
+- **A-P21-8 — what the flows prove, and what they leave to Phase 22.** The flows drive sign-in,
+  the room board, a walk-in quote and check-in, guest registration by phone, a search, a hold and its
+  cancellation, the guest's own booking list and the opaque refusal of another guest's booking id,
+  the restaurant QR entry, menu and order, the wanted registration, case activation, activation-sweep
+  match, acknowledgement and Found, the all-hotel check-in list, and the Operation sign-in with TOTP,
+  KPI cards, server-filtered list, password-reset initiation, suspension and the SMS preview →
+  confirm → history flow. They do not follow a provider invoice to its pay page (the simulator's
+  URL is not a page), do not pay a restaurant order, and do not drive a hotel checkout to
+  settlement; those belong to the full end-to-end pass of Phase 22.
+- **A-P21-9 — the web boundary is a lint rule and a test, and the kit is an approved package.**
+  `webBoundaryRule` in `eslint.config.mjs` refuses, from any `apps/web-*` or `packages/web-kit`
+  file, every platform package but `@prsystem/contracts` and the kit, every relative path into
+  another workspace, `pg`, `drizzle-orm` and `@nestjs/*`; `packages/testing/src/web-boundary.test.ts`
+  scans every web import besides and proves the rule fires. `packages/web-kit` is added to the
+  approved package list in `validate-workspace`, to the build plan's tree and to the architecture
+  document's shared-package table, depending on `contracts` alone.
+- **A-P21-10 — every Operation action wants a recent step-up, and the portal's answer is the
+  step-up screen.** doc 18 §5 marks every Operation row step-up; the API answers
+  `PRECONDITION_FAILED` when the last step-up is older than ten minutes; the portal redirects to
+  `/step-up`, re-proves the factor on the live session and returns to the same page. Sign-in with
+  the code counts as the first step-up, as the API already decided in Phase 19.
+- **A-P21-11 — grace and hard lock are rendered from the API's subscription state, not computed.**
+  The Hotel portal reads `subscriptionState` from the session's membership: `GRACE` and
+  `EXPIRING_SOON` render the banner doc 14 §4 names, and `EXPIRED` or `SUSPENDED` render the lock
+  screen with renew, help and sign-out only, the surviving actions doc 17 lists. The portal never
+  decides the state; a hard-locked hotel's commands are refused by the API regardless of what the
+  browser shows.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

@@ -1,9 +1,14 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import '@prsystem/web-kit/styles.css';
+
+// Every page is rendered per request from the session's cookie; nothing is
+// prerendered at build time, because nothing here is the same for two people.
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'Hotel Operations — PRsystem',
-  description: 'Reception, housekeeping, management and hotel administration.',
+  title: 'Reception (RC) System — PRsystem',
+  description: 'Зочин бүртгэх, check-in/check-out, өрөөний төлөв, төлбөр тооцоо, ээлж хүлээлцэх.',
 };
 
 export const viewport: Viewport = {

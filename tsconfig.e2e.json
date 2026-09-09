@@ -4,7 +4,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"]
   },
   "include": ["e2e/**/*.ts", "playwright.config.ts"]
 }
