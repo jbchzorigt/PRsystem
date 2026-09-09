@@ -19,8 +19,8 @@
   ],
   "commands": {
     "unit": "PYTHONPATH=src python -m unittest discover -s tests -q",
-    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs",
-    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs"
+    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs && node tests/browser/minibar-templates.cjs",
+    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs && node tests/browser/minibar-templates.cjs"
   },
   "evidence": {
     "failurePaths": "tests/browser/reception.cjs"

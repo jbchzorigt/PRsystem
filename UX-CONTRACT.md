@@ -115,3 +115,21 @@ Exact cost numerator/denominator is authoritative; fractional averages displayed
 with the existing number formatter are explicitly marked approximate. No browser
 cost calculation is submitted. Ledger actor labels and product metadata are
 recorded snapshots. Browser coverage: tests/browser/minibar.cjs.
+
+## Minibar template authoring
+
+Business authority: docs/26 §§24–29. Manager at 25,000/30,000₮ and Manager Plus
+at 30,000₮ use the existing `form`, `api`, `guard`, `table`, `select`, feedback
+and navigation owners in reception.js. The server reauthorizes every command.
+Template and version lists use bounded keyset pages; selection and cursors stay
+in memory under the Reception privacy contract. Product selection is a bounded
+50-item native select page with explicit next/first controls. A version has at
+most 100 items. Published product/quantity rows are read-only; changes begin by
+cloning into a new server draft. Exact target quantities are not stock counts.
+Publish uses a named confirmation form and a required review checkbox next to
+the actual item table. Default selection names its new-configuration effect.
+Create returns to the list; draft creation/clone opens the new draft; edit,
+publish and default refresh the same exact version and announce server success.
+Conflict preserves input and requires explicit reload/discard. Detail/picker
+loads ignore stale responses; failed picker loads have an explicit retry.
+Verification: tests/browser/minibar-templates.cjs and test_minibar_templates.py.

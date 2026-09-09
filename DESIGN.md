@@ -126,3 +126,8 @@ The Manager's warehouse destination uses the existing operational rows to compar
 product, warehouse quantity, selling price and average cost. Receipt history uses
 the shared horizontally scrollable table; forms keep natural document height.
 The existing petrol rail, typography, spacing and tokens remain unchanged.
+
+Template authoring uses the same operational rows, bounded lists and shared
+forms. Exact version numbers and the named Default state identify the current
+choice; a compact product/quantity table is the review surface before Publish.
+No new palette, typography, overlay or local form owner is introduced.

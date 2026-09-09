@@ -27,6 +27,7 @@ from prsystem.renewal import RenewalService
 from prsystem.opening import OpeningService
 from prsystem.rooms import RoomService
 from prsystem.minibar import MinibarWarehouse
+from prsystem.minibar_templates import MinibarTemplates
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -64,6 +65,32 @@ class MinibarStockReceipt(BaseModel):
     expected_revision: int = Field(ge=1, le=2**63-1)
     reference: str = Field(default='', max_length=200)
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class MinibarTemplateCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    name: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class MinibarTemplateCommand(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1, le=2**63-1)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class MinibarDraftCreate(MinibarTemplateCommand):
+    source_version_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class MinibarTemplateItem(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    product_id: str = Field(min_length=1, max_length=128)
+    target_quantity: int = Field(ge=1, le=2**63-1)
+
+
+class MinibarDraftSave(MinibarTemplateCommand):
+    items: list[MinibarTemplateItem] = Field(max_length=100)
 
 
 class MockBookingContract(BaseModel):
@@ -706,6 +733,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     openings = OpeningService(service)
     rooms = RoomService(service)
     minibar = MinibarWarehouse(service)
+    templates = MinibarTemplates(service)
     room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service,runtime_mode)
     stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
@@ -790,7 +818,9 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors['INVALID_DEPOSIT_AMOUNT'] = 422
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422,
-                          'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409}
+                          'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409,
+                          'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_VERSION_IMMUTABLE':409,
+                          'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -829,6 +859,40 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         return JSONResponse({"code": "SERVICE_UNAVAILABLE"}, status_code=503)
 
     static_root = Path(__file__).with_name("static")
+
+    @app.post('/hotels/{tenant_id}/minibar/templates', status_code=201)
+    def minibar_template_create(tenant_id: str, body: MinibarTemplateCreate, secret: Annotated[str, Depends(token)]):
+        return templates.create_template(secret, tenant_id, body.name, body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/templates')
+    def minibar_templates(tenant_id: str, secret: Annotated[str, Depends(token)],
+                          after: str = Query(default='', max_length=128), limit: int = Query(default=50, ge=1, le=100)):
+        return templates.templates(secret, tenant_id, after, limit)
+
+    @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions', status_code=201)
+    def minibar_draft_create(tenant_id: str, template_id: str, body: MinibarDraftCreate, secret: Annotated[str, Depends(token)]):
+        return templates.change(secret, tenant_id, template_id, 'DRAFT_CREATE', body.model_dump(exclude={'idempotency_key'}), body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/templates/{template_id}/versions')
+    def minibar_versions(tenant_id: str, template_id: str, secret: Annotated[str, Depends(token)],
+                         after: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100)):
+        return templates.versions(secret, tenant_id, template_id, after, limit)
+
+    @app.get('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}')
+    def minibar_version_detail(tenant_id: str, template_id: str, version_id: str, secret: Annotated[str, Depends(token)]):
+        return templates.detail(secret, tenant_id, template_id, version_id)
+
+    @app.put('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}')
+    def minibar_draft_save(tenant_id: str, template_id: str, version_id: str, body: MinibarDraftSave, secret: Annotated[str, Depends(token)]):
+        return templates.change(secret, tenant_id, template_id, 'DRAFT_SAVE', body.model_dump(exclude={'idempotency_key'}), body.idempotency_key, version_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/publish')
+    def minibar_version_publish(tenant_id: str, template_id: str, version_id: str, body: MinibarTemplateCommand, secret: Annotated[str, Depends(token)]):
+        return templates.change(secret, tenant_id, template_id, 'PUBLISH', body.model_dump(exclude={'idempotency_key'}), body.idempotency_key, version_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/default')
+    def minibar_version_default(tenant_id: str, template_id: str, version_id: str, body: MinibarTemplateCommand, secret: Annotated[str, Depends(token)]):
+        return templates.change(secret, tenant_id, template_id, 'DEFAULT', body.model_dump(exclude={'idempotency_key'}), body.idempotency_key, version_id)
 
     @app.post('/hotels/{tenant_id}/minibar/products', status_code=201)
     def minibar_create_product(tenant_id: str, body: MinibarProductCreate, secret: Annotated[str, Depends(token)]):
