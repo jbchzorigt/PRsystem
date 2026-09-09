@@ -1,7 +1,7 @@
 """Exact pinned configuration requests and pre-movement cancellation.
 
-No stock writes or apply endpoint: the physical reconciliation adapter must own
-counts, transfers, rollback and final readiness before it can apply a request.
+The reconciliation adapter owns counts and full-plan atomic transfers/apply.
+Cancellation is available only before application; history remains immutable.
 """
 import secrets
 from psycopg.types.json import Jsonb
@@ -96,10 +96,12 @@ class MinibarConfiguration(MinibarTemplates):
             before = self.request_data(conn,tenant,request)
             if before['revision']!=revision:
                 raise DomainError('REVISION_CONFLICT')
-            if before['state']=='CANCELLED':
+            if before['state'] in {'CANCELLED','APPLIED'}:
                 raise DomainError('CONFIGURATION_TERMINAL')
-            # The current schema has no movement/apply transition. The physical
-            # adapter must replace this gate with movement-aware cancellation.
+            # This adapter commits every transfer together with APPLIED.
+            # Pending requests therefore have no committed stock movements.
+            from prsystem.minibar_reconciliation import MinibarReconciliation
+            MinibarReconciliation.close_tasks(conn,tenant,request)
             conn.execute("""UPDATE prsystem.minibar_configuration_request SET state='CANCELLED',revision=revision+1,
                 cancelled_by=%s,cancel_reason=%s,cancelled_at=clock_timestamp() WHERE tenant_id=%s AND id=%s""",
                 (actor,reason,tenant,request))
@@ -115,12 +117,13 @@ class MinibarConfiguration(MinibarTemplates):
         with transaction(self.auth.dsn) as conn:
             self.reader(conn,bearer,tenant)
             self._catalog_lock(conn,tenant)
-            row = conn.execute('SELECT minibar_mode,revision,number FROM prsystem.room WHERE tenant_id=%s AND id=%s',(tenant,room)).fetchone()
+            row = conn.execute('SELECT minibar_mode,revision,number,minibar_application_id FROM prsystem.room WHERE tenant_id=%s AND id=%s',(tenant,room)).fetchone()
             if not row:
                 raise DomainError('WORK_SOURCE_NOT_FOUND')
             pending = self.pending(conn,tenant,room)
             history = conn.execute('SELECT id FROM prsystem.minibar_configuration_request WHERE tenant_id=%s AND room_id=%s AND id>%s ORDER BY id LIMIT %s',(tenant,room,after,limit+1)).fetchall()
             items = [self.request_data(conn,tenant,r[0]) for r in history[:limit]]
-            return dict(room_id=room,room_number=row[2],current=dict(mode=row[0],room_revision=row[1]),
+            return dict(room_id=room,room_number=row[2],current=dict(mode=row[0],room_revision=row[1],application_id=row[3],
+                configuration=self.request_data(conn,tenant,row[3])['target_snapshot'] if row[3] else None),
                 pending=self.request_data(conn,tenant,pending[0]) if pending else None,items=items,
                 next_after=items[-1]['request_id'] if len(history)>limit else None)

@@ -153,3 +153,13 @@ recorded at creation, not inferred from planned checkout time.
 Verification: test_minibar_configuration.py and the extended
  tests/browser/minibar-templates.cjs (request, retry, blocker, read/cancel,
 OFF, Reception read-only, keyboard and mobile checks).
+
+## Canonical reconciliation
+
+The migration-046 follow-up adds Manager prepare/plan and Cleaner assigned counts
+and full-plan apply. Shared forms retain actual inputs and idempotency keys across
+unknown outcomes. Explicit count fields have no assumed default. Whole physical
+transfer confirmation is required; shortage/variance has no override button.
+Apply completes stock configuration only; cleanliness remains separate. Queue and
+plan failures support retry and ignore detached responses. See docs/51 and
+tests/browser/minibar-reconciliation.cjs.

@@ -22,7 +22,7 @@ jobs:
         run: python -m unittest discover -s tests -v
   postgres:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17
@@ -65,6 +65,8 @@ jobs:
         run: node tests/browser/minibar.cjs
       - name: Verify minibar template authoring
         run: node tests/browser/minibar-templates.cjs
+      - name: Verify minibar reconciliation
+        run: node tests/browser/minibar-reconciliation.cjs
       - name: Validate browser payloads against API models
         run: |
           python -m pip install '.[api]'
@@ -72,6 +74,7 @@ jobs:
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/booking-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-template-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-reconciliation-requests.json
       - name: Save browser evidence
         uses: actions/upload-artifact@v4
         with:

@@ -141,6 +141,7 @@ class CleaningService(MembershipService):
                 room=conn.execute('SELECT cleaning_state FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,bridge[0])).fetchone()
                 if bridge[1]!='OPEN' or not room or room[0]!='CLEANING': raise DomainError('CLEANING_NOT_STARTED')
             source=conn.execute('SELECT id,room_id,configuration_id,configuration_version,snapshot FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant,source[0])).fetchone()
+            if source[4].get('canonical_minibar'):raise DomainError('CANONICAL_TASK_REQUIRED')
             if source[4].get('minibar_mode')=='MOCK_ON' and self.runtime_mode=='production':raise DomainError('FINANCIAL_SOURCE_NOT_READY')
             task=conn.execute("""SELECT t.assignee_id,t.assignment_version,t.state,w.state FROM prsystem.cleaning_task t
                 JOIN prsystem.staff_open_work w ON w.tenant_id=t.tenant_id AND w.source_id=t.id AND w.kind='CLEANING_TASK'

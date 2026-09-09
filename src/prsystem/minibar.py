@@ -1,6 +1,7 @@
 """Canonical product/opening/purchase records, separate from Reception mock stock.
 
-This receipt-only milestone does not create room transfers, sales or cash events.
+Warehouse availability subtracts canonical room transfers from hotel-wide stock.
+Receipts and transfers create no sales or cash events.
 Costs stay exact as integer inventory value and a rational average, never float.
 """
 
@@ -40,7 +41,7 @@ class MinibarWarehouse(RoomService):
 
     @staticmethod
     def stock(conn, tenant, product):
-        row = conn.execute('''SELECT stock_revision,warehouse_after,inventory_value_after
+        row = conn.execute('''SELECT stock_revision,total_quantity_after,inventory_value_after
             FROM prsystem.minibar_receipt WHERE tenant_id=%s AND product_id=%s
             ORDER BY stock_revision DESC LIMIT 1''', (tenant, product)).fetchone()
         if row is None:
@@ -48,8 +49,8 @@ class MinibarWarehouse(RoomService):
         return row[0], row[1], int(row[2])
 
     @staticmethod
-    def balance(revision, quantity, value):
-        return dict(stock_revision=revision, warehouse_quantity=quantity,
+    def balance(revision, quantity, value, room_quantity=0):
+        return dict(stock_revision=revision, warehouse_quantity=quantity-room_quantity, total_quantity=quantity, room_quantity=room_quantity,
                     inventory_value_mnt=str(value), average_cost=inventory_average(value, quantity))
 
     def post(self, conn, tenant, product, kind, quantity, cost, reference, actor, roles, package, prior):
@@ -57,6 +58,7 @@ class MinibarWarehouse(RoomService):
         after = before + quantity
         money(after)
         value += quantity * cost
+        in_rooms = conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s)',(tenant,product)).fetchone()[0]
         movement = secrets.token_hex(16)
         actor_label = conn.execute("SELECT coalesce(nullif(display_name,''),email) FROM prsystem.staff_account WHERE id=%s", (actor,)).fetchone()[0]
         snapshot = conn.execute('''SELECT jsonb_build_object('name',name,'category',category,
@@ -66,12 +68,12 @@ class MinibarWarehouse(RoomService):
             (tenant_id,id,product_id,stock_revision,kind,quantity,unit_cost_mnt,warehouse_after,
              inventory_value_after,actor_id,actor_roles,package_mnt,reference,product_snapshot,actor_label)
             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-            (tenant, movement, product, version+1, kind, quantity, cost, after,
+            (tenant, movement, product, version+1, kind, quantity, cost, after-in_rooms,
              value, actor, roles, package, reference, Jsonb(snapshot), actor_label))
         result = dict(product_id=product, receipt_id=movement, kind=kind,
-                      **self.balance(version+1, after, value))
+                      **self.balance(version+1, after, value, in_rooms))
         self.event(conn, tenant, actor, 'MINIBAR_'+kind, product,
-                   dict(result, quantity=quantity, unit_cost_mnt=cost, warehouse_before=before,
+                   dict(result, quantity=quantity, unit_cost_mnt=cost, warehouse_before=before-in_rooms,
                         actor_roles=roles, package_mnt=package, reference=reference))
         return result
 
@@ -134,13 +136,13 @@ class MinibarWarehouse(RoomService):
         with transaction(self.auth.dsn) as conn:
             self.actor(conn, bearer, tenant)
             rows = conn.execute('''SELECT p.id,p.name,p.category,p.unit,p.selling_price_mnt,p.status,
-                p.initial_unit_cost_mnt,s.stock_revision,s.warehouse_after,s.inventory_value_after
+                p.initial_unit_cost_mnt,s.stock_revision,s.total_quantity_after,s.inventory_value_after,prsystem.minibar_room_quantity(p.tenant_id,p.id)
                 FROM prsystem.minibar_product p JOIN LATERAL
-                (SELECT stock_revision,warehouse_after,inventory_value_after FROM prsystem.minibar_receipt
+                (SELECT stock_revision,total_quantity_after,inventory_value_after FROM prsystem.minibar_receipt
                  WHERE tenant_id=p.tenant_id AND product_id=p.id ORDER BY stock_revision DESC LIMIT 1) s ON true
                 WHERE p.tenant_id=%s AND p.id>%s ORDER BY p.id LIMIT %s''', (tenant, after, limit+1)).fetchall()
             items = [dict(product_id=r[0], name=r[1], category=r[2], unit=r[3], selling_price_mnt=r[4],
-                          status=r[5], initial_unit_cost_mnt=r[6], **self.balance(r[7], r[8], int(r[9])))
+                          status=r[5], initial_unit_cost_mnt=r[6], **self.balance(r[7], r[8], int(r[9]), r[10]))
                      for r in rows[:limit]]
             return dict(items=items, next_after=items[-1]['product_id'] if len(rows)>limit else None)
 
@@ -151,10 +153,10 @@ class MinibarWarehouse(RoomService):
                                 (tenant, product)).fetchone():
                 raise DomainError('WORK_SOURCE_NOT_FOUND')
             rows = conn.execute('''SELECT id,stock_revision,kind,quantity,unit_cost_mnt,warehouse_after,
-                inventory_value_after,actor_id,actor_roles,reference,recorded_at,package_mnt,product_snapshot,actor_label
+                inventory_value_after,actor_id,actor_roles,reference,recorded_at,package_mnt,product_snapshot,actor_label,total_quantity_after
                 FROM prsystem.minibar_receipt WHERE tenant_id=%s AND product_id=%s AND stock_revision>%s
                 ORDER BY stock_revision LIMIT %s''', (tenant, product, after, limit+1)).fetchall()
             items = [dict(receipt_id=r[0], kind=r[2], quantity=r[3], unit_cost_mnt=r[4],
-                          **self.balance(r[1], r[5], int(r[6])), actor_id=r[7], actor_roles=r[8],
+                          **self.balance(r[1], r[14], int(r[6]),r[14]-r[5]), actor_id=r[7], actor_roles=r[8],
                           reference=r[9], recorded_at=r[10], package_mnt=r[11], product_snapshot=r[12], actor_label=r[13]) for r in rows[:limit]]
             return dict(items=items, next_after=items[-1]['stock_revision'] if len(rows)>limit else None)

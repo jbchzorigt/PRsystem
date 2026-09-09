@@ -17,6 +17,7 @@ class MinibarWarehouseTests(StaffApiCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                'GRANT SELECT ON prsystem.minibar_transfer,prsystem.minibar_reconciliation,prsystem.minibar_configuration_application TO {}',
                 'GRANT SELECT,INSERT ON prsystem.minibar_product,prsystem.minibar_receipt,prsystem.staff_command_receipt TO {}',
                 'GRANT UPDATE(revision) ON prsystem.minibar_product TO {}',
                 'GRANT INSERT ON prsystem.operational_event TO {}',

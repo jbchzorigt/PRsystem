@@ -212,3 +212,10 @@ No merge or deployment was performed. [Scope and gates](47-booking-completion-ca
 template authoring хоёр бүрэн багц дээр энэ нэмэлт хийгдсэн; physical
 reconciliation, stock transfer, rollback/apply болон refill үлдсэн тул өрөөний
 тохиргооны том багцыг бүрэн дууссан гэж тооцоогүй.
+
+## Stage 5 — reconciliation candidate
+
+[Canonical тооллого ба бүх шилжүүлэлтийг нэг transaction-аар хэрэгжүүлэх](51-minibar-reconciliation.md)
+нэмэлт бэлэн: OFF → ON, хувилбар солих, ON → OFF; зөрүү/нөөц хүрэлцээгүй
+үед хаалттай. 16 шинэ тесттэй, PostgreSQL CI хүлээгдэж байна. Canonical guest
+opening/refill, variance/override, partial rollback болон Restaurant/Operation үлдсэн.

@@ -29,6 +29,7 @@ from prsystem.rooms import RoomService
 from prsystem.minibar import MinibarWarehouse
 from prsystem.minibar_templates import MinibarTemplates
 from prsystem.minibar_configuration import MinibarConfiguration
+from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -110,6 +111,23 @@ class MinibarConfigurationRequest(BaseModel):
 
 class MinibarConfigurationCancel(MinibarTemplateCommand):
     reason: str = Field(min_length=1,max_length=1000)
+
+
+class MinibarReconciliationPrepare(MinibarTemplateCommand):
+    assignee_id: str = Field(min_length=1,max_length=128)
+
+
+class MinibarCountCommand(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    assignment_version: int = Field(ge=0,le=2**63-1)
+    action_id: str = Field(min_length=1,max_length=128)
+    actual_count: int = Field(ge=0,le=2**63-1)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class MinibarApplyCommand(MinibarTemplateCommand):
+    assignment_version: int = Field(ge=0,le=2**63-1)
+    physical_transfers_confirmed: Literal[True]
 
 
 class MinibarDraftSave(MinibarTemplateCommand):
@@ -758,6 +776,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     minibar = MinibarWarehouse(service)
     templates = MinibarTemplates(service)
     configuration = MinibarConfiguration(service)
+    reconciliation = MinibarReconciliation(service)
     room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service,runtime_mode)
     stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
@@ -845,7 +864,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                           'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409,
                           'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_VERSION_IMMUTABLE':409,
                           'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409,
-                          'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
+                          'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -901,6 +920,26 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/cancel')
     def minibar_configuration_cancel(tenant_id: str,request_id: str,body: MinibarConfigurationCancel,secret: Annotated[str,Depends(token)]):
         return configuration.cancel(secret,tenant_id,request_id,body.expected_revision,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/prepare',status_code=201)
+    def minibar_prepare(tenant_id: str,request_id: str,body: MinibarReconciliationPrepare,secret: Annotated[str,Depends(token)]):
+        return reconciliation.prepare(secret,tenant_id,request_id,body.expected_revision,body.assignee_id,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/reconciliation')
+    def minibar_reconciliation_detail(tenant_id: str,request_id: str,secret: Annotated[str,Depends(token)]):
+        return reconciliation.detail(secret,tenant_id,request_id)
+
+    @app.get('/hotels/{tenant_id}/minibar/reconciliation/tasks')
+    def minibar_reconciliation_tasks(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=Query(default='',max_length=128),limit: int=Query(default=20,ge=1,le=50)):
+        return reconciliation.tasks(secret,tenant_id,after,limit)
+
+    @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/count')
+    def minibar_reconciliation_count(tenant_id: str,task_id: str,body: MinibarCountCommand,secret: Annotated[str,Depends(token)]):
+        return reconciliation.count(secret,tenant_id,task_id,body.assignment_version,body.action_id,body.actual_count,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/apply')
+    def minibar_reconciliation_apply(tenant_id: str,task_id: str,body: MinibarApplyCommand,secret: Annotated[str,Depends(token)]):
+        return reconciliation.apply(secret,tenant_id,task_id,body.assignment_version,body.expected_revision,body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/minibar/templates')
     def minibar_templates(tenant_id: str, secret: Annotated[str, Depends(token)],

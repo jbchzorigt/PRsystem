@@ -136,3 +136,5 @@ Room configuration requests appear beside the existing room facts. Current mode,
 exact target version and pending state have separate text labels. The existing
 shared table and form display the target items and reason, with the assignment
 warning before confirmation. This extension adds no new visual tokens.
+
+Canonical reconciliation uses the existing room detail, shared form, table and status owners: Manager assignment/plan and Cleaner count/full-plan confirmation. No new tokens or shell. See UX-CONTRACT.md and docs/51.

@@ -97,3 +97,5 @@ cancelled or until the later reconciliation adapter is implemented.
 
 Restaurant fulfillment, Operation, live providers/workers and production release
 remain separate. This increment is not full stage-five completion or deployment.
+
+Follow-up: [docs/51](51-minibar-reconciliation.md) adds assigned counts and fully funded atomic application. The no-apply boundary above describes the accepted migration-045 increment.

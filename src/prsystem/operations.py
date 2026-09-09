@@ -62,7 +62,7 @@ class Operations(GuestFinance):
                 result['cleaning']=rows(conn,"""SELECT t.id,t.source_id,s.room_id,t.assignment_version,t.started_at,a.id,a.kind,a.product_id,a.quantity-a.completed
                     FROM prsystem.cleaning_task t JOIN prsystem.cleaning_source s ON (s.tenant_id,s.id)=(t.tenant_id,t.source_id)
                     JOIN prsystem.cleaning_action a ON (a.tenant_id,a.source_id)=(t.tenant_id,t.source_id)
-                    WHERE t.tenant_id=%s AND t.assignee_id=%s AND t.state='OPEN' AND a.quantity>a.completed AND t.id>%s
+                    WHERE t.tenant_id=%s AND t.assignee_id=%s AND t.state='OPEN' AND s.source_reference NOT LIKE 'canonical-config:%%' AND a.quantity>a.completed AND t.id>%s
                     ORDER BY t.id,a.id LIMIT %s""",(tenant,actor,after,limit),'task_id source_id room_id assignment_version started_at action_id kind product_id remaining')
             return result
 
