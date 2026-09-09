@@ -10,7 +10,7 @@ import { S3ObjectStorage } from './s3-object-storage';
  * comes back, and what never leaves it.
  */
 
-const SECRET = 'phase-20-s3-canary-secret';
+const CANARY = 'phase-20-s3-canary-secret';
 const KEY = 'exports/00000000-0000-4000-8000-0000000000aa/0123456789abcdef0123456789abcdef.xlsx';
 
 class FakeHttp implements OutboundHttp {
@@ -41,7 +41,7 @@ function adapter(http: FakeHttp): S3ObjectStorage {
     region: 'us-east-1',
     bucket: 'prsystem-local',
     accessKeyId: 'prsystem_local',
-    secretAccessKey: new Secret(SECRET),
+    secretAccessKey: new Secret(CANARY),
     http,
     now: () => new Date('2026-09-09T00:00:00Z'),
   });
@@ -147,7 +147,7 @@ describe('S3ObjectStorage', () => {
       JSON.stringify(port),
       String(port),
     ];
-    for (const surface of surfaces) expect(surface).not.toContain(SECRET);
+    for (const surface of surfaces) expect(surface).not.toContain(CANARY);
   });
 
   it('refuses an endpoint that is not a bare origin, and a bucket that is not a bucket name', () => {

@@ -102,6 +102,14 @@ export const ALLOWED_VALUES = [
   'must-never-be-recorded', // packages/db — audit payload the constraint must refuse
   'super-secret-scheduler-password', // packages/config — asserts the scheduler credential is never echoed
   'startup-log-probe-password', // apps/api — asserts no credential reaches the startup logger
+
+  // AWS's own documentation fixture (Phase 20). The SigV4 signature vectors in
+  // packages/ports/src/adapters/s3/sigv4.test.ts are the ones the S3 API
+  // Reference publishes, and a signature is a function of the key id, so the
+  // example id must appear verbatim for the vectors to mean anything. It has
+  // never been issued to anyone; AWS prints it in public documentation for
+  // exactly this purpose.
+  'AKIAIOSFODNN7EXAMPLE',
 ];
 
 /** Raised when the inventory itself is unusable. Never a silent empty scan. */
