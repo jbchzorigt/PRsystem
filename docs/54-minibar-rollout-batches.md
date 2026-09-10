@@ -1,4 +1,4 @@
-# Multi-room minibar rollout — stage 5 increment
+# Multi-room minibar rollout — accepted stage 5 increment
 
 Implements docs/26 §§36–38 with one exact Published version, independent room
 requests and immutable confirmation history. Initial selection is 2–100 unique
@@ -75,12 +75,23 @@ IDs and input remain in memory. Archived version history stays accessible.
 
 ## Verification and remaining scope
 
-Candidate: 622 discovered backend tests, 106 local tests passed and 516 PostgreSQL
-cases require the full CI gate. New coverage: 18 database and six pure policy tests.
+Accepted source: `fae2c2e5cc7a91dcd31561243fc3b1feb482da2d`, tree
+`9493c4ae2d39011f5279fd4ca5642547421f924a` (identical to local `46f07eb`).
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34430146763) passed **622/622 backend tests without skips in 603.816 seconds**.
+The focused batch gate separately passed **18/18 in 37.778 seconds**. New coverage
+is 18 database and six pure policy tests. All nine Chromium suites, 55 actual
+browser/API payload contracts, token checks and design lint passed. Strict UI
+audit has zero findings; design lint retains six existing unused-token warnings
+and zero errors. Preview/progress desktop and 320px screenshots were inspected.
+Selection capacity and all ten progress counts have browser regression coverage.
+
+Local discovery executed 106 tests and skipped 516 database-dependent cases;
+the linked complete CI supplies the no-skip acceptance evidence.
 The ninth browser suite checks page selection retention, keyboard use, per-room
 preview, reason/acknowledgement, unknown-response replay, cancel conflict, applied
 preservation, one-room linked retry, history recovery, privacy and 320px layout.
-Acceptance evidence is recorded after the complete PostgreSQL CI run.
+The feature and CI corrections are published to `feat/approved-risk-controls`
+and Draft PR #1. The follow-up commit records acceptance in documentation only.
 
 This increment uses the existing atomic full-plan transfer adapter. Persisted
 partial physical transfers and ROLLBACK_REQUIRED/ROLLED_BACK execution are not yet
@@ -91,7 +102,9 @@ remain stage 5 work. External providers remain approved mocks. No merge/deployme
 
 ## CI correction
 
-Initial source c347f0126f4cf6c9a4472d3dd945ad5d80cc35d4 ran all 622 tests without
+Initial source `c347f0126f4cf6c9a4472d3dd945ad5d80cc35d4`
+([initial CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34428979142))
+ran all 622 tests without
 skips in 641.721 seconds: 607 passed, 14 failed and one errored. The failures were
 batch confirmation paths: PostgreSQL SELECT FOR SHARE/UPDATE on immutable parent
 history requires UPDATE privilege, which the deliberately restricted role lacks.
@@ -101,7 +114,7 @@ never observes an unsealed parent that it can append to. Operational room locks,
 seal/lineage checks, RLS and immutable triggers remain. No UPDATE/DELETE grants
 were added; the existing history regression now asserts both privileges absent.
 A focused real-database batch gate precedes the complete CI regression to expose
-this boundary promptly. Final acceptance remains pending.
+this boundary promptly. Final acceptance is recorded above.
 
 The focused rerun then exposed a missing SELECT grant on tenant-scoped
 operational_event for the new deferred audit proof. That read privilege is now

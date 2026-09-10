@@ -21,10 +21,10 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md), [Нэг өрөөний Rollout](53-minibar-room-rollout.md) нэмэлтүүд баталгаажсан: **598/598 тест skip-гүй**, найман Chromium suite, 48 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill, product/template lifecycle, batch rollout, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md), [Нэг өрөөний Rollout](53-minibar-room-rollout.md), [Олон өрөөний batch](54-minibar-rollout-batches.md) нэмэлтүүд баталгаажсан: **622/622 тест skip-гүй**, есөн Chromium suite, 55 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill/report, product/template lifecycle, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-Нэг өрөөний explicit Rollout ([53-р баримт](53-minibar-room-rollout.md)) нэмэлт баталгаажсан. Олон өрөөний batch болон дээрх 5-р шатны бусад ажил үлдсэн.
+Олон өрөөний Rollout batch ([54-р баримт](54-minibar-rollout-batches.md)) одоогийн atomic apply хүрээнд баталгаажсан. Дараагийн ажил нь check-in үеийн canonical opening/price-book snapshot, active-stay refill болон хэрэглээний тайлан; дээрх 5/6-р шатны бусад ажил үлдсэн.
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
 
@@ -259,11 +259,21 @@ variance/override, partial rollback, product/template lifecycle, Restaurant
 болон Operation үлдсэн. Гадаад provider-ууд зөвшөөрсөн mock горимд хэвээр.
 Merge/deployment хийгээгүй.
 
-## Stage 5 — multi-room rollout batch candidate
+## Stage 5 — multi-room rollout batch acceptance
 
 [Олон өрөөний Rollout batch](54-minibar-rollout-batches.md): read-only preview,
-өрөө бүрийн accepted/skipped үр дүн, immutable batch/lineage, явц, үлдсэнийг
-цуцлах болон шинэ linked retry нэмэгдсэн. Initial 2–100, retry 1–100 өрөө.
-622 backend тестээс 106 нь local орчинд давсан; 516 PostgreSQL тестийг full CI-д
-шалгана. Ес дэх browser suite ба API contract gate нэмэгдсэн. Баталгаажуулалт
-дуустал candidate төлөвтэй; 5/6-р шатны бусад ажил үлдсэн.
+өрөө бүрийн accepted/skipped үр дүн, immutable batch/lineage, бүх төлөвийн тооллоготой
+явц, үлдсэнийг цуцлах болон шинэ linked retry баталгаажсан. Initial 2–100,
+retry 1–100 өрөө; хуудас дамнасан сонголт, keyboard болон mobile шалгалттай.
+
+Source `fae2c2e5cc7a91dcd31561243fc3b1feb482da2d`,
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34430146763): **622/622 backend тест skip-гүй
+(603.816 секунд)**; batch-ийн 18 тест тусдаа gate дээр мөн давсан. Есөн Chromium
+suite, 55 API хүсэлт, design/token шалгалт амжилттай; strict UI audit 0 finding.
+CI-ээс илэрсэн immutable parent-ийн шаардлагагүй row lock болон tenant-scoped
+audit SELECT эрхийн дутууг зассан. History UPDATE/DELETE эрх нэмээгүй.
+
+5/6-р шат бүхэлдээ дуусаагүй. Canonical guest opening/price-book/refill/report,
+variance/override, partial physical rollback, product/template lifecycle,
+Restaurant, Operation болон production readiness үлдсэн. Гадаад provider-ууд
+зөвшөөрсөн mock горимд; merge/deployment хийгээгүй.
