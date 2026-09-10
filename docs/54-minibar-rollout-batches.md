@@ -87,3 +87,17 @@ implemented; their progress vocabulary is reserved for that later adapter. It
 cannot claim partial physical rollback. Canonical guest opening/refill/report,
 variance/override, product/template entity lifecycle, Restaurant and Operation
 remain stage 5 work. External providers remain approved mocks. No merge/deployment.
+
+## CI correction
+
+Initial source c347f0126f4cf6c9a4472d3dd945ad5d80cc35d4 ran all 622 tests without
+skips in 641.721 seconds: 607 passed, 14 failed and one errored. The failures were
+batch confirmation paths: PostgreSQL SELECT FOR SHARE/UPDATE on immutable parent
+history requires UPDATE privilege, which the deliberately restricted role lacks.
+Migration 050 replaces those unnecessary parent locks with ordinary reads. A
+parent cannot commit without its complete immutable seal, so another transaction
+never observes an unsealed parent that it can append to. Operational room locks,
+seal/lineage checks, RLS and immutable triggers remain. No UPDATE/DELETE grants
+were added; the existing history regression now asserts both privileges absent.
+A focused real-database batch gate precedes the complete CI regression to expose
+this boundary promptly. Final acceptance remains pending.

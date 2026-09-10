@@ -180,6 +180,10 @@ class MinibarBatchTests(MinibarConfigurationCase):
         self.assertEqual(self.database_count('minibar_rollout_batch'),0)
 
     def test_history_is_immutable_and_sealed_parent_rejects_new_children(self):
+        with psycopg.connect(self.app_dsn) as conn:
+            for name in ('minibar_rollout_batch','minibar_rollout_result','minibar_rollout_seal'):
+                table='prsystem.'+name
+                self.assertEqual(conn.execute("SELECT has_any_column_privilege(current_user,%s,'UPDATE'),has_table_privilege(current_user,%s,'DELETE')",(table,table)).fetchone(),(False,False))
         b=self.assert_status(self.confirm(),201)
         for table in ('minibar_rollout_batch','minibar_rollout_result','minibar_rollout_seal'):
             with self.assertRaises(psycopg.errors.CheckViolation),psycopg.connect(self.owner_dsn) as conn:
