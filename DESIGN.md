@@ -162,3 +162,7 @@ behavior remain shared. Evidence: `tests/browser/minibar-refill.cjs`.
 Automatic next-stay preparation uses the existing reconciliation card, count
 form and physical-confirmation controls. The only added action is Cleaner
 self-claim for a server-created next-stay task; no new visual owner or tokens.
+
+Manager physical minibar exceptions reuse the stay-detail form treatment. The
+reason identifies the exception in subsequent detail; prices, count labels,
+feedback, retry and responsive behavior remain owned by existing shared controls.

@@ -237,3 +237,9 @@ Automatic next-stay preparation is a `reconciliationTasks` variant. An unassigne
 reuse the same controls as configuration reconciliation. The screen explicitly
 separates minibar preparation from ordinary cleaning. Evidence:
 `tests/browser/minibar-next-stay.cjs` and `test_minibar_next_stay.py`.
+
+Manager exception reports reuse `openStay` with blank physical counts, mandatory
+reason and explicit no-use acknowledgement. Only a current operational Manager
+sees the exception form; server policy is authoritative. Successful writes reload
+stay detail and identify the exception reason. Ordinary and exceptional reports
+use the same price book. Evidence: `tests/browser/minibar-exception.cjs`.

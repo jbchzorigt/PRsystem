@@ -89,19 +89,34 @@ class MinibarGuest(ReceptionDependencies):
              actor,label,roles,package,Jsonb(snapshot),'Stay minibar report '+str(revision)))
         return identity
 
-    def report(self,bearer,tenant,stay,task,assignment,counts,no_consumption,revision,key):
+    def report(self,bearer,tenant,stay,task,assignment,counts,no_consumption,revision,key,*,exception_reason=None):
         command=dict(action='CANONICAL_MINIBAR_REPORT',stay_id=stay,task_id=task,assignment_version=assignment,counts=counts,no_consumption=no_consumption,revision=revision)
+        if exception_reason is not None:
+            exception_reason=self._text(exception_reason,1000)
+            command=dict(action='MANAGER_MINIBAR_EXCEPTION',stay_id=stay,counts=counts,no_consumption=no_consumption,revision=revision,reason=exception_reason)
         with transaction(self.auth.dsn) as conn:
-            actor,roles=self.cleaner_actor(conn,bearer,tenant,stay)
-            assigned=conn.execute('''SELECT t.assignee_id,t.assignment_version,e.source_id FROM prsystem.minibar_guest_inspection e
-                JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(e.tenant_id,e.source_id)
-                WHERE e.tenant_id=%s AND e.stay_id=%s AND e.revision=%s AND t.id=%s''',(tenant,stay,revision+1,task)).fetchone()
-            if not assigned:raise DomainError('WORK_SOURCE_NOT_FOUND')
-            if assigned[0]!=actor:raise DomainError('FORBIDDEN')
-            if assigned[1]!=assignment:raise DomainError('REVISION_CONFLICT')
-            replay=self._receipt(conn,tenant,key,actor,command)
-            if replay is not None:return replay
-            room,before=self.lock_inspection(conn,tenant,stay,revision)
+            if exception_reason is not None:
+                actor=self.actor(conn,bearer,tenant,stay,manager=True,action=Action.CHECKOUT_REPORT)
+                conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+                roles=conn.execute('SELECT roles FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=%s',(tenant,actor)).fetchone()[0]
+                package=conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s',(tenant,)).fetchone()[0]
+                if package not in(25000,30000):raise DomainError('PACKAGE_REQUIRED')
+                replay=self._receipt(conn,tenant,key,actor,command)
+                if replay is not None:return replay
+                room,before=self.lock_inspection(conn,tenant,stay,revision)
+                task,source=self.exception_task(conn,tenant,stay,revision,actor,roles,package,exception_reason)
+                assignment=0;assigned=(actor,assignment,source)
+            else:
+                actor,roles=self.cleaner_actor(conn,bearer,tenant,stay)
+                assigned=conn.execute('''SELECT t.assignee_id,t.assignment_version,e.source_id FROM prsystem.minibar_guest_inspection e
+                    JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(e.tenant_id,e.source_id)
+                    WHERE e.tenant_id=%s AND e.stay_id=%s AND e.revision=%s AND t.id=%s''',(tenant,stay,revision+1,task)).fetchone()
+                if not assigned:raise DomainError('WORK_SOURCE_NOT_FOUND')
+                if assigned[0]!=actor:raise DomainError('FORBIDDEN')
+                if assigned[1]!=assignment:raise DomainError('REVISION_CONFLICT')
+                replay=self._receipt(conn,tenant,key,actor,command)
+                if replay is not None:return replay
+                room,before=self.lock_inspection(conn,tenant,stay,revision)
             MinibarReconciliation.task_lock(conn,tenant,task,assigned[2])
             book=conn.execute("SELECT snapshot->'minibar_snapshot' FROM prsystem.stay WHERE tenant_id=%s AND id=%s",(tenant,stay)).fetchone()[0]
             if not book or book.get('mode')!='CANONICAL':raise DomainError('MINIBAR_REPORT_REQUIRED')
@@ -130,12 +145,32 @@ class MinibarGuest(ReceptionDependencies):
             self.credit_previous(conn,tenant,stay,actor,'Corrected canonical minibar report')
             charge=secrets.token_hex(16) if total else None;now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
             if charge:conn.execute("INSERT INTO prsystem.guest_charge(tenant_id,stay_id,id,kind,source_id,amount_mnt,recorded_at) VALUES(%s,%s,%s,'MINIBAR',%s,%s,%s)",(tenant,stay,charge,stay+':'+str(revision+1),total,now))
-            conn.execute('INSERT INTO prsystem.reception_minibar_report(tenant_id,stay_id,revision,actor_id,items,amount_mnt,charge_id) VALUES(%s,%s,%s,%s,%s,%s,%s)',(tenant,stay,revision+1,actor,Jsonb(lines),total,charge))
+            conn.execute('INSERT INTO prsystem.reception_minibar_report(tenant_id,stay_id,revision,actor_id,items,amount_mnt,charge_id,reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)',(tenant,stay,revision+1,actor,Jsonb(lines),total,charge,exception_reason))
             conn.execute('''INSERT INTO prsystem.minibar_guest_report(tenant_id,stay_id,revision,source_id,task_id,assignment_version,actor_id,no_consumption)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(tenant,stay,revision+1,assigned[2],task,assignment,actor,no_consumption))
-            balance=self.save(conn,tenant,stay,before,before,actor,'CANONICAL_MINIBAR_REPORTED',stay,dict(report_revision=revision+1,amount_mnt=total,charge_id=charge,movement_ids=movements,task_id=task),now)
-            result=dict(stay_id=stay,report_revision=revision+1,charge_id=charge,amount_mnt=total,balance=balance,mode='CANONICAL',movement_ids=movements)
+            balance=self.save(conn,tenant,stay,before,before,actor,'CANONICAL_MINIBAR_EXCEPTION_REPORTED' if exception_reason is not None else 'CANONICAL_MINIBAR_REPORTED',stay,dict(report_revision=revision+1,amount_mnt=total,charge_id=charge,movement_ids=movements,task_id=task),now)
+            result=dict(stay_id=stay,report_revision=revision+1,charge_id=charge,amount_mnt=total,balance=balance,mode='CANONICAL',movement_ids=movements,exception=exception_reason is not None)
             self._save_receipt(conn,tenant,key,actor,command,result);return result
+
+    @staticmethod
+    def exception_task(conn,tenant,stay,revision,actor,roles,package,reason):
+        source=conn.execute('SELECT source_id FROM prsystem.minibar_guest_inspection WHERE tenant_id=%s AND stay_id=%s AND revision=%s',(tenant,stay,revision+1)).fetchone()
+        if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
+        source=source[0]
+        conn.execute('SELECT id FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,source)).fetchone()
+        prior=conn.execute("SELECT id FROM prsystem.cleaning_task WHERE tenant_id=%s AND source_id=%s AND state='OPEN' FOR UPDATE",(tenant,source)).fetchone()
+        if prior:
+            conn.execute("UPDATE prsystem.cleaning_task SET state='CONTINUED' WHERE tenant_id=%s AND id=%s",(tenant,prior[0]))
+            conn.execute("UPDATE prsystem.staff_open_work SET state='CLOSED' WHERE tenant_id=%s AND source_id=%s AND kind='CLEANING_TASK'",(tenant,prior[0]))
+        task=secrets.token_hex(16)
+        conn.execute('INSERT INTO prsystem.cleaning_task(tenant_id,id,source_id,assignee_id,parent_id) VALUES(%s,%s,%s,%s,%s)',(tenant,task,source,actor,prior[0] if prior else None))
+        # Trusted Manager exception adapter: this work opens and finishes in the
+        # same report transaction, with an immutable current-role/physical proof.
+        # It is never an independently claimable Cleaner-role assignment.
+        conn.execute("INSERT INTO prsystem.staff_open_work(tenant_id,id,kind,source_id,owner_id) VALUES(%s,%s,'CLEANING_TASK',%s,%s)",(tenant,secrets.token_hex(16),task,actor))
+        conn.execute('''INSERT INTO prsystem.minibar_manager_exception(tenant_id,stay_id,revision,source_id,task_id,actor_id,actor_roles,package_mnt,reason)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)''',(tenant,stay,revision+1,source,task,actor,roles,package,reason))
+        return task,source
 
     def queue(self,bearer,tenant,after='',limit=50):
         with transaction(self.auth.dsn) as conn:

@@ -384,6 +384,11 @@
       panel.replaceChildren();selected=s;panel.append(node('h2',`${guest.room_number} · ${guest.guest.family_name} ${guest.guest.given_name}`));
       panel.append(node('p',`Төлөөгүй: ${money(finance.charge_unpaid_mnt)} · Барьцааны боломжит үлдэгдэл: ${money(finance.balance.available)} · Буцаалтад нөөцөлсөн: ${money(finance.balance.refund_reserved)}`));
       if(preview.price_book){minibarPriceBook(panel,preview.price_book);const refill=node('div');panel.append(refill);actions(panel).append(btn('Минибар нөхөх хүсэлтүүд',()=>guard(()=>stayRefills(refill,s.stay_id,preview.price_book,''))));}
+      if(preview.report?.exception_reason)panel.append(node('p',`Онцгой минибар тайлан · ${preview.report.exception_reason}`));
+      if(manager()&&preview.price_book&&preview.inspection?.state==='REQUESTED'){
+        const book=preview.price_book,fields=book.items.map((i,index)=>field('count_'+index,`${i.name} — бодитоор үлдсэн тоо`,'number',{min:0}));fields.push(field('no_consumption','Минибар хэрэглээгүйг шалгаж баталсан','checkbox',{optional:true}),reason());
+        form(panel,'Онцгой минибар тайлан',fields,'Онцгой тайлан илгээх',v=>{const counts={};for(const [index,i] of book.items.entries()){const n=v['count_'+index],available=preview.availability?.[i.product_id]?.available_quantity??i.opening_quantity;if(n>available)throw new Error(`${i.name}: боломжит ${available} тооноос их байна.`);counts[i.product_id]=n;}return api(stayPath(s.stay_id,'minibar-exception-report'),{counts,no_consumption:v.no_consumption===true,reason:v.reason,expected_revision:preview.inspection.revision,idempotency_key:v.idempotency_key});},{success:async()=>{panel.remove();await openStay(s,parent);say('Онцгой минибар тайлан бүртгэгдлээ.');}});
+      }
       if(finance.balance.frozen)panel.append(node('p','Санхүүгийн тулгалт хүлээгдэж байна. Platform-ийн хяналт шаардлагатай.','notice'));
       const rev={expected_revision:finance.balance.revision},prefix=suffix=>stayPath(s.stay_id,suffix);
       const a=actions(panel);a.append(btn('Байрлалт шинэчлэх',()=>guard(()=>{panel.remove();openStay(s,parent);})));if(role('RECEPTION')){

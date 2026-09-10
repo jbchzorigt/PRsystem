@@ -610,6 +610,12 @@ class MinibarRefillUnavailable(InvitationChange):
     reason: str=Field(min_length=1,max_length=1000)
 
 
+class ManagerMinibarException(InvitationChange):
+    counts: dict[str,int]=Field(min_length=1,max_length=100)
+    no_consumption: bool=False
+    reason: str=Field(min_length=1,max_length=1000)
+
+
 class CanonicalMinibarReport(InvitationChange):
     task_id: str=Field(min_length=1,max_length=128)
     assignment_version: int=Field(ge=0,le=2**63-1)
@@ -1247,6 +1253,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-inspection/claim',status_code=201)
     def claim_minibar_inspection(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
         return MinibarGuest(service,identity_vault,runtime_mode).claim(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-exception-report',status_code=201)
+    def manager_minibar_exception(tenant_id: str,stay_id: str,body: ManagerMinibarException,secret: Annotated[str,Depends(token)]):
+        return MinibarGuest(service,identity_vault,runtime_mode).report(secret,tenant_id,stay_id,None,None,body.counts,body.no_consumption,body.expected_revision,body.idempotency_key,exception_reason=body.reason)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-report',status_code=201)
     def canonical_minibar_report(tenant_id: str,stay_id: str,body: CanonicalMinibarReport,secret: Annotated[str,Depends(token)]):
