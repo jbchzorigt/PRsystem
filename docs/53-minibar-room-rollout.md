@@ -1,4 +1,4 @@
-# Explicit room minibar rollout — stage 5 candidate
+# Explicit room minibar rollout — accepted stage 5 increment
 
 Implements docs/26 §§33–35 at the existing full-plan reconciliation boundary.
 Manager selects an exact Published version and one physical room. Preview is
@@ -57,16 +57,37 @@ The runtime must use its application role, never migration credentials.
 
 ## Verification and remaining scope
 
-Candidate has 12 new database/API tests plus the dedicated rollout browser suite.
-Local discovery: 100 executed, 497 PostgreSQL-dependent tests skipped (597 total).
-All eight Chromium suites and 48 browser/API commands passed on 2026-09-10.
-Shared-token validation and strict UI audit passed (zero findings). The required
-e2e/accessibility command now includes rollout. Desktop/mobile screenshots were
-inspected. Full PostgreSQL CI is required before acceptance. Browser scenarios cover disabled
+Accepted source: `62dd2f5199a57e5da83427dd55121b3bcaa93ccc`, tree
+`82d82f9e518410aaf9e33cbfb896ad7647f1e5ef` (identical to local `0932262`).
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34425289850)
+passed **598/598 backend tests without skips in 562.245 seconds**, including
+all 13 rollout tests. All eight Chromium suites, 48 actual browser/API command
+contracts, shared-token validation and design lint passed. Strict local UI audit
+had zero findings; design lint retained six existing unused-token warnings and
+zero errors. Desktop and 320px screenshots were inspected. The configured
+e2e/accessibility command includes rollout.
+
+Local discovery ran 100 tests and skipped 498 PostgreSQL-dependent tests;
+the linked full CI supplies acceptance evidence. Browser scenarios cover disabled
 no-op, preview retry, reason/acknowledgement, CAS reload, unknown-response key
-retention, scheduled messaging and 320px layout, with real API model validation.
+retention, scheduled messaging and mobile layout. The feature source and CI
+correction were published to `feat/approved-risk-controls` and Draft PR #1.
 
 Multi-room batches, variance/override, partial physical rollback, canonical guest
 opening/refill/report, product/template entity lifecycle, Restaurant and Operation
 remain. The existing canonical ON guest-opening gate remains until that adapter
 is implemented. External providers remain approved mocks. No merge/deployment.
+
+## CI correction
+
+Initial source `af81ae6cb0b3b7faec28885dcd2309d72e600425` executed all 597
+backend tests without skips in 571.360 seconds: 596 passed, one failed.
+[Initial CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34424434050)
+identified a real assignment bug: readiness treated the rollout's own
+automatically-created COUNT source as unfinished preceding work. Prepare now
+loads the authoritative reconciliation source and excludes only that source
+from the existing safe-room predicate. Other stay, payment, report and work
+dependencies remain checked. A regression introduces a separate late refill,
+verifies assignment is denied without changing the task, then completes that
+dependency and verifies the original task is assigned and applied exactly once.
+The existing end-to-end assign/count/apply test remains unchanged.

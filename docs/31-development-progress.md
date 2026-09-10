@@ -21,10 +21,10 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md) нэмэлтүүд баталгаажсан: **585/585 тест skip-гүй**, долоон Chromium suite, 43 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill, product/template lifecycle, batch rollout, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md), [Нэг өрөөний Rollout](53-minibar-room-rollout.md) нэмэлтүүд баталгаажсан: **598/598 тест skip-гүй**, найман Chromium suite, 48 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill, product/template lifecycle, batch rollout, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-Нэг өрөөний explicit Rollout ([53-р баримт](53-minibar-room-rollout.md)) нэмэлт candidate бэлэн; PostgreSQL CI acceptance хүлээгдэж байна. Өмнөх баталгаажсан 585 тестийн тоог CI дүн гарах хүртэл өөрчлөөгүй.
+Нэг өрөөний explicit Rollout ([53-р баримт](53-minibar-room-rollout.md)) нэмэлт баталгаажсан. Олон өрөөний batch болон дээрх 5-р шатны бусад ажил үлдсэн.
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
 
@@ -236,3 +236,25 @@ skip-гүй (550.490 секунд)**, долоон Chromium suite, 43 API хүс
 Cleaner exception-ийн санамсаргүй сонголтын тестийн алдааг зассан; application
 дүрмийг сулруулаагүй. Хэрэглэгчийн тодорхой зөвшөөрлийн дараа branch/PR-д нийтэлсэн.
 Version archive нэмэлт баталгаажсан; stage 5 бүхэлдээ дуусаагүй.
+
+## Stage 5 — room rollout acceptance
+
+[Нэг өрөөний exact-version Rollout](53-minibar-room-rollout.md): read-only preview,
+нэг transaction-аар pending/blocker үүсгэх, safe point дээр тооллогын ажил
+үүсгэх, Manager оноолт болон existing count/atomic apply урсгал баталгаажсан.
+Source `62dd2f5199a57e5da83427dd55121b3bcaa93ccc`,
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34425289850):
+**598/598 backend тест skip-гүй (562.245 секунд)**; rollout-ийн 13 тест,
+найман Chromium suite, 48 API хүсэлт, design/token шалгалтууд амжилттай.
+
+Эхний CI 597 тестийг skip-гүй ажиллуулж, 596 нь давсан. Урьдчилан үүссэн
+өөрийн тооллогын ажлыг preceding dependency гэж үзсэн оноолтын алдааг зассан.
+Шинэ regression нь бусад дуусаагүй нөхөлтийн ажил blocker хэвээр үлдэж,
+дууссаны дараа анхны task-аар оноолт/application үргэлжлэхийг баталсан.
+Required UI verification-д rollout нэмсэн; 2-р шатны Reception takeover мөрийг
+сэргээсэн. Эдгээр өөрчлөлт branch/PR-д нийтлэгдсэн.
+
+5-р шат бүхэлдээ дуусаагүй: multi-room batch, guest opening/refill/report,
+variance/override, partial rollback, product/template lifecycle, Restaurant
+болон Operation үлдсэн. Гадаад provider-ууд зөвшөөрсөн mock горимд хэвээр.
+Merge/deployment хийгээгүй.
