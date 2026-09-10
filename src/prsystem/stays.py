@@ -149,7 +149,7 @@ class StayService(RoomService):
                     scope(conn,tenant)
                     source=conn.execute('''SELECT h.category_id,h.planned_checkin_at,h.planned_checkout_at,h.amount_mnt,h.snapshot,h.booking_state,h.applied_attempt_id
                         FROM prsystem.booking_hold h WHERE h.tenant_id=%s AND h.id=%s FOR UPDATE''',(tenant,hold_id)).fetchone()
-                    if not source or source[5]!='CONFIRMED' or row[21]!='OFF':raise DomainError('INVALID_FINANCIAL_SOURCE')
+                    if not source or source[5]!='CONFIRMED' or row[21] not in {'OFF','ON'}:raise DomainError('INVALID_FINANCIAL_SOURCE')
                     if source[0]!=row[3]:
                         upgrade=conn.execute('''SELECT u.id,u.room_id,m.roles,m.status,a.status,a.verified_at,h.package_mnt,s.rank,t.rank
                             FROM prsystem.booking_upgrade u JOIN prsystem.staff_membership m ON(m.tenant_id,m.account_id)=(u.tenant_id,u.actor_id)
@@ -159,7 +159,7 @@ class StayService(RoomService):
                             WHERE u.tenant_id=%s AND u.hold_id=%s ORDER BY u.recorded_at DESC,u.id DESC LIMIT 1''',(source[0],row[3],tenant,hold_id)).fetchone()
                         if (not upgrade or upgrade[1]!=row[0] or upgrade[3:5]!=('ACTIVE','ACTIVE') or upgrade[5] is None
                             or not self._manager(upgrade[2],upgrade[6]) or upgrade[7] is None or upgrade[8] is None or upgrade[8]<=upgrade[7]):raise DomainError('INVALID_FINANCIAL_SOURCE')
-                    if conn.execute("SELECT 1 FROM prsystem.reception_dependency_blocker WHERE tenant_id=%s AND room_id=%s AND state='OPEN'",(tenant,row[0])).fetchone():raise DomainError('ROOM_NOT_READY')
+                    if not conn.execute('SELECT prsystem.minibar_booking_eligible(%s,%s)',(tenant,row[0])).fetchone()[0]:raise DomainError('ROOM_NOT_READY')
                     if conn.execute('SELECT 1 FROM prsystem.booking_hold_cancellation WHERE tenant_id=%s AND hold_id=%s',(tenant,hold_id)).fetchone():raise DomainError('INVALID_FINANCIAL_SOURCE')
                     if conn.execute('SELECT 1 FROM prsystem.booking_hold_application WHERE tenant_id=%s AND hold_id=%s',(tenant,hold_id)).fetchone():raise DomainError('INVALID_FINANCIAL_SOURCE')
                     capture=conn.execute('''SELECT 1 FROM prsystem.booking_hold_capture WHERE tenant_id=%s AND hold_id=%s AND attempt_id=%s

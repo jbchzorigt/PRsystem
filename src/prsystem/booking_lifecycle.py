@@ -28,8 +28,9 @@ class BookingLifecycle(BookingRefunds):
             JOIN prsystem.room_category c ON(c.tenant_id,c.id)=(r.tenant_id,r.category_id)
             LEFT JOIN prsystem.booking_category_rank s ON s.tenant_id=r.tenant_id AND s.category_id=%s
             LEFT JOIN prsystem.booking_category_rank t ON(t.tenant_id,t.category_id)=(r.tenant_id,r.category_id)
-            WHERE r.tenant_id=%s AND r.status='ACTIVE' AND c.status='ACTIVE' AND r.cleaning_state='CLEAN' AND r.minibar_mode='OFF'
-            AND NOT EXISTS(SELECT 1 FROM prsystem.reception_dependency_blocker b WHERE b.tenant_id=r.tenant_id AND b.room_id=r.id AND b.state='OPEN')
+            WHERE r.tenant_id=%s AND r.cleaning_state='CLEAN'
+            AND prsystem.minibar_booking_eligible(r.tenant_id,r.id)
+            AND (r.minibar_mode='OFF' OR prsystem.minibar_guest_opening(r.tenant_id,r.id,clock_timestamp()) IS NOT NULL)
             ORDER BY r.id''',(row[0],tenant)).fetchall()
         result=[]
         for room,category,source_rank,target_rank in rooms:

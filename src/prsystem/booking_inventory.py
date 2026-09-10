@@ -22,11 +22,9 @@ def room_intervals(conn, tenant, category, *, excluding_stay=None):
     result = {}
     rooms = conn.execute('''SELECT r.id FROM prsystem.room r JOIN prsystem.room_category c
         ON(c.tenant_id,c.id)=(r.tenant_id,r.category_id) WHERE r.tenant_id=%s AND r.category_id=%s
-        AND r.status='ACTIVE' AND c.status='ACTIVE' AND r.minibar_mode='OFF'
-        AND NOT EXISTS(SELECT 1 FROM prsystem.reception_dependency_blocker b
-            WHERE b.tenant_id=r.tenant_id AND b.room_id=r.id AND b.state='OPEN')''', (tenant, category)).fetchall()
-    # Minibar-configured online capacity waits for the stage-five canonical
-    # configuration adapter; never infer readiness from a mock stock flag.
+        AND prsystem.minibar_booking_eligible(r.tenant_id,r.id)''', (tenant, category)).fetchall()
+    # Future claims pin category/price only. Current exact configuration must
+    # be eligible; physical stock and cleaning are rechecked at actual arrival.
     for (room,) in rooms:
         entries = conn.execute('''SELECT coalesce((SELECT a.actual_checkin_at FROM prsystem.stay_time_amendment a
             WHERE a.tenant_id=s.tenant_id AND a.stay_id=s.id AND a.state='APPROVED'

@@ -22,7 +22,7 @@ jobs:
         run: python -m unittest discover -s tests -v
   postgres:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17
@@ -42,6 +42,10 @@ jobs:
           python-version: "3.12"
       - name: Install backend and API test dependencies
         run: python -m pip install '.[postgres,api,test]'
+      - name: Verify canonical minibar booking capacity
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_booking.py -v
       - name: Verify rollout batch database boundary
         env:
           PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
