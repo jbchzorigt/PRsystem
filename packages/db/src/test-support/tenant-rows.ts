@@ -1229,7 +1229,7 @@ export const TENANT_ROW_SPECS: readonly TenantRowSpec[] = [
       sql: `INSERT INTO platform.booking_fulfillment_conflict
               (hotel_id, booking_ref, category_id, room_id, overdue_stay_id, planned_checkin_at,
                planned_checkout_at, cleaning_buffer_minutes)
-            SELECT $1, gen_random_uuid(),
+            SELECT $1, upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
                    coalesce(f.category_id, ${ABSENT_UUID}),
                    coalesce(f.room_id, ${ABSENT_UUID}),
                    coalesce(f.stay_id, ${ABSENT_UUID}),
