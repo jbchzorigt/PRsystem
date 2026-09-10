@@ -1,23 +1,24 @@
-# Autonomous checkpoint — Phase 22 complete, Phase 23 authorized
+# Autonomous checkpoint — Phase 23 complete; the approved programme is complete
 
-**Written:** 2026-09-10, at the close of Phase 22 under the standing progression authorization.
+**Written:** 2026-09-10, at the close of Phase 23, the last phase covered by the standing
+progression authorization of 2026-09-03.
 **Status of this document:** a handoff. It records what is true in the checkout, not what was
 intended. Nothing below claims a gate that was not run.
 
-**Phase 22 passed its battery on the correction commit.** The first run, on the implementation
-commit `4bf8629`, failed `pnpm run test:regression` (two tests asserting a 21-entry journal after
-migration `0021`) and the three `pnpm run test:security` runs (a tenant-row seed writing a uuid
-booking reference the new shape check refuses, so two db suites skipped); both fixtures were
-corrected on `4575f8d`, no product code, and all 28 executions of the governed battery exited 0
-there, the measured tree, in a clean detached checkout. Implementation
+**Phase 23 passed its battery on the implementation commit.** All 28 executions of the governed
+battery exited 0 on `4d42ab4`, the measured tree, in a clean detached checkout. Implementation
 completion is not customer acceptance and not release approval.
 
-**No gate cleared.** Every one of the fourteen gates is still `BLOCKED`; every provider the journeys
-reach answered as its simulator in the measured runs. Requirement coverage stays complete (279 of
-279) and release readiness stays absent: eleven EXT gates and three internal controls are open,
-seventeen P1 items are open, two dependency advisories are contained rather than closed and were
-reviewed this phase, no phase since Phase 05 has been accepted, two non-functional targets are
-measured short and five are unmeasured, and Phase 23 has not run.
+**The programme is complete and nothing is authorized to begin.** Phases 03–23 are `DONE`; Phases
+03, 04 and 05 are `ACCEPTED`; Phases 06–23 are `AWAITING_CUSTOMER_ACCEPTANCE`. The governed state
+records no current phase (`A-P23-4`). Every remaining decision is the customer's and is listed in
+[release-candidate-audit.md](release-candidate-audit.md) §9.
+
+**No gate cleared.** All eleven `EXT` gates and the four internal gates are `BLOCKED`; the release
+candidate cannot be started in production until `INT-KMS-01` clears, and cannot onboard a hotel
+without `INT-OTP-01` and `INT-MAIL-01`. Requirement coverage is complete (279 of 279) and release
+readiness is absent: 17 P1 items pending, three Police exceptions unapproved with no fallback
+active, two dependency advisories contained, two non-functional targets short, several unmeasured.
 
 ---
 
@@ -28,10 +29,10 @@ measured short and five are unmeasured, and Phase 23 has not run.
 | Path | `/Users/zorigtgantumur/Documents/Work/prsystem/.claude/worktrees/prsystem-phases-06-23-d506eb` |
 | Branch | `claude/prsystem-phases-06-23-d506eb` |
 | Base | fast-forwarded from `claude/mvp-implementation` at `818bd12db6fdc557bb6908b773ed359465c6ce71` (Phase 05 acceptance) |
-| Phases 06–20 | as recorded in the Phase 21 checkpoint and in `phase-status.md`; unchanged |
-| Phase 21 commits | implementation `357df68` (the measured tree), record `4f17b4b` |
-| Phase 22 commits | implementation `4bf8629`, correction `4575f8d37ec5cc5bbe6d93e29ef5828248688313` (the measured tree) |
-| Phase 22 record commit | the commit that carries this checkpoint (see `git log -1`) |
+| Phases 06–21 | as recorded in the Phase 22 checkpoint and in `phase-status.md`; unchanged |
+| Phase 22 commits | implementation `4bf8629`, correction `4575f8d` (the measured tree), record `e2fc068` |
+| Phase 23 commits | implementation `4d42ab49bbf6d6a078c924bc93b09ecfe88b0432` (the measured tree) |
+| Phase 23 record commit | the commit that carries this checkpoint (see `git log -1`) |
 
 **Where the work lives, and why.** Unchanged since the Phase 06 checkpoint: the work is on this
 worktree's branch. The main checkout at `/Users/zorigtgantumur/Documents/Work/prsystem` still holds
@@ -39,58 +40,41 @@ worktree's branch. The main checkout at `/Users/zorigtgantumur/Documents/Work/pr
 untracked Phase 03 checkpoint; it was not modified. This worktree also carries an untracked copy of
 `docs/implementation/phase-03-eighth-repair-checkpoint.md`, preserved as untracked. Reconciling the
 two checkouts is the customer's call and was not performed. No push, merge, rebase, reset, stash,
-clean or deploy has been performed anywhere.
+clean or deploy has been performed anywhere, at any point in the programme.
 
 ## 2. Governed state
 
 Declared in [`tools/programme-state.mjs`](../../tools/programme-state.mjs): Phases 03, 04 and 05
-`DONE` and `ACCEPTED`; Phases 06 to 22 `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`, each an entry of
-`PROGRESSED_PHASES` with its own evidence manifest; **Phase 23 — Release candidate audit —
-`NOT STARTED`, authorized to begin.** It is the last phase of the approved programme; there is no
-Phase 24. The standing progression authorization of 2026-09-03 is unchanged: implementation
-authorization for Phases 06–23, sequential; not acceptance, not release approval, no gate weakened.
-Governance check 17 holds each manifest, governed entry and record to one another; check 14 holds
-the runbook's `GATE-SEC` catalogue to its twenty sub-gates.
+`DONE` and `ACCEPTED`; Phases 06 to 23 `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`, each an entry of
+`PROGRESSED_PHASES` with its own evidence manifest; **`programmeComplete: true`, no current phase,
+state `PROGRAMME COMPLETE`.** Governance check 17 holds each manifest, governed entry and record to
+one another; the current-position check accepts the terminal state only while the authorization's
+last phase is a progressed phase in state `DONE`. The standing progression authorization of
+2026-09-03 is exhausted: it was implementation authorization for Phases 06–23, sequential, not
+acceptance, not release approval, and it grants nothing beyond Phase 23. **Any further work needs a
+new, explicit authorization and a change to this module.**
 
-## 3. What Phase 22 delivered
+## 3. What Phase 23 delivered
 
-See the [Phase 22 record](phase-status.md#phase-22-record) and `A-P22-1`…`A-P22-13` in
-[assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.26.
+See the [Phase 23 record](phase-status.md#phase-23-record) and `A-P23-1`…`A-P23-4` in
+[assumptions-and-conflicts.md](assumptions-and-conflicts.md) §3.27.
 
-- **Recovery rehearsal** — `tools/recovery-rehearsal.mjs` and `recovery-runbook.md`: a disposable
-  PostgreSQL 17 primary with continuous archiving, a base backup, the platform's own workload, the
-  primary destroyed, restore to the end of the archive and to a point in time, both verified row for
-  row and schema for schema. Measured RPO exposure 25.2 s (≤ 5 min), RTO 1.6 s for the restore
-  (≤ 4 h for the procedure). Report `phase-22-recovery-rehearsal.json`. P1-10 stays open.
-- **Full journeys** — `e2e/journeys/{booking,police,subscription,onboarding}.spec.ts` at three
-  Chromium profiles on the real API with the worker's consumers in-process: hold → invoice →
-  callback → check-in → minibar lock and reconciliation → charges → cash on a shift → settlement →
-  review → payable; wanted case → check-in → matcher alert with its latency recorded; the three
-  subscription lanes with renewal after the lock; onboarding from the application to the shift
-  count.
-- **Defects the journeys found, fixed at the source** — the folio's transactions as the minibar
-  report's payment attempts (`BillingPaymentAttempts`); migration `0021_stay_booking_ref_text`
-  (booking reference as text with a shape check, snapshot subject = booking id); the live minibar
-  report on the stay view and the revision on the Cleaner queue; the cash shift in the portal; the
-  Police sweep default at 5 s; request and unexpected-error logging; the table wrapper's
-  focusable region.
-- **Secret-leakage scan at runtime** — `e2e/leakage.spec.ts`: 81 canaries across every platform,
-  police and audit table, the API log and every Redis key of the run; zero findings. The tree scan
-  stays at zero.
-- **Concurrency coverage** — `tools/concurrency-manifest.mjs` (147 commands, each raced by a named
-  suite or excused for a recorded reason), `tools/validate-concurrency-coverage.mjs` and the unit
-  gate `packages/testing/src/concurrency-coverage.test.ts`.
-- **Fault injection** — `apps/api/src/resilience/degraded-modes.http.test.ts` in `GATE-INTEG`:
-  Redis, payment provider, ХУР, SMS and object storage down, each observed as doc 15 §4 documents.
-- **Security** — API security headers and a deny-all CSP on every answer; portal headers through
-  `packages/web-kit/next-headers.mjs`; `phase-22-security-review.md` (threat model re-verified realm
-  by realm); `dependency-security-register.md` v1.2 (DSR-01 and DSR-02 reviewed, still contained).
-- **Measurements** — `phase-22-measurements.md`, `phase-22-load-measurement.json`, doc 15 §10:
-  every target beside its measurement; the room board p50 (77.6 ms vs 50) and single-instance
-  throughput (145.5 rps vs 200) short; availability, outbox relay lag, the 10 000-row export, the
-  service-month boundary timing and the paint metrics not measured.
+- **[release-candidate-audit.md](release-candidate-audit.md)** — traceability reconciled (279
+  `COVERED`, nothing pending, partial or deferred; deferred scope with its source); every gate
+  reviewed and reported as a production release blocker, `INT-KMS-01` as the one that stops the
+  process; the three Police exceptions reported as implemented, unapproved, fallbacks not active,
+  contained by `POLICE_ENABLED` off; the P1 register as a sign-off sheet, unsigned; every
+  non-functional target achieved / not achieved / not measured with RPO and RTO explicit; the
+  release decision returned to the customer with the list of what a release requires.
+- **[release-notes.md](release-notes.md)** — the candidate by module and phase, migrations
+  `0000`–`0021`, what runs and what fails closed, limitations, deferred scope; identified by commit.
+- **[release-runbook.md](release-runbook.md)** — preconditions, configuration, build, database
+  bootstrap and upgrade, deploy order, verification, rollback plan (application rollback against the
+  new schema, forward fix, point-in-time restore), and what it does not cover.
+- **Registers:** gates v1.3 §7, assumptions §3.27 and §4 (17 total · 17 pending · 0 closed),
+  traceability v1.36 (six Phase 23 rows), targets §10, development.md.
 
-Traceability v1.35 (no decision changes state; six Phase 22 obligation rows).
+No product code changed in Phase 23.
 
 ## 4. Working tree at this checkpoint
 
@@ -100,60 +84,47 @@ Everything is committed except the untracked
 
 ## 5. Tests — what was actually run, and where
 
-**Development-time runs (this worktree, the repository's own Compose stack).** All exit 0:
+**Development-time runs (this worktree).** The eight governance validators on the final tree, all
+exit 0; `pnpm run format:check`, `scan-secrets` and `validate-workspace` exit 0.
 
-| Command | Result |
-| --- | --- |
-| `playwright test` (mobile, tablet, desktop and leakage projects, real API) | 130 passed |
-| `node tools/recovery-rehearsal.mjs` | PASS — RPO 25.233 s, RTO 1.567 s, 40/40 and 30/30 rows, schema equal |
-| `node tools/load-test.mjs --requests 200 --concurrency 8` | report written; two classes short of target |
-| api `degraded-modes.http` / `billing.integration` / `checkout.integration` / `stay.*` / `review.*` | exit 0 |
-| `pnpm run lint` / `typecheck` / `format:check` / `test:unit` / `test:migrations` / `openapi` / `build` | exit 0 (18 / 30 / — / 20 / 148 / — / 18 projects) |
-| the eight governance validators on the final tree | all exit 0 |
+**The governed battery** ran once, on the implementation commit `4d42ab4`, in a clean detached
+checkout with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true`, after a preparatory
+`pnpm run build`: **all 28 executions exited 0**. Exit codes and durations are in
+[`phase-23-battery-log.md`](phase-23-battery-log.md), results in
+[`phase-23-evidence.json`](phase-23-evidence.json), restated in the Phase 23 record. The counts are
+those of Phase 22 — the phase changed no product code.
 
 **Still true of how these runs must be made.** The api and db suites must not run against the same
 PostgreSQL cluster at once. `playwright test` binds 53100–53104 for the portals and 53200/53201 for
-the API and its console, refuses a server already on those ports, and needs `apps/api/dist`,
-`apps/worker/dist` and the portal builds (`pnpm run test:e2e` builds them first). The recovery
-rehearsal needs Docker and binds 55497–55499; the load tool binds 53230/53231.
+the API and its console, and needs `apps/api/dist`, `apps/worker/dist` and the portal builds
+(`pnpm run test:e2e` builds them first). The recovery rehearsal needs Docker and binds 55497–55499;
+the load tool binds 53230/53231.
 
-**The governed battery** ran twice — on `4bf8629`, where the regression suite exited 1, and in full
-on the correction commit `4575f8d` — each in a clean detached
-checkout with a fresh install, a fresh `TURBO_CACHE_DIR` and `TURBO_FORCE=true`, after a preparatory
-`pnpm run build`: **all 28 executions exited 0 on `4575f8d`**. Exit codes and durations are in
-[`phase-22-battery-log.md`](phase-22-battery-log.md), results in
-[`phase-22-evidence.json`](phase-22-evidence.json), restated in the Phase 22 record.
-
-**Historical evidence (unchanged, not re-measured):** the Phase 03 to 21 batteries and the Phase 05
+**Historical evidence (unchanged, not re-measured):** the Phase 03 to 22 batteries and the Phase 05
 CI ledger are frozen records of earlier trees.
 
-## 6. What Phase 23 receives
+## 6. What remains, and whose it is
 
-- **The release decision is the customer's.** Phase 23 reports, per target in doc 15, whether the
-  Phase 22 measurement achieved the provisional value — including RPO ≤ 5 min and RTO ≤ 4 h — and
-  P1-10 closes only by a DEC adopting the values, never by measurement.
-- **Measured gaps and unmeasured targets** (`A-P22-8`, `phase-22-measurements.md` §9): the room
-  board p50, single-instance throughput, availability, outbox relay lag (`A-P22-7`: the relay has no
-  consumer), the 10 000-row export, the service-month boundary timing, the paint metrics.
-- **Structural findings:** no general request rate limiter (`A-P22-6`); the portals' CSP admits
-  inline script (`A-P22-9`); WebKit and Firefox not claimed; `EXT-10` penetration test not performed.
-- **API reads the portals still lack** (`A-P21-4`) and the unscheduled domain sweeps (`A-P20-9`),
-  the SMS delivery-status refresh's worker question (`A-P20-5`), `A-P14-11`, and the two Operation
-  surfaces that need a doc 18 §5 row (`A-P14-1`, `A-P19-11`) — each to be reported as covered,
-  deferred with a reason, or a release blocker.
-- **Clearing any gate** is unchanged: the artefact in `external-integration-gates.md`, the entry in
-  `gates.ts`, a migration, the adapter and its conformance run, and `ADAPTER_<SLOT>`.
+Every item is the customer's decision or a piece of work beyond the approved programme; none is a
+defect in the candidate against its requirements.
 
-Every phase that resolves a lifecycle blocker keeps calling `LifecycleService.finalizeIfClear`.
+- **Acceptance** of Phases 06–23 — a change to `tools/programme-state.mjs` per phase.
+- **The gates** — which of the fifteen to pursue and in what order; each clears by a reviewed
+  document change, code change and migration. A release with none cleared is impossible.
+- **The Police exceptions** — written ЦЕГ approval of `POL-DEC-009`, `-010`, `-022` as built, or a
+  decision to build each fallback; `POLICE_ENABLED` stays unset until then.
+- **The P1 register** — seventeen signatures or replacement values; **P1-10** — a DEC adopting the
+  provisional non-functional values or others, knowing the two shortfalls and the unmeasured list.
+- **Engineering items with a path** (audit §9 item 6): `A-P22-8`, `A-P22-6`, `A-P22-7`, `A-P22-9`,
+  `A-P21-4`, `A-P20-9`, `A-P20-5`, the Firefox and WebKit profiles.
+- **The two checkouts** (§1).
 
 ## 7. Processes, containers and services
 
-- **No task-owned process is running.** The Phase 22 battery checkout is removed after its run; `git
+- **No task-owned process is running.** The Phase 23 battery checkout is removed after its run; `git
   worktree list` shows the main checkout, this worktree and the earlier task-owned detached checkouts
   under the session scratchpad — all safe to remove with `git worktree remove --force`. The scratch
-  databases `prsystem_test_e2e` and `prsystem_test_load` are dropped by the e2e server on shutdown
-  and recreated with `FORCE` by the next run. The rehearsal's `prsystem-rehearsal-*` containers and
-  volumes are removed by the tool on exit.
+  databases `prsystem_test_e2e` and `prsystem_test_load` are dropped by the e2e server on shutdown.
 - **Shared services that must not be touched:** the unrelated `piston`,
   `hotel-platform-postgres` and `hotel-platform-redis` containers.
 - **Environment for the measured runs:** the repository's own Compose stack, project `prsystem`
@@ -164,31 +135,29 @@ Every phase that resolves a lifecycle blocker keeps calling `LifecycleService.fi
 
 ## 8. Blockers and pending customer choices
 
-- Unchanged and still open: `EXT-01` … `EXT-11`, `INT-OTP-01`, `INT-MAIL-01`, `INT-STORAGE-01`
-  (BLOCKED), 17 P1 configuration items, `DSR-01` and `DSR-02` (reviewed in Phase 22, next due at the
-  release candidate audit), and selecting `GATE-SEC` as a required GitHub status check.
+- `EXT-01` … `EXT-11`, `INT-KMS-01`, `INT-OTP-01`, `INT-MAIL-01`, `INT-STORAGE-01` (BLOCKED —
+  production release blockers), 17 P1 configuration items, `DSR-01` and `DSR-02` (open, contained,
+  next review at the first release), and selecting `GATE-SEC` as a required GitHub status check.
 - **Three Police items are still recorded for the customer's attention**: the full registration
   number in a Match SMS, the all-hotel check-in list, and the four-digit bootstrap exception.
-- The main-checkout reconciliation of §1 remains the one decision this checkpoint asks of the
-  customer.
+- The main-checkout reconciliation of §1.
 
 ## 9. Exact next action
 
-**Phase 23 — Release candidate audit — is the current phase, the last of the approved programme,
-and is authorized to begin under the standing authorization.** Before editing: reread `CLAUDE.md`,
-this checkpoint, `phase-status.md` (current position, ledger, the Phase 21 and 22 records),
-`build-plan.md` §"Phase 23", `requirements-traceability.md`, `external-integration-gates.md`,
-`phase-22-measurements.md` §9 and `phase-22-security-review.md` §5. Then verify `git status`
-matches §4.
+**There is none under the standing authorization.** The approved programme is complete. Any
+further work — accepting a phase, clearing a gate, building a Police fallback, adopting P1 values,
+scheduling the engineering items, or preparing a release — begins with an explicit customer
+instruction and, for anything that changes the governed state, a change to
+`tools/programme-state.mjs` on that instruction. Before acting on one: reread `CLAUDE.md`, this
+checkpoint, `phase-status.md` (current position, ledger, the Phase 23 record) and
+[release-candidate-audit.md](release-candidate-audit.md) §9, then verify `git status` matches §4.
 
-**The exact next command.**
+**The command that shows the state of the checkout.**
 
 ```
 cd /Users/zorigtgantumur/Documents/Work/prsystem/.claude/worktrees/prsystem-phases-06-23-d506eb \
   && git log --oneline -3 && git status --porcelain \
-  && sed -n '/^### Phase 23/,/^## 5/p' docs/implementation/build-plan.md \
-  && grep -c PENDING docs/implementation/requirements-traceability.md
+  && node tools/validate-governance.mjs | tail -1
 ```
 
-Phase 23 reconciles and reports; it takes no release decision, clears no gate by assertion, adopts
-no non-functional value by measurement alone, and weakens nothing to pass (CLAUDE.md §11).
+Nothing is pushed, merged, deployed or released; no gate is weakened; no number is moved.

@@ -20,6 +20,7 @@ import {
   GOVERNED_STATE,
   PHASE_05_EVIDENCE,
   PROGRESSED_PHASES,
+  PROGRESSION_AUTHORIZATION,
 } from './programme-state.mjs';
 import { SUB_GATES } from './gate-sec-config.mjs';
 
@@ -104,6 +105,7 @@ export function runGovernanceChecks({
   phase20ManifestPath,
   phase21ManifestPath,
   phase22ManifestPath,
+  phase23ManifestPath,
 }) {
   const ROOT = root;
   const RUNBOOK_PATH = runbookPath;
@@ -129,6 +131,7 @@ export function runGovernanceChecks({
   const PHASE20_MANIFEST_PATH = phase20ManifestPath ?? join(IMPL, 'phase-20-evidence.json');
   const PHASE21_MANIFEST_PATH = phase21ManifestPath ?? join(IMPL, 'phase-21-evidence.json');
   const PHASE22_MANIFEST_PATH = phase22ManifestPath ?? join(IMPL, 'phase-22-evidence.json');
+  const PHASE23_MANIFEST_PATH = phase23ManifestPath ?? join(IMPL, 'phase-23-evidence.json');
   // The manifests of the phases completed under the standing authorization,
   // each overridable by the fixture harness the way the Phase 05 one is.
   const PROGRESSED_MANIFEST_PATHS = new Map([
@@ -149,6 +152,7 @@ export function runGovernanceChecks({
     ['20', PHASE20_MANIFEST_PATH],
     ['21', PHASE21_MANIFEST_PATH],
     ['22', PHASE22_MANIFEST_PATH],
+    ['23', PHASE23_MANIFEST_PATH],
   ]);
 
   const PHASE_MIN = 1;
@@ -1255,11 +1259,32 @@ export function runGovernanceChecks({
     // An acceptance is not an authorization to start what comes next. Phase 04
     // being accepted and Phase 05 being unstarted are independent facts, and the
     // governed state must keep saying the second while it says the first.
-    assert(
-      GOVERNED_STATE.currentPhaseState === 'NOT STARTED',
-      'the governed state advances the current phase past NOT STARTED; beginning a phase is a ' +
-        'separate explicit authorization, not a consequence of the previous phase being accepted',
-    );
+    //
+    // The one exception is the end of the programme: when the last phase the
+    // standing authorization covers is itself progressed and `DONE`, there is no
+    // phase to be current, and the governed state says PROGRAMME COMPLETE rather
+    // than NOT STARTED for a phase the build plan does not contain (`A-P23-4`).
+    if (GOVERNED_STATE.programmeComplete === true) {
+      const last = PROGRESSED_PHASES.find(
+        (phase) => phase.number === PROGRESSION_AUTHORIZATION.lastPhase,
+      );
+      assert(
+        last !== undefined && last.state === 'DONE',
+        `the governed state declares the programme complete while Phase ${PROGRESSION_AUTHORIZATION.lastPhase} ` +
+          'is not a progressed phase in state DONE',
+      );
+      assert(
+        GOVERNED_STATE.currentPhaseState === 'PROGRAMME COMPLETE',
+        'the governed state declares the programme complete but names a current phase state ' +
+          `other than PROGRAMME COMPLETE: ${JSON.stringify(GOVERNED_STATE.currentPhaseState)}`,
+      );
+    } else {
+      assert(
+        GOVERNED_STATE.currentPhaseState === 'NOT STARTED',
+        'the governed state advances the current phase past NOT STARTED; beginning a phase is a ' +
+          'separate explicit authorization, not a consequence of the previous phase being accepted',
+      );
+    }
 
     // One review number, stated four times, and the fourth is governed outside
     // the document. Every mutable pointer agreed only with the others, so

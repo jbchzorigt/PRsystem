@@ -14,8 +14,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 23 — Release candidate audit |
-| Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
+| Current phase | None — the approved programme (Phases 01–23) is complete; no further phase is approved |
+| Phase state | `PROGRAMME COMPLETE` — Phases 06–23 were implemented under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03, which Phase 23 exhausts; nothing is authorized to begin and no phase follows (`A-P23-4`) |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
 | Phase 05 state | `DONE` |
@@ -57,6 +57,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 21 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 22 state | `DONE` |
 | Phase 22 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 23 state | `DONE` |
+| Phase 23 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -92,7 +94,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 20 | External adapters | `DONE` | — | the Phase 20 battery — counts in [Phase 20 record](#phase-20-record) | implemented at `ccbf602`, corrected at the commit named in the record; the record and its evidence are the commit after it |
 | 21 | Responsive UI and accessibility | `DONE` | — | the Phase 21 battery — counts in [Phase 21 record](#phase-21-record) | implemented at `357df68`, the measured tree; the record and its evidence are the commit after it |
 | 22 | Security, concurrency, recovery, and full E2E | `DONE` | `0021_stay_booking_ref_text` | the Phase 22 battery — counts in [Phase 22 record](#phase-22-record) | implemented at `4bf8629`, corrected at `4575f8d` (two test fixtures), the measured tree; the record and its evidence are the commit after it |
-| 23 | Release candidate audit | `NOT STARTED` | — | — | — |
+| 23 | Release candidate audit | `DONE` | — | the Phase 23 battery — counts in [Phase 23 record](#phase-23-record) | implemented at `4d42ab4`, the measured tree; the record and its evidence are the commit after it |
 
 ---
 
@@ -6240,5 +6242,144 @@ new drift-fixture results that govern it.
 The per-command exit codes, durations and execution environment — and the first run that failed —
 are recorded in [phase-22-battery-log.md](phase-22-battery-log.md).
 
-Phase 22 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 23 is authorized to begin under the
-standing progression authorization and has **not** started.
+Phase 22 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 23 followed it under the same
+authorization and has its own record below.
+
+---
+
+## Phase 23 record
+
+Release candidate audit: the final reconciliation of the traceability, the final review of every
+external and internal gate, the state of the three Police production security exceptions, the P1
+configuration register presented for the customer's signature, the per-target non-functional
+report against the Phase 22 measurements, and the release notes, deployment runbook and rollback
+plan — with the release decision returned to the customer, not taken. Authorized under the
+[standing progression authorization](#standing-progression-authorization), the last phase it
+covers, implemented and gated on top of the Phase 22 tree. Phase 23 is `DONE` and
+`AWAITING_CUSTOMER_ACCEPTANCE`. **The approved programme is complete: no phase follows, nothing
+is authorized to begin, and the authorization is exhausted** (`A-P23-4`).
+
+**Decisions closed:** none — Phase 23 owns no DEC ID, and none changes state. Its traceable
+obligations are the six Phase 23 rows of [requirements-traceability.md](requirements-traceability.md)
+v1.36 §2.1, and each of the build plan's gates was met: governance validation passes; the
+traceability shows zero `PENDING`; no requirement conflict is unresolved; the release decision is
+reported to the customer, not taken unilaterally.
+
+### Scope completed
+
+- **The audit** ([release-candidate-audit.md](release-candidate-audit.md)). §1 reconciles the
+  traceability: 279 of 279 `COVERED`, 0 `PENDING`, 0 `PARTIAL`, 0 `DEFERRED`, the deferred *scope*
+  listed with the requirement document as its approver, zero open conflicts. §2 reviews all eleven
+  `EXT` gates and the four internal gates: none has an artefact, every one is reported as a
+  production release blocker, and `INT-KMS-01` is named as the one that stops the process — a
+  production API or worker refuses to start without an approved key-management adapter. §3 reports
+  the three Police security exceptions (`POL-DEC-009`, `-010`, `-022`) as implemented as decided,
+  approved by nobody, with no fallback active and `POLICE_ENABLED` off by default as the containing
+  control (`A-P23-2`). §4 presents the P1 register for signature: 17 rows, each with its interim
+  default and where it lives, the signature column empty (`A-P23-1`). §6 reports every
+  non-functional target as achieved, not achieved or not measured, with RPO and RTO explicit: two
+  short on one instance (the room-board p50 and sustained throughput), the rest achieved or not
+  measurable here; P1-10 stays open. §9 lists the decisions returned to the customer.
+- **Release notes** ([release-notes.md](release-notes.md)) — the candidate by module and phase, its
+  twenty-two migrations, what runs in production and what fails closed, the known limitations and
+  the deferred scope; identified by commit, not by a version (`A-P23-3`).
+- **Release runbook and rollback plan** ([release-runbook.md](release-runbook.md)) — the
+  preconditions the candidate cannot satisfy on its own, the configuration that decides a
+  deployment's shape, build, database bootstrap and upgrade with the migration principal, deploy
+  order, post-deploy verification, and the rollback plan: application rollback against the new
+  schema, forward fix for a bad migration, point-in-time restore per the recovery runbook, and what
+  the runbook does not cover.
+- **The register and the accounting.** `external-integration-gates.md` v1.3 §7 (the final gate
+  review), `assumptions-and-conflicts.md` §3.27 (`A-P23-1`…`A-P23-4`) and §4 (the register
+  presented, none signed; 17 total, 17 pending, 0 closed), `requirements-traceability.md` v1.36,
+  `15-non-functional-targets.md` §10 pointing at the report, `docs/development.md` pointing at the
+  runbook.
+
+### Gates this phase had to pass, and what they measured
+
+- **Governance validation passes** — 17 of 17 on the measured tree and on this one, with the
+  drift fixtures extended for the programme's end.
+- **Traceability shows zero `PENDING`** — governance checks 1–3, 6 and 11 plus the status count of
+  every family table.
+- **No unresolved requirement conflict** — `assumptions-and-conflicts.md` §1.
+- **The release decision reported, not taken** — audit §9; nothing pushed, merged, deployed,
+  configured against a provider, cleared or signed.
+- **All prior gates re-run green** — the governed battery below, unchanged in count from Phase 22
+  because the phase changes no product code.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` — Phase 23 in `PROGRESSED_PHASES`, and the governed
+  state now records `programmeComplete`, no current phase and the state `PROGRAMME COMPLETE`
+  instead of naming a phase the build plan does not contain; `tools/governance-checks.mjs` accepts
+  that terminal state only when the authorization's last phase is a progressed phase in state
+  `DONE`; `docs/implementation/phase-23-evidence.json`; twelve new drift fixtures and the
+  current-phase fixtures rewritten for the terminal state. Check 17 binds the manifest, the
+  governed entry and this record.
+- **Traceability:** `requirements-traceability.md` v1.36 — no decision changes state; 279 of 279.
+- **Assumptions:** `A-P23-1`…`A-P23-4` in `assumptions-and-conflicts.md` §3.27.
+
+### External gates
+
+Unchanged and finally reviewed: `EXT-01` to `EXT-11`, `INT-KMS-01`, `INT-MAIL-01`, `INT-OTP-01`
+and `INT-STORAGE-01` remain `BLOCKED`, each reported as a production release blocker in
+`external-integration-gates.md` §7 and audit §2. 17 P1 items pending; `DSR-01` and `DSR-02` open
+and contained; selecting `GATE-SEC` as a required GitHub status check. **Phase 23 adds no gate and
+clears none.**
+
+### What Phase 23 was asked to carry and did not
+
+The build plan's "P1 configuration register signed off" and "Police exceptions approved or
+fallbacks active" are the customer's and ЦЕГ's acts: the phase prepared the sign-off sheet and
+reported the exceptions' state, and signed nothing and built no fallback (`A-P23-1`, `A-P23-2`).
+The release decision is returned, not taken. The engineering items with a path — the room-board
+query and a second API instance (`A-P22-8`), a rate limiter (`A-P22-6`), the outbox relay schedule
+(`A-P22-7`), a nonce-based portal script policy (`A-P22-9`), the API reads the portals lack
+(`A-P21-4`), the domain sweeps (`A-P20-9`), the SMS refresh (`A-P20-5`) and the Firefox and WebKit
+profiles — lie beyond the approved programme and are listed in audit §9 for scheduling.
+
+### Evidence
+
+<!-- phase-23-evidence:begin -->
+
+Measured at implementation commit 4d42ab49bbf6d6a078c924bc93b09ecfe88b0432, in a clean detached
+checkout with a fresh install, a fresh Turborepo cache and forced task execution. All 28 executions
+exited 0. The two governance rows are from the final tree, which carries this record and the
+new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 349 of 349 drift fixtures caught at the measured commit; 361 of 361 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 1,019 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 18 of 18 projects |
+| `pnpm run typecheck` | PASS | 30 of 30 graphs |
+| `pnpm run test:unit` | PASS | 1,699 across 12 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, the upgrade paths from the Phase 02 baseline and the accepted Phase 03, 04 and 05 databases to head, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 621: ports 3, outbox 5, db 41, worker 2, api 570 |
+| `pnpm run test:concurrency` | PASS | 97 each run: db 16, api 81 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 20 of 20 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 130 passed: 43 flows at each of three viewports, plus the leakage scan with 0 findings, on the real API and worker |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; three moderate, DSR-01 and DSR-02 |
+| `pnpm run build` | PASS | 18 of 18 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-23-evidence:end -->
+
+The per-command exit codes, durations and execution environment are recorded in
+[phase-23-battery-log.md](phase-23-battery-log.md).
+
+Phase 23 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. The approved programme (Phases 01–23) is
+complete; no phase follows it, nothing is authorized to begin, and every decision that remains —
+acceptance, the gates, the exceptions, the P1 register, P1-10 and the release itself — is the
+customer's ([release-candidate-audit.md](release-candidate-audit.md) §9).

@@ -85,8 +85,21 @@ export const GOVERNED_STATE = {
    * it reads as covering whatever HEAD happens to be.
    */
   implementedPhaseAcceptedAtCommit: '35314ba210f609269863f0b528bbe827e6a5d3ce',
-  currentPhase: '23 — Release candidate audit',
-  currentPhaseState: 'NOT STARTED',
+  /**
+   * The programme is complete.
+   *
+   * Phase 23 is the last phase the build plan contains, so once it is `DONE`
+   * there is no phase to be current: nothing is authorized to begin, nothing
+   * is `NOT STARTED`, and the standing progression authorization below is
+   * exhausted. `currentPhase` says so in words rather than naming a phase the
+   * build plan does not have, and `programmeComplete` is the flag the checks
+   * read — a document may restate it and may not extend the programme by
+   * editing a cell (`A-P23-4`).
+   */
+  programmeComplete: true,
+  currentPhase:
+    'None — the approved programme (Phases 01–23) is complete; no further phase is approved',
+  currentPhaseState: 'PROGRAMME COMPLETE',
 };
 
 /**
@@ -326,6 +339,18 @@ export const PROGRESSED_PHASES = [
       manifestKeys: ['phase', 'phaseState', 'acceptance', 'measuredAtCommit', 'battery'],
     },
   },
+  {
+    number: '23',
+    name: '23 — Release candidate audit',
+    state: 'DONE',
+    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidence: {
+      manifest: 'phase-23-evidence.json',
+      region: 'phase-23-evidence',
+      heading: 'Phase 23 record',
+      manifestKeys: ['phase', 'phaseState', 'acceptance', 'measuredAtCommit', 'battery'],
+    },
+  },
 ];
 
 /**
@@ -348,7 +373,17 @@ export const GOVERNED_PHASES = [
     name: phase.name,
     state: phase.state,
   })),
-  { number: '23', name: GOVERNED_STATE.currentPhase, state: GOVERNED_STATE.currentPhaseState },
+  // The current phase, while there is one. Once the programme is complete every
+  // governed phase is a progressed one and there is no row to add.
+  ...(GOVERNED_STATE.programmeComplete
+    ? []
+    : [
+        {
+          number: '23',
+          name: GOVERNED_STATE.currentPhase,
+          state: GOVERNED_STATE.currentPhaseState,
+        },
+      ]),
 ];
 
 /**
