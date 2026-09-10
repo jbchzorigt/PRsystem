@@ -26,7 +26,9 @@ class MinibarExceptionTests(MinibarConfigurationCase):
             ):conn.execute(sql.SQL(grant).format(sql.Identifier(cls.role)))
 
     def setUp(self):
-        super().setUp();guest_support.MinibarGuestTests.configured(self);self.start();self.assert_status(guest_support.MinibarGuestTests.begin(self),200)
+        super().setUp()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET package_mnt=25000 WHERE tenant_id=%s',(self.tenant,))
+        guest_support.MinibarGuestTests.configured(self);self.start();self.assert_status(guest_support.MinibarGuestTests.begin(self),200)
 
     def exceptional(self,actual=1,revision=0,token=None,**extra):
         body=dict({'counts':{self.product:actual},'no_consumption':actual==2,'reason':'Cleaner боломжгүй тул өрөөг биечлэн шалгасан','expected_revision':revision,'idempotency_key':uuid4().hex},**extra)
@@ -42,7 +44,7 @@ class MinibarExceptionTests(MinibarConfigurationCase):
             self.assertTrue(reason);self.assertIn('MANAGER',roles);self.assertNotIn('CLEANER',roles);self.assertEqual(package,25000)
             self.assertEqual(conn.execute('SELECT state FROM prsystem.cleaning_task WHERE tenant_id=%s AND id=%s',(self.tenant,task)).fetchone()[0],'DONE')
             self.assertEqual(conn.execute("SELECT state FROM prsystem.staff_open_work WHERE tenant_id=%s AND source_id=%s AND kind='CLEANING_TASK'",(self.tenant,task)).fetchone()[0],'CLOSED')
-        preview=self.command('checkout/preview',None,self.manager_token,method='get').json()
+        preview=self.assert_status(self.api(f'stays/{self.stay["stay_id"]}/checkout/preview',token=self.manager_token,method='get'),200)
         self.assertEqual(preview['report']['exception_reason'],reason)
 
     def test_existing_cleaner_task_is_superseded_atomically(self):
