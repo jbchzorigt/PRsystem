@@ -1,5 +1,6 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from fractions import Fraction
 from threading import Barrier
 from uuid import uuid4
@@ -60,7 +61,7 @@ class MinibarGuestTests(MinibarConfigurationCase):
         book=self.stay['snapshot']['minibar_snapshot']
         self.assertEqual((book['mode'],book['template_id'],book['version_id']),('CANONICAL',self.template,self.version))
         self.assertEqual((book['items'][0]['opening_quantity'],book['items'][0]['unit_price']),(2,3000))
-        self.assertEqual(book['recorded_at'],self.stay['check_in_recorded_at'])
+        self.assertEqual(datetime.fromisoformat(book['recorded_at']),datetime.fromisoformat(self.stay['check_in_recorded_at']))
         self.assertEqual(self.stocks(),before)
         with psycopg.connect(self.owner_dsn) as conn:
             self.assertEqual(conn.execute('SELECT minibar_application_id FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(self.tenant,self.stay['stay_id'])).fetchone()[0],book['application_id'])
