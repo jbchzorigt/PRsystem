@@ -47,7 +47,8 @@ children, and commit without the seal, matching actor receipt and audit event.
 Snapshots and timestamps come from server state. Child lineage is part of the
 existing immutable configuration request. No SECURITY DEFINER or owner runtime.
 
-Add SELECT, INSERT on the three new tables to the application role, alongside
+Add SELECT, INSERT on the three new tables and SELECT on tenant-scoped
+operational_event (for the deferred audit proof) to the application role, alongside
 existing docs/50–53 configuration/reconciliation privileges. The configuration
 request's new rollout_batch_id column uses existing table INSERT grants. Ordinary
 non-batch writers return before querying batch tables in the new child trigger.
@@ -101,3 +102,9 @@ seal/lineage checks, RLS and immutable triggers remain. No UPDATE/DELETE grants
 were added; the existing history regression now asserts both privileges absent.
 A focused real-database batch gate precedes the complete CI regression to expose
 this boundary promptly. Final acceptance remains pending.
+
+The focused rerun then exposed a missing SELECT grant on tenant-scoped
+operational_event for the new deferred audit proof. That read privilege is now
+explicit in the batch fixture and runtime grant contract. Audit INSERT and
+immutability protections are unchanged. Competing-batch tests now assert HTTP
+success before checking counts, preserving the actual API error in failures.

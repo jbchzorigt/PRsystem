@@ -16,6 +16,7 @@ class MinibarBatchTests(MinibarConfigurationCase):
     def setUpClass(cls):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
+            conn.execute(sql.SQL('GRANT SELECT ON prsystem.operational_event TO {}').format(sql.Identifier(cls.role)))
             conn.execute(sql.SQL('GRANT SELECT,INSERT ON prsystem.minibar_rollout_batch,prsystem.minibar_rollout_result,prsystem.minibar_rollout_seal,prsystem.minibar_version_archive,prsystem.minibar_reconciliation,prsystem.minibar_transfer,prsystem.minibar_configuration_application TO {}').format(sql.Identifier(cls.role)))
             conn.execute(sql.SQL('GRANT UPDATE(minibar_application_id) ON prsystem.room TO {}').format(sql.Identifier(cls.role)))
 
@@ -167,7 +168,7 @@ class MinibarBatchTests(MinibarConfigurationCase):
 
     def test_competing_batches_keep_one_pending_per_room(self):
         rooms=self.selected();barrier=Barrier(2)
-        def post(_):barrier.wait();return self.confirm(rooms).json()
+        def post(_):barrier.wait();return self.assert_status(self.confirm(rooms),201)
         with ThreadPoolExecutor(2) as pool:results=list(pool.map(post,range(2)))
         self.assertEqual(sorted(b['counts']['accepted'] for b in results),[0,2])
         self.assertEqual(sorted(b['state'] for b in results),['FAILED_VALIDATION','IN_PROGRESS'])
