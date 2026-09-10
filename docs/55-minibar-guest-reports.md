@@ -97,13 +97,14 @@ same timestamp serialized with five versus six fractional digits. The test now
 compares parsed instants, preserving the requirement that the price book uses
 check_in_recorded_at. The final full run passed; no business rule was weakened.
 
-## Remaining integration
+## Subsequent integration and remaining scope
 
-Active-stay refill, automatic next-stay refill, manager exception report, paid
-quantity correction, non-guest waste/adjustment, shortage overrides, partial
-physical rollback, product/template lifecycle and online canonical room capacity
-remain. After checkout, a consumed room stays ineligible for a new check-in until
-stock is restored and ordinary cleaning/buffer readiness passes. For now the
-existing explicit same-version configuration/count/full-apply path can restore
-stock at the safe point; it is not an automatic refill service. Restaurant,
-Operation and stage 6 production readiness are still outstanding.
+[Active-stay refill](56-minibar-stay-refill.md),
+[automatic next-stay preparation](57-minibar-next-stay-refill.md) and
+[Manager physical exception reports](58-minibar-manager-exceptions.md) now have
+accepted follow-up implementations. A consumed room remains unavailable until
+physical preparation, ordinary cleaning and the snapshot buffer all pass.
+
+Paid quantity correction, non-guest waste/adjustment, shortage overrides, partial
+physical rollback, product/template lifecycle, online canonical room capacity,
+Restaurant, Operation, Police and production readiness remain.

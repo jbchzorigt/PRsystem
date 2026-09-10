@@ -33,12 +33,28 @@ Manager exception adapter additionally needs INSERT, plus existing report,
 physical task/posting, open-work and finance grants. No history UPDATE/DELETE
 permission is added. Published migrations 001–054 remain unchanged.
 
-Verification candidate: 13 new real-PostgreSQL tests exercise Manager/package
-boundaries, original Cleaner continuation, reason/quantity validation, no-use,
-locked-price correction, paid checkout, rollback, expiry, replay and competing
-Manager/Cleaner reports, and immutable tenant-scoped history. The new Chromium suite validates six real API payloads,
-required fields, exception identification, correction, unknown-outcome replay and
-320px reflow. CI acceptance will be recorded after the full run completes.
+## Accepted verification
+
+Accepted source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`, tree `04690ffc77499aeddf35f99fe37de7d936190141`
+(identical to local `7d99e67`), passed **683/683 backend tests without skips
+in 761.607 seconds**. [Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855).
+The focused gates passed 18 batch, 13 exception, 11 next-stay, 16 active-stay
+refill and 21 canonical guest tests. All 13 Chromium suites, 84 actual browser/API
+payload checks, design/token checks and strict local UI audit passed (zero audit
+findings). Local discovery executed 106 tests and skipped 577 PostgreSQL tests;
+the linked run provides the skip-free acceptance evidence.
+
+The 13 new exception tests cover Manager/package boundaries, original Cleaner
+continuation, reason/quantity validation, no-use, locked-price correction, paid
+checkout, rollback, expiry, replay, competing reports and immutable tenant-scoped
+history. The browser suite checks six actual command payloads, required fields,
+exception identification, correction, unknown-outcome replay and 320px reflow.
+
+The first focused run passed 11/13 tests. Its fixture inherited a 30k package,
+while two assertions assumed 25k. The fixture now explicitly selects 25k before
+opening the stay and tests Manager Plus after an explicit change to 30k. The
+preview assertion also uses the GET helper. Application authorization rules were
+unchanged; the corrected focused gate and full regression passed.
 
 Remaining stage 5/6 scope: paid quantity corrections, non-guest stock-out,
 variance/shortage override, partial physical rollback, product/template lifecycle,

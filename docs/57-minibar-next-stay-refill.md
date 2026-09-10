@@ -37,17 +37,26 @@ source/action/task and operational event; SELECT its exact target/product/stock
 sources, and UPDATE room revision. They do not gain history UPDATE/DELETE. The
 self-claim adapter uses the existing task assignment and open-work grants.
 
-## Verification candidate
+## Accepted verification
 
 11 new PostgreSQL tests cover exact automatic target and lineage, no stock effect
 at creation, Cleaner claim/count/apply, separate cleaning readiness, pending
 configuration precedence, later publication, retirement checkout, missing counts,
 current roles, retry and concurrent claim, and the no-consumption/full-room case.
-The added Chromium suite checks Cleaner self-claim, count and physical apply with
-six actual API payloads, lost responses and narrow-screen reflow. Full PostgreSQL
-acceptance will be recorded from CI; local skipped discovery is not acceptance.
+All **670/670 backend tests passed without skips in 728.330 seconds**, including
+all 11 new next-stay tests. Focused gates also passed: 18 batch, 11 next-stay,
+16 active-stay refill and 21 canonical guest tests. Twelve Chromium suites,
+78 actual browser/API payload checks, design/token checks and strict UI audit
+passed (zero findings).
 
-Remaining stage 5/6 work includes exception/paid corrections, non-guest stock-out,
+Accepted source: `f814b2d4c8f1ea53812dd3d9b799c60cf1f880d3`.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34441283600).
+Local discovery executed 106 tests and skipped 564 PostgreSQL tests; the linked
+run supplies full acceptance evidence.
+
+Manager exception reporting is accepted in [docs/58](58-minibar-manager-exceptions.md).
+
+Remaining stage 5/6 work includes paid corrections, non-guest stock-out,
 variance/override, partial rollback, product/template lifecycle, online canonical
 room capacity, Restaurant, Operation, Police and production readiness. Real
 providers remain within the user-approved mock boundary; no merge/deployment.

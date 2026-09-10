@@ -44,20 +44,29 @@ are needed for this immutable history. Reuse existing cleaning source/task/actio
 open-work, actor, receipt and operational-event grants; no new financial write
 grant is needed for refill. Report adapters retain their existing finance grants.
 
-## Verification candidate
+## Accepted verification
 
 16 new PostgreSQL tests cover no-op requests, exact stock/value conservation,
 locked selling price, cutoff evidence, idempotency, cancellation/unavailable,
 warehouse shortage, role/assignment/package/expiry boundaries, retirement,
 immutable RLS history, atomic rollback, correction and concurrent checkout/refill.
-The additional Chromium suite exercises nine actual API command payloads, loss
-of a completion response, retry, dirty-form protection, field validation and
-320px reflow. Local discovery is not PostgreSQL acceptance; CI evidence will be
-recorded after the source run completes.
+All **659/659 backend tests passed without skips in 694.127 seconds**, including
+all 16 new refill tests. Eleven Chromium suites, 72 actual browser/API command
+checks, design/token checks and strict UI audit passed (zero audit findings).
+
+Accepted source: `b10653b0354d2ad67c07d51a53006db7248cff9b`.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34440505579).
+Local discovery executed 106 tests and skipped 553 PostgreSQL tests; it was not
+used as skip-free acceptance evidence.
+
+Automatic next-stay preparation subsequently passed its full 670-test run;
+see [docs/57](57-minibar-next-stay-refill.md).
+
+Manager physical exception reporting subsequently passed; see [docs/58](58-minibar-manager-exceptions.md).
 
 ## Remaining stage 5/6 scope
 
-Automatic next-stay refill, manager exception reports, paid quantity corrections,
+Paid quantity corrections,
 non-guest stock-out/waste/adjustment, variance/shortage override, partial physical
 rollback, product/template lifecycle, online canonical room capacity, Restaurant,
 Operation, Police and production readiness remain. External providers retain the
