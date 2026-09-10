@@ -1,6 +1,13 @@
 # Manager minibar stock adjustments
 
-Implementation candidate; full source acceptance is pending.
+Accepted source: `ce0b1a9c8a2a94656c57177c5eb3dd99f2773334`.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34453610097):
+**736/736 backend tests without skips in 889.954 seconds**, including the
+22-test adjustment gate. All focused PostgreSQL gates, 15 Chromium suites and
+100 actual browser/API command checks passed. Strict local UI audit had zero
+findings; design/token CI passed with the six pre-existing design warnings.
+Local discovery ran 106 tests and skipped 630 database-dependent tests; the
+linked PostgreSQL run is the full acceptance evidence.
 
 Manager/package-scoped WASTE, COUNT_PLUS, COUNT_MINUS and room RETURN commands
 create immutable adjustment evidence and a matching stock receipt in one
@@ -41,7 +48,10 @@ or stay availability needs SELECT on minibar_adjustment, including booking,
 Reception, Cleaner and lifecycle adapters. The Manager adjustment adapter also
 needs INSERT on minibar_adjustment and the existing INSERT/SELECT receipt,
 product/room/stay row-lock, membership/access, report and audit/idempotency grants.
-All functions retain invoker rights and tenant scope.
+All functions retain invoker rights and tenant scope. Receipt insertion also
+wakes pending retirement, so the shared runtime must retain the lifecycle
+read/write grants in [document 60](60-minibar-entity-lifecycle.md), including
+when the tenant already has historical retirement intents.
 
 The Manager warehouse UI uses existing location selectors, forms, confirmation,
 feedback and bounded history, including linked reversals. Unknown-outcome retry
@@ -60,8 +70,11 @@ zero-stock cost, report lock, keyboard, reduced motion and 320px layout.
 
 The initial CI configuration mistakenly duplicated the PostgreSQL focused gate
 inside the browser job, where psycopg/PostgreSQL were unavailable. That duplicate
-step is removed; the actual PostgreSQL adjustment gate passed. This is a workflow
-correction, not a relaxation of inventory or authority checks.
+step is removed. The initial source `08bc4db56374c6baf49212486be3e7bca5234465`
+passed its 20 focused tests and all 734 backend tests without skips in 924.369
+seconds ([PostgreSQL run](https://github.com/jbchzorigt/PRsystem/actions/runs/34452421010));
+that run's browser job failed only on the duplicated database step. This is a
+workflow correction, not a relaxation of inventory or authority checks.
 
 Remaining stage-five scope includes paid quantity corrections, dedicated count
 variance resolution for configuration tasks, shortage override, partial physical
