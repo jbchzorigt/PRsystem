@@ -166,3 +166,7 @@ self-claim for a server-created next-stay task; no new visual owner or tokens.
 Manager physical minibar exceptions reuse the stay-detail form treatment. The
 reason identifies the exception in subsequent detail; prices, count labels,
 feedback, retry and responsive behavior remain owned by existing shared controls.
+
+Product and template retirement use the shared detail panel, count table and
+reason/acknowledgement form. State changes retain the same list/detail destination,
+feedback, conflict and unknown-outcome behavior as version archive. No new tokens.

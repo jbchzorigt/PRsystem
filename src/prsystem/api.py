@@ -35,6 +35,7 @@ from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.minibar_guest import MinibarGuest
 from prsystem.minibar_refill import MinibarRefill
+from prsystem.minibar_lifecycle import MinibarLifecycle
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -77,6 +78,7 @@ class MinibarStockReceipt(BaseModel):
 class MinibarTemplateCreate(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     name: str = Field(min_length=1, max_length=200)
+    status: Literal['ACTIVE','INACTIVE'] = 'ACTIVE'
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 
@@ -150,6 +152,10 @@ class MinibarBatchCancel(BaseModel):
 
 class MinibarArchiveCommand(MinibarTemplateCommand):
     reason: str = Field(min_length=1,max_length=1000)
+
+
+class MinibarEntityTransition(MinibarArchiveCommand):
+    action: Literal['DEACTIVATE','CANCEL_RETIRING','REACTIVATE']
 
 
 class MinibarConfigurationCancel(MinibarTemplateCommand):
@@ -986,7 +992,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
 
     @app.post('/hotels/{tenant_id}/minibar/templates', status_code=201)
     def minibar_template_create(tenant_id: str, body: MinibarTemplateCreate, secret: Annotated[str, Depends(token)]):
-        return templates.create_template(secret, tenant_id, body.name, body.idempotency_key)
+        return templates.create_template(secret, tenant_id, body.name, body.idempotency_key, body.status)
 
     @app.post('/hotels/{tenant_id}/rooms/{room_id}/minibar-configuration/requests', status_code=201)
     def minibar_configuration_request(tenant_id: str,room_id: str,body: MinibarConfigurationRequest,secret: Annotated[str,Depends(token)]):
@@ -1390,6 +1396,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/guest/access')
     def redeem_guest_access(body: GuestRedeem):
         return guest_access.redeem(body.qr_token.get_secret_value(),body.code.get_secret_value())
+
+    @app.get('/hotels/{tenant_id}/minibar/{entity_kind}/{entity_id}/lifecycle')
+    def preview_minibar_lifecycle(tenant_id: str,entity_kind: Literal['products','templates'],entity_id: str,secret: Annotated[str,Depends(token)]):
+        return MinibarLifecycle(service).preview(secret,tenant_id,entity_kind[:-1],entity_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/{entity_kind}/{entity_id}/lifecycle')
+    def change_minibar_lifecycle(tenant_id: str,entity_kind: Literal['products','templates'],entity_id: str,body: MinibarEntityTransition,secret: Annotated[str,Depends(token)]):
+        return MinibarLifecycle(service).change(secret,tenant_id,entity_kind[:-1],entity_id,body.action,body.expected_revision,body.reason,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/rooms/{room_id}/lifecycle')
     def change_room_lifecycle(tenant_id: str,room_id: str,body: RoomTransition,secret: Annotated[str,Depends(token)]):

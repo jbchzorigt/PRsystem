@@ -243,3 +243,18 @@ reason and explicit no-use acknowledgement. Only a current operational Manager
 sees the exception form; server policy is authoritative. Successful writes reload
 stay detail and identify the exception reason. Ordinary and exceptional reports
 use the same price book. Evidence: `tests/browser/minibar-exception.cjs`.
+
+## Product/template lifecycle
+
+Business authority: docs/26 §§2–11 and docs/22. The shared `minibarLifecycle`
+variant uses `form`, `field`, `table`, `guard`, `api` and `say` in reception.js.
+Manager warehouse rows and template details open the same read-only blocker
+preview. Confirm names the entity, action, effect and reason; an acknowledgement
+is required before changing state. A retiring entity offers cancellation; an
+inactive entity offers reactivation. Data is revalidated on the server.
+
+Success refreshes the current owning list/detail. Loading/error/retry remains
+within the panel; navigation invalidates stale responses. Unknown completion
+retains the same command key; stale revision requires refresh and preserves the
+shared dirty-form warning. Stock history stays accessible in inactive states.
+No hard-delete control is exposed. Evidence: tests/browser/minibar-lifecycle.cjs.

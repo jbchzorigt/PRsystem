@@ -29,6 +29,7 @@ class PostgresCase(unittest.TestCase):
         migrate(cls.owner_dsn)
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                "GRANT SELECT ON prsystem.minibar_lifecycle_intent TO {}",
                 "GRANT USAGE ON SCHEMA prsystem TO {}",
                 "GRANT SELECT ON prsystem.cash_book, prsystem.cash_drawer, prsystem.cash_transfer, "
                 "prsystem.cash_event, prsystem.cash_receipt, prsystem.cash_outbox TO {}",

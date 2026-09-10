@@ -150,10 +150,27 @@
         panel.replaceChildren();const f=form(panel,`${p.name} — агуулахын орлого`,[field('quantity','Хүлээн авсан тоо','number',{min:1}),field('unit_cost_mnt','Худалдан авалтын нэгж өртөг (₮)','number',{min:0}),field('reference','Баримтын дугаар / тайлбар','text',{optional:true,max:200})],
           'Орлого баталгаажуулах',v=>api(path(`minibar/products/${enc(p.product_id)}/receipts`),{...v,expected_revision:p.stock_revision}),{success:async()=>{await navigate('inventory');say('Агуулахын орлого бүртгэгдлээ.');}});f.querySelector('input').focus();
       })));
-      a.append(btn('Хөдөлгөөний түүх',()=>guard(()=>inventoryLedger(panel,p,0))));
+      a.append(btn('Хөдөлгөөний түүх',()=>guard(()=>inventoryLedger(panel,p,0))),btn('Идэвхтэй төлөв удирдах',()=>guard(()=>minibarLifecycle(panel,'products',p.product_id,'inventory'))));
     }
     const pages=actions(parent);pages.append(btn('Эхний хэсэг',()=>guard(()=>{inventoryAfter='';navigate('inventory');})),btn('Дараагийн хэсэг',()=>guard(()=>{inventoryAfter=data.next_after;navigate('inventory');})));
     pages.firstChild.disabled=!inventoryAfter;pages.lastChild.disabled=!data.next_after;parent.append(node('p',`Энэ хэсэгт ${data.items.length} бүтээгдэхүүн.`, 'muted'));
+  }
+  async function minibarLifecycle(container,kind,identity,destination){
+    const parent=node('div');container.replaceChildren(parent);const seq=generation;
+    parent.append(node('p','Идэвхтэй төлөв, хамаарлыг шалгаж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const url=path(`minibar/${kind}/${enc(identity)}/lifecycle`),data=await api(url);
+      if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren(node('h3',`${data.name} — ${labels[data.status]}`));
+      const kinds={ROOM_STOCK:'Өрөөнд үлдсэн бараа',ACTIVE_TEMPLATE:'Идэвхтэй загвар',CURRENT_ROOM:'Одоо ашиглаж буй өрөө',ACTIVE_STAY:'Идэвхтэй зочин',PENDING_CONFIGURATION:'Дуусаагүй бүрдлийн өөрчлөлт',PENDING_REFILL:'Дуусаагүй нөхөлт'};
+      if(data.blockers.length)table(parent,'Идэвхгүй болгохоос өмнө дуусгах ажил',['Хамаарал','Тоо'],data.blockers.map(b=>[kinds[b.kind]||b.kind,b.count]));
+      else parent.append(node('p','Дуусгах хамааралгүй байна.'));
+      const action=data.status==='ACTIVE'?'DEACTIVATE':data.status==='RETIRING'?'CANCEL_RETIRING':'REACTIVATE';
+      const label={DEACTIVATE:'Идэвхгүй болгох',CANCEL_RETIRING:'Идэвхгүй болгох хүсэлтийг цуцлах',REACTIVATE:'Дахин идэвхжүүлэх'}[action];
+      parent.append(node('p',action==='DEACTIVATE'?'Шинэ хэрэглээг шууд хаана. Өмнөх зочин, нөхөлт болон өрөөний хамаарлыг дуусгасны дараа идэвхгүй болно.':'Холбоотой бүтээгдэхүүн, бүрдлийн шаардлагыг дахин шалгана.'));
+      form(parent,label,[field('reason','Шалтгаан','text',{max:1000}),field('reviewed','Төлөв өөрчлөх үр дүнг ойлгосон','checkbox')],label,v=>api(url,{action,reason:v.reason,expected_revision:data.revision,idempotency_key:v.idempotency_key}),{success:async r=>{await navigate(destination);say(`${r.name}: ${labels[r.status]}.`);}});
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Төлөвийг дахин ачаалах',()=>minibarLifecycle(container,kind,identity,destination)));}
+    finally{parent.setAttribute('aria-busy','false');}
   }
   async function inventoryLedger(container,product,after){
     const parent=node('div');container.replaceChildren(parent);
@@ -172,7 +189,7 @@
     const data=await api(path(`minibar/templates?limit=50&after=${enc(templateAfter)}`));if(seq!==generation)return;
     parent.append(node('p','Өрөөний минибарт байлгах бүтээгдэхүүн, тоог загварын хувилбараар бэлтгэнэ.'));
     const editor=node('div');parent.append(editor);
-    actions(parent).append(btn('Загвар үүсгэх',()=>guard(()=>{editor.replaceChildren();const f=form(editor,'Шинэ минибарын загвар',[field('name','Загварын нэр','text',{max:200})],'Загвар үүсгэх',v=>api(path('minibar/templates'),v),{success:async()=>{templateAfter='';await navigate('templates');say('Загвар үүсгэлээ. Бүрдлийн ноорог хувилбараа нэмнэ үү.');}});f.querySelector('input').focus();})));
+    actions(parent).append(btn('Загвар үүсгэх',()=>guard(()=>{editor.replaceChildren();const f=form(editor,'Шинэ минибарын загвар',[field('name','Загварын нэр','text',{max:200}),select('status','Эхлэх төлөв',[['ACTIVE','Идэвхтэй'],['INACTIVE','Идэвхгүй']])],'Загвар үүсгэх',v=>api(path('minibar/templates'),v),{success:async()=>{templateAfter='';await navigate('templates');say('Загвар үүсгэлээ. Бүрдлийн ноорог хувилбараа нэмнэ үү.');}});f.querySelector('input').focus();})));
     if(!data.items.length)parent.append(node('p','Минибарын загвар бүртгэлгүй байна.'));
     for(const t of data.items){const r=record(parent,t.name,`${labels[t.status]} · ${t.default_version_id?'Нийтэлсэн үндсэн хувилбартай':'Нийтэлсэн хувилбаргүй'}`);actions(r).append(btn('Хувилбаруудыг нээх',()=>guard(()=>chooseTemplate({id:t.template_id,after:0}))));}
     const pages=actions(parent);pages.append(btn('Загварын эхний хэсэг',()=>guard(()=>{templateAfter='';navigate('templates');})),btn('Загварын дараагийн хэсэг',()=>guard(()=>{templateAfter=data.next_after;navigate('templates');})));pages.firstChild.disabled=!templateAfter;pages.lastChild.disabled=!data.next_after;
@@ -181,6 +198,7 @@
   async function templateVersions(parent,seq){
     const selected={...templateSelection},data=await api(templatePath(selected.id)+`?limit=50&after=${selected.after||0}`);if(seq!==generation)return;
     actions(parent).append(btn('Загварын жагсаалт',()=>guard(()=>chooseTemplate(null))));parent.append(node('h2',data.name));
+    const lifecyclePanel=node('div');parent.append(lifecyclePanel);actions(parent).append(btn('Идэвхтэй төлөв удирдах',()=>guard(()=>minibarLifecycle(lifecyclePanel,'templates',selected.id,'templates'))));
     if(data.status==='ACTIVE')form(parent,'Хоосон ноорог хувилбар',[],'Ноорог үүсгэх',v=>api(templatePath(selected.id),{...v,expected_revision:data.revision}),{success:async r=>{templateSelection={id:selected.id,version:r.version.version_id};await navigate('templates');say('Ноорог хувилбар үүслээ. Бүтээгдэхүүнээ нэмнэ үү.');}});
     if(!data.items.length)parent.append(node('p','Хувилбар үүсээгүй байна.'));
     for(const v of data.items){const r=record(parent,`Хувилбар ${v.version_number}`,`${v.state==='DRAFT'?'Ноорог':v.state==='ARCHIVED'?'Архивласан':'Нийтэлсэн'}${data.default_version_id===v.version_id?' · Үндсэн хувилбар':''}`);actions(r).append(btn('Бүрдлийг нээх',()=>guard(()=>chooseTemplate({id:selected.id,version:v.version_id}))));}

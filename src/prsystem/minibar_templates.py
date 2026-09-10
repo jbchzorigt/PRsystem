@@ -48,9 +48,11 @@ class MinibarTemplates(MinibarWarehouse):
             if active and row[0] != 'ACTIVE':
                 raise DomainError('PRODUCT_NOT_ACTIVE')
 
-    def create_template(self, bearer, tenant, name, key):
+    def create_template(self, bearer, tenant, name, key, status="ACTIVE"):
         name = self._text(name)
+        if status not in {'ACTIVE','INACTIVE'}:raise DomainError('INVALID_REQUEST')
         command = dict(action='MINIBAR_TEMPLATE_CREATE', name=name)
+        if status!='ACTIVE':command['status']=status
         with transaction(self.auth.dsn) as conn:
             actor, roles, package = self.actor(conn, bearer, tenant)
             replay = self._receipt(conn, tenant, key, actor, command)
@@ -58,8 +60,8 @@ class MinibarTemplates(MinibarWarehouse):
                 return replay
             self._catalog_lock(conn, tenant)
             template = secrets.token_hex(16)
-            conn.execute('INSERT INTO prsystem.minibar_template(tenant_id,id,name) VALUES(%s,%s,%s)',
-                         (tenant, template, name))
+            conn.execute('INSERT INTO prsystem.minibar_template(tenant_id,id,name,status) VALUES(%s,%s,%s,%s)',
+                         (tenant, template, name, status))
             result = self.template(conn, tenant, template)
             self.event(conn, tenant, actor, command['action'], template,
                        dict(result, actor_roles=roles, package_mnt=package))
