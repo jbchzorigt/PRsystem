@@ -89,6 +89,9 @@ the session cookie `Secure`). The E2E harness sets both; `.env.example` document
 Governance checks — `validate:workspace`, `validate:governance`, `scan:secrets` —
 also run standalone and are the first thing CI executes.
 
+Deploying a build is [docs/implementation/release-runbook.md](implementation/release-runbook.md)
+(Phase 23), which also carries the rollback plan.
+
 `pnpm run test:migrations` and `pnpm run test:e2e` need the compose stack, and the latter
 also the Playwright browser:
 

@@ -1469,12 +1469,36 @@ recorded so a reviewer can see where a judgement was made.
   deliver through. What the journeys prove about those sweeps they prove about the worker's code, not
   about its deployment.
 
+### 3.27 Phase 23 scope alignments — approved requirements, implemented
+
+- **A-P23-1 — a phase presents the P1 register for signature; it does not sign.** The build plan
+  asks for the "P1 configuration register signed off". Sign-off is the customer's act (doc 00 §3:
+  "MVP-г бэлэн гэж үзэхээс өмнө батална"), so the audit produces the sheet — seventeen rows, each
+  with its interim default, where it lives and an empty signature column — and the accounting stays
+  17 total, 17 pending, 0 closed. A row signed by the programme itself would be a closure by
+  architecture, which §4 forbids.
+- **A-P23-2 — the Police exception fallbacks are not built by the audit.** Phase 23 must confirm
+  the three exceptions are approved *or* their fallbacks active. Neither holds, and the audit
+  records both facts rather than implementing a fallback: each fallback changes a decided behaviour
+  (`POL-DEC-009`, `POL-DEC-010`, `POL-DEC-022`), so choosing it is the customer's decision between
+  approval and fallback, and building it is a gated change beyond an audit phase. What contains the
+  exceptions today is `POLICE_ENABLED`, off unless set to exactly `true` (`A-P18-8`).
+- **A-P23-3 — the candidate is identified by its commit, not by a version.** No release has been
+  approved and no version scheme has been adopted, so the workspace stays at `0.0.0` and the release
+  notes name the measured commit. Bumping versions would assert a release that has not happened.
+- **A-P23-4 — the programme's governed state ends explicitly.** Phase 23 is the last approved
+  phase; no phase follows it to become "current". The governed state therefore records the
+  programme as complete — every phase 03–23 `DONE`, no current phase, nothing authorized to begin —
+  rather than pointing at a phase the build plan does not contain. The standing progression
+  authorization is exhausted by this phase and grants nothing further.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain
 open**; none has been closed by any phase to date. None reopens schema or API design; each is
 implemented as versioned configuration with the interim default below, surfaced in the admin or
-configuration layer, and confirmed before MVP handover in Phase 23.
+configuration layer, and presented for the customer's sign-off in Phase 23
+([release-candidate-audit.md](release-candidate-audit.md) §4) — none has been signed.
 
 **P1 accounting:** 17 total · 17 pending · 0 closed.
 

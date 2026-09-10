@@ -1,7 +1,7 @@
 # PRsystem — External Integration Gates
 
-**Version:** 1.2 (Phase 20 — the register is code as well as a document; every adapter recorded as
-enabled or still blocked, per slot, in §6)
+**Version:** 1.3 (Phase 23 — the final gate review of §7: every gate reported as a production release
+blocker; nothing cleared since the Phase 20 record of §6)
 **Source:** [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §4 (EXT-01 … EXT-11), plus the
 module-level production exceptions in docs 13, 14 and 16.
 
@@ -384,3 +384,25 @@ and the worker records once at startup which gate kept it off. The Phase 19 SMS 
 refresh stays an Operation-realm route, because the worker's login holds no privilege on any
 Operation-realm table by Phase 19's own classification rule and Phase 20 did not widen it
 (`A-P20-5`).
+
+---
+
+## 7. Phase 23 final gate review
+
+Reviewed 2026-09-10 on the release candidate ([release-candidate-audit.md](release-candidate-audit.md)
+§2). Since Phase 20 no contract, credential, signature rule or written approval has been supplied,
+so the three copies of the register — this document, `packages/ports/src/gates.ts` and the
+`platform.external_gate` / `platform.internal_gate` rows — still agree that **every gate is
+`BLOCKED`**: EXT-01 to EXT-11 and the four internal gates INT-KMS-01, INT-MAIL-01, INT-OTP-01 and
+INT-STORAGE-01. Under §5, each is reported as a **production release blocker**, not as a development
+defect, and the release decision is returned to the customer.
+
+| Gate | Reported as | Effect on the candidate in production |
+| --- | --- | --- |
+| EXT-01 … EXT-07, EXT-11 | release blocker | the governed adapter is disabled and fails closed naming its gate; no network call |
+| EXT-08, EXT-09, EXT-10 (policy gates) | release blockers | retention runs on the product default with no notice or consent text (08); the escalation timer and the historical check-in search stay disabled (09); the three Police exceptions are implemented as decided, unapproved, fallbacks not active, and no assessment or penetration test exists (10) |
+| INT-KMS-01 | **release blocker that stops the process** | `api` and `worker` refuse to start without an approved key-management adapter |
+| INT-MAIL-01, INT-OTP-01 | release blocker | no email is sent; no OTP is delivered, so no registration or application completes |
+| INT-STORAGE-01 | release blocker | exports fail closed; the `s3` adapter exists and waits for a bucket and credential |
+
+The audit adds no gate and clears none. What would clear each is unchanged from §3, §4 and §6.

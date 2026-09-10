@@ -208,4 +208,6 @@ instance below the sustained-throughput target; the Police alert well within ten
 matcher sweeps every five; RPO exposure 25 s and a 1.6 s local restore, both verified; every
 degraded mode behaving as §4 says except that there is no general rate limiter to fail closed; the
 outbox relay unmeasurable because unscheduled; availability, the paint metrics and the two timed
-batch paths not measured. Phase 23 reports each as achieved or not; none is adjusted here.
+batch paths not measured. Phase 23 reports each as achieved, not achieved or not measured in
+[docs/implementation/release-candidate-audit.md](../implementation/release-candidate-audit.md) §6;
+none is adjusted here, and P1-10 stays open.

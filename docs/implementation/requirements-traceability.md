@@ -1,10 +1,10 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.35 (Phase 22 — no decision changes state; the phase owns no DEC ID and its
-traceable output is the rehearsed recovery, the four full journeys, the runtime leakage scan, the
-consolidated concurrency coverage, the fault injection, the measured targets, the threat-model
-re-verification and the five integration defects it fixed — the six Phase 22 rows in §2.1; 279 of
-279 `COVERED`)
+**Version:** 1.36 (Phase 23 — the release candidate audit; no decision changes state; the phase
+owns no DEC ID and its traceable output is the final reconciliation of this document, the final gate
+review, the Police exception report, the P1 sign-off sheet, the per-target non-functional report and
+the release notes, runbook and rollback plan — the six Phase 23 rows in §2.1; 279 of 279 `COVERED`,
+0 `PENDING`, 0 `PARTIAL`, 0 `DEFERRED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -150,6 +150,12 @@ artefacts below are the traceable output.
 | 20 | The one standards-based production adapter (S3-compatible object storage, SigV4) verified against the published vectors and a real S3-compatible service, and disabled in production behind `INT-STORAGE-01` | `packages/ports/src/adapters/s3/` | `pnpm run test:unit`, `pnpm run test:integration` (`@prsystem/ports`) |
 | 20 | The Phase 14 provider jobs scheduled on the worker only when their adapters can run, and `DISABLED` treated as no decision | `apps/api/src/modules/settlement/worker/`, `apps/worker/src/jobs/settlement.ts` | `pnpm run test:integration`, `pnpm run test:unit` (`@prsystem/worker`) |
 | 22 | Re-review `DSR-01` in the security pass; close it if a compatible stable Drizzle Kit has landed | [dependency-security-register.md](dependency-security-register.md) | `pnpm run audit:prod`, `pnpm run audit:tree` |
+| 23 | Final reconciliation of this document: every decision `COVERED` or explicitly `DEFERRED` with a recorded reason and approver — 279 `COVERED`, none deferred; deferred scope is §5 of the assumptions with the requirement document as approver | [release-candidate-audit.md](release-candidate-audit.md) §1 | `node tools/validate-governance.mjs` checks 1–3, 6, 11 |
+| 23 | Final review of every EXT and internal gate: each cleared with its named artefact or reported as a production release blocker — all fifteen reported as blockers, none cleared | [release-candidate-audit.md](release-candidate-audit.md) §2; [external-integration-gates.md](external-integration-gates.md) v1.3 §7; `packages/ports/src/gates.ts` | `packages/ports/src/gates.test.ts`, `SEC-EXT-REGISTER`, `SEC-ADAPTERS` |
+| 23 | Confirmation of the three Police production security exceptions: approved, or their fallbacks active — neither; reported with the containing control (`POLICE_ENABLED` off by default) | [release-candidate-audit.md](release-candidate-audit.md) §3; `A-P23-2` | `police.security`, `police.http` (unchanged) |
+| 23 | P1 configuration register presented for sign-off — 17 rows, interim default and location per row, no signature given by the programme | [release-candidate-audit.md](release-candidate-audit.md) §4; [assumptions-and-conflicts.md](assumptions-and-conflicts.md) §4; `A-P23-1` | governance check 13 |
+| 23 | Per-target non-functional report against the Phase 22 measurements, RPO and RTO explicitly; P1-10 not closed by measurement | [release-candidate-audit.md](release-candidate-audit.md) §6; [15-non-functional-targets.md](../architecture/15-non-functional-targets.md) §10 | governance check 13 |
+| 23 | Release notes, deployment runbook and rollback plan; the release decision returned to the customer, not taken | [release-notes.md](release-notes.md), [release-runbook.md](release-runbook.md), [release-candidate-audit.md](release-candidate-audit.md) §9; `A-P23-3`, `A-P23-4` | governance check 7 (links resolve); the Phase 23 battery |
 
 | 03 | Cluster role bootstrap separated from application migrations; restricted migration principal ([runbook](database-bootstrap-runbook.md)) | `packages/db/bootstrap/`, `packages/db/src/bootstrap.ts`, `packages/db/src/principal-guard.ts` | `GATE-SEC` / `SEC-ROLE` |
 | 03 | Tenant isolation: forced RLS, eleven group roles and seven canonical login principals, transaction-scoped server-derived context ([ADR-0017](../architecture/adr/ADR-0017-tenant-isolation-rls.md)) | `packages/db/migrations/0001_kernel.sql`, `packages/db/src/unit-of-work.ts` | `GATE-SEC` / `SEC-RLS`, `pnpm run test:concurrency` |
