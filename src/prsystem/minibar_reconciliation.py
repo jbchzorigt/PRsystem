@@ -60,10 +60,14 @@ class MinibarReconciliation(MinibarConfiguration):
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             data=self.lock_request(conn,tenant,request,revision)
-            self.safe(conn,tenant,data);self.target(conn,tenant,data)
             execution=self.execution(conn,tenant,request)
+            if execution and data['request_kind']!='ROLLOUT':
+                raise DomainError('WORK_SOURCE_CONFLICT')
+            # The pre-created rollout count is this request's work, not a
+            # preceding dependency. Keep every other source in the safe gate.
+            self.safe(conn,tenant,data,execution[0] if execution else None)
+            self.target(conn,tenant,data)
             if execution:
-                if data['request_kind']!='ROLLOUT':raise DomainError('WORK_SOURCE_CONFLICT')
                 source,baseline=execution
             else:
                 source=secrets.token_hex(16)

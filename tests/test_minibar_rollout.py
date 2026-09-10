@@ -78,6 +78,23 @@ class MinibarRolloutTests(MinibarConfigurationCase):
         next_q=self.assert_status(self.rollout(),201);self.assertNotEqual(q['request_id'],next_q['request_id'])
         self.assertEqual(len(self.execution(next_q)),1)
 
+    def test_ready_rollout_still_waits_for_a_late_foreign_source(self):
+        self.prepared_room();q=self.assert_status(self.rollout(),201)
+        original_task=self.execution(q)[0][0]
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('''INSERT INTO prsystem.cleaning_source(tenant_id,id,room_id,configuration_id,configuration_version,source_kind,source_reference,snapshot)
+                VALUES(%s,'late-refill',%s,'prior',1,'REFILL','late-refill','{}')''',(self.tenant,self.room))
+            conn.execute("INSERT INTO prsystem.cleaning_action(tenant_id,source_id,id,kind,product_id,quantity) VALUES(%s,'late-refill','late-action','REFILL',%s,1)",(self.tenant,self.product))
+        response=self.api(f'minibar/configuration-requests/{q["request_id"]}/prepare',dict(expected_revision=q['revision'],assignee_id=self.worker))
+        self.assert_status(response,409)
+        self.assertEqual(response.json()['code'],'RECONCILIATION_NOT_READY')
+        self.assertEqual(self.execution(q),[(original_task,None,'OPEN')])
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.cleaning_action SET completed=1 WHERE tenant_id=%s AND source_id='late-refill'",(self.tenant,))
+        self.configure_room(q)
+        self.assertEqual(self.execution(q),[(original_task,self.worker,'DONE')])
+        self.assertEqual(self.read().json()['current']['configuration']['version_id'],self.target)
+
     def test_pending_refill_delays_task_and_terminal_action_wakes_exactly_once(self):
         self.prepared_room()
         with psycopg.connect(self.owner_dsn) as conn:
