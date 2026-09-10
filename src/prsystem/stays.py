@@ -138,7 +138,7 @@ class StayService(RoomService):
                 raise DomainError('INVALID_REQUEST') from exc
             actual = actual_time(recorded, shift[1], requested, data.get('backdate_reason'))
             from prsystem.reception_dependencies import ReceptionDependencies
-            minibar=ReceptionDependencies.opening(conn,tenant,row[0],row[21],actual,self.runtime_mode)
+            minibar=ReceptionDependencies.opening(conn,tenant,row[0],row[21],actual,self.runtime_mode,recorded)
             booking=None
             if booking_id:
                 from prsystem.mock_providers import require_development_database

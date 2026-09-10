@@ -162,9 +162,9 @@ class MinibarReconciliation(MinibarConfiguration):
                 if not line['quantity']:continue
                 stock=self.stock(conn,tenant,line['product_id']);move=secrets.token_hex(16)
                 conn.execute('''INSERT INTO prsystem.minibar_transfer(tenant_id,id,request_id,source_id,task_id,product_id,room_id,actor_id,
-                    direction,quantity,warehouse_after,room_after,cost_value,cost_quantity) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                    direction,quantity,warehouse_after,room_after,cost_value,cost_quantity,cost_denominator) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                     (tenant,move,data['request_id'],taskrow[1],task,line['product_id'],data['room_id'],actor,line['direction'],line['quantity'],
-                     line['warehouse_quantity']+(line['quantity'] if line['direction']=='RETURN' else -line['quantity']),line['target_quantity'],stock[2],stock[1]))
+                     line['warehouse_quantity']+(line['quantity'] if line['direction']=='RETURN' else -line['quantity']),line['target_quantity'],stock[2].numerator,stock[1],stock[2].denominator))
                 movements.append(move)
             conn.execute('''INSERT INTO prsystem.minibar_configuration_application(tenant_id,request_id,room_id,source_id,task_id,actor_id,assignment_version)
                 VALUES(%s,%s,%s,%s,%s,%s,%s)''',(tenant,data['request_id'],data['room_id'],taskrow[1],task,actor,assignment))

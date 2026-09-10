@@ -55,8 +55,13 @@ class ReceptionDependencies(GuestFinance):
             self._save_receipt(conn,tenant,key,actor,command,result);return result
 
     @staticmethod
-    def opening(conn,tenant,room,mode,actual,runtime_mode):
+    def opening(conn,tenant,room,mode,actual,runtime_mode,recorded=None):
         if mode=='OFF':return None
+        if mode=='ON':
+            conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+            book=conn.execute('SELECT prsystem.minibar_guest_opening(%s,%s,%s)',(tenant,room,recorded or actual)).fetchone()[0]
+            if not book:raise DomainError('ROOM_NOT_READY')
+            return book
         if mode!='MOCK_ON' or runtime_mode=='production':raise DomainError('ROOM_NOT_READY')
         row=conn.execute('SELECT revision,items,recorded_at FROM prsystem.mock_minibar_configuration WHERE tenant_id=%s AND room_id=%s ORDER BY revision DESC LIMIT 1',(tenant,room)).fetchone()
         if not row or not row[1] or row[2]>actual:raise DomainError('HISTORICAL_READINESS_REQUIRED')
@@ -77,7 +82,13 @@ class ReceptionDependencies(GuestFinance):
             snapshot=conn.execute('SELECT snapshot FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
             conn.execute('INSERT INTO prsystem.reception_checkout_intent(tenant_id,stay_id,actor_id) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',(tenant,stay,actor))
             if snapshot['minibar_mode']!='OFF':
-                self.mock();conn.execute('INSERT INTO prsystem.reception_minibar_inspection(tenant_id,stay_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(tenant,stay))
+                if snapshot['minibar_mode']=='MOCK_ON':self.mock()
+                conn.execute('INSERT INTO prsystem.reception_minibar_inspection(tenant_id,stay_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(tenant,stay))
+                if snapshot['minibar_mode']=='ON':
+                    from prsystem.minibar_guest import MinibarGuest
+                    conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+                    inspection=conn.execute('SELECT state,revision FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()
+                    if inspection[0]=='REQUESTED':MinibarGuest.ensure_source(conn,tenant,stay,inspection[1])
             result=dict(stay_id=stay,minibar_report_required=snapshot['minibar_mode']!='OFF')
             self.event(conn,tenant,actor,'CHECKOUT_INITIATED',stay,result)
             self._save_receipt(conn,tenant,key,actor,command,result);return result
@@ -108,6 +119,7 @@ class ReceptionDependencies(GuestFinance):
             if inspection[1]!=revision:raise DomainError('REVISION_CONFLICT')
             self.report_unpaid(conn,tenant,stay)
             snapshot=conn.execute('SELECT snapshot FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]['minibar_snapshot']
+            if snapshot.get('mode')!='MOCK_ONLY':raise DomainError('CANONICAL_TASK_REQUIRED')
             room=conn.execute('SELECT room_id FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
             items={item['product_id']:item for item in snapshot['items']}
             if set(used)-set(items) or (not any(used.values()) and not no_consumption) or (any(used.values()) and no_consumption):raise DomainError('INVALID_REQUEST')
@@ -141,6 +153,11 @@ class ReceptionDependencies(GuestFinance):
             state={'RETURN':'REQUESTED','DISPUTE':'DISPUTED','UPHOLD':'REPORTED','WAIVE':'REPORTED'}[action]
             if action=='WAIVE':self.credit_previous(conn,tenant,stay,actor,reason)
             conn.execute('UPDATE prsystem.reception_minibar_inspection SET state=%s WHERE tenant_id=%s AND stay_id=%s',(state,tenant,stay))
+            if action=='RETURN' and conn.execute("SELECT 1 FROM prsystem.stay WHERE tenant_id=%s AND id=%s AND snapshot->>'minibar_mode'='ON'",(tenant,stay)).fetchone():
+                from prsystem.minibar_guest import MinibarGuest
+                conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+                revision=conn.execute('SELECT revision FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()[0]
+                MinibarGuest.ensure_source(conn,tenant,stay,revision)
             now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
             balance=self.save(conn,tenant,stay,before,before,actor,'MINIBAR_'+action,stay,dict(reason=reason),now)
             result=dict(stay_id=stay,state=state,balance=balance)
@@ -155,7 +172,11 @@ class ReceptionDependencies(GuestFinance):
     def final(conn,tenant,stay,actor,choices,guest_informed,runtime_mode):
         snapshot=conn.execute('SELECT snapshot FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
         if snapshot['minibar_mode']!='OFF':
-            if runtime_mode=='production' or not conn.execute("SELECT 1 FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s AND state='REPORTED'",(tenant,stay)).fetchone():raise DomainError('MINIBAR_REPORT_REQUIRED')
+            if (runtime_mode=='production' and snapshot['minibar_mode']!='ON') or not conn.execute("SELECT 1 FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s AND state='REPORTED'",(tenant,stay)).fetchone():raise DomainError('MINIBAR_REPORT_REQUIRED')
+            if snapshot['minibar_mode']=='ON':
+                conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+                if not conn.execute('''SELECT 1 FROM prsystem.minibar_guest_report r JOIN prsystem.reception_minibar_inspection i
+                    ON(i.tenant_id,i.stay_id,i.revision)=(r.tenant_id,r.stay_id,r.revision) WHERE r.tenant_id=%s AND r.stay_id=%s''',(tenant,stay)).fetchone():raise DomainError('MINIBAR_REPORT_REQUIRED')
         # Both order insertion and final checkout hold the same stay lock.
         # No extra UPDATE privilege on read-only service projections is needed.
         orders=conn.execute("SELECT id FROM prsystem.reception_restaurant_order WHERE tenant_id=%s AND stay_id=%s AND state NOT IN ('DONE','REFUNDED')",(tenant,stay)).fetchall()

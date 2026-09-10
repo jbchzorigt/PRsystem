@@ -26,7 +26,7 @@ class CheckoutService(GuestFinance):
             source=conn.execute('SELECT room_id,planned_checkout_at,cleaning_buffer_minutes FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()
             if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
             room=conn.execute('SELECT revision,status,minibar_mode,category_id FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,source[0])).fetchone()
-            if not room or room[1] not in {'ACTIVE','RETIRING'} or (room[2]!='OFF' and self.mode=='CASH_LEDGER'):raise DomainError('CHECKOUT_SOURCE_NOT_READY')
+            if not room or room[1] not in {'ACTIVE','RETIRING'} or (room[2]=='MOCK_ON' and self.mode=='CASH_LEDGER'):raise DomainError('CHECKOUT_SOURCE_NOT_READY')
             before=self.lock(conn,tenant,stay,revision,active=True)
             if conn.execute("SELECT 1 FROM prsystem.stay_time_amendment WHERE tenant_id=%s AND stay_id=%s AND state='PENDING'",(tenant,stay)).fetchone():raise DomainError('AMENDMENT_PENDING')
             shift=StayService._shift(conn,tenant,actor)

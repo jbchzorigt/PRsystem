@@ -22,7 +22,7 @@ jobs:
         run: python -m unittest discover -s tests -v
   postgres:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 18
     services:
       postgres:
         image: postgres:17
@@ -46,6 +46,10 @@ jobs:
         env:
           PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: python -m unittest discover -s tests -p test_minibar_batches.py -v
+      - name: Verify canonical minibar guest flow
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_guest.py -v
       - name: Run domain and real PostgreSQL tests
         env:
           PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres

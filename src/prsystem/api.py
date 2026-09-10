@@ -33,6 +33,7 @@ from prsystem.minibar_rollout import MinibarRollout
 from prsystem.minibar_batches import MinibarBatches
 from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
+from prsystem.minibar_guest import MinibarGuest
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -583,6 +584,13 @@ class MinibarReportInput(InvitationChange):
 
 class MinibarReview(ReasonCommand):
     action: Literal['RETURN','DISPUTE','UPHOLD','WAIVE']
+
+
+class CanonicalMinibarReport(InvitationChange):
+    task_id: str=Field(min_length=1,max_length=128)
+    assignment_version: int=Field(ge=0,le=2**63-1)
+    counts: dict[str,int]=Field(min_length=1,max_length=100)
+    no_consumption: bool=False
 
 
 class RestaurantOrderFixture(ReasonCommand):
@@ -1175,6 +1183,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-review')
     def review_minibar(tenant_id: str,stay_id: str,body: MinibarReview,secret: Annotated[str,Depends(token)]):
         return reception_dependencies.review(secret,tenant_id,stay_id,body.action,body.reason,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/guest-inspections')
+    def canonical_minibar_queue(tenant_id: str,secret: Annotated[str,Depends(token)],after: str='',limit: int=Query(default=50,ge=1,le=100)):
+        return MinibarGuest(service,identity_vault,runtime_mode).queue(secret,tenant_id,after,limit)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-inspection/claim',status_code=201)
+    def claim_minibar_inspection(tenant_id: str,stay_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
+        return MinibarGuest(service,identity_vault,runtime_mode).claim(secret,tenant_id,stay_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-report',status_code=201)
+    def canonical_minibar_report(tenant_id: str,stay_id: str,body: CanonicalMinibarReport,secret: Annotated[str,Depends(token)]):
+        return MinibarGuest(service,identity_vault,runtime_mode).report(secret,tenant_id,stay_id,body.task_id,body.assignment_version,body.counts,body.no_consumption,body.expected_revision,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/mock/stays/{stay_id}/restaurant-orders',status_code=201)
     def mock_restaurant_order(tenant_id: str,stay_id: str,body: RestaurantOrderFixture,secret: Annotated[str,Depends(token)]):

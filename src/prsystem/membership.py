@@ -211,7 +211,7 @@ class MembershipService(StaffCommands):
             return result
 
     @classmethod
-    def register_open_work(cls, conn, tenant, owner, kind, source_id, *, checkout_stay=None):
+    def register_open_work(cls, conn, tenant, owner, kind, source_id, *, checkout_stay=None, inspection_stay=None):
         """Internal source adapter only, inside the source creation transaction.
 
         Call before source row locks; all involved accounts must be locked in
@@ -232,6 +232,17 @@ class MembershipService(StaffCommands):
         role = "RECEPTION" if kind == "SHIFT" else "CLEANER"
         facts = AccessFacts(tenant, True, True, True, role in member[1], kind == "SHIFT" or hotel[0] >= 25000, True, True, hotel[2])
         action, obligation = Action.CONFIGURE, None
+        if inspection_stay is not None:
+            if kind!='CLEANING_TASK' or checkout_stay is not None:raise DomainError('INVALID_WORK_KIND')
+            source=conn.execute('''SELECT s.check_in_recorded_at FROM prsystem.minibar_guest_inspection e
+                JOIN prsystem.stay s ON(s.tenant_id,s.id)=(e.tenant_id,e.stay_id)
+                JOIN prsystem.reception_minibar_inspection i ON(i.tenant_id,i.stay_id)=(e.tenant_id,e.stay_id)
+                JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(e.tenant_id,e.source_id)
+                WHERE e.tenant_id=%s AND e.stay_id=%s AND t.id=%s AND t.assignee_id=%s AND t.state='OPEN'
+                AND s.state='ACTIVE' AND i.state='REQUESTED' AND e.revision=i.revision+1''',(tenant,inspection_stay,source_id,owner)).fetchone()
+            if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            from prsystem.subscription import Obligation, RootKind
+            action,obligation=Action.CHECKOUT_REPORT,Obligation(tenant,inspection_stay,RootKind.STAY,source[0],True)
         if checkout_stay is not None:
             if kind != 'CLEANING_TASK':raise DomainError('INVALID_WORK_KIND')
             # A trusted adapter may register completion work only when this exact
