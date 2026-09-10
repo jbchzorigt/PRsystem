@@ -1,4 +1,4 @@
-# Minibar version archive — stage 5 candidate
+# Minibar version archive — accepted stage 5 increment
 
 Implements docs/26 §§30–32: a Published exact version can become Archived only
 when it is not Default, current room configuration, pending target or source,
@@ -58,21 +58,32 @@ writes exact IDs. Do not grant UPDATE/DELETE on archive proof. RLS is forced.
 
 ## Verification and remaining scope
 
-Candidate source: local `39f21fc3309914fb2349f5405f28f2d8610ad22d`, with 16 new
-backend tests. Local discovery: 585 total, 100 passed and 485 PostgreSQL tests
-skipped. All seven local Chromium suites and 43 browser/API request contracts
-passed. Shared-token check and design lint passed (six existing unused-token
-warnings, zero errors); strict UI audit had zero findings. Desktop and 320px
-archive screenshots were inspected. Archive tests cover Default/current/pending/
-task/stay blockers, historical release, immutable proof, terminal clone,
-role/package/RLS, races and commit rollback; their database execution is pending.
+Accepted source: `c358be6ef82b973f34af4923524e2d89503db698`, tree
+`73ddba3f5b65ef24f78465d016e981fb8214363d` (identical to local `fd11cb1`).
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34420251943) passed
+**585/585 backend tests without skips in 550.490 seconds**, including all 16 new
+archive tests. All seven Chromium suites, 43 actual browser/API command contracts,
+design lint and shared-token checks passed. Strict local UI audit had zero findings.
+Design lint has six existing unused-token warnings and zero errors. Desktop and
+320px archive screenshots were inspected. Local discovery had 100 executed tests
+and 485 database tests skipped; the linked remote run is the acceptance evidence.
 
-Publication is blocked by automatic approval review. It rejected GitHub tree
-creation because uploading the source/workflow payload to the external repository
-requires explicit user authorization. No source from this increment was published
-and full PostgreSQL CI has not run. Requested destination is the existing public
-`jbchzorigt/PRsystem`, branch `feat/approved-risk-controls`, Draft PR #1. The last
-accepted remote head remains `018ad203a88c0c3d29ce5e66b7ad5ca1af64ca45`.
+The user explicitly approved publishing the source/workflow payload to the existing
+public `jbchzorigt/PRsystem`, branch `feat/approved-risk-controls`, Draft PR #1.
+Publication succeeded; the earlier automatic approval block is resolved.
+
+Verification corrections retained in history:
+- The database guard additionally rejects direct Draft → Archived writes, with a
+  regression assertion; only Published with immutable archive proof can transition.
+- Initial full runs passed 584/585 tests without skips. A whitespace-only reason
+  correctly returned the established HTTP 422 / INVALID_REQUEST response while a
+  test expected 400. The assertion now expects 422 and verifies unchanged eligibility.
+- The next run passed all 16 archive tests, but an existing Cleaner continuation
+  fixture picked the first lexically sorted random suspension exception ID. Its
+  worker owned both a shift and a Cleaner task, so it sometimes selected the shift
+  and correctly received WORK_SOURCE_NOT_FOUND. The test now selects the exact
+  CLEANING_TASK source ID. No application rule was weakened.
+- The final full run passed with both deterministic test corrections.
 
 Product/template entity lifecycle, batch rollout, reconciliation variance/override,
 partial rollback, canonical guest opening/refill/report, Restaurant and Operation
