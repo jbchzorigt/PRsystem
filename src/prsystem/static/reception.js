@@ -274,6 +274,7 @@
     const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Багцын явцыг ачаалж байна…'));parent.setAttribute('aria-busy','true');
     try{const result=await api(path(`minibar/rollout-batches/${enc(id)}`));if(seq!==generation||!parent.isConnected)return;
       parent.replaceChildren();parent.append(node('h3',`Шилжүүлгийн багц · Хувилбар ${result.target.version_number}`),node('p',batchLabels[result.state]),node('p',`Сонгосон: ${result.counts.selected} · Хүлээн авсан: ${result.counts.accepted} · Хэрэгжсэн: ${result.counts.APPLIED} · Алгассан: ${result.counts.SKIPPED} · Цуцалсан: ${result.counts.CANCELLED}`),node('p',`Бүртгэсэн: ${time(result.recorded_at)} · Шалтгаан: ${result.reason}`));
+      table(parent,'Төлөв бүрийн өрөөний тоо',['Төлөв','Өрөөний тоо'],['READY_FOR_RECONCILIATION','SCHEDULED_AFTER_STAY','IN_PROGRESS','BLOCKED_STOCK','BLOCKED_VARIANCE','APPLIED','SKIPPED','CANCELLED','ROLLBACK_REQUIRED','ROLLED_BACK'].map(state=>[batchLabels[state],result.counts[state]??0]));
       if(result.retry_of_batch_id)parent.append(node('p','Өмнөх багцаас дахин оролдсон. Өмнөх түүх хадгалагдсан.'));
       table(parent,'Өрөө бүрийн шилжүүлгийн явц',['Өрөө','Төлөв','Тайлбар'],result.items.map(i=>[batchRoomName(i),batchLabels[i.state]||i.state,i.code?(errors[i.code]||'Өрөө олдсонгүй эсвэл боломжгүй.'):'—']));
       const bar=actions(parent);bar.append(btn('Багцын явц шинэчлэх',()=>guard(()=>batchDetail(container,data,id))),btn('Багцын түүх рүү буцах',()=>guard(()=>batchHistory(container,data))));
