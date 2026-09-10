@@ -14,7 +14,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 
 | Field | Value |
 | --- | --- |
-| Current phase | 22 — Security, concurrency, recovery, and full E2E |
+| Current phase | 23 — Release candidate audit |
 | Phase state | `NOT STARTED` — authorized to begin under the [standing progression authorization](#standing-progression-authorization) of 2026-09-03; the commit that completes it advances this row |
 | Phase 03 state | `DONE` |
 | Phase 04 state | `DONE` |
@@ -55,6 +55,8 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 20 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Phase 21 state | `DONE` |
 | Phase 21 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 22 state | `DONE` |
+| Phase 22 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -89,7 +91,7 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | 19 | Platform Operation | `DONE` | `0020_platform_operation` | the Phase 19 battery — counts in [Phase 19 record](#phase-19-record) | implemented at the commit named in the record; the record and its evidence are the commit after it |
 | 20 | External adapters | `DONE` | — | the Phase 20 battery — counts in [Phase 20 record](#phase-20-record) | implemented at `ccbf602`, corrected at the commit named in the record; the record and its evidence are the commit after it |
 | 21 | Responsive UI and accessibility | `DONE` | — | the Phase 21 battery — counts in [Phase 21 record](#phase-21-record) | implemented at `357df68`, the measured tree; the record and its evidence are the commit after it |
-| 22 | Security, concurrency, recovery, and full E2E | `NOT STARTED` | — | — | — |
+| 22 | Security, concurrency, recovery, and full E2E | `DONE` | `0021_stay_booking_ref_text` | the Phase 22 battery — counts in [Phase 22 record](#phase-22-record) | implemented at `4bf8629`, corrected at `4575f8d` (two test fixtures), the measured tree; the record and its evidence are the commit after it |
 | 23 | Release candidate audit | `NOT STARTED` | — | — | — |
 
 ---
@@ -6068,5 +6070,175 @@ new drift-fixture results that govern it.
 The per-command exit codes, durations and execution environment are recorded in
 [phase-21-battery-log.md](phase-21-battery-log.md).
 
-Phase 21 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 22 is authorized to begin under the
+Phase 21 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 22 followed it under the same
+authorization and has its own record below.
+
+---
+
+## Phase 22 record
+
+Security, concurrency, recovery, and full E2E: the recovery posture rehearsed and measured, three
+full journeys driven across the portals and the API on the real worker, a secret-leakage scan over a
+run's own database, log and queue, the concurrency story of every command written down and gated,
+the documented degraded modes injected against the real API, the threat model re-verified, the two
+dependency advisories reviewed on their due date, and every non-functional target measured beside its
+provisional value. Authorized under the
+[standing progression authorization](#standing-progression-authorization), implemented and gated on
+top of the Phase 21 tree. Phase 22 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`; Phase 23 is the
+current phase, authorized to begin, and has **not** started.
+
+**Decisions closed:** none — Phase 22 owns no DEC ID. Its traceable obligations are the six Phase 22
+rows of [requirements-traceability.md](requirements-traceability.md) v1.35 §2.1, and each of the
+build plan's gates was measured: every prior gate re-run green, the upgrade migration from the Phase
+02 baseline to head, zero findings in the secret-leakage scan, and the recovery rehearsal measured
+against the Phase 01 RPO and RTO values.
+
+### Scope completed
+
+- **Backup, restore and disaster-recovery rehearsal** (`tools/recovery-rehearsal.mjs`,
+  `docs/implementation/recovery-runbook.md`, `phase-22-recovery-rehearsal.json`). A disposable
+  PostgreSQL 17 primary with continuous archiving, a base backup, a workload written through the
+  platform's own harness, the primary destroyed, and two restores — to the end of the archive and to
+  a point in time — verified row for row and schema for schema, with the outbox delivery markers
+  intact. Measured: RPO exposure 25.2 s against ≤ 5 min, RTO 1.6 s for the restore itself against
+  ≤ 4 h for the whole procedure (`A-P22-1`). P1-10 stays open; Phase 23 reports
+  achieved-or-not to the customer.
+- **Three full journeys on the harness Phase 21 stood up** (`e2e/journeys/*.spec.ts`, at Pixel 7,
+  Galaxy Tab S4 and Desktop Chrome): a guest's hold → provider invoice → simulated payment callback →
+  Reception check-in with the booking reference → checkout with the minibar lock and reconciliation,
+  posted charges, cash on an open shift, settlement → the guest's review and the hotel's payable; a
+  wanted case activated → API check-in → the worker's matcher raising the alert, its latency written
+  to the run; the subscription lanes (expiring, grace, expired) with renewal after the lock; and
+  onboarding from the application through the OTP, invoice and callback to provisioning, activation,
+  invitations, catalog and deposit, a check-in and a checkout, and the shift count. The e2e stack now
+  runs the worker's consumers in-process on the real Redis (`A-P22-13`, `A-P22-4`).
+- **Five integration defects the journeys found, fixed at their source rather than in the flows:**
+  the minibar report's payment attempts are the folio's own transactions (`BillingPaymentAttempts`,
+  `A-P22-2`); the stay's booking reference is the booking's reference — migration
+  `0021_stay_booking_ref_text` retypes `platform.stay.booking_ref` and the fulfilment-conflict column
+  to text with a shape check, and the check-in snapshot's subject is the booking id (`A-P22-3`); the
+  stay view carries the live minibar report and the Cleaner queue its revision; cash carries its
+  shift and the portal says which (`A-P22-10`); the Police matcher sweep defaults to 5 s rather than
+  60 s, which could not meet the 10-second target (`A-P22-11`).
+- **Secret-leakage scan over a run's own artefacts** (`e2e/leakage.spec.ts`, `e2e/api-server.mjs`):
+  81 canaries — every password, OTP, TOTP secret, session and activation token, provider secret,
+  registration number and SMS body the seeds and the journeys produced — searched for across every
+  table of the platform, police and audit schemas, the API's log, and every Redis key of the run:
+  zero findings. `tools/scan-secrets.mjs` over the tree stays at zero.
+- **Consolidated concurrency coverage** (`tools/concurrency-manifest.mjs`,
+  `tools/concurrency-coverage.mjs`, `tools/validate-concurrency-coverage.mjs`,
+  `packages/testing/src/concurrency-coverage.test.ts`): the 147 idempotent commands discovered from
+  the API's route table, each bound to the concurrency suite that races it or to a recorded reason
+  (`A-P22-12`); a command without either fails the gate.
+- **Fault injection against the real API** (`apps/api/src/resilience/degraded-modes.http.test.ts`,
+  in `GATE-INTEG`): Redis down, the payment provider down, ХУР down, the SMS provider down and object
+  storage down, each observed to behave as doc 15 §4 documents (`A-P22-6` records the absence of a
+  request rate limiter to fail closed).
+- **Security review and threat-model re-verification** (`phase-22-security-review.md`): the Phase 01
+  threat model walked realm by realm and interface by interface against the code as it stands; the
+  API answers every request with security headers and a deny-all content security policy
+  (`security-headers.plugin.ts`) and the five portals with theirs (`packages/web-kit/next-headers.mjs`,
+  `A-P22-9`); an unexpected exception is logged with its correlation id and every request leaves a
+  line, with no query string (`A-P22-5`); the `DSR-01` and `DSR-02` reviews due this phase are in
+  `dependency-security-register.md` v1.2, both still `OPEN — contained`.
+- **Non-functional measurements** (`phase-22-measurements.md`, `phase-22-load-measurement.json`,
+  `docs/architecture/15-non-functional-targets.md` §10): every target measured or explicitly not,
+  beside its provisional value. Two shortfalls are recorded as gaps — the room board's p50 and the
+  single-instance throughput (`A-P22-8`) — and five targets are not measurable in this phase; no
+  number was moved.
+
+### Gates this phase had to pass, and what they measured
+
+- **All prior gates re-run green** — the governed battery below, on a clean detached checkout.
+- **Upgrade migration** — `pnpm run test:migrations`: fresh, the upgrade paths from the Phase 02
+  baseline and from Phase 05 to head including `0021`, repeat application, and schema equality
+  between the fresh and upgraded databases.
+- **Zero findings in the secret-leakage scan** — the tree scan and the runtime scan, both zero.
+- **Recovery rehearsal measured against the RPO/RTO values** — §5 of the measurements document; the
+  numbers are one machine's and the runbook says what a hosted deployment must repeat.
+- **`GATE-CONC` and `GATE-SEC`** — three runs each, unchanged in count; the concurrency coverage
+  test joins `GATE-UNIT` and the degraded-mode suite joins `GATE-INTEG`.
+
+### Governance and traceability
+
+- **Governance:** `tools/programme-state.mjs` (Phase 22 in `PROGRESSED_PHASES`, the current phase
+  advanced to 23), `docs/implementation/phase-22-evidence.json`, twelve new drift fixtures and the
+  current-phase fixtures retargeted. Check 17 binds the manifest, the governed entry and this record.
+- **The first battery run, on `4bf8629`, was not green:** `pnpm run test:regression` exited 1 because
+  two Phase 03 regression tests still asserted a 21-entry journal, and the three `pnpm run
+  test:security` runs exited 1 because the tenant-row seed for `booking_fulfillment_conflict` still
+  wrote a uuid into `booking_ref`, which migration `0021`'s shape check refuses, so `SEC-RLS` and
+  `SEC-ACL-MATRIX` skipped from their `beforeAll` — and the gate counts a skipped suite as a
+  failure. Both fixtures were corrected on `4575f8d` (no product code) and the whole battery re-run
+  there; the first run's outcome is recorded in `phase-22-battery-log.md`, and no gate was changed.
+- **Traceability:** `requirements-traceability.md` v1.35 — no decision changes state; 279 of 279.
+- **Assumptions:** `A-P22-1`…`A-P22-13` in `assumptions-and-conflicts.md` §3.26.
+- **Test strategy:** `docs/architecture/14-test-strategy-and-gates.md` names the concurrency
+  coverage gate and the runtime leakage scan; `docs/development.md` names the rehearsal and the load
+  tool.
+
+### External gates
+
+Unchanged: `EXT-01` to `EXT-11`, `INT-MAIL-01`, `INT-OTP-01` and `INT-STORAGE-01` remain `BLOCKED`;
+every provider the journeys reach — the two gateways, ХУР, the OTP and SMS providers, object storage —
+answered as its simulator in the measured runs, and the payment callback the booking journey applies
+is the simulator's signed callback. 17 P1 items; `DSR-01` and `DSR-02` reviewed and still open,
+next due at the release candidate audit; selecting `GATE-SEC` as a required GitHub status check.
+**Phase 22 adds no new EXT gate.**
+
+### What Phase 22 was asked to carry and did not
+
+Availability percentages, the outbox relay's lag (no consumer runs the relay — `A-P22-7`), the
+10 000-row export, the service-month boundary timing and the front-end paint metrics were not
+measured and are listed as such; the room board misses its p50 and one instance misses the
+throughput target (`A-P22-8`); there is no general request rate limiter (`A-P22-6`); the portals'
+content security policy admits inline script until a nonce is threaded through the shell
+(`A-P22-9`); the penetration test with the Police realm in scope is `EXT-10` and was not performed;
+the measured browsers are Chromium profiles only. Each is Phase 23's to report to the customer,
+none was resolved by lowering a number.
+
+### Evidence
+
+<!-- phase-22-evidence:begin -->
+
+Measured at correction commit 4575f8d37ec5cc5bbe6d93e29ef5828248688313 — the implementation commit
+`4bf8629` plus one correction to two test fixtures that had not followed migration `0021`, after the
+first battery run on `4bf8629` failed `test:regression` and the three `test:security` runs — in a
+clean detached checkout with a fresh install, a fresh Turborepo cache and forced task execution. All
+28 executions exited 0. The two governance rows are from the final tree, which carries this record and the
+new drift-fixture results that govern it.
+
+| Command | Status | Result |
+| --- | --- | --- |
+| `node tools/validate-governance.mjs` | PASS | 17 of 17 at the measured commit; 17 of 17 on the final tree |
+| `node tools/validate-governance.fixtures.mjs` | PASS | 337 of 337 drift fixtures caught at the measured commit; 349 of 349 on the final tree |
+| `node tools/validate-secret-scan.fixtures.mjs` | PASS | 72 of 72 correct |
+| `node tools/validate-workspace.mjs` | PASS | 15 of 15 |
+| `node tools/validate-regression-coverage.mjs` | PASS | 724 of 724 |
+| `node tools/validate-regression-coverage.fixtures.mjs` | PASS | 76 of 76 bypasses caught |
+| `node tools/validate-pool-error-fixture.mjs` | PASS | 12 of 12 |
+| `node tools/scan-secrets.mjs` | PASS | 1,014 indexed files, 0 findings |
+| `pnpm run format:check` | PASS | clean |
+| `pnpm run lint` | PASS | 18 of 18 projects |
+| `pnpm run typecheck` | PASS | 30 of 30 graphs |
+| `pnpm run test:unit` | PASS | 1,699 across 12 projects |
+| `pnpm run test:migrations` | PASS | 148: fresh, the upgrade paths from the Phase 02 baseline and the accepted Phase 03, 04 and 05 databases to head with 0021, repeat and schema equality |
+| `pnpm run test:integration` | PASS | 621: ports 3, outbox 5, db 41, worker 2, api 570 (five degraded-mode injections among them) |
+| `pnpm run test:concurrency` | PASS | 97 each run: db 16, api 81 |
+| `pnpm run test:regression` | PASS | 51, every reproduced Phase 03 defect |
+| `pnpm run test:security` | PASS | 20 of 20 sub-gates, each run |
+| `pnpm run test:e2e` | PASS | 130 passed: 43 flows at each of three viewports, plus the leakage scan with 0 findings, on the real API and worker |
+| `pnpm run audit:prod` | PASS | no known vulnerabilities |
+| `pnpm run audit:tree` | PASS | none at high or critical; three moderate, DSR-01 and DSR-02 |
+| `pnpm run build` | PASS | 18 of 18 projects |
+| `pnpm run openapi` | PASS | document generated |
+| `pnpm run compose:config` | PASS | valid |
+| `git diff --check` | PASS | clean |
+
+<!-- phase-22-evidence:end -->
+
+The per-command exit codes, durations and execution environment — and the first run that failed —
+are recorded in [phase-22-battery-log.md](phase-22-battery-log.md).
+
+Phase 22 is `DONE` and `AWAITING_CUSTOMER_ACCEPTANCE`. Phase 23 is authorized to begin under the
 standing progression authorization and has **not** started.
