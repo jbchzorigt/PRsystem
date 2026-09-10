@@ -125,8 +125,8 @@ class MinibarGuest(ReceptionDependencies):
             for item in book['items']:
                 availability=conn.execute('SELECT prsystem.minibar_stay_availability(%s,%s,%s)',(tenant,stay,item['product_id'])).fetchone()[0]
                 actual=counts[item['product_id']]
-                if type(actual) is not int or not 0<=actual<=availability['available_quantity']:raise DomainError('INVALID_REQUEST')
-                used=availability['available_quantity']-actual;amount=used*item['unit_price'];total+=amount;money(total)
+                if type(actual) is not int or not 0<=actual<=availability['physical_quantity']:raise DomainError('INVALID_REQUEST')
+                used=max(0,availability['available_quantity']-actual);amount=used*item['unit_price'];total+=amount;money(total)
                 lines.append(dict(item,**availability,actual_count=actual,used_quantity=used,line_amount=amount))
             if no_consumption!=(total==0):raise DomainError('INVALID_REQUEST')
             movements=[]
@@ -136,7 +136,7 @@ class MinibarGuest(ReceptionDependencies):
             for line in lines:
                 product=line['product_id']
                 current=conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(tenant,product,room)).fetchone()[0]
-                if current!=line['available_quantity']:raise DomainError('COUNT_VARIANCE')
+                if current!=line['physical_quantity'] or current-line['used_quantity']!=line['actual_count']:raise DomainError('COUNT_VARIANCE')
                 if line['used_quantity']:movements.append(self.movement(conn,tenant,room,stay,revision+1,product,-line['used_quantity'],actor,roles))
                 action=conn.execute("SELECT id FROM prsystem.cleaning_action WHERE tenant_id=%s AND source_id=%s AND product_id=%s AND kind='COUNT'",(tenant,assigned[2],product)).fetchone()
                 if not action:raise DomainError('WORK_SOURCE_NOT_FOUND')

@@ -158,6 +158,6 @@ class MinibarWarehouse(RoomService):
                 ORDER BY stock_revision LIMIT %s''', (tenant, product, after, limit+1)).fetchall()
             items = [dict(receipt_id=r[0], kind=r[2], quantity=r[3], unit_cost_mnt=r[4],
                           **self.balance(r[1], r[14], Fraction(int(r[6]),int(r[15])),r[14]-r[5]), actor_id=r[7], actor_roles=r[8],
-                          cost=dict(numerator=str(r[16]),denominator=str(r[17])) if r[2].startswith('CONSUMPTION') else dict(numerator=str(r[4]),denominator='1'),stay_id=r[18],report_revision=r[19],original_receipt_id=r[20],
+                          cost=dict(numerator=str(r[16]),denominator=str(r[17])) if r[2].startswith('CONSUMPTION') or r[2]=='ADJUSTMENT' else dict(numerator=str(r[4]),denominator='1'),stay_id=r[18],report_revision=r[19],original_receipt_id=r[20],
                           reference=r[9], recorded_at=r[10], package_mnt=r[11], product_snapshot=r[12], actor_label=r[13]) for r in rows[:limit]]
             return dict(items=items, next_after=items[-1]['stock_revision'] if len(rows)>limit else None)

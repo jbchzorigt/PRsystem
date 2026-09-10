@@ -27,6 +27,7 @@ from prsystem.renewal import RenewalService
 from prsystem.opening import OpeningService
 from prsystem.rooms import RoomService
 from prsystem.minibar import MinibarWarehouse
+from prsystem.minibar_adjustments import MinibarAdjustments
 from prsystem.minibar_templates import MinibarTemplates
 from prsystem.minibar_archive import MinibarArchive
 from prsystem.minibar_rollout import MinibarRollout
@@ -73,6 +74,19 @@ class MinibarStockReceipt(BaseModel):
     expected_revision: int = Field(ge=1, le=2**63-1)
     reference: str = Field(default='', max_length=200)
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class MinibarStockAdjustment(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    kind: Literal['WASTE','COUNT_PLUS','COUNT_MINUS','RETURN','REVERSAL']
+    quantity: int = Field(ge=1, le=1000000)
+    expected_revision: int = Field(ge=1, le=2**63-1)
+    room_id: str | None = Field(default=None,min_length=1,max_length=128)
+    expected_stay_id: str | None = Field(default=None,min_length=1,max_length=128)
+    original_id: str | None = Field(default=None,min_length=1,max_length=128)
+    unit_cost_mnt: int | None = Field(default=None,ge=0,le=2**63-1)
+    reason: str = Field(min_length=1,max_length=1000)
+    idempotency_key: str = Field(min_length=1,max_length=128)
 
 
 class MinibarTemplateCreate(BaseModel):
@@ -1110,6 +1124,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def minibar_receive(tenant_id: str, product_id: str, body: MinibarStockReceipt, secret: Annotated[str, Depends(token)]):
         return minibar.receive(secret, tenant_id, product_id, body.quantity, body.unit_cost_mnt,
                                body.expected_revision, body.reference, body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/products/{product_id}/adjustment-preview')
+    def minibar_adjustment_preview(tenant_id: str,product_id: str,secret: Annotated[str,Depends(token)],room_id: str | None=Query(None,min_length=1,max_length=128)):
+        return MinibarAdjustments(service).preview(secret,tenant_id,product_id,room_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/products/{product_id}/adjustments',status_code=201)
+    def minibar_adjustment(tenant_id: str,product_id: str,body: MinibarStockAdjustment,secret: Annotated[str,Depends(token)]):
+        return MinibarAdjustments(service).change(secret,tenant_id,product_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/minibar/products/{product_id}/adjustments')
+    def minibar_adjustments(tenant_id: str,product_id: str,secret: Annotated[str,Depends(token)],after: str=Query('',max_length=128),limit: int=Query(50,ge=1,le=100)):
+        return MinibarAdjustments(service).history(secret,tenant_id,product_id,after,limit)
 
     @app.get('/hotels/{tenant_id}/minibar/products/{product_id}/ledger')
     def minibar_ledger(tenant_id: str, product_id: str, secret: Annotated[str, Depends(token)],
