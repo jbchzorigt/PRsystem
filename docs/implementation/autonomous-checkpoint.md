@@ -10,9 +10,19 @@ battery exited 0 on `4d42ab4`, the measured tree, in a clean detached checkout. 
 completion is not customer acceptance and not release approval.
 
 **The programme is complete and nothing is authorized to begin.** Phases 03–23 are `DONE`; Phases
-03, 04 and 05 are `ACCEPTED`; Phases 06–23 are `AWAITING_CUSTOMER_ACCEPTANCE`. The governed state
-records no current phase (`A-P23-4`). Every remaining decision is the customer's and is listed in
-[release-candidate-audit.md](release-candidate-audit.md) §9.
+03, 04 and 05 are `ACCEPTED`; Phases 06–23 were `AWAITING_CUSTOMER_ACCEPTANCE` when this checkpoint
+was written. The governed state records no current phase (`A-P23-4`). Every remaining decision is
+the customer's and is listed in [release-candidate-audit.md](release-candidate-audit.md) §9.
+
+**Acceptance update, 2026-09-10.** After the independent acceptance review and its three
+documentation corrections (`8ce5861`), the customer accepted the implementation of Phases 06–23 at
+commit `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843`. The acceptance is declared in
+`tools/programme-state.mjs` (`PROGRAMME_ACCEPTANCE`), held by governance check 18, and restated in
+the [Phase 06–23 customer implementation acceptance](phase-status.md#phase-0623-customer-implementation-acceptance)
+section of `phase-status.md`. It is implementation acceptance only: production release remains
+blocked, no gate is cleared, the Police exceptions stay unapproved, the 17 P1 items and P1-10 stay
+pending, DSR-01 and DSR-02 stay open, and no phase beyond 23 is authorized. The rest of this
+checkpoint is unchanged and describes the tree as it was at the Phase 23 record.
 
 **No gate cleared.** All eleven `EXT` gates and the four internal gates are `BLOCKED`; the release
 candidate cannot be started in production until `INT-KMS-01` clears, and cannot onboard a hotel

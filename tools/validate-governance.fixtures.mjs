@@ -1990,15 +1990,190 @@ const FIXTURES = [
         ),
       ),
   },
+  // ------------------------------ Phases 06–23 customer acceptance (check 18)
+  //
+  // The customer accepted Phases 06–23 as one event at one commit. The document
+  // restates it and may not withdraw it, narrow it, widen it, move it, or read
+  // into it what the acceptance does not grant.
   {
-    name: 'phase status: the Phase 06 acceptance row claims acceptance',
+    name: 'acceptance: a Phase 06 acceptance row withdraws the acceptance',
     file: 'phase-status',
-    expect: /Phase 06 acceptance = "`ACCEPTED`"/,
+    expect:
+      /states Phase 06 acceptance = "`AWAITING_CUSTOMER_ACCEPTANCE`"; the governed value is "`ACCEPTED`"/,
     mutate: (text) =>
       text.replace(
-        '| Phase 06 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |',
         '| Phase 06 acceptance | `ACCEPTED` |',
+        '| Phase 06 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |',
       ),
+  },
+  {
+    name: 'acceptance: the acceptance table withdraws one phase',
+    file: 'phase-status',
+    expect:
+      /the Phase 06 acceptance row states `AWAITING_CUSTOMER_ACCEPTANCE`; the governed acceptance is `ACCEPTED`/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase 06 | Hotel, room, category, and tariffs | `ACCEPTED` |',
+        '| Phase 06 | Hotel, room, category, and tariffs | `AWAITING_CUSTOMER_ACCEPTANCE` |',
+      ),
+  },
+  {
+    name: 'acceptance: a phase omitted from the accepted set',
+    file: 'phase-status',
+    expect: /the acceptance table lists phases \[[^\]]*\]; it must list exactly \[06, 07/,
+    mutate: (text) => text.replace(/^\| Phase 15 \| Restaurant \|[^\n]*\n/m, ''),
+  },
+  {
+    name: 'acceptance: a phase outside the approved programme added to the accepted set',
+    file: 'phase-status',
+    expect: /undeclared "Phase 24"|the acceptance table lists phases \[[^\]]*24\]/,
+    mutate: (text) =>
+      text.replace(
+        /^(\| Phase 23 \| Release candidate audit \| `ACCEPTED` \| `([0-9a-f]{40})` \|\n)/m,
+        '$1| Phase 24 | Beyond the approved programme | `ACCEPTED` | `$2` |\n',
+      ),
+  },
+  {
+    name: 'acceptance: the accepted-at commit changed in the section',
+    file: 'phase-status',
+    expect: /states "accepted at commit" 1 times naming 0{40}; it must state it exactly once/,
+    mutate: (text) =>
+      text.replace(/accepted at commit `[0-9a-f]{40}`/, `accepted at commit \`${'0'.repeat(40)}\``),
+  },
+  {
+    name: 'acceptance: the accepted-at commit deleted from the section',
+    file: 'phase-status',
+    expect: /states "accepted at commit" 0 times; it must state it exactly once/,
+    mutate: (text) => text.replace(/accepted at commit `[0-9a-f]{40}`/, 'accepted'),
+  },
+  {
+    name: 'acceptance: one member of the set accepted at a different commit',
+    file: 'phase-status',
+    expect: /the Phase 12 acceptance row names commit 0{40}; the accepted commit is [0-9a-f]{40}/,
+    mutate: (text) =>
+      text.replace(
+        /^(\| Phase 12 \| Public discovery and Guest authentication \| `ACCEPTED` \| )`[0-9a-f]{40}`/m,
+        `$1\`${'0'.repeat(40)}\``,
+      ),
+  },
+  {
+    name: 'acceptance: the section claims production release approval',
+    file: 'phase-status',
+    expect: /claims what the acceptance does not grant: "release is approved"/,
+    mutate: (text) =>
+      text.replace(
+        '**This is implementation acceptance only.**',
+        '**This is implementation acceptance only.** Production release is approved.',
+      ),
+  },
+  {
+    name: 'acceptance: the section clears the gates through the acceptance',
+    file: 'phase-status',
+    expect: /lacks the statement "no EXT or internal gate is cleared"/,
+    mutate: (text) =>
+      text.replace(
+        'no EXT or internal gate is cleared',
+        'every EXT and internal gate is cleared by this acceptance',
+      ),
+  },
+  {
+    name: 'acceptance: the section signs off the P1 items through the acceptance',
+    file: 'phase-status',
+    expect: /lacks the statement "17 P1 configuration items remain pending, P1-10 included"/,
+    mutate: (text) =>
+      text.replace(
+        '17 P1 configuration items remain pending, P1-10 included',
+        '17 P1 configuration items are signed off, P1-10 included',
+      ),
+  },
+  {
+    name: 'acceptance: the section approves the Police exceptions through the acceptance',
+    file: 'phase-status',
+    expect:
+      /lacks the statement "the three Police production security exceptions remain unapproved"/,
+    mutate: (text) =>
+      text.replace(
+        'the three Police production security exceptions remain unapproved',
+        'the three Police production security exceptions are accepted with the implementation',
+      ),
+  },
+  {
+    name: 'acceptance: a phase beyond the programme created in the ledger',
+    file: 'phase-status',
+    expect: /phase-status\.md ledger: unexpected phases 24|undeclared "Phase 24"/,
+    mutate: (text) =>
+      text.replace(
+        /^(\| 23 \| Release candidate audit \|[^\n]*\n)/m,
+        '$1| 24 | Beyond the approved programme | `NOT STARTED` | — | — | — |\n',
+      ),
+  },
+  {
+    name: 'acceptance: a phase beyond the programme started in the current position',
+    file: 'phase-status',
+    expect: /undeclared "Phase 24"|carries a row the manifest does not govern: Phase 24 state/,
+    mutate: (text) =>
+      text.replace(
+        '| Phase 23 acceptance | `ACCEPTED` |\n',
+        '| Phase 23 acceptance | `ACCEPTED` |\n| Phase 24 state | `IN PROGRESS` |\n',
+      ),
+  },
+  {
+    name: 'acceptance: the programme reopened to NOT STARTED after the acceptance',
+    file: 'phase-status',
+    expect:
+      /states Phase state = "`NOT STARTED`[^"]*"; it must name exactly one state and it must be PROGRAMME COMPLETE/,
+    mutate: (text) =>
+      text.replace('| Phase state | `PROGRAMME COMPLETE`', '| Phase state | `NOT STARTED`'),
+  },
+  {
+    name: 'acceptance: a current phase named after the programme completed',
+    file: 'phase-status',
+    expect:
+      /states Current phase = "23 [^"]*"; the governed value is "None — the approved programme/,
+    mutate: (text) =>
+      text.replace(
+        `| Current phase | ${CURRENT_PHASE_CELL} |`,
+        '| Current phase | 23 — Release candidate audit |',
+      ),
+  },
+  {
+    name: 'acceptance: the acceptance section deleted',
+    file: 'phase-status',
+    expect: /has 0 "## Phase 06–23 customer implementation acceptance" sections/,
+    mutate: (text) =>
+      text.replace(
+        /^## Phase 06–23 customer implementation acceptance\n[\s\S]*?\n---\n\n(?=## Phase 00 record)/m,
+        '',
+      ),
+  },
+  {
+    name: 'acceptance: the acceptance section duplicated',
+    file: 'phase-status',
+    expect: /has 2 "## Phase 06–23 customer implementation acceptance" sections/,
+    mutate: (text) => {
+      const block =
+        /^## Phase 06–23 customer implementation acceptance\n[\s\S]*?\n---\n\n(?=## Phase 00 record)/m.exec(
+          text,
+        )?.[0];
+      if (block === undefined) throw new Error('no acceptance section');
+      return text.replace(block, `${block}${block}`);
+    },
+  },
+  {
+    name: 'acceptance: the accepted-at position row moved to a different commit',
+    file: 'phase-status',
+    expect: /states Phases 06–23 accepted at = "`0{40}`"; the governed value is/,
+    mutate: (text) =>
+      text.replace(
+        /^\| Phases 06–23 accepted at \| `[0-9a-f]{40}` \|/m,
+        `| Phases 06–23 accepted at | \`${'0'.repeat(40)}\` |`,
+      ),
+  },
+  {
+    name: 'acceptance: the accepted-at position row removed',
+    file: 'phase-status',
+    expect: /has no "Phases 06–23 accepted at" row/,
+    mutate: (text) => text.replace(/^\| Phases 06–23 accepted at \|[^\n]*\n/m, ''),
   },
   // ------------------------------------------------ Phase 05 evidence (check 16)
   {

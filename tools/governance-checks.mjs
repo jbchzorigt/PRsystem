@@ -19,8 +19,10 @@ import {
   GOVERNED_PHASES,
   GOVERNED_STATE,
   PHASE_05_EVIDENCE,
+  PROGRAMME_ACCEPTANCE,
   PROGRESSED_PHASES,
   PROGRESSION_AUTHORIZATION,
+  currentAcceptance,
 } from './programme-state.mjs';
 import { SUB_GATES } from './gate-sec-config.mjs';
 
@@ -1239,6 +1241,7 @@ export function runGovernanceChecks({
       ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
       ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
       ['Phase 05', GOVERNED_STATE.implementedPhaseAcceptedAtCommit],
+      ['Phases 06–23', PROGRAMME_ACCEPTANCE.acceptedAtCommit],
     ];
     for (const [phase, commit] of ACCEPTED_COMMITS) {
       assert(
@@ -1477,13 +1480,17 @@ export function runGovernanceChecks({
       ['Phase 04 accepted at', `\`${GOVERNED_STATE.completedPhaseAcceptedAtCommit}\``],
       ['Phase 05 accepted at', `\`${GOVERNED_STATE.implementedPhaseAcceptedAtCommit}\``],
       // Every phase completed under the standing progression authorization
-      // states its own acceptance, which is `AWAITING_CUSTOMER_ACCEPTANCE` until
-      // a customer decision changes `programme-state.mjs`. The row cannot claim
-      // more than the governed entry does.
+      // states its own acceptance: the customer's event in `PROGRAMME_ACCEPTANCE`
+      // where the phase is in the accepted set, its evidence-time status
+      // otherwise. The row cannot claim more than the governed state does, and
+      // cannot withdraw what it records.
       ...PROGRESSED_PHASES.map((phase) => [
         `Phase ${phase.number} acceptance`,
-        `\`${phase.acceptance}\``,
+        `\`${currentAcceptance(phase)}\``,
       ]),
+      // The one commit the customer accepted Phases 06–23 at (check 18 holds
+      // the acceptance itself). One row for the set, because it was one event.
+      ['Phases 06–23 accepted at', `\`${PROGRAMME_ACCEPTANCE.acceptedAtCommit}\``],
       ['Phase 03 accepted at', `\`${manifest.acceptedAtCommit}\``],
       ['Customer review number', String(manifest.customerReviewNumber)],
       ['Latest implemented repair number', String(manifest.latestRepairNumber)],
@@ -2029,7 +2036,13 @@ export function runGovernanceChecks({
           manifestKeys: phase.evidence.manifestKeys,
           region: phase.evidence.region,
           heading: phase.evidence.heading,
-          governed: { phase: phase.name, phaseState: phase.state, acceptance: phase.acceptance },
+          // The evidence-time acceptance: the manifest is frozen with what held
+          // when it was measured, never rewritten to the live acceptance.
+          governed: {
+            phase: phase.name,
+            phaseState: phase.state,
+            acceptance: phase.evidenceAcceptance,
+          },
           earlierAcceptanceCommits: [
             ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
             ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
@@ -2040,6 +2053,161 @@ export function runGovernanceChecks({
     }
     return summaries.join('; ');
   });
+
+  check(
+    '18',
+    'Customer acceptance of Phases 06–23 is recorded once, in full, and reads no wider',
+    () => {
+      // The governed event, in code, first. Acceptance of the set requires the
+      // programme to be complete and every member to be a progressed phase in
+      // state DONE; the set is exactly the phases the standing authorization
+      // covered, contiguous, with nothing beyond its last phase; the commit is a
+      // full object name that is no earlier acceptance's and no phase's measured
+      // tree; and every scope flag says the acceptance does not do more.
+      const A = PROGRAMME_ACCEPTANCE;
+      assert(
+        A.acceptance === 'ACCEPTED',
+        `the programme acceptance is ${JSON.stringify(A.acceptance)}`,
+      );
+      assert(
+        GOVERNED_STATE.programmeComplete === true &&
+          GOVERNED_STATE.currentPhaseState === 'PROGRAMME COMPLETE',
+        'Phases 06–23 are accepted while the governed state does not declare the programme complete',
+      );
+      const progressed = PROGRESSED_PHASES.map((phase) => phase.number);
+      const first = Number(PROGRESSION_AUTHORIZATION.firstPhase);
+      const last = Number(PROGRESSION_AUTHORIZATION.lastPhase);
+      const expected = range(first, last).map((n) => String(n).padStart(2, '0'));
+      assert(
+        A.phases.join(',') === expected.join(','),
+        `the accepted set is [${A.phases.join(', ')}]; it must be exactly [${expected.join(', ')}]`,
+      );
+      assert(
+        progressed.join(',') === expected.join(','),
+        `the progressed phases are [${progressed.join(', ')}]; the accepted set needs exactly [${expected.join(', ')}]`,
+      );
+      for (const phase of PROGRESSED_PHASES) {
+        assert(
+          phase.state === 'DONE',
+          `Phase ${phase.number} is accepted while in state ${phase.state}`,
+        );
+      }
+      assert(
+        /^[0-9a-f]{40}$/.test(A.acceptedAtCommit),
+        `the acceptance does not name a full lowercase object name: ${JSON.stringify(A.acceptedAtCommit)}`,
+      );
+      for (const [label, commit] of [
+        ['Phase 03', GOVERNED_STATE.acceptedAtCommit],
+        ['Phase 04', GOVERNED_STATE.completedPhaseAcceptedAtCommit],
+        ['Phase 05', GOVERNED_STATE.implementedPhaseAcceptedAtCommit],
+      ]) {
+        assert(
+          A.acceptedAtCommit !== commit,
+          `the acceptance reuses the ${label} acceptance commit`,
+        );
+      }
+      for (const phase of PROGRESSED_PHASES) {
+        const manifestPath =
+          PROGRESSED_MANIFEST_PATHS.get(phase.number) ?? join(IMPL, phase.evidence.manifest);
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        assert(
+          manifest.measuredAtCommit !== A.acceptedAtCommit,
+          `the acceptance commit is the Phase ${phase.number} measured commit; an acceptance is given ` +
+            'at a reviewed tree, not at the tree that measured itself',
+        );
+      }
+      for (const flag of [
+        'isReleaseApproval',
+        'clearsGates',
+        'approvesPoliceExceptions',
+        'closesP1Items',
+        'authorizesFurtherPhases',
+      ]) {
+        assert(
+          A[flag] === false,
+          `the acceptance declares ${flag} = ${JSON.stringify(A[flag])}; it must be false`,
+        );
+      }
+
+      // Then the document, which may only restate it. Exactly one section, whose
+      // table lists exactly the accepted phases in order, each ACCEPTED at the one
+      // commit; the prose states that commit; and the section carries every
+      // limiting statement and none of the claims the acceptance does not make.
+      const HEADING = '## Phase 06–23 customer implementation acceptance';
+      const headings = phaseStatus.split('\n').filter((line) => line.trim() === HEADING);
+      assert(
+        headings.length === 1,
+        `phase-status.md has ${String(headings.length)} "${HEADING}" sections; there must be exactly one`,
+      );
+      const body = section(phaseStatus, HEADING) ?? '';
+      const rows = [
+        ...body.matchAll(
+          /^\|\s*Phase (\d{2})\s*\|([^|]*)\|\s*`([A-Z_ ]+)`\s*\|\s*`([0-9a-f]+)`\s*\|/gm,
+        ),
+      ];
+      const listed = rows.map((m) => m[1]);
+      assert(
+        listed.join(',') === A.phases.join(','),
+        `the acceptance table lists phases [${listed.join(', ')}]; it must list exactly [${A.phases.join(', ')}], once each, in order`,
+      );
+      for (const m of rows) {
+        assert(
+          m[3] === A.acceptance,
+          `the Phase ${m[1]} acceptance row states \`${m[3]}\`; the governed acceptance is \`${A.acceptance}\``,
+        );
+        assert(
+          m[4] === A.acceptedAtCommit,
+          `the Phase ${m[1]} acceptance row names commit ${m[4]}; the accepted commit is ${A.acceptedAtCommit}`,
+        );
+      }
+      const stated = [...body.matchAll(/accepted at commit `([0-9a-f]{40})`/g)];
+      assert(
+        stated.length === 1 && stated[0][1] === A.acceptedAtCommit,
+        `the acceptance section states "accepted at commit" ${String(stated.length)} times` +
+          (stated.length === 1 ? ` naming ${stated[0][1]}` : '') +
+          `; it must state it exactly once, naming ${A.acceptedAtCommit}`,
+      );
+      const REQUIRED = [
+        'implementation acceptance only',
+        'This closes implementation review only',
+        'Production release remains `BLOCKED`',
+        'no EXT or internal gate is cleared',
+        'the three Police production security exceptions remain unapproved',
+        '17 P1 configuration items remain pending, P1-10 included',
+        '`DSR-01` and `DSR-02` remain open and contained',
+        'selecting `GATE-SEC` as a required GitHub status check remains an unattempted external action',
+        'no phase beyond 23 and no further implementation is authorized',
+      ];
+      // Prose wraps; the statements are matched on collapsed whitespace.
+      const flat = body.replace(/\s+/g, ' ');
+      for (const statement of REQUIRED) {
+        assert(
+          flat.includes(statement),
+          `the acceptance section lacks the statement "${statement}"`,
+        );
+      }
+      const FORBIDDEN = [
+        /release (?:is|was|has been) approved/i,
+        /approved for (?:production )?release/i,
+        /production[- ]ready/i,
+        /\bCLEARED\b/,
+        /P1-\d{2} (?:is|was|has been) (?:closed|signed off)/i,
+        /exceptions? (?:is|are|was|were|has been|have been) approved/i,
+        /Phase 24/,
+      ];
+      for (const pattern of FORBIDDEN) {
+        const hit = pattern.exec(flat);
+        assert(
+          hit === null,
+          `the acceptance section claims what the acceptance does not grant: "${hit?.[0] ?? ''}"`,
+        );
+      }
+      return (
+        `Phases ${A.phases[0]}–${A.phases[A.phases.length - 1]} ${A.acceptance} at ${A.acceptedAtCommit.slice(0, 7)} ` +
+        `on ${A.acceptedOn}; implementation acceptance only; the section restates it`
+      );
+    },
+  );
 
   return { results, failed: results.filter((entry) => !entry.ok).length };
 }

@@ -24,41 +24,42 @@ Legend: `DONE` · `IN PROGRESS` · `BLOCKED` · `NOT STARTED` · `SECURITY_REPAI
 | Phase 05 acceptance | `ACCEPTED` |
 | Phase 05 accepted at | `35314ba210f609269863f0b528bbe827e6a5d3ce` |
 | Phase 06 state | `DONE` |
-| Phase 06 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 06 acceptance | `ACCEPTED` |
 | Phase 07 state | `DONE` |
-| Phase 07 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 07 acceptance | `ACCEPTED` |
 | Phase 08 state | `DONE` |
-| Phase 08 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 08 acceptance | `ACCEPTED` |
 | Phase 09 state | `DONE` |
-| Phase 09 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 09 acceptance | `ACCEPTED` |
 | Phase 10 state | `DONE` |
-| Phase 10 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 10 acceptance | `ACCEPTED` |
 | Phase 11 state | `DONE` |
-| Phase 11 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 11 acceptance | `ACCEPTED` |
 | Phase 12 state | `DONE` |
-| Phase 12 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 12 acceptance | `ACCEPTED` |
 | Phase 13 state | `DONE` |
-| Phase 13 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 13 acceptance | `ACCEPTED` |
 | Phase 14 state | `DONE` |
-| Phase 14 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 14 acceptance | `ACCEPTED` |
 | Phase 15 state | `DONE` |
-| Phase 15 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 15 acceptance | `ACCEPTED` |
 | Phase 16 state | `DONE` |
-| Phase 16 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 16 acceptance | `ACCEPTED` |
 | Phase 17 state | `DONE` |
-| Phase 17 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 17 acceptance | `ACCEPTED` |
 | Phase 18 state | `DONE` |
-| Phase 18 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 18 acceptance | `ACCEPTED` |
 | Phase 19 state | `DONE` |
-| Phase 19 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 19 acceptance | `ACCEPTED` |
 | Phase 20 state | `DONE` |
-| Phase 20 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 20 acceptance | `ACCEPTED` |
 | Phase 21 state | `DONE` |
-| Phase 21 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 21 acceptance | `ACCEPTED` |
 | Phase 22 state | `DONE` |
-| Phase 22 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 22 acceptance | `ACCEPTED` |
 | Phase 23 state | `DONE` |
-| Phase 23 acceptance | `AWAITING_CUSTOMER_ACCEPTANCE` |
+| Phase 23 acceptance | `ACCEPTED` |
+| Phases 06–23 accepted at | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
 | Customer acceptance | `ACCEPTED` |
 | Phase 03 accepted at | `3ac74a6244a7c350b7489be05778884a9fe65c3c` |
 | Customer review number | 19 |
@@ -240,6 +241,78 @@ Under it, the "Current phase" row of the current position names the phase author
 ledger state advances when the commit completing it lands. Each completed phase is recorded in
 `PROGRESSED_PHASES` with its own evidence manifest, and governance check 17 holds the manifest, the
 governed entry and the phase's record here to one another exactly as check 16 holds Phase 05's.
+
+---
+
+## Phase 06–23 customer implementation acceptance
+
+On 2026-09-10 the customer accepted the implementation of **Phases 06 through 23**, every phase
+completed under the standing progression authorization, as one event, at the corrected release
+candidate: accepted at commit `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` — the commit that carries the
+three documentation corrections of the independent acceptance review on top of the Phase 23 record.
+The acceptance is declared in [`tools/programme-state.mjs`](../../tools/programme-state.mjs)
+(`PROGRAMME_ACCEPTANCE`), outside this document; governance check 18 holds this section, the
+current-position rows and the governed event to one another, and this document can no more withdraw
+the acceptance, narrow the set, or move it to a different tree than it could have granted it.
+
+| Phase | Title | Implementation acceptance | Accepted at |
+| --- | --- | --- | --- |
+| Phase 06 | Hotel, room, category, and tariffs | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 07 | Minibar inventory and templates | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 08 | Availability, guest identity, reception, and stay | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 09 | Cleaner and checkout coordination | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 10 | Folio, deposit, payment, and correction | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 11 | Shift, cash drawer, expense, and hotel finance | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 12 | Public discovery and Guest authentication | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 13 | Online booking and inventory hold | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 14 | Online payment, refund, commission, and settlement | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 15 | Restaurant | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 16 | Verified reviews | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 17 | Guest registry, exports, and Hotel Admin reports | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 18 | Police monitoring | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 19 | Platform Operation | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 20 | External adapters | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 21 | Responsive UI and accessibility | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 22 | Security, concurrency, recovery, and full E2E | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+| Phase 23 | Release candidate audit | `ACCEPTED` | `8ce58610b643fad9e59ae5b4a69cfa65fd4bb843` |
+
+**What was accepted, and what the evidence still says.** The measured evidence of each phase is
+frozen at the commit its manifest names — `phase-06-evidence.json` through `phase-23-evidence.json`,
+each a battery of 28 executions with every exit zero on its own implementation or correction commit
+— and none of it is re-run or restated by this acceptance. Each manifest keeps the acceptance status
+that held when it was measured, `AWAITING_CUSTOMER_ACCEPTANCE`, because that is what was true then;
+check 17 holds the manifests to that evidence-time status, and check 18 holds the live acceptance to
+the governed event. The eighteen phase records below this section are history and keep saying what
+was true when they were written.
+
+**This is implementation acceptance only.** This closes implementation review only. It is not
+production-release approval and not release readiness: **Production release remains `BLOCKED`**, for
+the reasons [release-candidate-audit.md](release-candidate-audit.md) §2, §3, §4 and §9 record, and
+the acceptance changes none of them:
+
+- **Gates:** no EXT or internal gate is cleared. `EXT-01` … `EXT-11`, `INT-KMS-01`, `INT-MAIL-01`,
+  `INT-OTP-01` and `INT-STORAGE-01` stay `BLOCKED` in
+  [external-integration-gates.md](external-integration-gates.md), `packages/ports/src/gates.ts` and
+  the seeded gate rows, each still a production release blocker, and `INT-KMS-01` still stops the
+  process.
+- **Police:** the three Police production security exceptions remain unapproved
+  (`POL-DEC-009`, `POL-DEC-010`, `POL-DEC-022`), their fallbacks are not active, and `POLICE_ENABLED`
+  stays unset until written ЦЕГ approval exists.
+- **P1:** the 17 P1 configuration items remain pending, P1-10 included; the register's accounting
+  stays 17 total, 17 pending, 0 closed, and the non-functional values stay
+  `PROVISIONAL_ARCHITECTURE_DEFAULT`.
+- **Dependencies and CI:** `DSR-01` and `DSR-02` remain open and contained in
+  [dependency-security-register.md](dependency-security-register.md); selecting `GATE-SEC` as a
+  required GitHub status check remains an unattempted external action.
+- **Scope:** no phase beyond 23 and no further implementation is authorized. The programme stays
+  complete with no current phase (`PROGRAMME COMPLETE`), the standing progression authorization
+  stays exhausted, and any further work — clearing a gate, building a Police fallback, adopting P1
+  values, scheduling the items the audit lists — begins with a new explicit customer instruction.
+- **Repository:** the acceptance authorizes no push, merge, deployment, rebase, checkout
+  reconciliation or worktree cleanup; none was performed.
+
+Phase 03's, Phase 04's and Phase 05's acceptances, their commits and their evidence are untouched by
+this and remain exactly as recorded above.
 
 ---
 

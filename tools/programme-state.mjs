@@ -128,18 +128,21 @@ export const PROGRESSION_AUTHORIZATION = {
 /**
  * The phases completed under that authorization, in order.
  *
- * Each is `DONE` — implemented and measured — and `AWAITING_CUSTOMER_ACCEPTANCE`
- * until the customer accepts it, which would be a change to this entry. Its
- * evidence manifest declares what was measured and on which implementation
- * commit; governance check 17 holds the manifest, the governed state and the
- * `phase-status.md` record to one another the way check 16 holds Phase 05's.
+ * Each is `DONE` — implemented and measured. `evidenceAcceptance` is the
+ * acceptance status that held when the phase's battery was measured and its
+ * manifest written: `AWAITING_CUSTOMER_ACCEPTANCE` for every one of them, and
+ * frozen with the manifest, which governance check 17 holds it to. It is not
+ * the live acceptance. The customer's acceptance of these phases is a later
+ * event, recorded once for the whole set in `PROGRAMME_ACCEPTANCE` below and
+ * read through `currentAcceptance`; the manifests are not rewritten to say an
+ * acceptance existed when the measurements were made, because it did not.
  */
 export const PROGRESSED_PHASES = [
   {
     number: '06',
     name: '06 — Hotel, room, category, and tariffs',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-06-evidence.json',
       region: 'phase-06-evidence',
@@ -151,7 +154,7 @@ export const PROGRESSED_PHASES = [
     number: '07',
     name: '07 — Minibar inventory and templates',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-07-evidence.json',
       region: 'phase-07-evidence',
@@ -163,7 +166,7 @@ export const PROGRESSED_PHASES = [
     number: '08',
     name: '08 — Availability, guest identity, reception, and stay',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-08-evidence.json',
       region: 'phase-08-evidence',
@@ -175,7 +178,7 @@ export const PROGRESSED_PHASES = [
     number: '09',
     name: '09 — Cleaner and checkout coordination',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-09-evidence.json',
       region: 'phase-09-evidence',
@@ -187,7 +190,7 @@ export const PROGRESSED_PHASES = [
     number: '10',
     name: '10 — Folio, deposit, payment, and correction',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-10-evidence.json',
       region: 'phase-10-evidence',
@@ -199,7 +202,7 @@ export const PROGRESSED_PHASES = [
     number: '11',
     name: '11 — Shift, cash drawer, expense, and hotel finance',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-11-evidence.json',
       region: 'phase-11-evidence',
@@ -211,7 +214,7 @@ export const PROGRESSED_PHASES = [
     number: '12',
     name: '12 — Public discovery and Guest authentication',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-12-evidence.json',
       region: 'phase-12-evidence',
@@ -223,7 +226,7 @@ export const PROGRESSED_PHASES = [
     number: '13',
     name: '13 — Online booking and inventory hold',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-13-evidence.json',
       region: 'phase-13-evidence',
@@ -235,7 +238,7 @@ export const PROGRESSED_PHASES = [
     number: '14',
     name: '14 — Online payment, refund, commission, and settlement',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-14-evidence.json',
       region: 'phase-14-evidence',
@@ -247,7 +250,7 @@ export const PROGRESSED_PHASES = [
     number: '15',
     name: '15 — Restaurant',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-15-evidence.json',
       region: 'phase-15-evidence',
@@ -259,7 +262,7 @@ export const PROGRESSED_PHASES = [
     number: '16',
     name: '16 — Verified reviews',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-16-evidence.json',
       region: 'phase-16-evidence',
@@ -271,7 +274,7 @@ export const PROGRESSED_PHASES = [
     number: '17',
     name: '17 — Guest registry, exports, and Hotel Admin reports',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-17-evidence.json',
       region: 'phase-17-evidence',
@@ -283,7 +286,7 @@ export const PROGRESSED_PHASES = [
     number: '18',
     name: '18 — Police monitoring',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-18-evidence.json',
       region: 'phase-18-evidence',
@@ -295,7 +298,7 @@ export const PROGRESSED_PHASES = [
     number: '19',
     name: '19 — Platform Operation',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-19-evidence.json',
       region: 'phase-19-evidence',
@@ -307,7 +310,7 @@ export const PROGRESSED_PHASES = [
     number: '20',
     name: '20 — External adapters',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-20-evidence.json',
       region: 'phase-20-evidence',
@@ -319,7 +322,7 @@ export const PROGRESSED_PHASES = [
     number: '21',
     name: '21 — Responsive UI and accessibility',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-21-evidence.json',
       region: 'phase-21-evidence',
@@ -331,7 +334,7 @@ export const PROGRESSED_PHASES = [
     number: '22',
     name: '22 — Security, concurrency, recovery, and full E2E',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-22-evidence.json',
       region: 'phase-22-evidence',
@@ -343,7 +346,7 @@ export const PROGRESSED_PHASES = [
     number: '23',
     name: '23 — Release candidate audit',
     state: 'DONE',
-    acceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
+    evidenceAcceptance: 'AWAITING_CUSTOMER_ACCEPTANCE',
     evidence: {
       manifest: 'phase-23-evidence.json',
       region: 'phase-23-evidence',
@@ -352,6 +355,59 @@ export const PROGRESSED_PHASES = [
     },
   },
 ];
+
+/**
+ * The customer's implementation acceptance of Phases 06–23.
+ *
+ * Given on 2026-09-10 at the corrected release candidate — the commit that
+ * carries the three documentation corrections of the independent acceptance
+ * review, on top of the Phase 23 record — as one event for the whole set. It
+ * is implementation acceptance and nothing else: every flag below says what it
+ * does not do, and governance check 18 refuses a document that reads more into
+ * it. Like the Phase 03, 04 and 05 acceptances it is a change to this module,
+ * never something a document or a manifest declares about itself, and the
+ * commit it names is required to differ from every earlier acceptance commit
+ * and from every phase's measured commit.
+ */
+export const PROGRAMME_ACCEPTANCE = {
+  phases: [
+    '06',
+    '07',
+    '08',
+    '09',
+    '10',
+    '11',
+    '12',
+    '13',
+    '14',
+    '15',
+    '16',
+    '17',
+    '18',
+    '19',
+    '20',
+    '21',
+    '22',
+    '23',
+  ],
+  acceptance: 'ACCEPTED',
+  acceptedAtCommit: '8ce58610b643fad9e59ae5b4a69cfa65fd4bb843',
+  acceptedOn: '2026-09-10',
+  acceptedBy: 'customer',
+  scope: 'implementation acceptance of Phases 06–23 at the corrected release candidate',
+  isReleaseApproval: false,
+  clearsGates: false,
+  approvesPoliceExceptions: false,
+  closesP1Items: false,
+  authorizesFurtherPhases: false,
+};
+
+/** The live acceptance of a progressed phase: the customer's event, or the evidence-time status. */
+export function currentAcceptance(phase) {
+  return PROGRAMME_ACCEPTANCE.phases.includes(phase.number)
+    ? PROGRAMME_ACCEPTANCE.acceptance
+    : phase.evidenceAcceptance;
+}
 
 /**
  * Every phase whose ledger row and position cell are governed, in ledger order.
