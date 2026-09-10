@@ -26,7 +26,7 @@ export function Table<T>({
 }) {
   if (rows.length === 0) return <p>{empty}</p>;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" role="region" aria-label={caption} tabIndex={0}>
       <table className="stack">
         <caption className="visually-hidden">{caption}</caption>
         <thead>

@@ -4873,7 +4873,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'stay',
       column: 'booking_ref',
-      shape: 'uuid | NULL | no default | no identity | not generated',
+      shape: 'text | NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -5473,7 +5473,7 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       schema: 'platform',
       table: 'booking_fulfillment_conflict',
       column: 'booking_ref',
-      shape: 'uuid | NOT NULL | no default | no identity | not generated',
+      shape: 'text | NOT NULL | no default | no identity | not generated',
     },
     {
       schema: 'platform',
@@ -17468,6 +17468,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
     {
       schema: 'platform',
       table: 'stay',
+      name: 'stay_booking_ref_shape',
+      kind: 'c',
+      definition: "CHECK (((booking_ref IS NULL) OR (booking_ref ~ '^[A-Z0-9]{8,12}$'::text)))",
+    },
+    {
+      schema: 'platform',
+      table: 'stay',
       name: 'stay_source_known',
       kind: 'c',
       definition: "CHECK ((source = ANY (ARRAY['WALK_IN'::text, 'ONLINE'::text])))",
@@ -17932,6 +17939,13 @@ export const EXPECTED_SCHEMA_SNAPSHOT: SchemaSnapshot = {
       kind: 'f',
       definition:
         'FOREIGN KEY (hotel_id, assigned_room_id) REFERENCES platform.room(hotel_id, room_id) ON DELETE RESTRICT',
+    },
+    {
+      schema: 'platform',
+      table: 'booking_fulfillment_conflict',
+      name: 'booking_fulfillment_conflict_booking_ref_shape',
+      kind: 'c',
+      definition: "CHECK ((booking_ref ~ '^[A-Z0-9]{8,12}$'::text))",
     },
     {
       schema: 'platform',

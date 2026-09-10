@@ -1,6 +1,6 @@
 # PRsystem — Dependency Security Risk Register
 
-**Version:** 1.1 (Phase 18 — a second dev-only advisory recorded: `GHSA-82fw-gwwq-j7x9`)
+**Version:** 1.2 (Phase 22 — the mandatory reviews of `DSR-01` and `DSR-02`; both still `OPEN — contained`)
 
 Advisories that cannot be closed by upgrading to a compatible stable version are recorded here with
 their containment, their evidence, and the phase that must revisit them. An entry in this register is
@@ -122,6 +122,16 @@ that wires the external adapters. **Status unchanged: `OPEN — contained`.**
 
 Next mandatory review: **Phase 22**, unchanged.
 
+### Phase 22 review (mandatory — security, concurrency, recovery)
+
+Reviewed 2026-09-10 on the Phase 22 tree. The transitive path is unchanged — `drizzle-kit@0.31.10 →
+@esbuild-kit/esm-loader@2.6.5 → @esbuild-kit/core-utils@3.3.2 → esbuild@0.18.20` — and every other
+`esbuild` in the workspace still resolves to a patched version. No dependency was added to
+`packages/db`; Phase 22's migration `0021` was written by hand like every other and applied by the
+runtime journal, never by `drizzle-kit`. `validate-workspace` checks 12–15 hold (15 of 15 in the
+battery), no script or workflow starts an esbuild server, and the production audit is clean.
+**Status unchanged: OPEN — contained.** Next mandatory review: Phase 23.
+
 ### Removal condition
 
 Close this entry when a **compatible stable** Drizzle Kit release drops the deprecated
@@ -190,6 +200,16 @@ upgrade is a change of its own, with its own gates, and Phase 22 is where it is 
 | 4 | A production install ships neither package | `pnpm run audit:prod` |
 
 No override, ignore rule or version force was used, and the advisory is not suppressed.
+
+### Phase 22 review (mandatory — security, concurrency, recovery)
+
+Reviewed 2026-09-10 on the Phase 22 tree. `pnpm why vitest` and `pnpm why @vitest/mocker` resolve to
+the same versions as at the entry's opening; `grep -r "vi.mock"` over `apps/` and `packages/` still
+returns nothing, and the two suites Phase 22 added (`degraded-modes.http`, `concurrency-coverage`)
+mock nothing either. The Phase 22 battery's `pnpm run audit:tree` reports the same three moderate
+advisories and `pnpm run audit:prod` is clean. Vitest 4 remains a deliberate upgrade with its own
+gate run; this phase did not make it. **Status unchanged: OPEN — contained.** Next mandatory review:
+Phase 23, as a release-readiness item.
 
 ### Removal condition
 

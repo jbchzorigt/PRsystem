@@ -240,7 +240,12 @@ export class CheckInService extends StayServiceBase {
         const stayId = randomUUID();
         const captured = await this.deps.tariffs.captureRateSnapshot(uow, {
           subjectType: input.source === 'ONLINE' ? 'ONLINE_BOOKING' : 'WALK_IN_STAY',
-          subjectRef: input.source === 'ONLINE' ? (input.bookingRef as string) : stayId,
+          // The booking's snapshot was captured under its id at the hold; a
+          // fulfilling check-in reads that one (Phase 22, `A-P22-3`).
+          subjectRef:
+            input.source === 'ONLINE'
+              ? (booking?.bookingId ?? (input.bookingRef as string))
+              : stayId,
           stayType: input.stayType,
           categoryId: room.categoryId,
           ...(input.source === 'ONLINE' ? {} : { roomId: room.roomId }),

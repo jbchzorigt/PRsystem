@@ -202,7 +202,14 @@ export class PaymentLockService extends StayServiceBase {
         if (held.revision !== input.expectedRevision) {
           throw new ApiError('CONFLICT', 'the attempt changed; reload and retry');
         }
-        const facts = await this.deps.payments.statusOf(uow, held.attemptRef);
+        // doc 21 §5 locks the amount a payment attempt charges. A lock for nothing
+        // — a no-usage report, or a version fully waived — has no charge to
+        // capture and no provider to ask; it settles on the lock's own evidence
+        // (Phase 22, `A-P22-2`).
+        const facts =
+          held.amountMnt === 0n
+            ? { attemptRef: held.attemptRef, status: 'SUCCEEDED' as const, capturedAmountMnt: 0n }
+            : await this.deps.payments.statusOf(uow, held.attemptRef);
         const outcome = lockOutcome(facts.status);
         const now = serverNow(this.deps, uow);
         if (outcome === 'HOLD') {

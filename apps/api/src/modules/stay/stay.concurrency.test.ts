@@ -127,7 +127,7 @@ describe('a check-in racing an overdue-conflict resolution', () => {
     env.travel(60);
     // Room B must not be eligible at detection, or no conflict opens: hold it with a stay, then free it.
     const holder = await checkIn(roomB, 1);
-    const bookingRef = '44444444-4444-4444-8444-444444444444';
+    const bookingRef = 'BKREF444444';
     env.bookings.add({
       bookingRef,
       categoryId: hotel.categoryId,

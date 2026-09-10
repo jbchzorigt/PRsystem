@@ -26,7 +26,7 @@ The gate catalog every later phase cites, and what each gate must prove.
 | `GATE-LINT` | `pnpm -w lint` | Style plus module-boundary rules | Phase 02 |
 | `GATE-UNIT` | `pnpm -w test:unit` | Pure logic: money, time, authorization matrix, state machines, event schemas | Phase 03 |
 | `GATE-INTEG` | `pnpm -w test:integration` | Real Postgres: constraints, transactions, authorization end-to-end, provider ports against simulators | Phase 03 |
-| `GATE-CONC` | `pnpm -w test:concurrency` | Real Postgres, multiple connections: every race in [11](11-concurrency-strategy.md) §4 | Phase 03 |
+| `GATE-CONC` | `pnpm -w test:concurrency` | Real Postgres, multiple connections: every race in [11](11-concurrency-strategy.md) §4; from Phase 22 `tools/concurrency-manifest.mjs` names, for every idempotent command, the suite that races it or the kernel proof it relies on | Phase 03 |
 | `GATE-MIGR` | `pnpm -w test:migrations` | Fresh and upgrade migration, constraint presence, append-only enforcement | Phase 02 |
 | `GATE-E2E` | `pnpm -w test:e2e` | Playwright journeys through the portals | Phase 21 |
 | `GATE-SEC` | `pnpm -w test:security` | Secret-leakage canary scan, dependency audit, header and CSP checks | Phase 22 |
@@ -102,6 +102,15 @@ provider page or run a full checkout to settlement are Phase 22's full pass.
 
 Canary scan across logs, traces, audit rows, outbox payloads, fixtures and seeds; dependency
 vulnerability audit; security-header and CSP verification; the `security-review` pass.
+
+Phase 22 completes the gate's four parts: the committed-content scan (`tools/scan-secrets.mjs`,
+`SEC-SECRETS`, `SEC-PII-LEAK`) is joined by the runtime scan the e2e run ends with
+(`e2e/leakage.spec.ts`: the API's own log, every durable table including `bytea`, the queue, with
+every secret the run knew as a canary); the audits are `audit:prod` and `audit:tree`; the headers
+and policies are asserted on every API answer (`health.http`) and every portal page
+(`e2e/security-headers.spec.ts`); and the review is
+[docs/implementation/phase-22-security-review.md](../implementation/phase-22-security-review.md),
+which re-verifies the threat model gate by gate.
 
 ### `GATE-GOV`
 

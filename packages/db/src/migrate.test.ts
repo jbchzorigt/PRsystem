@@ -249,12 +249,12 @@ describe('migration runner', () => {
     // 0014_online_booking_inventory, 0015_booking_settlement,
     // 0016_restaurant_ordering, 0017_verified_reviews, 0018_registry_reporting,
     // 0019_police_monitoring.
-    expect(outcome.appliedAfter).toBe(21);
+    expect(outcome.appliedAfter).toBe(22);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
       freshLedger = await ledgerRows(pool);
-      expect(freshLedger).toHaveLength(21);
+      expect(freshLedger).toHaveLength(22);
     } finally {
       await pool.end();
     }
@@ -270,7 +270,7 @@ describe('migration runner', () => {
 
     const upgradeOutcome = await runMigrations(upgradeUrl);
     expect(upgradeOutcome.appliedBefore).toBe(1);
-    expect(upgradeOutcome.appliedAfter).toBe(21);
+    expect(upgradeOutcome.appliedAfter).toBe(22);
   }, 60000);
 
   it('holds the accepted Phase 03 migrations byte-for-byte, and only those', () => {
@@ -317,7 +317,7 @@ describe('migration runner', () => {
     const toHead = await runMigrations(phase04Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 2,
-      after: 21,
+      after: 22,
     });
   }, 120000);
 
@@ -337,15 +337,15 @@ describe('migration runner', () => {
     const toHead = await runMigrations(phase05Url);
     expect({ before: toHead.appliedBefore, after: toHead.appliedAfter }).toEqual({
       before: 3,
-      after: 21,
+      after: 22,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase05Url, ledgerRows);
     const repeat = await runMigrations(phase05Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 21,
-      after: 21,
+      before: 22,
+      after: 22,
     });
     expect(await withPool(phase05Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -387,15 +387,15 @@ describe('migration runner', () => {
     const phase06 = await runMigrations(phase06Url);
     expect({ before: phase06.appliedBefore, after: phase06.appliedAfter }).toEqual({
       before: 7,
-      after: 21,
+      after: 22,
     });
 
     // Applying it again is a no-op, and mutates no ledger row.
     const ledgerAfter = await withPool(phase06Url, ledgerRows);
     const repeat = await runMigrations(phase06Url);
     expect({ before: repeat.appliedBefore, after: repeat.appliedAfter }).toEqual({
-      before: 21,
-      after: 21,
+      before: 22,
+      after: 22,
     });
     expect(await withPool(phase06Url, ledgerRows)).toEqual(ledgerAfter);
   }, 120000);
@@ -633,8 +633,8 @@ describe('migration runner', () => {
   it('treats a second application as a safe no-op', async () => {
     const outcome = await runMigrations(freshUrl);
 
-    expect(outcome.appliedBefore).toBe(21);
-    expect(outcome.appliedAfter).toBe(21);
+    expect(outcome.appliedBefore).toBe(22);
+    expect(outcome.appliedAfter).toBe(22);
 
     const pool = quietPool({ connectionString: freshUrl, max: 1 });
     try {
@@ -1527,7 +1527,7 @@ describe('the migration runner requires the canonical migration login', () => {
     const url = asMigrationLogin(withDatabase(ADMIN_URL, CANONICAL_DATABASE));
     await expect(
       runMigrations(url, { approvedOperatorOwners: ['prsystem'] }),
-    ).resolves.toMatchObject({ appliedAfter: 21 });
+    ).resolves.toMatchObject({ appliedAfter: 22 });
   }, 180000);
 });
 

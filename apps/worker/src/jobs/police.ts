@@ -117,7 +117,10 @@ export async function schedulePoliceSweep(
   try {
     await handle.upsertJobScheduler(
       `${queue}:sweep`,
-      { every: options.everyMs ?? 60_000 },
+      // doc 15 §2.1 puts the alert at p95 < 10 s from the check-in; a sweep
+      // every five seconds bounds it and costs one indexed query (Phase 22,
+      // `A-P22-11`, measured at 1.1–1.7 s with a two-second sweep).
+      { every: options.everyMs ?? 5_000 },
       {
         name: 'sweep',
         data: { kind: 'sweep' },

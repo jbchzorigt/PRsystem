@@ -76,11 +76,14 @@ the session cookie `Secure`). The E2E harness sets both; `.env.example` document
 | `pnpm run typecheck` | `tsc --noEmit` per project plus the E2E sources |
 | `pnpm run test:unit` | Vitest across apps and packages |
 | `pnpm run test:migrations` | applies the journal to real PostgreSQL, twice |
-| `pnpm run test:e2e` | builds the API and the portals, starts the real API on a scratch database (`e2e/api-server.mjs`, seeded with synthetic people) and the five portals as production builds, then runs the Playwright flows and the axe accessibility scan at phone, tablet and desktop viewports |
+| `pnpm run test:e2e` | builds the API and the portals, starts the real API on a scratch database with the worker's consumers in-process on the compose Redis (`e2e/api-server.mjs`, seeded with synthetic people), and the five portals as production builds, then runs the Playwright flows, the four full journeys, the security-header check and the axe scan at phone, tablet and desktop viewports, and last the secret-leakage scan over the run's own log, tables and queue |
 | `pnpm run build` | compiles all seven applications |
 | `pnpm run openapi` | writes `apps/api/openapi.json` (build artefact, not committed) |
 | `pnpm run migrate` | applies pending migrations to `DATABASE_URL` |
 | `pnpm run verify` | the full local gate set, in order |
+| `node tools/validate-concurrency-coverage.mjs` | every idempotent command raced by a `GATE-CONC` suite or explained (Phase 22; also run under `test:unit`) |
+| `node tools/recovery-rehearsal.mjs --out <report.json>` | the backup, restore and disaster-recovery rehearsal on a dedicated PostgreSQL with WAL archiving — measures RPO and RTO (Phase 22; needs Docker) |
+| `node tools/load-test.mjs --out <report.json>` | the latency and throughput measurement per class of doc 15 §2–§3 against the seeded e2e API (Phase 22; needs the compose stack) |
 | `pnpm run compose:up` / `compose:down` | start / destroy the backing services |
 
 Governance checks — `validate:workspace`, `validate:governance`, `scan:secrets` —

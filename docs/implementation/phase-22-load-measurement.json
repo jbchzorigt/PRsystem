@@ -1,0 +1,117 @@
+{
+  "measuredAt": "2026-09-10T00:57:50.935Z",
+  "requests": 200,
+  "concurrency": 8,
+  "classes": {
+    "read-indexed": {
+      "count": 200,
+      "concurrency": 8,
+      "failures": 0,
+      "failureSample": [],
+      "p50": 77.6,
+      "p95": 100.9,
+      "p99": 106.8,
+      "max": 114.4,
+      "rps": 101.2,
+      "target": {
+        "p50": 50,
+        "p95": 200,
+        "p99": 500
+      },
+      "withinTarget": false
+    },
+    "read-paginated": {
+      "count": 200,
+      "concurrency": 8,
+      "failures": 0,
+      "failureSample": [],
+      "p50": 22.4,
+      "p95": 38.3,
+      "p99": 40.8,
+      "max": 42.1,
+      "rps": 328,
+      "target": {
+        "p50": 100,
+        "p95": 400,
+        "p99": 800
+      },
+      "withinTarget": true
+    },
+    "public-search": {
+      "count": 200,
+      "concurrency": 8,
+      "failures": 0,
+      "failureSample": [],
+      "p50": 17.6,
+      "p95": 32.3,
+      "p99": 33.6,
+      "max": 33.9,
+      "rps": 430.1,
+      "target": {
+        "p50": 150,
+        "p95": 600,
+        "p99": 1200
+      },
+      "withinTarget": true
+    },
+    "command-transactional": {
+      "count": 120,
+      "concurrency": 4,
+      "failures": 0,
+      "failureSample": [],
+      "p50": 26.4,
+      "p95": 34.7,
+      "p99": 75.1,
+      "max": 86.8,
+      "target": {
+        "p50": 200,
+        "p95": 800,
+        "p99": 1500
+      },
+      "withinTarget": true
+    },
+    "command-simple": {
+      "count": 120,
+      "concurrency": 4,
+      "failures": 0,
+      "failureSample": [],
+      "p50": 26.3,
+      "p95": 34.9,
+      "p99": 40.6,
+      "max": 41.3,
+      "target": {
+        "p50": 100,
+        "p95": 300,
+        "p99": 700
+      },
+      "withinTarget": true
+    },
+    "command-provider": {
+      "count": 120,
+      "concurrency": 4,
+      "failures": 0,
+      "failureSample": [],
+      "p50": 26.9,
+      "p95": 34.2,
+      "p99": 36.1,
+      "max": 36.9,
+      "target": {
+        "p50": 300,
+        "p95": 1500,
+        "p99": 3000
+      },
+      "withinTarget": true
+    }
+  },
+  "throughput": {
+    "windowSeconds": 15,
+    "inFlight": 32,
+    "served": 2183,
+    "errors": 0,
+    "rps": 145.5,
+    "p95": 251.8,
+    "targetRps": 200,
+    "withinTarget": false
+  },
+  "outcome": "SHORTFALL"
+}

@@ -68,6 +68,7 @@ export async function recordPayment(form: FormData): Promise<void> {
   const approvalCode = text(form, 'approvalCode');
   const terminalId = text(form, 'terminalId');
   const providerReference = text(form, 'providerReference');
+  const shiftId = text(form, 'shiftId');
   await post(
     hotelId,
     stayId,
@@ -79,6 +80,7 @@ export async function recordPayment(form: FormData): Promise<void> {
       ...(approvalCode === undefined ? {} : { approvalCode }),
       ...(terminalId === undefined ? {} : { terminalId }),
       ...(providerReference === undefined ? {} : { providerReference }),
+      ...(shiftId === undefined ? {} : { shiftId }),
     },
     'paid',
   );
@@ -107,5 +109,53 @@ export async function finishCheckout(form: FormData): Promise<void> {
     form,
     { expectedRevision: integer(form, 'expectedRevision') },
     'checked-out',
+  );
+}
+
+/** doc 02 §3.3: the room charge, and the minibar charge once its report settled, posted to the bill. */
+export async function postCharges(form: FormData): Promise<void> {
+  const hotelId = requiredText(form, 'hotelId');
+  const stayId = requiredText(form, 'stayId');
+  await post(
+    hotelId,
+    stayId,
+    `/hotels/${hotelId}/stays/${stayId}/folio/charges`,
+    form,
+    {},
+    'charged',
+  );
+}
+
+/** doc 21 §5: lock the exact report version a payment attempt charges, under the attempt's reference. */
+export async function lockReport(form: FormData): Promise<void> {
+  const hotelId = requiredText(form, 'hotelId');
+  const stayId = requiredText(form, 'stayId');
+  const reportId = requiredText(form, 'reportId');
+  await post(
+    hotelId,
+    stayId,
+    `/hotels/${hotelId}/minibar-reports/${reportId}/payment-attempts`,
+    form,
+    {
+      expectedRevision: integer(form, 'reportRevision'),
+      attemptRef: requiredText(form, 'attemptRef'),
+    },
+    'report-locked',
+  );
+}
+
+/** The API re-reads the attempt — the folio's own payment under that reference — and settles or holds. */
+export async function reconcileReport(form: FormData): Promise<void> {
+  const hotelId = requiredText(form, 'hotelId');
+  const stayId = requiredText(form, 'stayId');
+  const reportId = requiredText(form, 'reportId');
+  const lockId = requiredText(form, 'lockId');
+  await post(
+    hotelId,
+    stayId,
+    `/hotels/${hotelId}/minibar-reports/${reportId}/payment-attempts/${lockId}/reconcile`,
+    form,
+    { expectedRevision: integer(form, 'lockRevision') },
+    'report-reconciled',
   );
 }

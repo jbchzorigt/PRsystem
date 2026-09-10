@@ -11,6 +11,7 @@ import { selectAdapters, selectKeyManagement } from '@prsystem/ports';
 import { AppModule } from './app.module';
 import { DatabaseSubscriptionState } from './modules/onboarding/contracts/subscription-state.adapter';
 import { registerCorrelation } from './observability/correlation.plugin';
+import { registerSecurityHeaders } from './observability/security-headers.plugin';
 import { ApiErrorFilter } from './observability/api-error.filter';
 import { assertApiConnectionPrincipal } from './observability/connection-guard';
 import { assertSchedulerConnectionPrincipal } from './security/scheduler-guard';
@@ -219,7 +220,8 @@ export async function createApp(
       await assertSchedulerConnectionPrincipal(schedulerPool, logger);
     }
 
-    registerCorrelation(app.getHttpAdapter().getInstance());
+    registerCorrelation(app.getHttpAdapter().getInstance(), logger);
+    registerSecurityHeaders(app.getHttpAdapter().getInstance());
 
     // Every API route is versioned. Health and the OpenAPI document are
     // operational surfaces rather than API contract, so they stay unversioned
@@ -227,7 +229,7 @@ export async function createApp(
     app.setGlobalPrefix(API_PREFIX, {
       exclude: UNVERSIONED_PATHS.map((path) => ({ path, method: RequestMethod.ALL })),
     });
-    app.useGlobalFilters(new ApiErrorFilter());
+    app.useGlobalFilters(new ApiErrorFilter(logger));
 
     if (options.serveDocs ?? true) {
       // Only the machine-readable document is served. The Swagger UI bundle

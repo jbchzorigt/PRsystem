@@ -36,6 +36,7 @@ interface ReportRow {
   readonly reportId: string;
   readonly roomId: string;
   readonly state: string;
+  readonly revision: number;
 }
 interface ConfigTask {
   readonly taskId: string;
@@ -233,7 +234,7 @@ export default async function CleanerPage({
                 <p>{stateBadge(report.state)}</p>
                 {report.state === 'PENDING' ? (
                   <form action={claimReport}>
-                    {hiddenFor({ revision: 0 }, report.reportId, 'reportId')}
+                    {hiddenFor(report, report.reportId, 'reportId')}
                     <button className="button" type="submit">
                       {HOTEL.actions.claim}
                     </button>
@@ -242,14 +243,14 @@ export default async function CleanerPage({
                 {report.state === 'INSPECTING' || report.state === 'RETURNED' ? (
                   <>
                     <form action={submitReport} aria-label={HOTEL.actions.submitReport}>
-                      {hiddenFor({ revision: 0 }, report.reportId, 'reportId')}
+                      {hiddenFor(report, report.reportId, 'reportId')}
                       {countLines(report.roomId, `count-${report.reportId}`)}
                       <button className="button" type="submit">
                         {HOTEL.actions.submitReport}
                       </button>
                     </form>
                     <form action={submitReport}>
-                      {hiddenFor({ revision: 0 }, report.reportId, 'reportId')}
+                      {hiddenFor(report, report.reportId, 'reportId')}
                       <input type="hidden" name="noUsage" value="1" />
                       <button className="button button-secondary" type="submit">
                         {HOTEL.actions.noUsage}

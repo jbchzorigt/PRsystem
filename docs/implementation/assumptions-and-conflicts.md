@@ -1380,6 +1380,95 @@ recorded so a reviewer can see where a judgement was made.
   decides the state; a hard-locked hotel's commands are refused by the API regardless of what the
   browser shows.
 
+### 3.26 Phase 22 scope alignments — approved requirements, implemented
+
+- **A-P22-1 — the recovery posture is rehearsed, and its numbers are one machine's.**
+  `tools/recovery-rehearsal.mjs` is the executable [recovery-runbook.md](recovery-runbook.md): a
+  dedicated PostgreSQL 17 with continuous WAL archiving, the platform's own bootstrap and journal, real
+  rows, a base backup, an unplanned failure, a restore to the end of the archive and one to a point in
+  time, each verified row for row and schema for schema. It measured an RPO exposure of 25.2 s against
+  the provisional 300 s and a restore of 1.6 s against the four-hour procedure budget. Those are the
+  replay's numbers on a local archive; the runbook says what a hosted restore adds and requires the
+  first production-shaped rehearsal to record its own. The archive's encryption and retention are the
+  deployment's and were not exercised.
+- **A-P22-2 — the minibar report's payment attempts are the folio's own transactions.** Phase 09
+  wrote the report lock and reconcile against a `PaymentAttemptsPort`; Phase 10 recorded every payment
+  a stay receives as a `platform.payment_transaction`; nothing joined them, and production wiring
+  answered `UNKNOWN` for every attempt — no minibar report could settle and no minibar checkout could
+  complete. `BillingPaymentAttempts` answers from the folio's `FOLIO_PAYMENT` transactions by provider
+  reference or transaction id (`SUCCEEDED` with the captured amount, `UNKNOWN` otherwise — the folio
+  holds no record of a provider's refusal). A lock whose payable is zero — a no-usage report, a fully
+  waived version — settles at the reconcile on its own evidence, because there is nothing to capture
+  and no provider to ask (doc 21 §5 locks the amount an attempt charges; a zero amount charges
+  nothing). The Hotel portal gained the lock and reconcile actions and the post-charges action, so the
+  Reception can do from the stay page what the API always required.
+- **A-P22-3 — a booking's reference is the booking's reference, in the stay too.** Phase 08 typed
+  `platform.stay.booking_ref` and the fulfilment conflict's as `uuid` before a booking existed; Phase
+  13 made the reference an 8–12 character code the guest holds. Migration `0021` widens both columns
+  and gives them the booking's own shape check (expand only; no row ever held a uuid reference,
+  because no such check-in ever succeeded); the check-in route accepts the reference the desk types;
+  the confirmed-booking facts carry the booking's id so the fulfilling check-in reads the rate snapshot
+  the hold captured (CLAUDE.md §5) instead of capturing a second one under the reference; the
+  portal's check-in form has the field. The Cleaner's report queue now carries the report's revision
+  the claim must name; the Phase 21 page had guessed zero.
+- **A-P22-4 — the onboarding journey's first steps go through the API.** No portal carries the
+  hotel application, its phone code, its invoice or the provider's pay page (doc 15's applicant
+  screens were not in Phase 21's five portals and are recorded here, not invented). The journey
+  drives them over the API's own routes, then the worker's sweeps provision and deliver the
+  activation, and everything from the first Hotel Admin's activation onward — invitations,
+  configuration, the first walk-in, its checkout, the shift's close — runs on the API and in the Hotel
+  portal. The provider's pay page is never followed: the simulator's URL is not a page.
+- **A-P22-5 — a 500 is never silent, and every request leaves a line.** An unexpected exception
+  became a bare `INTERNAL_ERROR` with no log entry anywhere, and no request was logged at all; a
+  defect found by this phase's journeys was invisible until the filter logged it. `ApiErrorFilter`
+  now logs the error under its correlation id through the redacting logger, and the correlation
+  plugin logs every completed request — method, path without its query string, status, duration —
+  under the same id. The leakage scan reads that log back; it found nothing.
+- **A-P22-6 — general request rate limiting does not exist, and this phase says so rather than
+  inventing its values.** Every limit the requirements name is in place where they name it (OTP
+  attempts and lockouts, guest access-code attempts, Police exact-search attempts, one TOTP per
+  step); a per-IP or per-account ceiling on ordinary requests is not, so doc 15 §4's "Redis
+  unavailable → rate limits fail closed" has nothing to fail. The concrete values are P1
+  configuration (`T-X-05`); the mechanism and its numbers are Phase 23's to put to the customer.
+- **A-P22-7 — the outbox relay is durable and unscheduled.** `packages/outbox` provides the relay
+  and the consumer; the worker names the queue; no consumer runs it. Every committed event is kept
+  and none is delivered; nothing is lost because today's integrations read state — the Police
+  matcher sweeps stays, the settlement sweeps read payables, provisioning sweeps applications — and
+  the "outbox relay lag" target cannot be measured. The relay is scheduled by the phase that first
+  needs a consumer, together with the runbook's recovery cut-off (§4).
+- **A-P22-8 — the room board misses its p50 and one instance misses the throughput target, and the
+  numbers stand.** `tools/load-test.mjs` measured p50 77.6 ms against 50 ms for
+  `GET /hotels/:id/rooms/board` (p95 and p99 within) and 145.5 rps sustained against 200 for one API
+  process on one machine. The board assembles occupancy, time state, cleaning, minibar and blockers
+  per room from several relations; the shortfall is the query's, and a second instance or a tuned
+  plan is what would close it. Neither is done here, and neither number is lowered.
+- **A-P22-9 — the portals' content security policy admits inline script until a nonce is
+  threaded through.** Every portal and every API answer now carries the header baseline (`nosniff`,
+  `DENY`, `no-store` on the API, `frame-ancestors 'none'`, `object-src 'none'`, `form-action 'self'
+  https:` for the provider's pay page). Next.js renders its hydration bootstrap as inline script, so
+  `script-src` carries `'unsafe-inline'`; a nonce-based policy needs a middleware and is an open item.
+  `Strict-Transport-Security` is the TLS edge's to set.
+- **A-P22-10 — cash carries its shift, and the portal now says which.** The billing API requires a
+  cash payment to name the Reception's open shift (doc 24); the Phase 21 stay page never sent one, so
+  every cash payment through the portal failed. The page carries the open shift and says when there
+  is none.
+- **A-P22-11 — the Police matcher sweep runs every five seconds.** The worker's default was 60 s,
+  which cannot meet doc 15 §2.1's p95 < 10 s from the check-in; the journey measured 1.1–1.7 s with a
+  2-second sweep. Five seconds bounds the alert within the target at the cost of one indexed query
+  per sweep. The e2e stack's own cadence is its own setting.
+- **A-P22-12 — the concurrency story of every command is written down.** 147 idempotent commands
+  are discovered from the source; `tools/concurrency-manifest.mjs` names for each the `GATE-CONC`
+  suite that races its service method (69) or records that its only concurrency concern is the
+  duplicate submit the kernel's four idempotency proofs cover (78); `validate-concurrency-coverage`
+  holds source, manifest and suites to one another under `GATE-UNIT`. The 78 are not raced beyond the
+  claim; the manifest says so per command, and adding a race is a manifest edit and a test.
+- **A-P22-13 — the e2e stack runs the worker's consumers in-process.** The provisioning, activation
+  delivery, boundary, Police matcher, export and settlement sweeps run in the e2e API process, on the
+  worker's own database login and the real Redis, from the worker's own job modules — the same code
+  the worker deployment runs, in the same process only so the console can read the simulators they
+  deliver through. What the journeys prove about those sweeps they prove about the worker's code, not
+  about its deployment.
+
 ## 4. P1 configuration register
 
 [docs/00-mvp-open-decisions.md](../00-mvp-open-decisions.md) §3 lists **17** P1 items. All **17 remain

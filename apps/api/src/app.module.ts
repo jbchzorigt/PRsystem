@@ -34,6 +34,7 @@ import {
   RepositoryBookingFulfilment,
 } from './modules/booking/contracts/booking-reads';
 import { BillingDeposits } from './modules/billing/contracts/stay-deposits';
+import { BillingPaymentAttempts } from './modules/billing/contracts/stay-payment-attempts';
 import { RepositoryRestaurantOrders } from './modules/restaurant/contracts/stay-checkout';
 import type { RestaurantModuleOptions } from './modules/restaurant/restaurant.module';
 import { RestaurantModule } from './modules/restaurant/restaurant.module';
@@ -216,6 +217,9 @@ export class AppModule {
       catalog,
       minibar,
       deposits: options.stay.deposits ?? new BillingDeposits(),
+      // Phase 22: the minibar report's payment attempts are the folio's own
+      // transactions; without this the report could never settle (`A-P22-2`).
+      payments: options.stay.payments ?? new BillingPaymentAttempts(),
       cash: options.stay.cash ?? new LedgerCashLedger(),
       // Phase 13 supplies both: a check-in reads the booking it fulfils and
       // consumes it in the same transaction (`BK-DEC-013`).

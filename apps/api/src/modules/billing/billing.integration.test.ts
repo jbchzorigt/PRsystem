@@ -6,6 +6,9 @@ import { syntheticGuest } from '../stay/test-support/stay-harness';
 import type { StayView } from '../stay/services/stay-views';
 import type { BillingHarness } from './test-support/billing-harness';
 import { createBillingHarness, key, request } from './test-support/billing-harness';
+import { withTenantTransaction } from '@prsystem/db';
+import { BillingPaymentAttempts } from './contracts/stay-payment-attempts';
+import { hotelScope } from './services/billing-context';
 import type { FolioView } from './services/billing-views';
 
 /**
@@ -101,6 +104,55 @@ async function receiveDeposit(stayId: string, amountMnt = 50_000n): Promise<Foli
     request(h.reception),
   );
 }
+
+describe('the stay module’s payment attempts are the folio’s own transactions (Phase 22, A-P22-2)', () => {
+  it('answers SUCCEEDED with the captured amount for a payment reference, and UNKNOWN for none', async () => {
+    const stay = await checkIn();
+    await env.folios.postCharges(
+      { hotelId: h.hotelId, stayId: stay.stayId, idempotencyKey: key('fc') },
+      h.reception,
+      request(h.reception),
+    );
+    const paid = await env.folios.pay(
+      {
+        hotelId: h.hotelId,
+        stayId: stay.stayId,
+        idempotencyKey: key('py'),
+        channel: 'MANUAL_POS',
+        amountMnt: 15_000n,
+        approvalCode: 'A22-0001',
+        terminalId: 'T-22',
+        providerReference: `pos-${stay.stayId}`,
+      },
+      h.reception,
+      request(h.reception),
+    );
+    const transaction = paid.transactions.find((t) => t.kind === 'FOLIO_PAYMENT');
+    expect(transaction).toBeDefined();
+    const attempts = new BillingPaymentAttempts();
+    const scope = hotelScope(h.hotelId, request(h.reception));
+    const byReference = await withTenantTransaction(env.api, scope, (uow) =>
+      attempts.statusOf(uow, `pos-${stay.stayId}`),
+    );
+    expect(byReference).toEqual({
+      attemptRef: `pos-${stay.stayId}`,
+      status: 'SUCCEEDED',
+      capturedAmountMnt: 15_000n,
+    });
+    const byTransaction = await withTenantTransaction(env.api, scope, (uow) =>
+      attempts.statusOf(uow, transaction!.transactionId),
+    );
+    expect(byTransaction.status).toBe('SUCCEEDED');
+    const unknown = await withTenantTransaction(env.api, scope, (uow) =>
+      attempts.statusOf(uow, 'no-such-attempt'),
+    );
+    expect(unknown).toEqual({
+      attemptRef: 'no-such-attempt',
+      status: 'UNKNOWN',
+      capturedAmountMnt: null,
+    });
+  }, 90000);
+});
 
 describe('the one bill of a stay (RC-DEC-001, DEP-DEC-001, -008)', () => {
   it('opens with the check-in, carries the deposit requirement it was confirmed under, and charges the room once', async () => {

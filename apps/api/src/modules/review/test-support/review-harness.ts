@@ -120,7 +120,7 @@ export async function createReviewHarness(suite: string): Promise<ReviewHarness>
                    now() - make_interval(days => $5 + 2), NULL,
                    gen_random_uuid(), 120000, 120000, 1, NULL,
                    1, now() - make_interval(days => $5 + 3))
-           RETURNING booking_id),
+           RETURNING booking_id, booking_ref),
          s AS (
            INSERT INTO platform.stay
              (hotel_id, room_id, category_id, source, booking_ref, stay_type, state,
@@ -129,7 +129,7 @@ export async function createReviewHarness(suite: string): Promise<ReviewHarness>
               room_charge_mnt, pricing_config_version, deposit_required, shift_id,
               checked_in_by_account_id, actual_checkout_at, checkout_recorded_by_account_id,
               fulfilled_booking_id)
-           SELECT $1::uuid, $2::uuid, $3::uuid, 'ONLINE', b.booking_id, 'NIGHTLY', 'COMPLETED',
+           SELECT $1::uuid, $2::uuid, $3::uuid, 'ONLINE', b.booking_ref, 'NIGHTLY', 'COMPLETED',
                   now() - make_interval(days => $5 + 1), now() - make_interval(days => $5 + 1),
                   now() - make_interval(days => $5), 1, 720, 60, r.snapshot_id, 120000,
                   120000, 1, false, $6::uuid, $7::uuid,

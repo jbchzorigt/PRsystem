@@ -1,5 +1,9 @@
+import { resolve } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 import { API_PORT, API_URL, CONSOLE_PORT, CONSOLE_URL, PORTALS } from './e2e/portals';
+
+/** The API's own log for this run — what the leakage scan reads back. */
+const API_LOG = resolve(__dirname, 'test-results/e2e-api.log');
 
 /**
  * Playwright harness — Phase 21.
@@ -27,13 +31,22 @@ export default defineConfig({
     navigationTimeout: 30_000,
   },
   projects: [
-    { name: 'mobile', use: { ...devices['Pixel 7'] } },
-    { name: 'tablet', use: { ...devices['Galaxy Tab S4'] } },
-    { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile', use: { ...devices['Pixel 7'] }, testIgnore: /leakage\.spec\.ts/u },
+    { name: 'tablet', use: { ...devices['Galaxy Tab S4'] }, testIgnore: /leakage\.spec\.ts/u },
+    { name: 'desktop', use: { ...devices['Desktop Chrome'] }, testIgnore: /leakage\.spec\.ts/u },
+    // Last, once every flow and journey has run at every viewport: the scan
+    // of what this run left in the log, the database and the queue.
+    {
+      name: 'leakage',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /leakage\.spec\.ts/u,
+      dependencies: ['mobile', 'tablet', 'desktop'],
+    },
   ],
   webServer: [
     {
-      command: 'node e2e/api-server.mjs',
+      // The API's stdout goes to a file the leakage scan reads back afterwards.
+      command: `mkdir -p test-results && node e2e/api-server.mjs > "${API_LOG}" 2>&1`,
       url: `${CONSOLE_URL}/seed`,
       reuseExistingServer: false,
       timeout: 300_000,
@@ -42,6 +55,7 @@ export default defineConfig({
       env: {
         E2E_API_PORT: String(API_PORT),
         E2E_CONSOLE_PORT: String(CONSOLE_PORT),
+        E2E_API_LOG: API_LOG,
         ...(process.env['DATABASE_URL'] === undefined
           ? {}
           : { DATABASE_URL: process.env['DATABASE_URL'] }),

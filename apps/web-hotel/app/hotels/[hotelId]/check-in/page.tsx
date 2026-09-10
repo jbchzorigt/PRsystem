@@ -167,6 +167,19 @@ export default async function CheckInPage({
                 <option value="ONLINE">{HOTEL.source['ONLINE']}</option>
               </select>
             </Field>
+            <Field
+              id="bookingRef"
+              label={HOTEL.labels.bookingRef}
+              hint={HOTEL.labels.bookingRefHint}
+            >
+              <input
+                id="bookingRef"
+                name="bookingRef"
+                defaultValue={one(query, 'bookingRef')}
+                maxLength={12}
+                autoComplete="off"
+              />
+            </Field>
             <Field id="identityType" label={HOTEL.labels.identityType}>
               <select id="identityType" name="identityType" defaultValue={identityType}>
                 {Object.entries(HOTEL.identityTypes).map(([value, label]) => (

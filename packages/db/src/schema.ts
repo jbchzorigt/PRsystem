@@ -4728,7 +4728,7 @@ export const stay = platform
         .default(sql`0`),
       backdateNote: text('backdate_note'),
       backdateReasonCode: text('backdate_reason_code'),
-      bookingRef: uuid('booking_ref'),
+      bookingRef: text('booking_ref'),
       categoryId: uuid('category_id').notNull(),
       checkInRecordedAt: timestamp('check_in_recorded_at', { withTimezone: true }).notNull(),
       checkedInByAccountId: uuid('checked_in_by_account_id').notNull(),
@@ -4837,6 +4837,10 @@ export const stay = platform
         columns: [table.hotelId, table.shiftId],
         foreignColumns: [receptionShift.hotelId, receptionShift.shiftId],
       }).onDelete('restrict'),
+      check(
+        'stay_booking_ref_shape',
+        sql`((booking_ref IS NULL) OR (booking_ref ~ '^[A-Z0-9]{8,12}$'::text))`,
+      ),
       check('stay_source_known', sql`(source = ANY (ARRAY['WALK_IN'::text, 'ONLINE'::text]))`),
       check('stay_source_shape', sql`((source = 'ONLINE'::text) = (booking_ref IS NOT NULL))`),
       check(
@@ -5249,7 +5253,7 @@ export const bookingFulfillmentConflict = platform
     'booking_fulfillment_conflict',
     {
       assignedRoomId: uuid('assigned_room_id'),
-      bookingRef: uuid('booking_ref').notNull(),
+      bookingRef: text('booking_ref').notNull(),
       categoryId: uuid('category_id').notNull(),
       cleaningBufferMinutes: integer('cleaning_buffer_minutes').notNull(),
       conflictId: uuid('conflict_id')
@@ -5283,6 +5287,10 @@ export const bookingFulfillmentConflict = platform
         columns: [table.hotelId, table.assignedRoomId],
         foreignColumns: [room.hotelId, room.roomId],
       }).onDelete('restrict'),
+      check(
+        'booking_fulfillment_conflict_booking_ref_shape',
+        sql`(booking_ref ~ '^[A-Z0-9]{8,12}$'::text)`,
+      ),
       check(
         'booking_fulfillment_conflict_assignment_shape',
         sql`((state = ANY (ARRAY['RESOLVED_REASSIGNED'::text, 'RESOLVED_HIGHER_CATEGORY'::text])) = (assigned_room_id IS NOT NULL))`,

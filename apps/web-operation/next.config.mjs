@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { portalSecurityHeaders } from '@prsystem/web-kit/next-headers';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -7,6 +8,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   // The monorepo root, so file tracing does not guess at a lockfile elsewhere.
   outputFileTracingRoot: resolve(here, '../..'),
+  // Phase 22: the same security headers on every portal (GATE-SEC).
+  headers: portalSecurityHeaders,
   reactStrictMode: true,
   poweredByHeader: false,
   // The shared kit is TypeScript source; Next compiles it with the app.

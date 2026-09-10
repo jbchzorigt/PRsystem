@@ -148,6 +148,13 @@
       "when": 1757376000009,
       "tag": "0020_platform_operation",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1757376000010,
+      "tag": "0021_stay_booking_ref_text",
+      "breakpoints": true
     }
   ]
 }

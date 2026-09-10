@@ -17,6 +17,13 @@ import type { UnitOfWork } from '@prsystem/db';
 
 export interface NextBookingFacts {
   readonly bookingRef: string;
+  /**
+   * The booking's own id — what its rate snapshot was captured under at the
+   * hold (`STAY-DEC-005`), so a check-in that fulfils it reads that snapshot
+   * rather than capturing a second one under the guest's reference. Absent
+   * only from a simulated booking (Phase 22, `A-P22-3`).
+   */
+  readonly bookingId?: string;
   readonly categoryId: string;
   /** The physical room the booking is assigned to, when it has one. */
   readonly assignedRoomId: string | null;

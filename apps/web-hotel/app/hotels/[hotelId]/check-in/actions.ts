@@ -101,7 +101,13 @@ export async function checkIn(form: FormData): Promise<void> {
   const ctx = await hotelContext(hotelId, back);
   let body: Record<string, unknown>;
   try {
-    body = { ...stayFrom(form), source: requiredText(form, 'source'), guest: guestFrom(form) };
+    const bookingRef = text(form, 'bookingRef');
+    body = {
+      ...stayFrom(form),
+      source: requiredText(form, 'source'),
+      ...(bookingRef === undefined ? {} : { bookingRef: bookingRef.toUpperCase() }),
+      guest: guestFrom(form),
+    };
   } catch (error) {
     redirect(withOutcome(back, { error: 'VALIDATION_FAILED', message: (error as Error).message }));
   }

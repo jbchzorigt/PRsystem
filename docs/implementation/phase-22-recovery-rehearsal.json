@@ -1,0 +1,86 @@
+{
+  "image": "postgres:17.6-alpine",
+  "archiveTimeoutSeconds": 30,
+  "targets": {
+    "rpoSeconds": 300,
+    "rtoSeconds": 14400
+  },
+  "steps": {
+    "primaryReadyMs": 3677,
+    "provisionMs": 1549,
+    "baseBackupMs": 1497,
+    "baseBackupListing": [
+      "total 52528",
+      "-rw-------    1 root     root        373158 Sep 10 00:17 backup_manifest",
+      "-rw-------    1 root     root      53409792 Sep 10 00:17 base.tar",
+      "51.3M\t/backup/base"
+    ],
+    "archive": {
+      "files": 6,
+      "size": "80.0M\t/archive"
+    }
+  },
+  "pitrTarget": "2026-09-10T00:17:33.308Z",
+  "preFailure": {
+    "rooms": 40,
+    "audit": 85,
+    "outbox": 82,
+    "outboxPublished": 0,
+    "currentWal": "000000010000000000000005"
+  },
+  "rpo": {
+    "lastCommitAt": "2026-09-10T00:17:35.170Z",
+    "lastCommitArchivedAt": "2026-09-10T00:18:00.403Z",
+    "exposureSeconds": 25.233,
+    "boundSeconds": 30,
+    "targetSeconds": 300,
+    "withinTarget": true
+  },
+  "failureAt": "2026-09-10T00:18:00.570Z",
+  "restoreLatest": {
+    "unpackedMs": 272,
+    "readyMs": 675,
+    "totalMs": 1281,
+    "verified": {
+      "rooms": 40,
+      "audit": 85,
+      "outbox": 82,
+      "outboxPublished": 0,
+      "lastRoomPresent": true,
+      "roomAtTargetPresent": true,
+      "firstAfterTargetPresent": true
+    },
+    "schemaEqual": true,
+    "recoveryLines": [],
+    "rtoSeconds": 1.567,
+    "expectedRooms": 40,
+    "complete": true
+  },
+  "restorePointInTime": {
+    "unpackedMs": 255,
+    "readyMs": 690,
+    "totalMs": 1287,
+    "verified": {
+      "rooms": 30,
+      "audit": 65,
+      "outbox": 62,
+      "outboxPublished": 0,
+      "lastRoomPresent": false,
+      "roomAtTargetPresent": true,
+      "firstAfterTargetPresent": false
+    },
+    "schemaEqual": true,
+    "recoveryLines": [],
+    "expectedRooms": 30,
+    "complete": true
+  },
+  "rto": {
+    "measuredSeconds": 1.567,
+    "targetSeconds": 14400,
+    "withinTarget": true,
+    "note": "failure → restore A ready and verified, on one machine from a local archive; a hosted restore adds provisioning and network transfer, which the runbook budgets separately"
+  },
+  "outcome": "PASS",
+  "measuredAt": "2026-09-10T00:18:03.462Z",
+  "commits": 40
+}

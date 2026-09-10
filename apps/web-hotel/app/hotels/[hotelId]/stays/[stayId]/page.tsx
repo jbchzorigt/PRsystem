@@ -15,6 +15,9 @@ import { hotelContext, lockedScreen } from '../../../../../lib/hotel-context';
 import {
   cancelCheckout,
   finishCheckout,
+  lockReport,
+  postCharges,
+  reconcileReport,
   recordPayment,
   settleFolio,
   startCheckout,
@@ -40,6 +43,11 @@ interface StayView {
   readonly timeState: string | null;
   readonly overdueMinutes: number;
   readonly revision: number;
+  readonly minibarReport: {
+    readonly reportId: string;
+    readonly state: string;
+    readonly revision: number;
+  } | null;
   readonly guest: {
     readonly familyName?: string;
     readonly givenName?: string;
@@ -71,10 +79,26 @@ interface FolioView {
   readonly revision: number;
 }
 
+interface ReportLock {
+  readonly lockId: string;
+  readonly attemptRef: string;
+  readonly state: string;
+  readonly providerStatus: string | null;
+  readonly amountMnt: string;
+  readonly revision: number;
+}
 interface ReportSummary {
   readonly reportId: string;
   readonly state: string;
-  readonly payableMnt: string;
+  readonly revision: number;
+  readonly payableMnt?: string;
+  readonly currentVersionId: string | null;
+  readonly versions: readonly {
+    readonly versionId: string;
+    readonly totalMnt: string;
+    readonly noUsage: boolean;
+  }[];
+  readonly locks: readonly ReportLock[];
 }
 
 /**
@@ -112,15 +136,9 @@ export default async function StayPage({
   const folio = await ctx.client.call<FolioView>(`/hotels/${hotelId}/stays/${stayId}/folio`, {
     token: ctx.token,
   });
-  const reports = s.minibarApplicable
-    ? await ctx.client.call<{
-        reports: readonly { reportId: string; roomId: string; state: string }[];
-      }>(`/hotels/${hotelId}/minibar-reports`, { token: ctx.token })
-    : undefined;
-  const openReport =
-    reports !== undefined && reports.ok
-      ? reports.body.reports.find((r) => r.roomId === s.roomId)
-      : undefined;
+  // The stay's own live report, as the API names it (a submitted report has
+  // left the Cleaner's queue but is still the checkout's).
+  const openReport = s.minibarReport ?? undefined;
   const report =
     openReport === undefined
       ? undefined
@@ -129,6 +147,14 @@ export default async function StayPage({
           { token: ctx.token },
         );
   const canCheckout = ctx.has('hotel.stay.checkout_record');
+  // doc 24: cash belongs to the shift of the desk that took it. The Reception's
+  // open shift, if any, travels with a cash payment; the API refuses cash
+  // without one, and this page says so before the desk tries.
+  const currentShift = await ctx.client.call<{ shift: { shiftId: string } | null }>(
+    `/hotels/${hotelId}/shifts/current`,
+    { token: ctx.token },
+  );
+  const shiftId = currentShift.ok ? (currentShift.body.shift?.shiftId ?? undefined) : undefined;
   const hidden = (
     <>
       <input type="hidden" name="hotelId" value={hotelId} />
@@ -188,10 +214,63 @@ export default async function StayPage({
                 {HOTEL.cleanerTaskState[openReport.state] ?? openReport.state}
               </Badge>{' '}
               {report !== undefined && report.ok
-                ? `${'Төлөх дүн'}: ${formatMnt(report.body.payableMnt)}`
+                ? `${'Төлөх дүн'}: ${formatMnt(report.body.payableMnt ?? report.body.versions.find((v) => v.versionId === report.body.currentVersionId)?.totalMnt ?? '0')}`
                 : null}
             </p>
           )}
+          {report !== undefined && report.ok && canCheckout ? (
+            <>
+              {openReport?.state === 'SUBMITTED' || openReport?.state === 'RESUBMITTED' ? (
+                <form action={lockReport} className="form-grid" aria-labelledby="lock-title">
+                  <h3 id="lock-title" className="span-2">
+                    {HOTEL.labels.lockReport}
+                  </h3>
+                  <input type="hidden" name="hotelId" value={hotelId} />
+                  <input type="hidden" name="stayId" value={stayId} />
+                  <input type="hidden" name="reportId" value={report.body.reportId} />
+                  <input type="hidden" name="reportRevision" value={report.body.revision} />
+                  <input type="hidden" name={IDEMPOTENCY_FIELD} value={newIdempotencyKey()} />
+                  <Field
+                    id="attemptRef"
+                    label={HOTEL.labels.attemptRef}
+                    hint={HOTEL.labels.attemptRefHint}
+                  >
+                    <input
+                      id="attemptRef"
+                      name="attemptRef"
+                      defaultValue={`mb-${report.body.reportId.slice(0, 8)}`}
+                      maxLength={120}
+                      required
+                    />
+                  </Field>
+                  <div className="actions span-2">
+                    <button className="button" type="submit">
+                      {HOTEL.labels.lockReport}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              {report.body.locks
+                .filter((lock) => lock.state === 'HELD')
+                .map((lock) => (
+                  <form key={lock.lockId} action={reconcileReport} className="inline">
+                    <input type="hidden" name="hotelId" value={hotelId} />
+                    <input type="hidden" name="stayId" value={stayId} />
+                    <input type="hidden" name="reportId" value={report.body.reportId} />
+                    <input type="hidden" name="lockId" value={lock.lockId} />
+                    <input type="hidden" name="lockRevision" value={lock.revision} />
+                    <input type="hidden" name={IDEMPOTENCY_FIELD} value={newIdempotencyKey()} />
+                    <span>
+                      {HOTEL.labels.attemptRef}: {lock.attemptRef} · {formatMnt(lock.amountMnt)} ·{' '}
+                      {lock.state}
+                    </span>{' '}
+                    <button className="button button-secondary" type="submit">
+                      {HOTEL.labels.reconcileReport}
+                    </button>
+                  </form>
+                ))}
+            </>
+          ) : null}
         </section>
       ) : null}
 
@@ -230,7 +309,22 @@ export default async function StayPage({
               empty={COMMON.nothingHere}
             />
             {canCheckout && folio.body.state !== 'SETTLED' ? (
+              <form action={postCharges} className="inline">
+                <input type="hidden" name="hotelId" value={hotelId} />
+                <input type="hidden" name="stayId" value={stayId} />
+                <input type="hidden" name={IDEMPOTENCY_FIELD} value={newIdempotencyKey()} />
+                <button className="button button-secondary" type="submit">
+                  {HOTEL.labels.postCharges}
+                </button>
+              </form>
+            ) : null}
+            {canCheckout && folio.body.state !== 'SETTLED' ? (
               <form action={recordPayment} className="form-grid" aria-labelledby="pay-title">
+                {shiftId !== undefined ? (
+                  <input type="hidden" name="shiftId" value={shiftId} />
+                ) : (
+                  <p className="hint span-2">{HOTEL.labels.noOpenShift}</p>
+                )}
                 <h3 id="pay-title" className="span-2">
                   {HOTEL.actions.recordPayment}
                 </h3>

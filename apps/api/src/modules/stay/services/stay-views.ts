@@ -3,6 +3,8 @@ import type { CorrectionRow } from '../repositories/correction.repository';
 import { CorrectionRepository } from '../repositories/correction.repository';
 import type { GuestRow, PriceBook, StayRow } from '../repositories/stay.repository';
 import { StayRepository } from '../repositories/stay.repository';
+import type { ReportRow } from '../repositories/report.repository';
+import { ReportRepository } from '../repositories/report.repository';
 import { overdueMinutes, timeState } from '../domain/timing';
 import type { TimeState } from '../domain/timing';
 
@@ -146,6 +148,12 @@ export interface StayView {
   readonly timeState: TimeState | null;
   readonly overdueMinutes: number;
   readonly revision: number;
+  /** The stay's live minibar usage report, once a checkout opened one (Phase 22). */
+  readonly minibarReport: {
+    readonly reportId: string;
+    readonly state: string;
+    readonly revision: number;
+  } | null;
   readonly guest: GuestView | null;
   readonly priceBook: PriceBookView | null;
   readonly pendingCorrection: CorrectionView | null;
@@ -166,6 +174,7 @@ export function stayView(
     readonly priceBook: PriceBook | undefined;
     readonly latestApproved: CorrectionRow | undefined;
     readonly pending: CorrectionRow | undefined;
+    readonly report?: ReportRow | undefined;
   },
 ): StayView {
   const effective = effectiveActualCheckIn(stay, parts.latestApproved);
@@ -199,6 +208,14 @@ export function stayView(
       stay.state === 'COMPLETED' ? null : timeState(now, effective, stay.plannedCheckoutAt),
     overdueMinutes: stay.state === 'COMPLETED' ? 0 : overdueMinutes(now, stay.plannedCheckoutAt),
     revision: stay.revision,
+    minibarReport:
+      parts.report === undefined
+        ? null
+        : {
+            reportId: parts.report.reportId,
+            state: parts.report.state,
+            revision: parts.report.revision,
+          },
     guest: parts.guest === undefined ? null : guestView(parts.guest),
     priceBook: parts.priceBook === undefined ? null : priceBookView(parts.priceBook),
     pendingCorrection: parts.pending === undefined ? null : correctionView(parts.pending),
@@ -214,5 +231,6 @@ export async function loadStayView(uow: UnitOfWork, stay: StayRow, now: Date): P
     priceBook: await stays.priceBook(stay.stayId),
     latestApproved: await corrections.latestApproved(stay.stayId),
     pending: await corrections.pendingOf(stay.stayId),
+    report: await new ReportRepository(uow).liveOfStay(stay.stayId),
   });
 }

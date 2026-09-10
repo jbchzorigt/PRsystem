@@ -1,8 +1,10 @@
 # PRsystem — Requirements Traceability
 
-**Version:** 1.34 (Phase 21 — no decision changes state; the phase owns no DEC ID and its
-traceable output is the five portals on the real API, the accessibility scan, the web boundary
-lint rule and test, and the four Phase 21 rows in §2.1; 279 of 279 `COVERED`)
+**Version:** 1.35 (Phase 22 — no decision changes state; the phase owns no DEC ID and its
+traceable output is the rehearsed recovery, the four full journeys, the runtime leakage scan, the
+consolidated concurrency coverage, the fault injection, the measured targets, the threat-model
+re-verification and the five integration defects it fixed — the six Phase 22 rows in §2.1; 279 of
+279 `COVERED`)
 **Total canonical decisions:** 279 across 22 families.
 **Phase namespace:** 01–23 as fixed in [build-plan.md](build-plan.md) §3.
 
@@ -138,6 +140,12 @@ artefacts below are the traceable output.
 | 21 | Automated accessibility scan on every primary screen; no horizontal document scroll at any viewport (doc 02 §7) | `e2e/accessibility.spec.ts` (axe-core WCAG 2.0/2.1 A + AA, serious and critical fail), `packages/web-kit/src/styles.css`, `packages/web-kit/src/components/` | `pnpm run test:e2e` |
 | 21 | Architecture test: web packages import only `contracts` and the kit — never `db`, `authz` internals, `ports`, `config` or module services | `eslint.config.mjs` (`webBoundaryRule`), `packages/testing/src/web-boundary.test.ts`, `tools/validate-workspace.mjs` 3 | `pnpm run lint`, `pnpm run test:unit` |
 | 21 | Mongolian copy from the requirement documents; grace-period banners and the hard-lock screen rendered from the API's subscription state | `apps/web-*/lib/copy.ts`, `packages/web-kit/src/copy.ts`, `apps/web-hotel/lib/hotel-context.tsx`; `A-P21-5`, `A-P21-11` | `pnpm run test:e2e`, `pnpm run test:unit` (`packages/web-kit`) |
+| 22 | Backup, restore and disaster-recovery rehearsal, measured against the Phase 01 RPO/RTO values | `tools/recovery-rehearsal.mjs`, [recovery-runbook.md](recovery-runbook.md), [phase-22-recovery-rehearsal.json](phase-22-recovery-rehearsal.json); `A-P22-1` | `node tools/recovery-rehearsal.mjs` (RPO exposure 25.2 s, RTO 1.6 s, both restores verified) |
+| 22 | Full-journey Playwright suites: onboarding → activation → configuration → check-in → checkout → shift close; search → book → pay → check-in → minibar → checkout → review → settlement; check-in → Police alert → acknowledge → Found; expiry → grace → lock → renewal | `e2e/journeys/*.spec.ts`, `e2e/api-server.mjs` (worker consumers in-process); `A-P22-4`, `A-P22-13`; the fixes `A-P22-2`, `A-P22-3`, `A-P22-10` | `pnpm run test:e2e` (three viewports) |
+| 22 | Secret-leakage scan over logs, audit records, outbox payloads, fixtures and seeds — zero findings | `e2e/leakage.spec.ts` + the console's scan in `e2e/api-server.mjs`; `tools/scan-secrets.mjs`; `SEC-PII-LEAK`, `SEC-SECRETS`; the request and error logging of `A-P22-5` | `pnpm run test:e2e` (the `leakage` project), `pnpm run test:security`, `node tools/scan-secrets.mjs` |
+| 22 | Consolidated concurrency suite across every money and lifecycle command | `tools/concurrency-manifest.mjs`, `tools/concurrency-coverage.mjs`, `packages/testing/src/concurrency-coverage.test.ts`; `A-P22-12` | `pnpm run test:unit`, `pnpm run test:concurrency` ×3 |
+| 22 | Fresh and upgrade migration from the Phase 02 baseline to head; migration `0021` | `packages/db/migrations/0021_stay_booking_ref_text.sql`, `packages/db/src/migrate.test.ts` | `pnpm run test:migrations` (148: fresh, Phase 02 baseline → head, three accepted paths, determinism) |
+| 22 | Threat-model re-verification, the security-review pass, security headers, fault injection, the non-functional targets measured beside their provisional values, `DSR-01`/`DSR-02` reviewed | [phase-22-security-review.md](phase-22-security-review.md), [phase-22-measurements.md](phase-22-measurements.md), `apps/api/src/observability/security-headers.plugin.ts`, `packages/web-kit/next-headers.mjs`, `apps/api/src/resilience/degraded-modes.http.test.ts`, `tools/load-test.mjs`; `A-P22-5`…`A-P22-9`, `A-P22-11` | `pnpm run test:integration`, `pnpm run test:security`, `pnpm run test:e2e`, `node tools/load-test.mjs` |
 | 20 | Per-environment adapter configuration that fails closed: no simulator above test, no production adapter behind a `BLOCKED` gate, no stale storage credential; provider callback source allowlisting | `packages/config/src/adapters-env.ts`, `apps/api/src/security/callback-source.ts` | `pnpm run test:unit`, `GATE-SEC` / `SEC-STARTUP`, `SEC-STARTUP-WORKER` |
 | 20 | The one standards-based production adapter (S3-compatible object storage, SigV4) verified against the published vectors and a real S3-compatible service, and disabled in production behind `INT-STORAGE-01` | `packages/ports/src/adapters/s3/` | `pnpm run test:unit`, `pnpm run test:integration` (`@prsystem/ports`) |
 | 20 | The Phase 14 provider jobs scheduled on the worker only when their adapters can run, and `DISABLED` treated as no decision | `apps/api/src/modules/settlement/worker/`, `apps/worker/src/jobs/settlement.ts` | `pnpm run test:integration`, `pnpm run test:unit` (`@prsystem/worker`) |

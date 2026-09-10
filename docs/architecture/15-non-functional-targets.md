@@ -194,3 +194,18 @@ Phase 21.
 **Phase 23** reports, per target, whether it was achieved, and returns the release decision to the
 customer. A missed target is never silently adjusted, and P1-10 does not become `CLOSED` by
 measurement alone — it closes when an approved DEC adopts the values.
+
+---
+
+## 10. Measured in Phase 22
+
+Every value above keeps its `PROVISIONAL_ARCHITECTURE_DEFAULT` status. What Phase 22 measured beside
+each — the method, the number, and where it fell short — is recorded in
+[docs/implementation/phase-22-measurements.md](../implementation/phase-22-measurements.md), with the
+recovery rehearsal in [docs/implementation/recovery-runbook.md](../implementation/recovery-runbook.md)
+§2. In brief: every latency class within its target but the indexed room-board read at p50; one API
+instance below the sustained-throughput target; the Police alert well within ten seconds once the
+matcher sweeps every five; RPO exposure 25 s and a 1.6 s local restore, both verified; every
+degraded mode behaving as §4 says except that there is no general rate limiter to fail closed; the
+outbox relay unmeasurable because unscheduled; availability, the paint metrics and the two timed
+batch paths not measured. Phase 23 reports each as achieved or not; none is adjusted here.

@@ -218,5 +218,6 @@ value the dependent feature is disabled in production, not defaulted (EXT-08, EX
 - Redis loss is tolerable: queues re-drive from the outbox, rate limits fail closed.
 - Object storage holds only regenerable export artefacts under TTL.
 - A restore must not replay side effects. Outbox rows carry a delivery marker so a restored database
-  does not re-send email or SMS for already-delivered events; the recovery runbook (Phase 22) records
-  the cut-off procedure.
+  does not re-send email or SMS for already-delivered events; the recovery runbook
+  ([docs/implementation/recovery-runbook.md](../implementation/recovery-runbook.md), Phase 22) records
+  the cut-off procedure and the rehearsal's measured RPO and RTO.

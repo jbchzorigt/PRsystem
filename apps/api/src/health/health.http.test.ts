@@ -111,3 +111,18 @@ describe('GET /docs', () => {
     expect(Object.keys(doc.paths)).toContain('/health/ready');
   });
 });
+
+describe('security headers (Phase 22, GATE-SEC)', () => {
+  it('every answer carries the baseline, and API paths the strict content security policy', async () => {
+    const live = await fetch(`${baseUrl}/health/live`);
+    expect(live.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(live.headers.get('x-frame-options')).toBe('DENY');
+    expect(live.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(live.headers.get('cache-control')).toBe('no-store');
+    expect(live.headers.get('content-security-policy')).toContain("default-src 'none'");
+    const missing = await fetch(`${baseUrl}/api/v1/no-such-route`);
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(missing.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  });
+});

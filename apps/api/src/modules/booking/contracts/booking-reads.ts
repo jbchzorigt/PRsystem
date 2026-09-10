@@ -47,7 +47,7 @@ export class RepositoryConfirmedBookings implements ConfirmedBookingsPort {
     at: Date,
   ): Promise<readonly NextBookingFacts[]> {
     const result = await uow.query<Record<string, unknown>>(
-      `SELECT b.booking_ref, b.category_id, s.room_id, b.check_in_date, b.check_out_date,
+      `SELECT b.booking_id, b.booking_ref, b.category_id, s.room_id, b.check_in_date, b.check_out_date,
               s.cleaning_buffer_minutes
          FROM platform.booking b
          JOIN platform.stay s ON s.fulfilled_booking_id = b.booking_id
@@ -62,7 +62,7 @@ export class RepositoryConfirmedBookings implements ConfirmedBookingsPort {
 
   async byReference(uow: UnitOfWork, bookingRef: string): Promise<NextBookingFacts | undefined> {
     const result = await uow.query<Record<string, unknown>>(
-      `SELECT b.booking_ref, b.category_id, NULL::uuid AS room_id, b.check_in_date,
+      `SELECT b.booking_id, b.booking_ref, b.category_id, NULL::uuid AS room_id, b.check_in_date,
               b.check_out_date,
               COALESCE(c.cleaning_buffer_minutes, h.cleaning_buffer_minutes) AS cleaning_buffer_minutes
          FROM platform.booking b
@@ -84,7 +84,7 @@ export class RepositoryConfirmedBookings implements ConfirmedBookingsPort {
     now: Date,
   ): Promise<readonly NextBookingFacts[]> {
     const result = await uow.query<Record<string, unknown>>(
-      `SELECT b.booking_ref, b.category_id, NULL::uuid AS room_id, b.check_in_date,
+      `SELECT b.booking_id, b.booking_ref, b.category_id, NULL::uuid AS room_id, b.check_in_date,
               b.check_out_date,
               COALESCE(c.cleaning_buffer_minutes, h.cleaning_buffer_minutes) AS cleaning_buffer_minutes
          FROM platform.booking b
@@ -131,6 +131,7 @@ function mapFacts(row: Record<string, unknown>): NextBookingFacts {
   const checkIn = fromPgDate(row['check_in_date'] as Date);
   const checkOut = fromPgDate(row['check_out_date'] as Date);
   return {
+    bookingId: String(row['booking_id']),
     bookingRef: String(row['booking_ref']),
     categoryId: String(row['category_id']),
     assignedRoomId: (row['room_id'] as string | null) ?? null,

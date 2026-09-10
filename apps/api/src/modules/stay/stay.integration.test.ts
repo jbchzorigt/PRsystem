@@ -1082,7 +1082,7 @@ describe('the overdue conflict (STAY-DEC-013)', () => {
   let roomA: string;
   let roomB: string;
   let overdue: StayView;
-  const bookingRef = '11111111-1111-4111-8111-111111111111';
+  const bookingRef = 'BKREF111111';
 
   beforeAll(async () => {
     h = await env.hotel('Conflict Hotel', 'P25');
@@ -1253,7 +1253,7 @@ describe('the overdue conflict (STAY-DEC-013)', () => {
       h.cleaner,
       request(h.cleaner),
     );
-    const secondRef = '22222222-2222-4222-8222-222222222222';
+    const secondRef = 'BKREF222222';
     env.bookings.add({
       bookingRef: secondRef,
       categoryId: h.categoryId,
@@ -1306,7 +1306,7 @@ describe('the overdue conflict (STAY-DEC-013)', () => {
 
     // A third booking, due, with the same overdue stay: the checkout resolves it READY.
     env.bookings.clear();
-    const thirdRef = '33333333-3333-4333-8333-333333333333';
+    const thirdRef = 'BKREF333333';
     env.bookings.add({
       bookingRef: thirdRef,
       categoryId: h.categoryId,

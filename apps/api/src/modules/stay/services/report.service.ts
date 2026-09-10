@@ -68,7 +68,13 @@ export class MinibarReportService extends StayServiceBase {
     actor: CommandActor,
     request: RequestContext,
   ): Promise<
-    readonly { readonly reportId: string; readonly roomId: string; readonly state: string }[]
+    readonly {
+      readonly reportId: string;
+      readonly roomId: string;
+      readonly state: string;
+      /** The compare-and-set token a claim must carry (Phase 22). */
+      readonly revision: number;
+    }[]
   > {
     return this.runAuthorizedHotelCommandAny(
       actor,
@@ -82,6 +88,7 @@ export class MinibarReportService extends StayServiceBase {
           reportId: report.reportId,
           roomId: report.roomId,
           state: report.state,
+          revision: report.revision,
         }));
       },
     );

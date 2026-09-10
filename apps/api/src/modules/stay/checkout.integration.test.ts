@@ -241,6 +241,33 @@ async function payAndSettle(report: ReportView, ref: string): Promise<ReportView
   );
 }
 
+/** The lock and the reconcile with the attempts port left silent: only a zero lock may settle. */
+async function payAndSettleWithoutProvider(report: ReportView, ref: string): Promise<ReportView> {
+  const locked = await env.paymentLocks.lockForPayment(
+    {
+      hotelId: h.hotelId,
+      reportId: report.reportId,
+      idempotencyKey: key('pl'),
+      expectedRevision: report.revision,
+      attemptRef: ref,
+    },
+    h.reception,
+    request(h.reception),
+  );
+  const lock = locked.locks.find((l) => l.attemptRef === ref);
+  if (lock === undefined) throw new Error('no lock');
+  return env.paymentLocks.reconcile(
+    {
+      hotelId: h.hotelId,
+      lockId: lock.lockId,
+      idempotencyKey: key('pl'),
+      expectedRevision: lock.revision,
+    },
+    h.reception,
+    request(h.reception),
+  );
+}
+
 describe('the checkout and its minibar report (CHK-DEC-001, PRICE-DEC-003, -007)', () => {
   it('starts, is counted by the Cleaner, priced by the server, and only then may the stay complete', async () => {
     const roomId = await stockedRoom();
@@ -341,6 +368,16 @@ describe('the checkout and its minibar report (CHK-DEC-001, PRICE-DEC-003, -007)
     expect(version.noUsage).toBe(true);
     expect(version.totalMnt).toBe('0');
     expect(version.lines.every((line) => line.billableQuantity === 0)).toBe(true);
+  }, 60000);
+
+  it('a lock for nothing settles at the reconcile without asking any provider (Phase 22, A-P22-2)', async () => {
+    const stay = await checkIn(await stockedRoom());
+    const report = await claimReport(await startCheckout(stay));
+    const submitted = await submit(report, [], true);
+    env.payments.clear();
+    const settled = await payAndSettleWithoutProvider(submitted, `nothing-${stay.stayId}`);
+    expect(settled.state).toBe('SETTLED');
+    expect(settled.locks[0]).toMatchObject({ amountMnt: '0', state: 'SETTLED' });
   }, 60000);
 });
 

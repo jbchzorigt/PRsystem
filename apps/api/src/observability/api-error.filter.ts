@@ -3,6 +3,7 @@ import type { FastifyReply } from 'fastify';
 import { ApiError, errorEnvelope, httpStatusForErrorCode } from '@prsystem/contracts';
 import type { ErrorCode } from '@prsystem/contracts';
 import { currentCorrelationId } from '@prsystem/telemetry';
+import type { Logger } from '@prsystem/telemetry';
 
 /**
  * Translates every failure into the canonical error envelope.
@@ -10,10 +11,14 @@ import { currentCorrelationId } from '@prsystem/telemetry';
  * An unexpected error becomes a bare `INTERNAL_ERROR`: the message, the stack and
  * any value it closed over stay server-side, because an exception message is one
  * of the easiest places for a connection string or a provider payload to escape
- * (CLAUDE.md §8).
+ * (CLAUDE.md §8). What the client does not get, the operator must: an
+ * unexpected error is logged at error level under its correlation id, through
+ * the redacting logger, so a `500` is never a silent one (Phase 22, `A-P22-5`).
  */
 @Catch()
 export class ApiErrorFilter implements ExceptionFilter {
+  constructor(private readonly logger?: Logger) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
     const correlationId = currentCorrelationId() ?? 'unknown';
@@ -32,6 +37,10 @@ export class ApiErrorFilter implements ExceptionFilter {
       return;
     }
 
+    this.logger?.error(
+      { err: exception instanceof Error ? exception : new Error(String(exception)), correlationId },
+      'unexpected error answered as INTERNAL_ERROR',
+    );
     void reply
       .status(500)
       .send(errorEnvelope(new ApiError('INTERNAL_ERROR', 'internal error'), correlationId));

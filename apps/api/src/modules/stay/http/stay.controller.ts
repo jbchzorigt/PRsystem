@@ -1,3 +1,4 @@
+import { ApiError } from '@prsystem/contracts';
 import {
   Controller,
   Get,
@@ -13,7 +14,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import type { AuthenticatedRequest } from '../../iam/http/session.guard';
 import { SessionGuard, actorOf, principalOf } from '../../iam/http/session.guard';
-import { body, idempotencyKey, optionalUuid, requireUuid } from '../../iam/http/validation';
+import { body, idempotencyKey, requireUuid } from '../../iam/http/validation';
 import { requireRevision } from '../../catalog/http/catalog-validation';
 import { CheckInService } from '../services/check-in.service';
 import type { QuoteView } from '../services/check-in.service';
@@ -115,7 +116,10 @@ export class StayController {
       60,
     );
     const backdateNote = optionalString(payload['backdateNote'], 'backdateNote', 500);
-    const bookingRef = optionalUuid(payload['bookingRef'], 'bookingRef');
+    // A booking reference is the 8–12 character code the guest holds
+    // (`booking_ref_shape`), not the booking's id: the desk types what the
+    // guest shows (Phase 22, `A-P22-3`).
+    const bookingRef = optionalBookingRef(payload['bookingRef']);
     const stay = await this.checkIns.checkIn(
       {
         hotelId: requireUuid(hotelIdParam, 'hotelId'),
@@ -179,4 +183,14 @@ export class StayController {
       newStayRequest(principalOf(request).accountId),
     );
   }
+}
+
+function optionalBookingRef(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !/^[A-Z0-9]{8,12}$/u.test(value.trim().toUpperCase())) {
+    throw new ApiError('VALIDATION_FAILED', 'the request is not valid', [
+      { field: 'bookingRef', issue: 'must be the booking reference the guest holds' },
+    ]);
+  }
+  return value.trim().toUpperCase();
 }
