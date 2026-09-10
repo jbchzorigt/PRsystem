@@ -55,6 +55,12 @@ class CleaningService(MembershipService):
             stay=source[1][9:]
             if not conn.execute('SELECT 1 FROM prsystem.stay_checkout WHERE tenant_id=%s AND stay_id=%s AND cleaning_source_id=%s',(tenant,stay,source[2])).fetchone():raise DomainError('WORK_SOURCE_NOT_FOUND')
             self._cleaner(conn,tenant,actor,action=Action.CHECKOUT_REPORT,obligation=GuestFinance.root(conn,tenant,stay))
+        elif source and source[0]=='CHECKOUT' and source[1].startswith('minibar-report:'):
+            from prsystem.guest_finance import GuestFinance
+            conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+            inspection=conn.execute('SELECT stay_id FROM prsystem.minibar_guest_inspection WHERE tenant_id=%s AND source_id=%s',(tenant,source[2])).fetchone()
+            if not inspection:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            self._cleaner(conn,tenant,actor,action=Action.CHECKOUT_REPORT,obligation=GuestFinance.root(conn,tenant,inspection[0]))
         else:self._cleaner(conn,tenant,actor)
 
     @classmethod

@@ -24,7 +24,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md), [Нэг өрөөний Rollout](53-minibar-room-rollout.md), [Олон өрөөний batch](54-minibar-rollout-batches.md) нэмэлтүүд баталгаажсан: **622/622 тест skip-гүй**, есөн Chromium suite, 55 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill/report, product/template lifecycle, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-Олон өрөөний Rollout batch ([54-р баримт](54-minibar-rollout-batches.md)) одоогийн atomic apply хүрээнд баталгаажсан. Дараагийн ажил нь check-in үеийн canonical opening/price-book snapshot, active-stay refill болон хэрэглээний тайлан; дээрх 5/6-р шатны бусад ажил үлдсэн.
+Олон өрөөний Rollout batch ([54-р баримт](54-minibar-rollout-batches.md)) баталгаажсан. [Canonical guest opening, түгжсэн үнэ, хэрэглээний тайлан ба checkout](55-minibar-guest-reports.md)-ийн сервер/UI implementation нэмэгдсэн; эцсийн PostgreSQL regression/CI acceptance хүлээгдэж байна. Active-stay refill болон дээрх 5/6-р шатны бусад ажил үлдсэн.
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
 

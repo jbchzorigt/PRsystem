@@ -148,3 +148,8 @@ removable selected rooms. Selection is bounded and retained across pages in
 memory. Preview explains room-level readiness; progress uses text states and
 counts, with no color-only meaning. The named one-room retry variant shares the
 same selection/confirmation system. See UX-CONTRACT.md and docs/54.
+
+Guest minibar inspections reuse the same forms, scrollable tables, explicit
+claims, status text and dirty-form guard. The immutable check-in price book is
+readable by Reception and the assigned Cleaner. Physical-count inputs start
+empty; no-use acknowledgement is explicit. See UX-CONTRACT.md and docs/55.

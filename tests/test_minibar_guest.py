@@ -3,12 +3,15 @@ from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 from threading import Barrier
 from uuid import uuid4
+from unittest.mock import patch
 from minibar_configuration_support import MinibarConfigurationCase
 from postgres_support import ADMIN_DSN
 if ADMIN_DSN:
     import psycopg
     from psycopg import sql
     import test_minibar_reconciliation as reconciliation_support
+    from prsystem.minibar_guest import MinibarGuest
+    from prsystem.common import DomainError
 
 
 @unittest.skipUnless(ADMIN_DSN,'PRSYSTEM_TEST_ADMIN_DSN is not set')
@@ -130,6 +133,10 @@ class MinibarGuestTests(MinibarConfigurationCase):
         self.open_report()
         self.assert_status(self.command('checkout',dict(expected_revision=1,idempotency_key=uuid4().hex)),409)
         report=self.assert_status(self.report(),201)
+        self.settle_and_close(report)
+        self.assertEqual(self.stocks()['room_quantity'],1)
+
+    def settle_and_close(self,report):
         revision=report['balance']['revision']
         self.assert_status(self.allocate(60000,revision=revision),201)
         for charge,amount in ((self.stay['room_charge_id'],20000),(report['charge_id'],3000)):
@@ -138,7 +145,7 @@ class MinibarGuestTests(MinibarConfigurationCase):
         self.assertEqual(self.review().json()['code'],'MINIBAR_REPORT_LOCKED')
         revision=self.statement().json()['balance']['revision']
         result=self.assert_status(self.command('checkout',dict(expected_revision=revision,idempotency_key=uuid4().hex)),200)
-        self.assertEqual(result['state'],'CLOSED');self.assertEqual(self.stocks()['room_quantity'],1)
+        self.assertEqual(result['state'],'CLOSED')
 
     def test_waiver_is_financial_only_and_keeps_consumption(self):
         self.open_report();report=self.assert_status(self.report(),201)
@@ -176,3 +183,70 @@ class MinibarGuestTests(MinibarConfigurationCase):
         with psycopg.connect(self.app_dsn) as conn:
             conn.execute("SELECT set_config('prsystem.tenant_id','other-hotel',true)")
             self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.minibar_guest_inspection').fetchone()[0],0)
+
+    def test_backdated_arrival_uses_recorded_checkin_prices(self):
+        with psycopg.connect(self.owner_dsn) as conn:arrival=conn.execute('SELECT clock_timestamp()').fetchone()[0].isoformat()
+        self.configured()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.minibar_product SET selling_price_mnt=4500,revision=revision+1 WHERE tenant_id=%s AND id=%s',(self.tenant,self.product))
+        self.start(actual_checkin_at=arrival,backdate_reason='Зочин өмнө ирсэн')
+        self.assertEqual(self.stay['snapshot']['minibar_snapshot']['items'][0]['unit_price'],4500)
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.minibar_product SET selling_price_mnt=9000,revision=revision+1 WHERE tenant_id=%s AND id=%s',(self.tenant,self.product))
+        self.assert_status(self.begin(),200);self.task=self.assert_status(self.claim(),201)
+        self.assertEqual(self.assert_status(self.report(),201)['amount_mnt'],4500)
+
+    def test_cleaner_only_account_can_claim_count_and_view_queue(self):
+        self.configured();self.start();self.assert_status(self.begin(),200)
+        _,cleaner=self.add_staff(['CLEANER'])
+        self.assertEqual(len(self.api('minibar/guest-inspections',token=cleaner,method='get').json()['items']),1)
+        self.task=self.assert_status(self.claim(token=cleaner),201)
+        self.assert_status(self.report(token=cleaner),201)
+
+    def test_eligible_stay_completion_remains_available_after_subscription_lock(self):
+        self.configured();self.start()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours'+interval '1 millisecond' WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+        self.assert_status(self.begin(),200);self.task=self.assert_status(self.claim(),201)
+        self.assertEqual(len(self.api('minibar/guest-inspections',token=self.worker_token,method='get').json()['items']),1)
+        self.assert_status(self.report(),201)
+        self.assertEqual(self.api('minibar/guest-inspections',token=self.worker_token,method='get').json()['items'],[])
+
+    def test_failure_after_postings_rolls_back_stock_report_charge_and_task(self):
+        self.open_report();before=self.stocks()
+        with patch.object(MinibarGuest,'save',side_effect=DomainError('INVALID_REQUEST')):
+            self.assert_status(self.report(),422)
+        self.assertEqual(self.stocks(),before)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.reception_minibar_report WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],0)
+            self.assertEqual(conn.execute("SELECT state FROM prsystem.cleaning_task WHERE tenant_id=%s AND id=%s",(self.tenant,self.task['task_id'])).fetchone()[0],'OPEN')
+        self.assert_status(self.report(),201)
+
+    def test_generic_cleaning_endpoint_cannot_post_canonical_guest_count(self):
+        self.open_report()
+        with psycopg.connect(self.owner_dsn) as conn:
+            action=conn.execute('SELECT id FROM prsystem.cleaning_action WHERE tenant_id=%s AND source_id=%s',(self.tenant,self.task['source_id'])).fetchone()[0]
+        response=self.api(f'cleaning/tasks/{self.task["task_id"]}/post',dict(expected_revision=0,action_id=action,quantity=1,actual_count=1),self.worker_token)
+        self.assertEqual(response.json()['code'],'CANONICAL_TASK_REQUIRED')
+        self.assertEqual(self.stocks()['room_quantity'],2)
+
+    def test_simultaneous_reports_consume_once(self):
+        self.open_report();gate=Barrier(2)
+        def report():gate.wait();return self.report()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses=[r.result() for r in (pool.submit(report),pool.submit(report))]
+        self.assertEqual(sorted(r.status_code for r in responses),[201,409]);self.assertEqual(self.stocks()['total_quantity'],9)
+
+    def test_next_opening_requires_restock_and_transfers_keep_fractional_value(self):
+        self.open_report()
+        self.assert_status(self.api(f'minibar/products/{self.product}/receipts',dict(quantity=5,unit_cost_mnt=2000,expected_revision=1)),201)
+        report=self.assert_status(self.report(),201);self.settle_and_close(report)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertIsNone(conn.execute('SELECT prsystem.minibar_guest_opening(%s,%s,clock_timestamp())',(self.tenant,self.room)).fetchone()[0])
+        before=self.stocks();self.configured();after=self.stocks()
+        self.assertEqual((after['warehouse_quantity'],after['room_quantity'],after['total_quantity']),(12,2,14))
+        self.assertEqual(after['inventory_value_exact'],before['inventory_value_exact'])
+        with psycopg.connect(self.owner_dsn) as conn:
+            book=conn.execute('SELECT prsystem.minibar_guest_opening(%s,%s,clock_timestamp())',(self.tenant,self.room)).fetchone()[0]
+            self.assertEqual(book['items'][0]['opening_quantity'],2)
+            self.assertEqual(conn.execute('SELECT cost_value,cost_denominator,cost_quantity FROM prsystem.minibar_transfer WHERE tenant_id=%s ORDER BY recorded_at DESC LIMIT 1',(self.tenant,)).fetchone(),(56000,3,14))

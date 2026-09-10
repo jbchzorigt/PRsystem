@@ -141,6 +141,9 @@ class MinibarGuest(ReceptionDependencies):
             self._actors(conn,bearer,tenant)
             principal,_=self.auth._authenticate(conn,bearer,tenant)
             if 'CLEANER' not in principal['roles']:raise DomainError('FORBIDDEN')
+            package,suspended=conn.execute('SELECT package_mnt,security_suspended FROM prsystem.hotel_access WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()
+            if suspended:raise DomainError('SECURITY_SUSPENDED')
+            if package not in (25000,30000):raise DomainError('PACKAGE_REQUIRED')
             conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
             rows=conn.execute('''SELECT e.stay_id,s.snapshot->>'room_number',i.revision,e.source_id,t.id,t.assignment_version,t.assignee_id,
                 s.snapshot->'minibar_snapshot',w.state FROM prsystem.minibar_guest_inspection e JOIN prsystem.stay s ON(s.tenant_id,s.id)=(e.tenant_id,e.stay_id)
@@ -156,5 +159,4 @@ class MinibarGuest(ReceptionDependencies):
                     if str(exc) in {'SUBSCRIPTION_EXPIRED','SUBSCRIPTION_LOCKED'}:continue
                     raise
                 items.append(dict(zip(('stay_id','room_number','report_revision','source_id','task_id','assignment_version','assignee_id','price_book','work_state'),r)))
-            if not rows:self._cleaner(conn,tenant,principal['account_id'],action=Action.DETAIL)
             return dict(items=items,next_after=rows[limit-1][0] if len(rows)>limit else None)

@@ -202,5 +202,6 @@ class ReceptionDependencies(GuestFinance):
             self.read_actor(conn,bearer,tenant,stay)
             inspection=conn.execute('SELECT state,revision FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone()
             reports=conn.execute('SELECT revision,items,amount_mnt FROM prsystem.reception_minibar_report WHERE tenant_id=%s AND stay_id=%s ORDER BY revision DESC LIMIT 1',(tenant,stay)).fetchone()
+            book=conn.execute("SELECT snapshot->'minibar_snapshot' FROM prsystem.stay WHERE tenant_id=%s AND id=%s",(tenant,stay)).fetchone()[0]
             orders=conn.execute("SELECT id,restaurant_name,contact_phone,state FROM prsystem.reception_restaurant_order WHERE tenant_id=%s AND stay_id=%s AND state NOT IN ('DONE','REFUNDED') ORDER BY id LIMIT 100",(tenant,stay)).fetchall()
-            return dict(inspection=dict(state=inspection[0],revision=inspection[1]) if inspection else None,report=dict(revision=reports[0],items=reports[1],amount_mnt=reports[2]) if reports else None,restaurant_orders=[dict(zip(('order_id','restaurant_name','contact_phone','state'),r)) for r in orders])
+            return dict(price_book=book if book and book.get('mode')=='CANONICAL' else None,inspection=dict(state=inspection[0],revision=inspection[1]) if inspection else None,report=dict(revision=reports[0],items=reports[1],amount_mnt=reports[2]) if reports else None,restaurant_orders=[dict(zip(('order_id','restaurant_name','contact_phone','state'),r)) for r in orders])

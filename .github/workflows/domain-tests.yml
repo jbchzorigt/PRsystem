@@ -81,6 +81,8 @@ jobs:
         run: node tests/browser/minibar-rollout.cjs
       - name: Verify multi-room minibar batches
         run: node tests/browser/minibar-batches.cjs
+      - name: Verify canonical minibar guest reports
+        run: node tests/browser/minibar-guest.cjs
       - name: Validate browser payloads against API models
         run: |
           python -m pip install '.[api]'
@@ -92,6 +94,7 @@ jobs:
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-archive-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-rollout-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-batch-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-guest-requests.json
       - name: Save browser evidence
         uses: actions/upload-artifact@v4
         with:

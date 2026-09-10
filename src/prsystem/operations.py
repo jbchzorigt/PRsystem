@@ -57,12 +57,12 @@ class Operations(GuestFinance):
                 result['inspections']=rows(conn,"""SELECT i.stay_id,s.snapshot->>'room_number',i.state,i.revision,s.snapshot->'minibar_snapshot'->'items'
                     FROM prsystem.reception_minibar_inspection i JOIN prsystem.stay s ON (s.tenant_id,s.id)=(i.tenant_id,i.stay_id)
                     JOIN prsystem.hotel_access h ON h.tenant_id=s.tenant_id
-                    WHERE i.tenant_id=%s AND s.state='ACTIVE' AND s.check_in_recorded_at<h.expires_at+interval '48 hours'
+                    WHERE i.tenant_id=%s AND s.state='ACTIVE' AND s.snapshot->>'minibar_mode'<>'ON' AND s.check_in_recorded_at<h.expires_at+interval '48 hours'
                     AND i.stay_id>%s ORDER BY i.stay_id LIMIT %s""",(tenant,after,limit),'stay_id room_number state revision items')
                 result['cleaning']=rows(conn,"""SELECT t.id,t.source_id,s.room_id,t.assignment_version,t.started_at,a.id,a.kind,a.product_id,a.quantity-a.completed
                     FROM prsystem.cleaning_task t JOIN prsystem.cleaning_source s ON (s.tenant_id,s.id)=(t.tenant_id,t.source_id)
                     JOIN prsystem.cleaning_action a ON (a.tenant_id,a.source_id)=(t.tenant_id,t.source_id)
-                    WHERE t.tenant_id=%s AND t.assignee_id=%s AND t.state='OPEN' AND s.source_reference NOT LIKE 'canonical-config:%%' AND a.quantity>a.completed AND t.id>%s
+                    WHERE t.tenant_id=%s AND t.assignee_id=%s AND t.state='OPEN' AND s.source_reference NOT LIKE 'canonical-config:%%' AND s.source_reference NOT LIKE 'minibar-report:%%' AND a.quantity>a.completed AND t.id>%s
                     ORDER BY t.id,a.id LIMIT %s""",(tenant,actor,after,limit),'task_id source_id room_id assignment_version started_at action_id kind product_id remaining')
             return result
 
@@ -86,7 +86,7 @@ class Operations(GuestFinance):
                 result['stays'].append({k:v for k,v in item.items() if k not in {'recorded_at','room_number','state'}})
                 result['rooms']+=rows(conn,'SELECT r.id,r.number,c.name,r.status,r.cleaning_state,r.minibar_mode,r.revision FROM prsystem.room r JOIN prsystem.room_category c ON(c.tenant_id,c.id)=(r.tenant_id,r.category_id) WHERE r.tenant_id=%s AND r.id=%s',(tenant,item['room_id']),'room_id number category_name status cleaning_state minibar_mode revision')
             if manager or 'CLEANER' in principal['roles']:
-                if item['state']=='ACTIVE':result['inspections']+=rows(conn,"SELECT stay_id,%s,state,revision,(SELECT snapshot->'minibar_snapshot'->'items' FROM prsystem.stay WHERE tenant_id=%s AND id=%s) FROM prsystem.reception_minibar_inspection WHERE tenant_id=%s AND stay_id=%s",(item['room_number'],tenant,item['stay_id'],tenant,item['stay_id']),'stay_id room_number state revision items')
+                if item['state']=='ACTIVE':result['inspections']+=rows(conn,"SELECT stay_id,%s,state,revision,(SELECT snapshot->'minibar_snapshot'->'items' FROM prsystem.stay WHERE tenant_id=%s AND id=%s) FROM prsystem.reception_minibar_inspection i WHERE tenant_id=%s AND stay_id=%s AND EXISTS(SELECT 1 FROM prsystem.stay s WHERE s.tenant_id=i.tenant_id AND s.id=i.stay_id AND s.snapshot->>'minibar_mode'<>'ON')",(item['room_number'],tenant,item['stay_id'],tenant,item['stay_id']),'stay_id room_number state revision items')
                 result['cleaning']+=rows(conn,"""SELECT t.id,t.source_id,c.room_id,t.assignment_version,t.started_at,a.id,a.kind,a.product_id,a.quantity-a.completed
                     FROM prsystem.stay_checkout c JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(c.tenant_id,c.cleaning_source_id)
                     JOIN prsystem.cleaning_action a ON(a.tenant_id,a.source_id)=(t.tenant_id,t.source_id)

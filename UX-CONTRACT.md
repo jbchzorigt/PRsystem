@@ -205,3 +205,19 @@ visible but are excluded from cancel/retry. Retry creates linked history.
 Published and archived versions expose bounded batch history. Lists, selection,
 IDs and reasons never enter URLs or storage. Async responses cannot repopulate
 detached panels. Natural document scrolling and shared native focus styles apply.
+
+## Canonical guest minibar inspection
+
+`reception.js` owners: `minibarPriceBook` renders the locked version, server
+recording time, opening quantities and selling prices using `table`;
+`guestMinibarTasks` provides bounded available/assigned work and explicit
+claim/count submission using `form`, `api` and `guard`. Reception reads the
+same price book in the existing stay panel and returns reports with a reason.
+Cleaner counts every product with initially empty inputs; no-consumption
+acknowledgement is explicit. Clients send no price, balance or success proof.
+Unknown results retain entered counts and the same idempotency key. Success
+reloads the authoritative queue. Refresh asks before discarding dirty counts.
+Load failures expose retry, obsolete loads cannot revive detached panels, and
+blocked assignments show text without an executable form. Pagination and empty
+states use the existing controls. All state remains in memory. Verification:
+`tests/browser/minibar-guest.cjs`, `test_minibar_guest.py`, desktop and 320px.
