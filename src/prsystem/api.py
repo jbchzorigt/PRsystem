@@ -1003,6 +1003,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     def minibar_reconciliation_detail(tenant_id: str,request_id: str,secret: Annotated[str,Depends(token)]):
         return reconciliation.detail(secret,tenant_id,request_id)
 
+    @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/claim-next-stay',status_code=201)
+    def minibar_claim_next_stay(tenant_id: str,task_id: str,body: MinibarTemplateCommand,secret: Annotated[str,Depends(token)]):
+        return MinibarReconciliation(service).claim_next_stay(secret,tenant_id,task_id,body.expected_revision,body.idempotency_key)
+
     @app.get('/hotels/{tenant_id}/minibar/reconciliation/tasks')
     def minibar_reconciliation_tasks(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=Query(default='',max_length=128),limit: int=Query(default=20,ge=1,le=50)):
         return reconciliation.tasks(secret,tenant_id,after,limit)

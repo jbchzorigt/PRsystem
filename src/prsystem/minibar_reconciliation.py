@@ -61,7 +61,7 @@ class MinibarReconciliation(MinibarConfiguration):
             if replay is not None:return replay
             data=self.lock_request(conn,tenant,request,revision)
             execution=self.execution(conn,tenant,request)
-            if execution and data['request_kind']!='ROLLOUT':
+            if execution and data['request_kind'] not in('ROLLOUT','NEXT_STAY'):
                 raise DomainError('WORK_SOURCE_CONFLICT')
             # The pre-created rollout count is this request's work, not a
             # preceding dependency. Keep every other source in the safe gate.
@@ -184,14 +184,37 @@ class MinibarReconciliation(MinibarConfiguration):
             self._actors(conn,bearer,tenant);principal,_=self.auth._authenticate(conn,bearer,tenant)
             self._cleaner(conn,tenant,principal['account_id']);conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
             self._catalog_lock(conn,tenant)
-            rows=conn.execute('''SELECT t.id,t.assignment_version,e.request_id,r.number,w.state FROM prsystem.cleaning_task t
+            rows=conn.execute('''SELECT t.id,t.assignment_version,e.request_id,r.number,w.state,t.assignee_id IS NULL FROM prsystem.cleaning_task t
                 JOIN prsystem.minibar_reconciliation e ON(e.tenant_id,e.source_id)=(t.tenant_id,t.source_id)
                 JOIN prsystem.minibar_configuration_request q ON(q.tenant_id,q.id)=(e.tenant_id,e.request_id)
                 JOIN prsystem.room r ON(r.tenant_id,r.id)=(q.tenant_id,q.room_id)
-                JOIN prsystem.staff_open_work w ON w.tenant_id=t.tenant_id AND w.source_id=t.id AND w.kind='CLEANING_TASK'
-                WHERE t.tenant_id=%s AND t.assignee_id=%s AND t.state='OPEN' AND t.id>%s ORDER BY t.id LIMIT %s''',(tenant,principal['account_id'],after,limit+1)).fetchall()
+                LEFT JOIN prsystem.staff_open_work w ON w.tenant_id=t.tenant_id AND w.source_id=t.id AND w.kind='CLEANING_TASK'
+                WHERE t.tenant_id=%s AND(t.assignee_id=%s OR(t.assignee_id IS NULL AND q.request_kind='NEXT_STAY')) AND t.state='OPEN' AND t.id>%s ORDER BY t.id LIMIT %s''',(tenant,principal['account_id'],after,limit+1)).fetchall()
             items=[]
-            for task,assignment,request,room,state in rows[:limit]:
+            for task,assignment,request,room,state,claimable in rows[:limit]:
                 data=self.request_data(conn,tenant,request)
-                items.append(dict(task_id=task,assignment_version=assignment,room_number=room,work_state=state,request=data,plan=self.plan(conn,tenant,data)))
+                items.append(dict(task_id=task,assignment_version=assignment,room_number=room,work_state=state,claimable=claimable,request=data,plan=self.plan(conn,tenant,data)))
             return dict(items=items,next_after=items[-1]['task_id'] if len(rows)>limit else None)
+
+    def claim_next_stay(self,bearer,tenant,task,revision,key):
+        command=dict(action='CLAIM_NEXT_STAY_MINIBAR',task_id=task,revision=revision)
+        with transaction(self.auth.dsn) as conn:
+            self._actors(conn,bearer,tenant);principal,_=self.auth._authenticate(conn,bearer,tenant)
+            actor=principal['account_id'];self._cleaner(conn,tenant,actor)
+            conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+            source=conn.execute("""SELECT e.request_id,e.source_id,q.request_kind,t.assignee_id FROM prsystem.minibar_reconciliation e
+                JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(e.tenant_id,e.source_id)
+                JOIN prsystem.minibar_configuration_request q ON(q.tenant_id,q.id)=(e.tenant_id,e.request_id)
+                WHERE t.tenant_id=%s AND t.id=%s""",(tenant,task)).fetchone()
+            if not source or source[2]!='NEXT_STAY':raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if source[3] is not None and source[3]!=actor:raise DomainError('FORBIDDEN')
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            data=self.lock_request(conn,tenant,source[0],revision)
+            self.safe(conn,tenant,data,source[1]);self.target(conn,tenant,data)
+            claimed=self.assign_source(conn,tenant,source[1],actor)
+            if claimed!=task:raise DomainError('WORK_SOURCE_CONFLICT')
+            conn.execute("UPDATE prsystem.minibar_configuration_request SET state='IN_PROGRESS',revision=revision+1 WHERE tenant_id=%s AND id=%s",(tenant,source[0]))
+            result=dict(task_id=task,source_id=source[1],request_id=source[0],assignment_version=0,revision=revision+1,state='IN_PROGRESS')
+            self.event(conn,tenant,actor,'MINIBAR_NEXT_STAY_CLAIMED',source[0],result)
+            self._save_receipt(conn,tenant,key,actor,command,result);return result

@@ -28,7 +28,9 @@ class MinibarGuestTests(MinibarConfigurationCase):
             ):conn.execute(sql.SQL(grant).format(sql.Identifier(cls.role)))
 
     def configured(self):
-        task=self.assert_status(reconciliation_support.MinibarReconciliationTests.prepare(self),201)
+        pending=self.read().json()['pending']
+        prepared=self.api(f'minibar/configuration-requests/{pending["request_id"]}/prepare',dict(expected_revision=pending['revision'],assignee_id=self.worker)) if pending and pending['request_kind']=='NEXT_STAY' else reconciliation_support.MinibarReconciliationTests.prepare(self)
+        task=self.assert_status(prepared,201)
         detail=self.assert_status(self.api('minibar/reconciliation/tasks',token=self.worker_token,method='get'),200)['items'][0]
         for line in detail['plan']['lines']:
             self.assert_status(self.api(f'minibar/reconciliation/tasks/{task["task_id"]}/count',dict(assignment_version=0,action_id=line['action_id'],actual_count=line['baseline_quantity']),self.worker_token),200)

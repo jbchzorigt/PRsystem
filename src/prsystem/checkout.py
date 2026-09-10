@@ -64,7 +64,7 @@ class CheckoutService(GuestFinance):
             conn.execute('INSERT INTO prsystem.stay_checkout VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,365,%s)',
                          (tenant,stay,actor,shift[0],source[0],now,balance['revision'],Jsonb(balance),cleaning_source,'MVP-365-v1',now+timedelta(days=365)))
             result=dict(stay_id=stay,state='CLOSED',actual_checkout_at=now.isoformat(),planned_checkout_at=source[1].isoformat(),
-                        earliest_ready_at=(now+timedelta(minutes=source[2])).isoformat(),cleaning_state='DIRTY',room_revision=room[0]+1,
+                        earliest_ready_at=(now+timedelta(minutes=source[2])).isoformat(),cleaning_state='DIRTY',room_revision=conn.execute('SELECT revision FROM prsystem.room WHERE tenant_id=%s AND id=%s',(tenant,source[0])).fetchone()[0],
                         cleaning_source_id=cleaning_source,cleaning_action_id=action,finance_revision=balance['revision'])
             self._save_receipt(conn,tenant,key,actor,command,result)
             return result

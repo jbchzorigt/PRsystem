@@ -231,3 +231,9 @@ counts start blank, server failure retains input and an unchanged idempotency
 key, successful writes reload the authoritative queue. Existing guest report
 counts use server-provided opening + documented refill availability. Verification:
 `tests/browser/minibar-refill.cjs` and real PostgreSQL `test_minibar_refill.py`.
+
+Automatic next-stay preparation is a `reconciliationTasks` variant. An unassigned
+`NEXT_STAY` task has a Cleaner self-claim form; assigned count and physical apply
+reuse the same controls as configuration reconciliation. The screen explicitly
+separates minibar preparation from ordinary cleaning. Evidence:
+`tests/browser/minibar-next-stay.cjs` and `test_minibar_next_stay.py`.

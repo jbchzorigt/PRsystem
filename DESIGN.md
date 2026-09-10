@@ -158,3 +158,7 @@ Stay-refill screens reuse the existing Reception form and Cleaner queue treatmen
 A room/product heading precedes requested and actual quantities; no price or cost
 is shown in refill tasks. Field, reason, retry, pagination, dirty-dialog and 320px
 behavior remain shared. Evidence: `tests/browser/minibar-refill.cjs`.
+
+Automatic next-stay preparation uses the existing reconciliation card, count
+form and physical-confirmation controls. The only added action is Cleaner
+self-claim for a server-created next-stay task; no new visual owner or tokens.
