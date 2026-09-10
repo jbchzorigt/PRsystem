@@ -128,7 +128,14 @@ class MinibarReconciliationTests(MinibarConfigurationCase):
 
     def test_reassignment_keeps_counts_and_uses_current_task_version(self):
         task=self.assert_status(self.prepare(),201);self.count_all(task)
-        exception=self.suspend()
+        self.suspend()
+        # The worker owns both a shift and a cleaning task. Suspension returns
+        # sorted random exception IDs, not an ordering by work kind.
+        with psycopg.connect(self.owner_dsn) as conn:
+            exception=conn.execute("""SELECT e.id FROM prsystem.staff_work_exception e
+                JOIN prsystem.staff_open_work w ON(w.tenant_id,w.id)=(e.tenant_id,e.work_id)
+                WHERE e.tenant_id=%s AND w.kind='CLEANING_TASK' AND w.source_id=%s""",
+                (self.tenant,task['task_id'])).fetchone()[0]
         revision=self.claim(exception)
         result=self.assert_status(self.api(f'staff-work/exceptions/{exception}/cleaning/reassign',dict(expected_revision=revision,replacement_id=self.replacement,reason='Үргэлжлүүлэх')),200)
         next_task=dict(task_id=result['task_id'],assignment_version=result['assignment_version'])
