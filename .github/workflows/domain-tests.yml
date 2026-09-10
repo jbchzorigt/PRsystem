@@ -113,12 +113,10 @@ jobs:
         run: node tests/browser/minibar-next-stay.cjs
       - name: Verify Manager minibar exceptions
         run: node tests/browser/minibar-exception.cjs
-      - name: Verify Manager stock adjustments
-        env:
-          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-        run: python -m unittest discover -s tests -p test_minibar_adjustments.py -v
       - name: Verify minibar entity lifecycle
         run: node tests/browser/minibar-lifecycle.cjs
+      - name: Verify minibar stock adjustment UI
+        run: node tests/browser/minibar-adjustments.cjs
       - name: Validate browser payloads against API models
         run: |
           python -m pip install '.[api]'
@@ -135,6 +133,7 @@ jobs:
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-next-stay-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-exception-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-lifecycle-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-adjustment-requests.json
       - name: Save browser evidence
         uses: actions/upload-artifact@v4
         with:

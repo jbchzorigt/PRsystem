@@ -260,3 +260,19 @@ shared dirty-form warning. Stock history stays accessible in inactive states.
 An eligible never-used record exposes a separate permanent-delete confirmation
 with reason and acknowledgement. Deletion returns to the first list page,
 clearing the deleted detail selection. Used records never expose this action. Evidence: tests/browser/minibar-lifecycle.cjs.
+
+## Manager stock adjustment variant
+
+Warehouse product rows open a bounded 100-room native location selector with
+explicit first/next controls; warehouse remains selectable on every page.
+Read-only preview precedes the quantity/reason/acknowledgement form. It names the
+location, current physical quantity, valuation and effect on guest availability.
+Successful movement returns to the owning warehouse list with shared feedback.
+The immutable adjustment history has 50-item pages and a separate linked-reversal
+confirmation using the original quantity/cost. Posted-report and changed-stay
+locks are visible before confirmation. Only zero-stock COUNT_PLUS asks for cost.
+Forms retain the shared CAS, uncertain-outcome, dirty-navigation, validation and
+retry behavior. Loading and failure use the existing panel/status owners.
+Cleaner count bounds use physical quantity; a separate column shows billable
+availability. Generic additions never silently become a guest sale. Evidence:
+`tests/browser/minibar-adjustments.cjs` and the existing guest/exception suites.

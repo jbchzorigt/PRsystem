@@ -115,7 +115,7 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
 
     def test_posted_report_locks_further_adjustments(self):
         self.guest();self.assert_status(self.report(1,False),201)
-        self.assertEqual(self.adjust(room=self.room).json()['code'],'MINIBAR_REPORT_LOCKED')
+        self.assertEqual(self.adjust(room=self.room).json()['code'],'STOCK_ADJUSTMENT_LOCKED')
 
     def test_current_manager_authority_and_package_required_before_retry(self):
         key=uuid4().hex;r=self.assert_status(self.adjust(idempotency_key=key),201)
@@ -174,3 +174,11 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
                     conn.execute("INSERT INTO prsystem.minibar_adjustment(tenant_id,id,product_id,kind,quantity,hotel_delta,room_delta,billable_delta,receipt_id,actor_id,actor_roles,package_mnt,reason) VALUES(%s,%s,%s,'WASTE',1,-1,0,0,%s,%s,ARRAY['MANAGER'],30000,'Direct forged source')",(self.tenant,uuid4().hex,self.product,receipt[0],receipt[1]))
                     conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
         self.assertEqual(self.preview()['total_quantity'],10)
+
+    def test_original_cost_reversal_cannot_strand_value_at_zero_stock(self):
+        original=self.assert_status(self.adjust('COUNT_PLUS',quantity=2),201)
+        self.assert_status(self.api(f'minibar/products/{self.product}/receipts',dict(quantity=1,unit_cost_mnt=2000,expected_revision=2)),201)
+        self.assert_status(self.adjust(quantity=11),201)
+        before=self.preview()
+        self.assertEqual(self.adjust('REVERSAL',quantity=2,original_id=original['adjustment_id']).json()['code'],'ADJUSTMENT_COST_CONFLICT')
+        self.assertEqual(self.preview(),before)

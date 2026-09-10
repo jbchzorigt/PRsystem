@@ -170,3 +170,7 @@ feedback, retry and responsive behavior remain owned by existing shared controls
 Product and template retirement use the shared detail panel, count table and
 reason/acknowledgement form. State changes retain the same list/detail destination,
 feedback, conflict and unknown-outcome behavior as version archive. No new tokens.
+
+Manager stock adjustments reuse the warehouse operational rows, location select,
+reason/acknowledgement form and bounded history. Preview distinguishes physical
+quantity and billable availability; no new visual token or form owner is added.
