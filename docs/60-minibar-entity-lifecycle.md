@@ -1,6 +1,12 @@
 # Minibar product and template lifecycle
 
-Implementation candidate; full PostgreSQL acceptance is pending.
+Accepted source: `7d2cf463cb9443e3d89469e6d969dd4d30caad1a`.
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34449347356): the focused
+18-test PostgreSQL lifecycle gate, all 14 Chromium suites and 92 actual
+browser/API command contracts passed. Strict local UI audit has zero findings;
+design/token CI passed with the six pre-existing design warnings. **714/714 backend tests passed without skips in 832.546 seconds** in the
+full PostgreSQL run. Local discovery ran 106 tests and skipped 608 database-dependent
+tests; the linked remote run is the full acceptance evidence.
 
 Current Manager/package authority, expected entity revision, mandatory reason
 and idempotency protect DEACTIVATE, CANCEL_RETIRING and REACTIVATE. The separate

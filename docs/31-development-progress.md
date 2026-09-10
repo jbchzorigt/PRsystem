@@ -17,14 +17,41 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 
 | № | Үе шат | Одоогийн төлөв |
 | --- | --- | --- |
-| 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence бэлэн. Booking persistence, provider inbox болон delivery worker үлдсэн |
+| 1 | PostgreSQL, migration, tenant scope, idempotency, inbox/outbox | Кассын суурь, RLS, atomic persistence болон durable booking persistence бэлэн. Бодит provider inbox/delivery worker ба production integration gate үлдсэн |
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report болон [Active-stay нөхөлт](56-minibar-stay-refill.md), [Автомат next-stay нөхөлт](57-minibar-next-stay-refill.md), [Manager exception](58-minibar-manager-exceptions.md) баталгаажсан: **683/683 тест skip-гүй**, 13 Chromium suite, 84 API хүсэлт. Paid quantity correction, non-guest stock-out, variance/override, partial rollback, product/template lifecycle, online canonical capacity, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, [canonical online capacity](59-minibar-booking-capacity.md) болон [product/template lifecycle](60-minibar-entity-lifecycle.md) баталгаажсан: **714/714 тест skip-гүй**, 14 Chromium suite, 92 API хүсэлт. Paid quantity correction, non-guest stock-out, variance/override, partial rollback, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-Нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Энэ үргэлжлэлээр 40 backend тест нэмэгдсэн; **5/6-р шат бүхэлдээ дуусаагүй**, дээрх үлдэгдэл хэвээр.
+Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Хамгийн сүүлийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.
+
+## 2026-09-10 — Canonical booking ба minibar entity lifecycle
+
+[Онлайн minibar capacity](59-minibar-booking-capacity.md): future category hold
+нь stock эсвэл price book үүсгэхгүй. Arrival дээр current exact configuration,
+бодит нөөц болон cleaning readiness-ийг дахин шалгаж, stay-ийн immutable нээлт,
+үнэ, booking assignment-ийг нэг transaction-аар хадгална. Source
+`4732d4dd5446b305a4c9e40fbdd9be57903cf557`, [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34447882812):
+**696/696 backend тест skip-гүй**, 807.838 секунд.
+
+[Entity lifecycle](60-minibar-entity-lifecycle.md): product/template-ийн хамаарал
+урьдчилан харах, deactivation, cancel, reactivation, хамаарал дуусахад automatic
+INACTIVE болох, анхнаасаа inactive template үүсгэх болон ашиглаагүй хоосон
+загварыг шалтгаан/audit-тай устгах сервер/UI нэмэгдсэн. Source
+`7d2cf463cb9443e3d89469e6d969dd4d30caad1a`, [CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34449347356).
+**714/714 backend тест skip-гүй, 832.546 секундэд амжилттай**.
+18 focused PostgreSQL тест, 14 browser suite, 92 API хүсэлт, strict UI audit
+(0 findings) болон design/token шалгалтууд мөн давсан. Энэ үргэлжлэлээр
+31 backend тест нэмэгдэв. Local discovery-ийн 608 database skip-ийг
+баталгаажуулалт гэж тооцоогүй; дээрх CI нь бодит PostgreSQL нотолгоо болно.
+
+Үлдсэн implementation нь зөвхөн credential биш: төлбөр хийгдсэний дараах
+хэрэглээний тоо засах, stay-scoped non-guest stock-out/waste/adjustment,
+тооллогын зөрүү ба shortage override, хэсэгчилсэн physical rollback,
+Restaurant fulfillment болон Operation урсгалууд байна. Police-ийн код,
+production security/restore/load/retention болон бодит provider acceptance
+мөн дуусаагүй. Бүх 5/6-р шатыг дууссан гэж тэмдэглээгүй.
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
 
