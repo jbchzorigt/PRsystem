@@ -173,3 +173,15 @@ are required; conflict retains input until explicit refresh/discard, unknown out
 retain the command key. Success refreshes the same exact version and announces
 archive. Archived state has history/clone, with no Default/Publish/room-target action.
 Verification: test_minibar_archive.py and tests/browser/minibar-archive.cjs.
+
+## Explicit room minibar rollout
+
+Published version detail owns the distinct same-template rollout entry. A bounded
+room page leads to an explicit read-only eligibility preview. Same-version and
+other ineligible outcomes show a reason and disabled confirmation. Ready versus
+scheduled text explains task timing; confirmation states the immediate room
+blocker and requires reason plus acknowledgement. Current room version changes
+only after physical reconciliation. Shared form/navigation owners retain inputs
+and the request key after an unknown outcome; CAS reload requires fresh preview.
+Automatic unassigned tasks require current Manager assignment before Cleaner work.
+Verification: test_minibar_rollout.py and tests/browser/minibar-rollout.cjs.

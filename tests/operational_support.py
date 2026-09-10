@@ -12,6 +12,7 @@ class OperationalCase(StaffApiCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for statement in (
+                'GRANT SELECT ON prsystem.minibar_configuration_request TO {}',
                 'GRANT SELECT ON prsystem.staff_link,prsystem.staff_command_receipt,prsystem.staff_open_work,prsystem.staff_work_exception TO {}',
                 'GRANT INSERT ON prsystem.staff_command_receipt,prsystem.staff_change_event,prsystem.staff_open_work,prsystem.staff_work_exception,prsystem.operational_event TO {}',
                 'GRANT UPDATE (status,roles) ON prsystem.staff_membership TO {}',

@@ -31,18 +31,18 @@ class MinibarConfiguration(MinibarTemplates):
     @staticmethod
     def request_data(conn, tenant, request):
         r = conn.execute('''SELECT id,room_id,target_mode,target_template_id,target_version_id,source_snapshot,
-            target_snapshot,active_stay_id,state,revision,reason,requested_by,recorded_at,cancelled_by,cancel_reason,cancelled_at
+            target_snapshot,active_stay_id,state,revision,reason,requested_by,recorded_at,cancelled_by,cancel_reason,cancelled_at,request_kind
             FROM prsystem.minibar_configuration_request WHERE tenant_id=%s AND id=%s''',(tenant,request)).fetchone()
         if not r:
             raise DomainError('WORK_SOURCE_NOT_FOUND')
         fields=('request_id','room_id','target_mode','target_template_id','target_version_id','source_snapshot',
                 'target_snapshot','active_stay_id','state','revision','reason','requested_by','recorded_at',
-                'cancelled_by','cancel_reason','cancelled_at')
+                'cancelled_by','cancel_reason','cancelled_at','request_kind')
         return dict(zip(fields,[v.isoformat() if hasattr(v,'isoformat') else v for v in r]))
 
-    def request(self, bearer, tenant, room, data, key):
+    def request(self, bearer, tenant, room, data, key, *, rollout=False):
         data = dict(data, reason=self._text(data['reason'],1000))
-        command = dict(action='MINIBAR_CONFIGURATION_REQUEST',room_id=room,data=data)
+        command = dict(action='MINIBAR_ROLLOUT' if rollout else 'MINIBAR_CONFIGURATION_REQUEST',room_id=room,data=data)
         with transaction(self.auth.dsn) as conn:
             actor, roles, package = self.actor(conn,bearer,tenant)
             replay = self._receipt(conn,tenant,key,actor,command)
@@ -70,11 +70,15 @@ class MinibarConfiguration(MinibarTemplates):
                 if version['state']!='PUBLISHED':
                     raise DomainError('TEMPLATE_NOT_PUBLISHED')
                 self.validate_items(conn,tenant,version['items'])
+            if rollout:
+                from prsystem.minibar_rollout import MinibarRollout
+                preview=MinibarRollout.eligibility(self,conn,tenant,room,data['target_template_id'],data['target_version_id'])
+                if not preview['eligible']:raise DomainError(preview['code'])
             request = secrets.token_hex(16)
             conn.execute('''INSERT INTO prsystem.minibar_configuration_request
-                (tenant_id,id,room_id,target_mode,target_template_id,target_version_id,source_snapshot,target_snapshot,state,requested_by,reason)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'READY_FOR_RECONCILIATION',%s,%s)''',
-                (tenant,request,room,data['target_mode'],data.get('target_template_id'),data.get('target_version_id'),Jsonb({}),Jsonb({}),actor,data['reason']))
+                (tenant_id,id,room_id,target_mode,target_template_id,target_version_id,source_snapshot,target_snapshot,state,requested_by,reason,request_kind)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'READY_FOR_RECONCILIATION',%s,%s,%s)''',
+                (tenant,request,room,data['target_mode'],data.get('target_template_id'),data.get('target_version_id'),Jsonb({}),Jsonb({}),actor,data['reason'],'ROLLOUT' if rollout else 'CONFIGURATION'))
             conn.execute('UPDATE prsystem.room SET revision=revision+1 WHERE tenant_id=%s AND id=%s',(tenant,room))
             result = self.request_data(conn,tenant,request)
             self.event(conn,tenant,actor,'MINIBAR_CONFIGURATION_REQUESTED',request,dict(result,actor_roles=roles,package_mnt=package))

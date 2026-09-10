@@ -60,16 +60,20 @@ class MinibarReconciliation(MinibarConfiguration):
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             data=self.lock_request(conn,tenant,request,revision)
-            if self.execution(conn,tenant,request):raise DomainError('WORK_SOURCE_CONFLICT')
             self.safe(conn,tenant,data);self.target(conn,tenant,data)
-            source=secrets.token_hex(16)
-            baseline=conn.execute('SELECT prsystem.minibar_configuration_baseline(%s,%s)',(tenant,request)).fetchone()[0]
-            if not baseline:raise DomainError('RECONCILIATION_NOT_READY')
-            conn.execute('''INSERT INTO prsystem.cleaning_source(tenant_id,id,room_id,configuration_id,configuration_version,source_kind,source_reference,snapshot)
-                VALUES(%s,%s,%s,%s,%s,'CONFIGURATION',%s,%s)''',(tenant,source,data['room_id'],request,data['revision'],'canonical-config:'+request,Jsonb(dict(canonical_minibar=True,request_id=request,target=data['target_snapshot'],baseline=baseline))))
-            conn.execute('INSERT INTO prsystem.minibar_reconciliation(tenant_id,request_id,source_id,baseline,created_by) VALUES(%s,%s,%s,%s,%s)',(tenant,request,source,Jsonb(baseline),actor))
-            for item in baseline:
-                conn.execute("INSERT INTO prsystem.cleaning_action(tenant_id,source_id,id,kind,product_id,quantity) VALUES(%s,%s,%s,'COUNT',%s,1)",(tenant,source,secrets.token_hex(16),item['product_id']))
+            execution=self.execution(conn,tenant,request)
+            if execution:
+                if data['request_kind']!='ROLLOUT':raise DomainError('WORK_SOURCE_CONFLICT')
+                source,baseline=execution
+            else:
+                source=secrets.token_hex(16)
+                baseline=conn.execute('SELECT prsystem.minibar_configuration_baseline(%s,%s)',(tenant,request)).fetchone()[0]
+                if not baseline:raise DomainError('RECONCILIATION_NOT_READY')
+                conn.execute('''INSERT INTO prsystem.cleaning_source(tenant_id,id,room_id,configuration_id,configuration_version,source_kind,source_reference,snapshot)
+                    VALUES(%s,%s,%s,%s,%s,'CONFIGURATION',%s,%s)''',(tenant,source,data['room_id'],request,data['revision'],'canonical-config:'+request,Jsonb(dict(canonical_minibar=True,request_id=request,target=data['target_snapshot'],baseline=baseline))))
+                conn.execute('INSERT INTO prsystem.minibar_reconciliation(tenant_id,request_id,source_id,baseline,created_by) VALUES(%s,%s,%s,%s,%s)',(tenant,request,source,Jsonb(baseline),actor))
+                for item in baseline:
+                    conn.execute("INSERT INTO prsystem.cleaning_action(tenant_id,source_id,id,kind,product_id,quantity) VALUES(%s,%s,%s,'COUNT',%s,1)",(tenant,source,secrets.token_hex(16),item['product_id']))
             task=self.assign_source(conn,tenant,source,assignee)
             conn.execute("UPDATE prsystem.minibar_configuration_request SET state='IN_PROGRESS',revision=revision+1 WHERE tenant_id=%s AND id=%s",(tenant,request))
             result=dict(request_id=request,task_id=task,source_id=source,assignment_version=0,revision=revision+1,state='IN_PROGRESS')

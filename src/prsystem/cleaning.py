@@ -70,8 +70,14 @@ class CleaningService(MembershipService):
         row = conn.execute('SELECT id FROM prsystem.cleaning_source WHERE tenant_id=%s AND id=%s FOR UPDATE', (tenant,source)).fetchone()
         if not row or not conn.execute('SELECT 1 FROM prsystem.cleaning_action WHERE tenant_id=%s AND source_id=%s', (tenant,source)).fetchone():
             raise DomainError('WORK_SOURCE_NOT_FOUND')
-        if conn.execute('SELECT 1 FROM prsystem.cleaning_task WHERE tenant_id=%s AND source_id=%s', (tenant,source)).fetchone():
-            raise DomainError('WORK_SOURCE_CONFLICT')
+        existing=conn.execute('SELECT id,assignee_id,state FROM prsystem.cleaning_task WHERE tenant_id=%s AND source_id=%s FOR UPDATE', (tenant,source)).fetchall()
+        if existing:
+            if len(existing)!=1 or existing[0][1] is not None or existing[0][2]!='OPEN':
+                raise DomainError('WORK_SOURCE_CONFLICT')
+            task=existing[0][0]
+            conn.execute('UPDATE prsystem.cleaning_task SET assignee_id=%s WHERE tenant_id=%s AND id=%s',(assignee,tenant,task))
+            cls.register_open_work(conn,tenant,assignee,'CLEANING_TASK',task)
+            return task
         task = secrets.token_hex(16)
         conn.execute('INSERT INTO prsystem.cleaning_task (tenant_id,id,source_id,assignee_id) VALUES (%s,%s,%s,%s)', (tenant,task,source,assignee))
         cls.register_open_work(conn, tenant, assignee, 'CLEANING_TASK', task)

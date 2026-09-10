@@ -1,6 +1,6 @@
 # Хөгжүүлэлтийн явц
 
-**Шинэчилсэн:** 2026-09-09. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
+**Шинэчилсэн:** 2026-09-10. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
 ## Одоогийн Reception acceptance
 
@@ -24,6 +24,8 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md) нэмэлтүүд баталгаажсан: **585/585 тест skip-гүй**, долоон Chromium suite, 43 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill, product/template lifecycle, batch rollout, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
+Нэг өрөөний explicit Rollout ([53-р баримт](53-minibar-room-rollout.md)) нэмэлт candidate бэлэн; PostgreSQL CI acceptance хүлээгдэж байна. Өмнөх баталгаажсан 585 тестийн тоог CI дүн гарах хүртэл өөрчлөөгүй.
+
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
 
 Энэ тогтмол дугаарлалт нь 2026-09-06-нд хэрэглэгчид тайлбарласан үлдсэн 9 багц. Өмнөх 4/4 нь өмнөх implementation багцын явц байсан. Доорх тоо нь төслийн completion хувь биш.
@@ -34,7 +36,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Paid onboarding → Primary Admin | Хэсэгчлэн: OTP/stored-owner proof ports, paid provisioning/activation, bounded worker + durable SMS/QPay/Khaan mocks бэлэн; бодит SMS/QPay/Khaan adapter, tax/eBarimt болон screening integration үлдсэн |
 | **3** | **Hotel Admin reset email хүсэлт** | **Дууссан:** canonical recipient, current scope/revision, idempotency, audit; бодит хүргэлт №1-ээс хамаарна |
 | **4** | **Unverified suspended invite recovery** | **Дууссан:** ижил membership → PENDING, шинэ нэг удаагийн invite, mandatory reason, хуучин link/session revoke |
-| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md) нэмэлтүүд баталгаажсан: **585/585 тест skip-гүй**, долоон Chromium suite, 43 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill, product/template lifecycle, batch rollout, Restaurant/Operation үлдсэн |
+| 5 | Reception takeover execution | Хэсэгчлэн: shift/takeover, replacement recovery, count/variance, transfer terminalization, close/new shift/review API бэлэн; expiry-locked close бэлэн; configured float/initial opening producer нэмэгдсэн; payment producers болон reconciliation delivery үлдсэн |
 | 6 | Cleaner reassignment/continuation | Хэсэгчлэн: source/task/stock, versioned reassignment, immutable continuation ба remaining-action guard бэлэн; canonical room cleaning/readiness producer нэмэгдсэн; checkout/config/product/guest-charge integration үлдсэн |
 | 7 | Hotel/account/package-related recovery | Хэсэгчлэн: claimant/replacement recovery, Platform MFA security resume, paid renewal/floor бэлэн; enrollment/provider deployment, offline account-email recovery procedure болон billing integration үлдсэн |
 | **8** | **Denied-action security audit** | **Дууссан:** 401/403 denial нь rollback-аас тусдаа хадгалагдана; raw request/secret агуулахгүй |
