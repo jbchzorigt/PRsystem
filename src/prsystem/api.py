@@ -30,6 +30,7 @@ from prsystem.minibar import MinibarWarehouse
 from prsystem.minibar_templates import MinibarTemplates
 from prsystem.minibar_archive import MinibarArchive
 from prsystem.minibar_rollout import MinibarRollout
+from prsystem.minibar_batches import MinibarBatches
 from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.readiness import ReadinessService
@@ -114,6 +115,33 @@ class MinibarConfigurationRequest(BaseModel):
 class MinibarRolloutCommand(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     expected_room_revision: int = Field(ge=1,le=2**63-1)
+    reason: str = Field(min_length=1,max_length=1000)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class MinibarBatchPreview(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    room_ids: list[Annotated[str, Field(min_length=1,max_length=128)]] = Field(min_length=1,max_length=100)
+    retry_of_batch_id: str | None = Field(default=None,min_length=1,max_length=128)
+
+
+class MinibarBatchRoom(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    room_id: str = Field(min_length=1,max_length=128)
+    expected_room_revision: int = Field(ge=0,le=2**63-1)
+
+
+class MinibarBatchConfirm(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    rooms: list[MinibarBatchRoom] = Field(min_length=1,max_length=100)
+    retry_of_batch_id: str | None = Field(default=None,min_length=1,max_length=128)
+    reason: str = Field(min_length=1,max_length=1000)
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
+class MinibarBatchCancel(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: str = Field(pattern=r'^[0-9a-f]{64}$')
     reason: str = Field(min_length=1,max_length=1000)
     idempotency_key: str = Field(min_length=1,max_length=128)
 
@@ -875,7 +903,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         catalog_errors = {'LOCATION_CODE_EXISTS':409,'DRAWER_ALREADY_USED':409,'DRAWER_NOT_CONFIGURED':409,
                           'CATEGORY_NAME_EXISTS':409,'ROOM_NUMBER_EXISTS':409,'CATEGORY_NOT_ACTIVE':409,'INVALID_MNT':422,
                           'PRODUCT_NOT_ACTIVE':409,'STOCK_SOURCE_NOT_FOUND':409,
-                          'ROLLOUT_REQUIRES_MINIBAR':409,'ROLLOUT_TEMPLATE_MISMATCH':409,'ROLLOUT_UNCHANGED':409,
+                          'BATCH_RETRY_NOT_READY':409,'ROLLOUT_REQUIRES_MINIBAR':409,'ROLLOUT_TEMPLATE_MISMATCH':409,'ROLLOUT_UNCHANGED':409,
                           'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_ARCHIVE_BLOCKED':409,'TEMPLATE_VERSION_IMMUTABLE':409,
                           'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409,
                           'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
@@ -984,6 +1012,26 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/default')
     def minibar_version_default(tenant_id: str, template_id: str, version_id: str, body: MinibarTemplateCommand, secret: Annotated[str, Depends(token)]):
         return templates.change(secret, tenant_id, template_id, 'DEFAULT', body.model_dump(exclude={'idempotency_key'}), body.idempotency_key, version_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/rollout-batches/preview')
+    def minibar_batch_preview(tenant_id: str,template_id: str,version_id: str,body: MinibarBatchPreview,secret: Annotated[str,Depends(token)]):
+        return MinibarBatches(service).preview_batch(secret,tenant_id,template_id,version_id,body.room_ids,body.retry_of_batch_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/rollout-batches',status_code=201)
+    def minibar_batch_confirm(tenant_id: str,template_id: str,version_id: str,body: MinibarBatchConfirm,secret: Annotated[str,Depends(token)]):
+        return MinibarBatches(service).confirm_batch(secret,tenant_id,template_id,version_id,[r.model_dump() for r in body.rooms],body.reason,body.idempotency_key,body.retry_of_batch_id)
+
+    @app.get('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/rollout-batches')
+    def minibar_batch_list(tenant_id: str,template_id: str,version_id: str,secret: Annotated[str,Depends(token)],after: str='',limit: int=Query(default=20,ge=1,le=50)):
+        return MinibarBatches(service).list_batches(secret,tenant_id,template_id,version_id,after,limit)
+
+    @app.get('/hotels/{tenant_id}/minibar/rollout-batches/{batch_id}')
+    def minibar_batch_read(tenant_id: str,batch_id: str,secret: Annotated[str,Depends(token)]):
+        return MinibarBatches(service).read_batch(secret,tenant_id,batch_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/rollout-batches/{batch_id}/cancel-remaining')
+    def minibar_batch_cancel(tenant_id: str,batch_id: str,body: MinibarBatchCancel,secret: Annotated[str,Depends(token)]):
+        return MinibarBatches(service).cancel_remaining(secret,tenant_id,batch_id,body.expected_revision,body.reason,body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/minibar/templates/{template_id}/versions/{version_id}/rollout/{room_id}/preview')
     def minibar_rollout_preview(tenant_id: str,template_id: str,version_id: str,room_id: str,secret: Annotated[str,Depends(token)]):

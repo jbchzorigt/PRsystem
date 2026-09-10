@@ -258,3 +258,12 @@ Required UI verification-д rollout нэмсэн; 2-р шатны Reception take
 variance/override, partial rollback, product/template lifecycle, Restaurant
 болон Operation үлдсэн. Гадаад provider-ууд зөвшөөрсөн mock горимд хэвээр.
 Merge/deployment хийгээгүй.
+
+## Stage 5 — multi-room rollout batch candidate
+
+[Олон өрөөний Rollout batch](54-minibar-rollout-batches.md): read-only preview,
+өрөө бүрийн accepted/skipped үр дүн, immutable batch/lineage, явц, үлдсэнийг
+цуцлах болон шинэ linked retry нэмэгдсэн. Initial 2–100, retry 1–100 өрөө.
+622 backend тестээс 106 нь local орчинд давсан; 516 PostgreSQL тестийг full CI-д
+шалгана. Ес дэх browser suite ба API contract gate нэмэгдсэн. Баталгаажуулалт
+дуустал candidate төлөвтэй; 5/6-р шатны бусад ажил үлдсэн.

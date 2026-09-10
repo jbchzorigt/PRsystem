@@ -12,6 +12,7 @@ docs/30, docs/32, docs/34 and docs/35; this file records UI consequences only.
 | Date | reception.js field | docs/05, hotel +08:00 | native date and datetime-local | tests/browser/reception.cjs |
 | Dialog | reception.js guard + reception.html discard | dirty form state | native modal, safe initial focus | tests/browser/reception.cjs |
 | CRUD | reception.js form + command | docs/18,20,24,26 and strict API models | pessimistic source commands | tests/browser/reception.cjs |
+| Table Selection | reception.js multiSelection | docs/26 §§36–38, docs/54 | initial 2–100 rooms, linked retry 1–100 rooms | tests/browser/minibar-batches.cjs |
 
 
 All pages are public link entry points. The server validates purpose, one-use
@@ -185,3 +186,22 @@ only after physical reconciliation. Shared form/navigation owners retain inputs
 and the request key after an unknown outcome; CAS reload requires fresh preview.
 Automatic unassigned tasks require current Manager assignment before Cleaner work.
 Verification: test_minibar_rollout.py and tests/browser/minibar-rollout.cjs.
+
+## Multi-room rollout selection and progress
+
+| Capability | Canonical owner | Contract | Verification |
+| --- | --- | --- | --- |
+| Table Selection | reception.js `multiSelection` | Native labeled checkboxes, keyboard Space, current-page select, clear/remove, live count; 100-room cap; selection retained across bounded pages in memory | tests/browser/minibar-batches.cjs |
+
+Batch preview and commands reuse `api`, `form`, `guard`, `table`, feedback and
+navigation. Initial selection is 2–100 rooms; the named retry variant allows
+1–100 failed/cancelled rooms from the same historical batch. Selection alone
+has no server side effect. Preview shows every selected room and uses server
+revisions when confirming. An unknown result retains the same key; successful
+confirmation reloads authoritative progress, including on idempotent replay.
+Cancellation requires a reviewed progress revision, reason and acknowledgement;
+a conflict retains inputs until explicit refresh/discard. Applied rooms remain
+visible but are excluded from cancel/retry. Retry creates linked history.
+Published and archived versions expose bounded batch history. Lists, selection,
+IDs and reasons never enter URLs or storage. Async responses cannot repopulate
+detached panels. Natural document scrolling and shared native focus styles apply.

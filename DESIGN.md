@@ -140,3 +140,11 @@ warning before confirmation. This extension adds no new visual tokens.
 Canonical reconciliation uses the existing room detail, shared form, table and status owners: Manager assignment/plan and Cleaner count/full-plan confirmation. No new tokens or shell. See UX-CONTRACT.md and docs/51.
 
 Exact-version archive extends the shared template detail with blocker counts, reason/acknowledgement and terminal history. Existing form/table/status tokens and Mongolian labels remain the owners; see docs/52 and UX-CONTRACT.md.
+
+Multi-room minibar rollout uses the existing console forms, table regions and
+status treatment. The shared `multiSelection` owner renders native checkboxes
+inside a labeled fieldset, explicit page selection, a live total and individually
+removable selected rooms. Selection is bounded and retained across pages in
+memory. Preview explains room-level readiness; progress uses text states and
+counts, with no color-only meaning. The named one-room retry variant shares the
+same selection/confirmation system. See UX-CONTRACT.md and docs/54.

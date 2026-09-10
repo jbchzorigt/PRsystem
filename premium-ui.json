@@ -10,7 +10,8 @@
     "Scrollbar",
     "Select/Listbox",
     "Date",
-    "CRUD"
+    "CRUD",
+    "Table Selection"
   ],
   "requiredCommands": [
     "unit",
@@ -19,8 +20,8 @@
   ],
   "commands": {
     "unit": "PYTHONPATH=src python -m unittest discover -s tests -q",
-    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs && node tests/browser/minibar-templates.cjs && node tests/browser/minibar-reconciliation.cjs && node tests/browser/minibar-archive.cjs && node tests/browser/minibar-rollout.cjs",
-    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs && node tests/browser/minibar-templates.cjs && node tests/browser/minibar-reconciliation.cjs && node tests/browser/minibar-archive.cjs && node tests/browser/minibar-rollout.cjs"
+    "e2e": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs && node tests/browser/minibar-templates.cjs && node tests/browser/minibar-reconciliation.cjs && node tests/browser/minibar-archive.cjs && node tests/browser/minibar-rollout.cjs && node tests/browser/minibar-batches.cjs",
+    "accessibility": "node tests/browser/staff.cjs && node tests/browser/reception.cjs && node tests/browser/booking.cjs && node tests/browser/minibar.cjs && node tests/browser/minibar-templates.cjs && node tests/browser/minibar-reconciliation.cjs && node tests/browser/minibar-archive.cjs && node tests/browser/minibar-rollout.cjs && node tests/browser/minibar-batches.cjs"
   },
   "evidence": {
     "failurePaths": "tests/browser/reception.cjs"

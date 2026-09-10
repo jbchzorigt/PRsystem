@@ -212,7 +212,8 @@
       form(parent,'Үндсэн хувилбар сонгох',[],'Үндсэн хувилбар болгох',value=>api(url+'/default',{expected_revision:data.revision,idempotency_key:value.idempotency_key}),{success:refresh('Үндсэн хувилбар солигдлоо.')});
     }
     if(v.state==='PUBLISHED')actions(parent).append(btn('Өрөөнд тохируулах хүсэлт',()=>guard(()=>configurationRoomPicker(panel,data,''))));
-    if(v.state==='PUBLISHED')actions(parent).append(btn('Өрөөний хувилбар шинэчлэх',()=>guard(()=>rolloutRoomPicker(panel,data,''))));
+    if(v.state==='PUBLISHED')actions(parent).append(btn('Өрөөний хувилбар шинэчлэх',()=>guard(()=>rolloutRoomPicker(panel,data,''))),btn('Олон өрөөнд шилжүүлэх',()=>guard(()=>batchPicker(panel,data))));
+    if(v.state!=='DRAFT')actions(parent).append(btn('Шилжүүлгийн багцууд',()=>guard(()=>batchHistory(panel,data))));
     form(parent,'Энэ бүрдлээс шинэ хувилбар бэлтгэх',[],'Ноорог хуулбар үүсгэх',value=>api(templatePath(selected.id),{source_version_id:v.version_id,expected_revision:data.revision,idempotency_key:value.idempotency_key}),{success:async r=>{templateSelection={id:selected.id,version:r.version.version_id};await navigate('templates');say('Бүрдлээс шинэ ноорог хувилбар үүслээ.');}});
   }
   async function archivePreview(parent,data,seq){
@@ -231,6 +232,63 @@
       parent.append(node('p','Архивласны дараа энэ хувилбарыг шууд дахин идэвхжүүлэхгүй. Дахин ашиглах бол шинэ ноорог хуулбар үүсгэнэ. Өмнөх бүртгэлийн түүх хадгалагдана.'));
       form(parent,'Хувилбар архивлах',[reason(),field('reviewed','Архивлах нөхцөл, үр дүнг ойлгосон','checkbox')],'Хувилбарыг архивлах',v=>api(url+'/archive',{reason:v.reason,expected_revision:result.revision,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('templates');say('Хувилбар архивлагдлаа. Түүхэн бүрдэл хадгалагдсан.');}});
     }catch(e){if(seq!==generation||!parent.isConnected)return;parent.replaceChildren(node('p',e.message,'error'),btn('Архивлах нөхцөлийг дахин ачаалах',()=>guard(()=>archivePreview(parent,data,seq))));}
+  }
+  const batchLabels={...labels,IN_PROGRESS:'Шилжүүлэг үргэлжилж буй',PARTIALLY_COMPLETED:'Хэсэгчлэн дууссан',FAILED_VALIDATION:'Хүлээн авсан өрөө алга',SKIPPED:'Алгассан',ROLLBACK_REQUIRED:'Буцаалт шаардлагатай',ROLLED_BACK:'Буцаасан'};
+  const batchPath=data=>templatePath(data.template_id,data.version.version_id)+'/rollout-batches';
+  const batchRoomName=item=>item.room_number??'Өрөө олдсонгүй';
+  // Shared bounded selection owner: native checkboxes, explicit page scope,
+  // selection retained across pages in memory only, with a live total.
+  function multiSelection(parent,items,chosen,onChange){
+    const group=node('fieldset'),legend=node('legend','Энэ хэсгийн өрөөнүүд'),controls=[];group.append(legend);
+    const update=()=>{for(const {input,item} of controls){input.checked=chosen.has(item.room_id);input.disabled=chosen.size>=100&&!input.checked;}onChange();};
+    for(const item of items){const label=node('label',undefined,'field'),input=node('input');input.type='checkbox';input.checked=chosen.has(item.room_id);label.append(input,document.createTextNode(` ${batchRoomName(item)} өрөө сонгох`));group.append(label);controls.push({input,item});input.addEventListener('change',()=>{if(input.checked)chosen.set(item.room_id,item);else chosen.delete(item.room_id);dirty=true;update();});}
+    const bar=actions(group);bar.append(btn('Энэ хэсгийг сонгох',()=>{for(const item of items){if(chosen.size>=100)break;chosen.set(item.room_id,item);}dirty=true;update();}),btn('Бүх сонголтыг арилгах',()=>{chosen.clear();dirty=true;update();}));parent.append(group);update();
+  }
+  function batchPicker(container,data,retry=null,chosen=new Map()){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);let pageSeq=0;
+    parent.append(node('h3',retry?'Алгассан, цуцалсан өрөөнөөс дахин сонгох':'Шилжүүлэх өрөөнүүд сонгох'),node('p',`Хувилбар ${data.version.version_number} · ${retry?'1–100':'2–100'} өрөө. Сонголт хуудас солиход хадгалагдана. Батлах хүртэл өрөөнд хориг үүсэхгүй.`));
+    const count=node('p',''),selection=node('div'),list=node('div'),feedback=node('p','','error'),bar=actions(parent);count.setAttribute('role','status');
+    const preview=btn('Сонгосон өрөөнүүдийг шалгах',()=>batchPreview(container,data,[...chosen.values()],retry,chosen),'primary');bar.append(preview);parent.append(count,selection,feedback,list);
+    const update=()=>{count.textContent=`Сонгосон: ${chosen.size} / 100`;preview.disabled=chosen.size<(retry?1:2);selection.replaceChildren();for(const item of chosen.values())selection.append(btn(`${batchRoomName(item)} сонголт хасах`,()=>{chosen.delete(item.room_id);dirty=true;renderCurrent();}));};
+    let current=[];const renderCurrent=()=>{list.replaceChildren();multiSelection(list,current,chosen,update);};
+    const pages=actions(parent),first=btn('Сонголтын эхний хэсэг',()=>load('')),next=btn('Сонголтын дараагийн хэсэг',()=>load(current.at(-1).room_id));pages.append(first,next);
+    async function load(after){const request=++pageSeq;list.setAttribute('aria-busy','true');first.disabled=true;next.disabled=true;feedback.textContent='Өрөөнүүд ачаалж байна…';
+      try{const rows=retry?retry.items.filter(i=>['SKIPPED','CANCELLED','ROLLED_BACK'].includes(i.state)):await api(path(`rooms?limit=100&after=${enc(after)}`));if(seq!==generation||request!==pageSeq||!parent.isConnected)return;
+        current=rows.map(r=>({...r,room_number:r.room_number??r.number??null}));renderCurrent();feedback.textContent=rows.length?'':'Энэ хэсэгт өрөө алга.';first.disabled=!!retry||!after;next.disabled=!!retry||rows.length<100;
+      }catch(e){if(seq===generation&&request===pageSeq&&parent.isConnected){feedback.replaceChildren(node('span',e.message),btn('Сонголтыг дахин ачаалах',()=>load(after)));}}
+      finally{if(request===pageSeq)list.setAttribute('aria-busy','false');}
+    }update();load('');
+  }
+  async function batchPreview(container,data,selected,retry,chosen){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.setAttribute('aria-busy','true');parent.append(node('p','Өрөө бүрийн нөхцөл шалгаж байна…'));
+    try{const result=await api(batchPath(data)+'/preview',{room_ids:selected.map(r=>r.room_id),...(retry?{retry_of_batch_id:retry.batch_id}:{})});if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('h3',`Шилжүүлгийн урьдчилсан шалгалт · Хувилбар ${result.target.version_number}`),node('p',`Сонгосон: ${result.items.length} · Боломжтой: ${result.items.filter(i=>i.eligible).length}. Батлах үед өрөө бүрийн нөхцөлийг дахин шалгана.`));
+      table(parent,'Өрөө бүрийн урьдчилсан үр дүн',['Өрөө','Шилжүүлэх нөхцөл'],result.items.map(i=>[batchRoomName(i),i.eligible?(i.disposition==='READY_NOW'?'Тооллого шууд эхэлнэ':'Өмнөх ажлууд дуусахыг хүлээнэ'):(errors[i.code]||'Өрөө олдсонгүй эсвэл шилжүүлэх боломжгүй.')]));
+      parent.append(node('p',configurationNotice),node('p','Боломжгүй өрөөг шалтгаантай нь алгасна. Хүлээн авсан өрөө бүрийн ажил тусдаа үргэлжилнэ.'));
+      actions(parent).append(btn('Өрөөний сонголт руу буцах',()=>guard(()=>batchPicker(container,data,retry,chosen))),btn('Урьдчилсан шалгалт шинэчлэх',()=>guard(()=>batchPreview(container,data,selected,retry,chosen))));
+      form(parent,'Шилжүүлгийн багц батлах',[reason(),field('reviewed','Хувилбар, өрөө бүрийн үр дүн болон хоригийг ойлгосон','checkbox')],'Багцыг батлах',v=>api(batchPath(data),{rooms:result.items.map(i=>({room_id:i.room_id,expected_room_revision:i.room_revision})),reason:v.reason,idempotency_key:v.idempotency_key,...(retry?{retry_of_batch_id:retry.batch_id}:{})}),{success:result=>batchDetail(container,data,result.batch_id)});
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.code==='BATCH_RETRY_NOT_READY'?'Өмнөх багцын төлөв өөрчлөгдсөн. Түүхийг шинэчилж дахин сонгоно уу.':e.message,'error'),btn('Багцын шалгалтыг дахин ачаалах',()=>batchPreview(container,data,selected,retry,chosen)),btn('Өрөөний сонголт руу буцах',()=>guard(()=>batchPicker(container,data,retry,chosen))));}
+    finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function batchDetail(container,data,id){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Багцын явцыг ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const result=await api(path(`minibar/rollout-batches/${enc(id)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('h3',`Шилжүүлгийн багц · Хувилбар ${result.target.version_number}`),node('p',batchLabels[result.state]),node('p',`Сонгосон: ${result.counts.selected} · Хүлээн авсан: ${result.counts.accepted} · Хэрэгжсэн: ${result.counts.APPLIED} · Алгассан: ${result.counts.SKIPPED} · Цуцалсан: ${result.counts.CANCELLED}`),node('p',`Бүртгэсэн: ${time(result.recorded_at)} · Шалтгаан: ${result.reason}`));
+      if(result.retry_of_batch_id)parent.append(node('p','Өмнөх багцаас дахин оролдсон. Өмнөх түүх хадгалагдсан.'));
+      table(parent,'Өрөө бүрийн шилжүүлгийн явц',['Өрөө','Төлөв','Тайлбар'],result.items.map(i=>[batchRoomName(i),batchLabels[i.state]||i.state,i.code?(errors[i.code]||'Өрөө олдсонгүй эсвэл боломжгүй.'):'—']));
+      const bar=actions(parent);bar.append(btn('Багцын явц шинэчлэх',()=>guard(()=>batchDetail(container,data,id))),btn('Багцын түүх рүү буцах',()=>guard(()=>batchHistory(container,data))));
+      if(result.items.some(i=>['SKIPPED','CANCELLED','ROLLED_BACK'].includes(i.state))&&data.version.state==='PUBLISHED')bar.append(btn('Алгассан, цуцалсан өрөөг дахин сонгох',()=>guard(()=>batchPicker(container,data,result))));
+      if(result.items.some(i=>!['SKIPPED','APPLIED','CANCELLED','ROLLED_BACK'].includes(i.state))){parent.append(node('p','Үлдсэн ажлыг цуцлахад хэрэгжсэн өрөөнүүд хэвээр үлдэнэ. Хүлээгдэж буй өрөөнүүдийн хүсэлт, холбогдох ажил цуцлагдана.'));
+        form(parent,'Багцын үлдсэн ажлыг цуцлах',[reason(),field('reviewed','Үлдсэн өрөөнүүдийн ажлыг цуцлахыг баталж байна','checkbox')],'Үлдсэн ажлыг цуцлах',v=>api(path(`minibar/rollout-batches/${enc(id)}/cancel-remaining`),{expected_revision:result.revision,reason:v.reason,idempotency_key:v.idempotency_key}),{success:()=>batchDetail(container,data,id)});
+      }
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Багцын явцыг дахин ачаалах',()=>batchDetail(container,data,id)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function batchHistory(container,data,after=''){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Багцын түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const result=await api(batchPath(data)+`?limit=20&after=${enc(after)}`);if(seq!==generation||!parent.isConnected)return;parent.replaceChildren();parent.append(node('h3','Шилжүүлгийн багцын түүх'));if(!result.items.length)parent.append(node('p','Энэ хэсэгт шилжүүлгийн багц алга.'));
+      for(const item of result.items){const row=record(parent,`${time(item.recorded_at)} · ${batchLabels[item.state]}`,`Сонгосон: ${item.counts.selected} · Хэрэгжсэн: ${item.counts.APPLIED}`);actions(row).append(btn('Багцын явцыг нээх',()=>guard(()=>batchDetail(container,data,item.batch_id))));}
+      const pages=actions(parent);pages.append(btn('Багцын эхний хэсэг',()=>guard(()=>batchHistory(container,data))),btn('Багцын дараагийн хэсэг',()=>guard(()=>batchHistory(container,data,result.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!result.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Багцын түүхийг дахин ачаалах',()=>batchHistory(container,data,after)));}finally{parent.setAttribute('aria-busy','false');}
   }
   async function rolloutRoomPicker(container,data,after){
     const parent=node('div');container.replaceChildren(parent);const seq=generation;
