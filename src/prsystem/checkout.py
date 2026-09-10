@@ -1,4 +1,4 @@
-"""Minibar-OFF checkout and claimable canonical cleaning source.
+"""Settled checkout with canonical minibar proof and claimable cleaning source.
 
 No client-supplied checkout time, paid flag, balance or retention policy.
 """

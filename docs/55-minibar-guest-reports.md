@@ -49,6 +49,8 @@ not change. Selling price remains separate from weighted-average COGS. Integer
 numerators/denominators retain exact rational inventory value and cost without
 floating-point arithmetic or rounding, including purchases after consumption.
 Warehouse/room transfers preserve that rational value and hotel total.
+Historical opening/purchase cost is read from the original unit_cost_mnt,
+including rows that predate the rational consumption columns.
 
 Reception can return an unpaid report with a reason. A new source/version requires
 a fresh claim and physical count. The new transaction reverses every preceding
