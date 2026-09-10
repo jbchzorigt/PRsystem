@@ -107,9 +107,12 @@ concurrently with a schema-reading test suite on the same cluster.
 ## 6. Deploy order
 
 1. Migrate (§5) with the migration principal; confirm `SELECT count(*) FROM drizzle.__drizzle_migrations` is 22.
-2. Roll `api`. Readiness is `GET /health/ready` (200 only when PostgreSQL, Redis and the key
-   management adapter answer); liveness is `GET /health/live`. Every answer carries the security
-   headers and the deny-all content security policy.
+2. Roll `api`. Readiness is `GET /health/ready`, which probes PostgreSQL and Redis and answers 200
+   only when both do; liveness is `GET /health/live`. Key management is not a readiness probe: it
+   is enforced by a fail-closed startup guard that runs before any adapter is constructed and before
+   the API binds its listening port, so an absent or invalid production key-management adapter
+   (INT-KMS-01) prevents the process from starting at all rather than showing up as a not-ready
+   answer. Every answer carries the security headers and the deny-all content security policy.
 3. Roll `worker`. At startup it logs which provider jobs it scheduled and which gate kept each off;
    with every gate blocked, the refund executor and payout runner are not scheduled and say so.
 4. Roll the five portals, each with `PRSYSTEM_API_URL` and its own `PRSYSTEM_PORTAL_ORIGIN`.

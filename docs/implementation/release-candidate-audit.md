@@ -81,7 +81,7 @@ a gate needs a named artefact — a contract, a credential or a written approval
 | --- | --- | --- | --- |
 | EXT-01 | XYP / ХУР | check-in identity is entered manually with `MANUAL` provenance; a Wanted record cannot be ХУР-sourced | the service contract, field list, consent basis and network access |
 | EXT-02 | e-Mongolia | the guest portal shows the e-Mongolia sign-in as not yet open; registration is by phone (which is itself behind INT-OTP-01) | the integration agreement and sandbox access |
-| EXT-03 | QPay | no online payment can be initiated; a provider-dependent command answers `PRECONDITION_FAILED` naming the gate | the merchant contract, callback signature rule and credentials |
+| EXT-03 | QPay | no online payment can be initiated; a provider-dependent command answers `PRECONDITION_FAILED` with the payment-unavailable outcome (`PAYMENT_UNAVAILABLE … (DISABLED)`); the gate id is retained in the internal port result and is not exposed in the HTTP error message | the merchant contract, callback signature rule and credentials |
 | EXT-04 | Khaan Bank | as EXT-03 for the gateway; manual POS reference capture at Reception continues (it is not an integration) | the gateway and POS contracts and credentials |
 | EXT-05 | CallPro | a confirmed SMS job records every recipient `FAILED` with the gate as reason; nothing is sent; the Police Match alert is raised in-app only | the agreement: endpoint, authentication, allowlist, segment billing, tariff |
 | EXT-06 | Google Maps | no geocoding; hotel coordinates must be entered; distance ordering still works server-side | the API selection, billing account and key restrictions |
