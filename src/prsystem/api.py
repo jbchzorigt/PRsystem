@@ -34,6 +34,7 @@ from prsystem.minibar_batches import MinibarBatches
 from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.minibar_guest import MinibarGuest
+from prsystem.minibar_refill import MinibarRefill
 from prsystem.readiness import ReadinessService
 from prsystem.stays import StayService
 from prsystem.guest_finance import GuestFinance
@@ -586,6 +587,29 @@ class MinibarReview(ReasonCommand):
     action: Literal['RETURN','DISPUTE','UPHOLD','WAIVE']
 
 
+class MinibarRefillRequest(BaseModel):
+    model_config=ConfigDict(extra="forbid",strict=True)
+    idempotency_key: str=Field(min_length=1,max_length=128)
+    product_id: str=Field(min_length=1,max_length=128)
+    quantity: int=Field(ge=1,le=1000000)
+
+
+class MinibarRefillCancel(InvitationChange):
+    reason: str=Field(min_length=1,max_length=1000)
+
+
+class MinibarRefillComplete(InvitationChange):
+    task_id: str=Field(min_length=1,max_length=128)
+    assignment_version: int=Field(ge=0,le=2**63-1)
+    quantity: int=Field(ge=1,le=1000000)
+
+
+class MinibarRefillUnavailable(InvitationChange):
+    task_id: str=Field(min_length=1,max_length=128)
+    assignment_version: int=Field(ge=0,le=2**63-1)
+    reason: str=Field(min_length=1,max_length=1000)
+
+
 class CanonicalMinibarReport(InvitationChange):
     task_id: str=Field(min_length=1,max_length=128)
     assignment_version: int=Field(ge=0,le=2**63-1)
@@ -900,7 +924,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({'INVALID_LIFECYCLE_TRANSITION':409,'LIFECYCLE_BLOCKED':409})
         stay_errors.update({'HANDOVER_PENDING':409,'RECOUNT_REQUIRED':409})
         stay_errors.update({'REFUND_APPROVAL_REQUIRED':409,'REFUND_RELEASE_NOT_PROVEN':409})
-        stay_errors.update({'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
+        stay_errors.update({'MINIBAR_REFILL_PENDING':409,'MINIBAR_REFILL_LOCKED':409,'MINIBAR_REPORT_LOCKED':409,'MINIBAR_REPORT_REQUIRED':409,'RESTAURANT_ACK_REQUIRED':409})
         stay_errors.update({'PAYMENT_ALREADY_PAID':409,'PAYMENT_VOID_REQUIRES_CANCELLATION':409,'PHYSICAL_COUNT_REQUIRED':409})
         stay_errors['PUBLIC_ORIGIN_REQUIRED']=503
         stay_errors.update({code:409 for code in ('BANK_BENEFICIARY_UNVERIFIED','SETTLEMENT_REFRESH_REQUIRED','SETTLEMENT_HELD','PAYOUT_TERMINAL','PAYOUT_PENDING','BANK_FUNDS_INSUFFICIENT')})
@@ -1183,6 +1207,34 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-review')
     def review_minibar(tenant_id: str,stay_id: str,body: MinibarReview,secret: Annotated[str,Depends(token)]):
         return reception_dependencies.review(secret,tenant_id,stay_id,body.action,body.reason,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-refills',status_code=201)
+    def request_minibar_refill(tenant_id: str,stay_id: str,body: MinibarRefillRequest,secret: Annotated[str,Depends(token)]):
+        return MinibarRefill(service,identity_vault,runtime_mode).create(secret,tenant_id,stay_id,body.product_id,body.quantity,body.idempotency_key)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/minibar-refills')
+    def read_stay_refills(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)],after: str='',limit: int=Query(50,ge=1,le=100)):
+        return MinibarRefill(service,identity_vault,runtime_mode).list_refills(secret,tenant_id,stay_id,after,limit)
+
+    @app.get('/hotels/{tenant_id}/minibar/refill-tasks')
+    def read_minibar_refills(tenant_id: str,secret: Annotated[str,Depends(token)],after: str='',limit: int=Query(50,ge=1,le=100)):
+        return MinibarRefill(service,identity_vault,runtime_mode).list_refills(secret,tenant_id,None,after,limit)
+
+    @app.post('/hotels/{tenant_id}/minibar/refills/{request_id}/claim',status_code=201)
+    def claim_minibar_refill(tenant_id: str,request_id: str,body: InvitationChange,secret: Annotated[str,Depends(token)]):
+        return MinibarRefill(service,identity_vault,runtime_mode).claim_refill(secret,tenant_id,request_id,body.expected_revision,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/refills/{request_id}/complete')
+    def complete_minibar_refill(tenant_id: str,request_id: str,body: MinibarRefillComplete,secret: Annotated[str,Depends(token)]):
+        return MinibarRefill(service,identity_vault,runtime_mode).resolve(secret,tenant_id,request_id,'COMPLETED',body.quantity,None,body.expected_revision,body.idempotency_key,body.task_id,body.assignment_version)
+
+    @app.post('/hotels/{tenant_id}/minibar/refills/{request_id}/unavailable')
+    def unavailable_minibar_refill(tenant_id: str,request_id: str,body: MinibarRefillUnavailable,secret: Annotated[str,Depends(token)]):
+        return MinibarRefill(service,identity_vault,runtime_mode).resolve(secret,tenant_id,request_id,'UNAVAILABLE',0,body.reason,body.expected_revision,body.idempotency_key,body.task_id,body.assignment_version)
+
+    @app.post('/hotels/{tenant_id}/minibar/refills/{request_id}/cancel')
+    def cancel_minibar_refill(tenant_id: str,request_id: str,body: MinibarRefillCancel,secret: Annotated[str,Depends(token)]):
+        return MinibarRefill(service,identity_vault,runtime_mode).resolve(secret,tenant_id,request_id,'CANCELLED',0,body.reason,body.expected_revision,body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/minibar/guest-inspections')
     def canonical_minibar_queue(tenant_id: str,secret: Annotated[str,Depends(token)],after: str='',limit: int=Query(default=50,ge=1,le=100)):

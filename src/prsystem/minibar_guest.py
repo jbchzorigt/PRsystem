@@ -108,10 +108,11 @@ class MinibarGuest(ReceptionDependencies):
             if set(counts)!={i['product_id'] for i in book['items']}:raise DomainError('INVALID_REQUEST')
             lines=[];total=0
             for item in book['items']:
+                availability=conn.execute('SELECT prsystem.minibar_stay_availability(%s,%s,%s)',(tenant,stay,item['product_id'])).fetchone()[0]
                 actual=counts[item['product_id']]
-                if type(actual) is not int or not 0<=actual<=item['opening_quantity']:raise DomainError('INVALID_REQUEST')
-                used=item['opening_quantity']-actual;amount=used*item['unit_price'];total+=amount;money(total)
-                lines.append(dict(item,actual_count=actual,used_quantity=used,line_amount=amount))
+                if type(actual) is not int or not 0<=actual<=availability['available_quantity']:raise DomainError('INVALID_REQUEST')
+                used=availability['available_quantity']-actual;amount=used*item['unit_price'];total+=amount;money(total)
+                lines.append(dict(item,**availability,actual_count=actual,used_quantity=used,line_amount=amount))
             if no_consumption!=(total==0):raise DomainError('INVALID_REQUEST')
             movements=[]
             # Restore the complete old version before recomputing the new one.
@@ -120,7 +121,7 @@ class MinibarGuest(ReceptionDependencies):
             for line in lines:
                 product=line['product_id']
                 current=conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(tenant,product,room)).fetchone()[0]
-                if current!=line['opening_quantity']:raise DomainError('COUNT_VARIANCE')
+                if current!=line['available_quantity']:raise DomainError('COUNT_VARIANCE')
                 if line['used_quantity']:movements.append(self.movement(conn,tenant,room,stay,revision+1,product,-line['used_quantity'],actor,roles))
                 action=conn.execute("SELECT id FROM prsystem.cleaning_action WHERE tenant_id=%s AND source_id=%s AND product_id=%s AND kind='COUNT'",(tenant,assigned[2],product)).fetchone()
                 if not action:raise DomainError('WORK_SOURCE_NOT_FOUND')
@@ -158,5 +159,7 @@ class MinibarGuest(ReceptionDependencies):
                 except DomainError as exc:
                     if str(exc) in {'SUBSCRIPTION_EXPIRED','SUBSCRIPTION_LOCKED'}:continue
                     raise
-                items.append(dict(zip(('stay_id','room_number','report_revision','source_id','task_id','assignment_version','assignee_id','price_book','work_state'),r)))
+                entry=dict(zip(('stay_id','room_number','report_revision','source_id','task_id','assignment_version','assignee_id','price_book','work_state'),r))
+                entry['availability']={i['product_id']:conn.execute('SELECT prsystem.minibar_stay_availability(%s,%s,%s)',(tenant,r[0],i['product_id'])).fetchone()[0] for i in entry['price_book']['items']}
+                items.append(entry)
             return dict(items=items,next_after=rows[limit-1][0] if len(rows)>limit else None)

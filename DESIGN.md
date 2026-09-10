@@ -153,3 +153,8 @@ Guest minibar inspections reuse the same forms, scrollable tables, explicit
 claims, status text and dirty-form guard. The immutable check-in price book is
 readable by Reception and the assigned Cleaner. Physical-count inputs start
 empty; no-use acknowledgement is explicit. See UX-CONTRACT.md and docs/55.
+
+Stay-refill screens reuse the existing Reception form and Cleaner queue treatment.
+A room/product heading precedes requested and actual quantities; no price or cost
+is shown in refill tasks. Field, reason, retry, pagination, dirty-dialog and 320px
+behavior remain shared. Evidence: `tests/browser/minibar-refill.cjs`.

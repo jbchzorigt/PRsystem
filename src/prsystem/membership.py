@@ -211,7 +211,7 @@ class MembershipService(StaffCommands):
             return result
 
     @classmethod
-    def register_open_work(cls, conn, tenant, owner, kind, source_id, *, checkout_stay=None, inspection_stay=None):
+    def register_open_work(cls, conn, tenant, owner, kind, source_id, *, checkout_stay=None, inspection_stay=None, refill_stay=None):
         """Internal source adapter only, inside the source creation transaction.
 
         Call before source row locks; all involved accounts must be locked in
@@ -232,6 +232,16 @@ class MembershipService(StaffCommands):
         role = "RECEPTION" if kind == "SHIFT" else "CLEANER"
         facts = AccessFacts(tenant, True, True, True, role in member[1], kind == "SHIFT" or hotel[0] >= 25000, True, True, hotel[2])
         action, obligation = Action.CONFIGURE, None
+        if refill_stay is not None:
+            if kind!='CLEANING_TASK' or checkout_stay is not None or inspection_stay is not None:raise DomainError('INVALID_WORK_KIND')
+            source=conn.execute("""SELECT s.check_in_recorded_at FROM prsystem.minibar_refill_request q
+                JOIN prsystem.stay s ON(s.tenant_id,s.id)=(q.tenant_id,q.stay_id)
+                JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(q.tenant_id,q.source_id)
+                WHERE q.tenant_id=%s AND q.stay_id=%s AND t.id=%s AND t.assignee_id=%s AND t.state='OPEN' AND s.state='ACTIVE'
+                AND NOT EXISTS(SELECT 1 FROM prsystem.minibar_refill_result x WHERE(x.tenant_id,x.request_id)=(q.tenant_id,q.id))""",(tenant,refill_stay,source_id,owner)).fetchone()
+            if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            from prsystem.subscription import Obligation, RootKind
+            action,obligation=Action.CHECKOUT_REPORT,Obligation(tenant,refill_stay,RootKind.STAY,source[0],True)
         if inspection_stay is not None:
             if kind!='CLEANING_TASK' or checkout_stay is not None:raise DomainError('INVALID_WORK_KIND')
             source=conn.execute('''SELECT s.check_in_recorded_at FROM prsystem.minibar_guest_inspection e

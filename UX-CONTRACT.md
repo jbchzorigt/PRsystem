@@ -221,3 +221,13 @@ Load failures expose retry, obsolete loads cannot revive detached panels, and
 blocked assignments show text without an executable form. Pagination and empty
 states use the existing controls. All state remains in memory. Verification:
 `tests/browser/minibar-guest.cjs`, `test_minibar_guest.py`, desktop and 320px.
+
+## Stay minibar refill
+
+`reception.js stayRefills/refillTasks` reuse Form, CRUD, Feedback, Dialog and
+pagination owners. Reception requests/cancels; Cleaner claims and confirms actual
+quantity or an unavailable reason. Task screens omit selling prices. Physical
+counts start blank, server failure retains input and an unchanged idempotency
+key, successful writes reload the authoritative queue. Existing guest report
+counts use server-provided opening + documented refill availability. Verification:
+`tests/browser/minibar-refill.cjs` and real PostgreSQL `test_minibar_refill.py`.

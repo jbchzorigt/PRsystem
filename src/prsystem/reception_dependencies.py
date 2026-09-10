@@ -77,7 +77,12 @@ class ReceptionDependencies(GuestFinance):
             actor=self.actor(conn,bearer,tenant,stay,action=Action.CHECKOUT)
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
-            ShiftService._book(conn,tenant);self.lock(conn,tenant,stay,active=True);StayService._shift(conn,tenant,actor)
+            conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+            ShiftService._book(conn,tenant);self._catalog_lock(conn,tenant)
+            conn.execute('SELECT id FROM prsystem.room WHERE tenant_id=%s AND id=(SELECT room_id FROM prsystem.stay WHERE tenant_id=%s AND id=%s) FOR UPDATE',(tenant,tenant,stay)).fetchone()
+            self.lock(conn,tenant,stay,active=True);StayService._shift(conn,tenant,actor)
+            if conn.execute("""SELECT 1 FROM prsystem.minibar_refill_request q WHERE q.tenant_id=%s AND q.stay_id=%s
+                AND NOT EXISTS(SELECT 1 FROM prsystem.minibar_refill_result x WHERE(x.tenant_id,x.request_id)=(q.tenant_id,q.id))""",(tenant,stay)).fetchone():raise DomainError('MINIBAR_REFILL_PENDING')
             if conn.execute("SELECT 1 FROM prsystem.stay_time_amendment WHERE tenant_id=%s AND stay_id=%s AND state='PENDING'",(tenant,stay)).fetchone():raise DomainError('AMENDMENT_PENDING')
             snapshot=conn.execute('SELECT snapshot FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
             conn.execute('INSERT INTO prsystem.reception_checkout_intent(tenant_id,stay_id,actor_id) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',(tenant,stay,actor))

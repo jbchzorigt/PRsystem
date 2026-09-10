@@ -61,6 +61,12 @@ class CleaningService(MembershipService):
             inspection=conn.execute('SELECT stay_id FROM prsystem.minibar_guest_inspection WHERE tenant_id=%s AND source_id=%s',(tenant,source[2])).fetchone()
             if not inspection:raise DomainError('WORK_SOURCE_NOT_FOUND')
             self._cleaner(conn,tenant,actor,action=Action.CHECKOUT_REPORT,obligation=GuestFinance.root(conn,tenant,inspection[0]))
+        elif source and source[0]=='REFILL' and source[1].startswith('minibar-refill:'):
+            from prsystem.guest_finance import GuestFinance
+            conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+            refill=conn.execute('SELECT stay_id FROM prsystem.minibar_refill_request WHERE tenant_id=%s AND source_id=%s',(tenant,source[2])).fetchone()
+            if not refill:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            self._cleaner(conn,tenant,actor,action=Action.CHECKOUT_REPORT,obligation=GuestFinance.root(conn,tenant,refill[0]))
         else:self._cleaner(conn,tenant,actor)
 
     @classmethod
