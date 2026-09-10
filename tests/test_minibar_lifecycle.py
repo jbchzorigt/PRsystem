@@ -17,6 +17,7 @@ class MinibarLifecycleTests(MinibarConfigurationCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                'GRANT DELETE ON prsystem.minibar_product,prsystem.minibar_template TO {}',
                 'GRANT SELECT,INSERT ON prsystem.minibar_lifecycle_intent,prsystem.minibar_lifecycle_completion TO {}',
                 'GRANT UPDATE(status,revision,deactivation_requested_at) ON prsystem.minibar_product TO {}',
                 'GRANT UPDATE(status,revision) ON prsystem.minibar_template TO {}',
@@ -31,7 +32,7 @@ class MinibarLifecycleTests(MinibarConfigurationCase):
     def change(self,kind='products',identity=None,action='DEACTIVATE',revision=None,token=None,**extra):
         identity=identity or self.product
         if revision is None:revision=self.assert_status(self.preview(kind,identity),200)['revision']
-        return self.api(f'minibar/{kind}/{identity}/lifecycle',dict(action=action,expected_revision=revision,reason='Бүрдлээс гаргах',**extra),token)
+        return self.api(f'minibar/{kind}/{identity}/lifecycle',dict(dict(action=action,expected_revision=revision,reason='Бүрдлээс гаргах'),**extra),token)
 
     def test_product_retirement_blocks_new_template_and_receipt_but_retains_stock(self):
         before=self.api('minibar/products',method='get').json()['items'][0]
@@ -92,8 +93,7 @@ class MinibarLifecycleTests(MinibarConfigurationCase):
         self.assert_status(self.change(token=token,revision=1),200)
 
     def test_hotel_admin_without_manager_cannot_change_lifecycle(self):
-        _,token=self.add_staff(['HOTEL_ADMIN'])
-        self.assert_status(self.change(token=token,revision=1),403)
+        self.assert_status(self.change(token=self.admin,revision=1),403)
 
     def test_concurrent_deactivation_and_cancel_have_one_revision_winner(self):
         gate=Barrier(2)
@@ -148,3 +148,30 @@ class MinibarLifecycleTests(MinibarConfigurationCase):
         self.assertEqual(self.api(f'minibar/templates/{template["template_id"]}/versions',dict(expected_revision=1)).json()['code'],'TEMPLATE_NOT_ACTIVE')
         self.assert_status(self.change('templates',template['template_id'],action='REACTIVATE'),200)
         self.assert_status(self.api(f'minibar/templates/{template["template_id"]}/versions',dict(expected_revision=2)),201)
+
+    def test_only_empty_unused_template_can_delete_with_replay_and_audit(self):
+        t=self.assert_status(self.api('minibar/templates',dict(name='Туршилтын хоосон загвар')),201)['template_id']
+        self.assertTrue(self.preview('templates',t).json()['can_delete'])
+        key=uuid4().hex
+        result=self.assert_status(self.change('templates',t,action='HARD_DELETE',revision=1,idempotency_key=key),200)
+        self.assertEqual(result['status'],'DELETED')
+        self.assertEqual(self.assert_status(self.change('templates',t,action='HARD_DELETE',revision=1,idempotency_key=key),200),result)
+        self.assert_status(self.preview('templates',t),404)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute("SELECT reason FROM prsystem.minibar_lifecycle_intent WHERE tenant_id=%s AND entity_id=%s AND action='HARD_DELETE'",(self.tenant,t)).fetchone()[0],'Бүрдлээс гаргах')
+
+    def test_opening_stock_or_versions_or_lifecycle_history_prevent_delete(self):
+        self.assertFalse(self.preview().json()['can_delete'])
+        self.assertEqual(self.change(action='HARD_DELETE').json()['code'],'LIFECYCLE_BLOCKED')
+        self.assertEqual(self.change('templates',self.template,action='HARD_DELETE').json()['code'],'LIFECYCLE_BLOCKED')
+        t=self.assert_status(self.api('minibar/templates',dict(name='Хадгалах загвар')),201)['template_id']
+        self.assert_status(self.change('templates',t),200)
+        self.assertEqual(self.change('templates',t,action='HARD_DELETE').json()['code'],'LIFECYCLE_BLOCKED')
+
+    def test_direct_delete_without_audit_proof_rolls_back(self):
+        t=self.assert_status(self.api('minibar/templates',dict(name='Нотолгоо шаардана')),201)['template_id']
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            with psycopg.connect(self.app_dsn) as conn:
+                conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(self.tenant,))
+                conn.execute('DELETE FROM prsystem.minibar_template WHERE tenant_id=%s AND id=%s',(self.tenant,t))
+        self.assert_status(self.preview('templates',t),200)

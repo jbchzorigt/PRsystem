@@ -10,6 +10,7 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   const requests=[],problems=[],receipts=new Map();let fail=true,lost=true,conflict=true;
   const product={entity_id:'water',kind:'product',name:'Ус',status:'ACTIVE',revision:1};
   const template={entity_id:'standard',kind:'template',name:'Стандарт',status:'ACTIVE',revision:4};
+  const empty={entity_id:'empty',kind:'template',name:'Хоосон загвар',status:'ACTIVE',revision:1};
   const blockers=entity=>entity===product&&template.status==='ACTIVE'?[{kind:'ACTIVE_TEMPLATE',count:1}]:[];
   page.on('pageerror',e=>problems.push(e.message));
   await page.route('**/auth/**',r=>r.fulfill({json:new URL(r.request().url()).pathname==='/auth/login'?{access_token:'fake-token'}:{roles:['MANAGER']}}));
@@ -18,16 +19,17 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
    if(tail.startsWith('minibar/'))requests.push({tail,body,method});
    if(tail==='operations')result={roles:['MANAGER'],package_mnt:30000,mode:'LIVE'};
    else if(tail==='minibar/products')result={items:[{...product,product_id:'water',category:'Ундаа',unit:'ш',selling_price_mnt:3000,warehouse_quantity:10,stock_revision:1,average_cost:{numerator:'1000',denominator:'1'}}],next_after:null};
-   else if(tail==='minibar/templates')result={items:[{...template,template_id:'standard',default_version_id:'v1'}],next_after:null};
+   else if(tail==='minibar/templates')result={items:[{...template,template_id:'standard',default_version_id:'v1'},...(empty.status==='DELETED'?[]:[{...empty,template_id:'empty',default_version_id:null}])],next_after:null};
    else if(tail==='minibar/templates/standard/versions')result={...template,template_id:'standard',items:[],next_after:null};
+   else if(tail==='minibar/templates/empty/versions')result={...empty,template_id:'empty',items:[],next_after:null};
    else if(tail.endsWith('/lifecycle')){
-    const entity=tail.includes('/products/')?product:template;
-    if(!body){if(fail){fail=false;return r.fulfill({status:503,json:{code:'SERVICE_UNAVAILABLE'}});}result={...entity,blockers:blockers(entity)};}
+    const entity=tail.includes('/products/')?product:tail.includes('/empty/')?empty:template;
+    if(!body){if(fail){fail=false;return r.fulfill({status:503,json:{code:'SERVICE_UNAVAILABLE'}});}result={...entity,blockers:blockers(entity),can_delete:entity===empty};}
     else{
      if(receipts.has(body.idempotency_key))return r.fulfill({json:receipts.get(body.idempotency_key)});
      if(conflict){conflict=false;entity.revision++;return r.fulfill({status:409,json:{code:'REVISION_CONFLICT'}});}
      assert.equal(body.expected_revision,entity.revision);assert(body.reason);
-     entity.status=body.action==='DEACTIVATE'?(blockers(entity).length?'RETIRING':'INACTIVE'):'ACTIVE';entity.revision++;
+     entity.status=body.action==='HARD_DELETE'?'DELETED':body.action==='DEACTIVATE'?(blockers(entity).length?'RETIRING':'INACTIVE'):'ACTIVE';entity.revision++;
      result={...entity,blockers:blockers(entity)};receipts.set(body.idempotency_key,structuredClone(result));
      if(template.status==='INACTIVE'&&product.status==='RETIRING'){product.status='INACTIVE';product.revision++;}
      if(lost){lost=false;return r.fulfill({status:503,json:{code:'SERVICE_UNAVAILABLE'}});}
@@ -48,8 +50,9 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   assert.equal(product.status,'RETIRING');assert.equal(await page.getByRole('button',{name:'Орлого бүртгэх',exact:true}).count(),0);
   await open();await fill();await page.getByRole('button',{name:'Идэвхгүй болгох хүсэлтийг цуцлах',exact:true}).click();await ready();assert.equal(product.status,'ACTIVE');
   await open();await fill();await page.getByRole('button',{name:'Идэвхгүй болгох',exact:true}).click();await ready();
-  await page.getByRole('link',{name:'Минибарын загвар',exact:true}).click();await ready();await page.getByRole('button',{name:'Хувилбаруудыг нээх'}).click();await ready();await open();await fill();await page.getByRole('button',{name:'Идэвхгүй болгох',exact:true}).click();await ready();assert.equal(template.status,'INACTIVE');assert.equal(product.status,'INACTIVE');
+  await page.getByRole('link',{name:'Минибарын загвар',exact:true}).click();await ready();await page.getByRole('button',{name:'Хувилбаруудыг нээх'}).first().click();await ready();await open();await fill();await page.getByRole('button',{name:'Идэвхгүй болгох',exact:true}).click();await ready();assert.equal(template.status,'INACTIVE');assert.equal(product.status,'INACTIVE');
   await page.getByRole('link',{name:'Агуулах',exact:true}).click();await ready();await open();await fill();await page.getByRole('button',{name:'Дахин идэвхжүүлэх',exact:true}).click();await ready();assert.equal(product.status,'ACTIVE');
+  await page.getByRole('link',{name:'Минибарын загвар',exact:true}).click();await ready();await page.getByRole('button',{name:'Загварын жагсаалт',exact:true}).click();await ready();await page.getByRole('button',{name:'Хувилбаруудыг нээх'}).last().click();await ready();await open();await page.getByRole('button',{name:'Ашиглаагүй бүртгэлийг устгах',exact:true}).click();await page.getByLabel('Устгах шалтгаан').fill('Туршилтын хоосон бүртгэл');await page.getByLabel('Бүрмөсөн устгахыг зөвшөөрч байна').check();await page.getByRole('button',{name:'Бүрмөсөн устгах',exact:true}).click();await ready();assert.equal(empty.status,'DELETED');assert.equal(await page.getByText('Хоосон загвар',{exact:true}).count(),0);
   const commands=requests.filter(r=>r.body&&r.tail.endsWith('/lifecycle'));assert.equal(commands[1].body.idempotency_key,commands[2].body.idempotency_key);assert.notEqual(commands[0].body.idempotency_key,commands[1].body.idempotency_key);
   assert.equal(await page.evaluate(()=>localStorage.length+sessionStorage.length),0);assert.deepEqual(problems,[]);
   fs.writeFileSync('artifacts/minibar-lifecycle-requests.json',JSON.stringify(requests));console.log('Minibar lifecycle browser: preview, failure/retry, reason/ack, CAS, unknown outcome, retirement/cancel/reactivation and 320px passed.');

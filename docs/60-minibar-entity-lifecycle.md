@@ -26,7 +26,7 @@ No guest charge, price snapshot, inventory quantity or cost is rewritten.
 
 ## Runtime grants
 
-Migration 057 is additive. All source adapters executing stay/configuration/refill
+Migrations 057–058 are additive. All source adapters executing stay/configuration/refill
 terminal writes need SELECT on minibar_lifecycle_intent, including when no
 retirement exists. The shared operational runtime additionally needs:
 
@@ -50,7 +50,21 @@ coverage includes loading failure, CAS recovery, uncertain completion, required
 acknowledgement, retirement/cancel/reactivation and 320px reflow.
 
 Templates can be created ACTIVE or INACTIVE; authoring requires ACTIVE.
-Never-used hard-delete remains unimplemented.
+Hard-delete is available only without business history or dependencies. Every
+created product has an immutable opening receipt (including a zero opening), so
+it cannot be hard-deleted. An empty template with no versions, assignments or
+lifecycle history can be deleted. Database preconditions and a deferred audit
+proof reject direct deletion without immutable actor/reason evidence. Retry
+returns the existing receipt even after the entity is gone.
+
+The deletion adapter additionally needs DELETE on minibar_template and
+minibar_product; database guards retain all used entities. The browser exposes
+the separate permanent-delete confirmation only after an eligible preview.
+
+Initial focused CI passed 12/15 tests. The other three stopped in test setup:
+two passed the reason keyword twice and one attempted to create a second
+Primary Hotel Admin using the ordinary staff fixture. The tests now merge
+overrides and use the existing Hotel Admin token; application gates are unchanged.
 Paid quantity correction, non-guest stock-out, variance/shortage override, partial
 physical rollback, Restaurant, Operation, Police and production readiness remain.
 Provider integrations stay within the user-approved mock boundary. No merge or

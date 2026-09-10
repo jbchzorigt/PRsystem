@@ -155,7 +155,7 @@ class MinibarArchiveCommand(MinibarTemplateCommand):
 
 
 class MinibarEntityTransition(MinibarArchiveCommand):
-    action: Literal['DEACTIVATE','CANCEL_RETIRING','REACTIVATE']
+    action: Literal['DEACTIVATE','CANCEL_RETIRING','REACTIVATE','HARD_DELETE']
 
 
 class MinibarConfigurationCancel(MinibarTemplateCommand):

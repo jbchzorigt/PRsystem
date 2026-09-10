@@ -169,6 +169,14 @@
       const label={DEACTIVATE:'Идэвхгүй болгох',CANCEL_RETIRING:'Идэвхгүй болгох хүсэлтийг цуцлах',REACTIVATE:'Дахин идэвхжүүлэх'}[action];
       parent.append(node('p',action==='DEACTIVATE'?'Шинэ хэрэглээг шууд хаана. Өмнөх зочин, нөхөлт болон өрөөний хамаарлыг дуусгасны дараа идэвхгүй болно.':'Холбоотой бүтээгдэхүүн, бүрдлийн шаардлагыг дахин шалгана.'));
       form(parent,label,[field('reason','Шалтгаан','text',{max:1000}),field('reviewed','Төлөв өөрчлөх үр дүнг ойлгосон','checkbox')],label,v=>api(url,{action,reason:v.reason,expected_revision:data.revision,idempotency_key:v.idempotency_key}),{success:async r=>{await navigate(destination);say(`${r.name}: ${labels[r.status]}.`);}});
+      if(data.can_delete){
+        const deletion=node('div');parent.append(deletion);
+        actions(parent).append(btn('Ашиглаагүй бүртгэлийг устгах',()=>guard(()=>{
+          deletion.replaceChildren(node('p',`${data.name}: бүртгэлийг бүрмөсөн устгана. Устгасан шалтгаан, ажилтны бүртгэл хадгалагдана.`));
+          form(deletion,'Ашиглаагүй бүртгэлийг устгах',[field('reason','Устгах шалтгаан','text',{max:1000}),field('reviewed','Бүрмөсөн устгахыг зөвшөөрч байна','checkbox')],'Бүрмөсөн устгах',v=>api(url,{action:'HARD_DELETE',reason:v.reason,expected_revision:data.revision,idempotency_key:v.idempotency_key}),{success:async()=>{if(destination==='templates'){templateSelection=null;templateAfter='';}else inventoryAfter='';await navigate(destination);say(`${data.name} бүртгэлийг устгалаа.`);}});
+        })));
+      }
+
     }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Төлөвийг дахин ачаалах',()=>minibarLifecycle(container,kind,identity,destination)));}
     finally{parent.setAttribute('aria-busy','false');}
   }
@@ -189,7 +197,7 @@
     const data=await api(path(`minibar/templates?limit=50&after=${enc(templateAfter)}`));if(seq!==generation)return;
     parent.append(node('p','Өрөөний минибарт байлгах бүтээгдэхүүн, тоог загварын хувилбараар бэлтгэнэ.'));
     const editor=node('div');parent.append(editor);
-    actions(parent).append(btn('Загвар үүсгэх',()=>guard(()=>{editor.replaceChildren();const f=form(editor,'Шинэ минибарын загвар',[field('name','Загварын нэр','text',{max:200}),select('status','Эхлэх төлөв',[['ACTIVE','Идэвхтэй'],['INACTIVE','Идэвхгүй']])],'Загвар үүсгэх',v=>api(path('minibar/templates'),v),{success:async()=>{templateAfter='';await navigate('templates');say('Загвар үүсгэлээ. Бүрдлийн ноорог хувилбараа нэмнэ үү.');}});f.querySelector('input').focus();})));
+    actions(parent).append(btn('Загвар үүсгэх',()=>guard(()=>{editor.replaceChildren();const f=form(editor,'Шинэ минибарын загвар',[field('name','Загварын нэр','text',{max:200}),select('status','Эхлэх төлөв',[['ACTIVE','Идэвхтэй'],['INACTIVE','Идэвхгүй']])],'Загвар үүсгэх',v=>api(path('minibar/templates'),v),{success:async r=>{templateAfter='';await navigate('templates');say(r.status==='INACTIVE'?'Идэвхгүй загвар үүслээ. Ашиглахын өмнө идэвхжүүлнэ үү.':'Загвар үүсгэлээ. Бүрдлийн ноорог хувилбараа нэмнэ үү.');}});f.querySelector('input').focus();})));
     if(!data.items.length)parent.append(node('p','Минибарын загвар бүртгэлгүй байна.'));
     for(const t of data.items){const r=record(parent,t.name,`${labels[t.status]} · ${t.default_version_id?'Нийтэлсэн үндсэн хувилбартай':'Нийтэлсэн хувилбаргүй'}`);actions(r).append(btn('Хувилбаруудыг нээх',()=>guard(()=>chooseTemplate({id:t.template_id,after:0}))));}
     const pages=actions(parent);pages.append(btn('Загварын эхний хэсэг',()=>guard(()=>{templateAfter='';navigate('templates');})),btn('Загварын дараагийн хэсэг',()=>guard(()=>{templateAfter=data.next_after;navigate('templates');})));pages.firstChild.disabled=!templateAfter;pages.lastChild.disabled=!data.next_after;

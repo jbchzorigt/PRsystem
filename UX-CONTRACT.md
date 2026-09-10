@@ -257,4 +257,6 @@ Success refreshes the current owning list/detail. Loading/error/retry remains
 within the panel; navigation invalidates stale responses. Unknown completion
 retains the same command key; stale revision requires refresh and preserves the
 shared dirty-form warning. Stock history stays accessible in inactive states.
-No hard-delete control is exposed. Evidence: tests/browser/minibar-lifecycle.cjs.
+An eligible never-used record exposes a separate permanent-delete confirmation
+with reason and acknowledgement. Deletion returns to the first list page,
+clearing the deleted detail selection. Used records never expose this action. Evidence: tests/browser/minibar-lifecycle.cjs.
