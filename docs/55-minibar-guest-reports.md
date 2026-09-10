@@ -1,4 +1,4 @@
-# Canonical guest minibar — stage 5 implementation
+# Canonical guest minibar — accepted stage 5 increment
 
 Connects a fully stocked canonical room to production CASH check-in, assigned
 Cleaner inspection, immutable consumption, guest charge, unpaid report correction
@@ -83,9 +83,19 @@ owners cover validation, load retry, lost-response replay, dirty-state protectio
 blocked assignments, pagination, keyboard focus and a 320px viewport. The stock
 history distinguishes consumption and linked correction from purchase receipts.
 
-The initial server candidate `7ddedcabec855170db0f2b1860763aa09ed7eb63` passed the
-14-test focused PostgreSQL guest-flow gate. Final full-suite and browser acceptance
-will be recorded after the complete UI/test candidate passes CI.
+Accepted source `45c65c12fc92a9ec4f39315c96a3eff8e9974067`, tree
+`a5bae16d387e06697e2476a5803d4445b85569b3` (identical to local `c96269d`),
+passed **643/643 backend tests without skips in 677.837 seconds**.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34437621164)
+also passed the focused 21-test guest-flow gate, the 18-test batch gate, ten
+Chromium suites, 63 actual browser/API command checks and design/token checks.
+Strict local UI audit: zero findings. Local-only discovery executes 106 tests
+and skips 537 database tests; the linked PostgreSQL run is the acceptance evidence.
+
+One preceding full run passed 642/643 tests: the failing assertion compared the
+same timestamp serialized with five versus six fractional digits. The test now
+compares parsed instants, preserving the requirement that the price book uses
+check_in_recorded_at. The final full run passed; no business rule was weakened.
 
 ## Remaining integration
 

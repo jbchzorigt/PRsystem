@@ -21,10 +21,10 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md), [Нэг өрөөний Rollout](53-minibar-room-rollout.md), [Олон өрөөний batch](54-minibar-rollout-batches.md) нэмэлтүүд баталгаажсан: **622/622 тест skip-гүй**, есөн Chromium suite, 55 API хүсэлт, design/token CI. Reconciliation variance/override, partial rollback, canonical guest/refill/report, product/template lifecycle, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | [Агуулах](48-minibar-warehouse.md), [Template authoring](49-minibar-template-authoring.md), [Pending configuration](50-minibar-configuration-requests.md), [Тооллого/atomic apply](51-minibar-reconciliation.md), [Version archive](52-minibar-version-archive.md), [Нэг өрөөний Rollout](53-minibar-room-rollout.md), [Олон өрөөний batch](54-minibar-rollout-batches.md), [Guest opening/price book/report/checkout](55-minibar-guest-reports.md) нэмэлтүүд баталгаажсан: **643/643 тест skip-гүй**, арван Chromium suite, 63 API хүсэлт, design/token CI. Active-stay/automatic refill, exception report, paid quantity correction, variance/override, partial rollback, product/template lifecycle, online canonical room capacity, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
-Олон өрөөний Rollout batch ([54-р баримт](54-minibar-rollout-batches.md)) баталгаажсан. [Canonical guest opening, түгжсэн үнэ, хэрэглээний тайлан ба checkout](55-minibar-guest-reports.md)-ийн сервер/UI implementation нэмэгдсэн; эцсийн PostgreSQL regression/CI acceptance хүлээгдэж байна. Active-stay refill болон дээрх 5/6-р шатны бусад ажил үлдсэн.
+Олон өрөөний Rollout batch ([54-р баримт](54-minibar-rollout-batches.md)) баталгаажсан. [Canonical guest opening, түгжсэн үнэ, хэрэглээний тайлан ба checkout](55-minibar-guest-reports.md)-ийн сервер/UI implementation **643/643 PostgreSQL regression болон бүх CI gate-аар баталгаажсан**. Active-stay refill болон дээрх 5/6-р шатны бусад ажил үлдсэн.
 
 ## 2-р шатны үлдсэн 9 багц — 4/9 дууссан
 
@@ -46,7 +46,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 
 [Recovery/worker contract ба minimum grants](34-staff-recovery-mail-worker.md). [Membership/queue boundary](33-membership-work.md).
 
-## Тестийн бүрэлдэхүүн
+## Тестийн бүрэлдэхүүний түүх (364 тесттэй үе)
 
 | Suite | Тоо |
 | --- | ---: |
@@ -277,3 +277,26 @@ audit SELECT эрхийн дутууг зассан. History UPDATE/DELETE эр�
 variance/override, partial physical rollback, product/template lifecycle,
 Restaurant, Operation болон production readiness үлдсэн. Гадаад provider-ууд
 зөвшөөрсөн mock горимд; merge/deployment хийгээгүй.
+
+
+## Canonical guest minibar — баталгаажсан нэмэлт
+
+[55-р баримт](55-minibar-guest-reports.md): бүрэн нөөцтэй canonical өрөөний
+check-in нээлт/үнийн snapshot, Cleaner-ийн ажлаа авах/бодит тооллого,
+хэрэглээний stock/COGS, snapshot үнэтэй charge, төлбөрөөс өмнөх холбоостой
+буцаалт/шинэ тайлан болон production CASH checkout холбогдсон. Reception ба
+Cleaner ижил түгжсэн үнийг харна; бүртгэлүүд нэг transaction-д батлагдана.
+
+Source `45c65c12fc92a9ec4f39315c96a3eff8e9974067`,
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34437621164): **643/643
+backend тест skip-гүй (677.837 секунд)**; guest-flow 21 болон batch 18 тест тусдаа
+gate дээр мөн давсан. Арван Chromium suite, 63 API хүсэлт, design/token CI,
+strict UI audit 0 finding. CI-д илэрсэн ижил timestamp-ийн өөр текст нарийвчлалыг
+харьцуулсан тестийг огноо/цагийн утгаар харьцуулдаг болгож зассан.
+
+Active-stay/automatic refill, manager exception report, paid quantity correction,
+variance/override, partial physical rollback, product/template lifecycle, online
+canonical room capacity, Restaurant, Operation болон 6-р шат үлдсэн. Хэрэглээтэй
+өрөөг дараагийн зочинд өгөхөд stock/cleaning/buffer gate хэвээр; одоогоор existing
+explicit same-version configuration/count/apply-аар stock сэргээж болно.
+Гадаад provider-ууд зөвшөөрсөн mock горимд; merge/deployment хийгээгүй.
