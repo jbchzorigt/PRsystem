@@ -81,6 +81,7 @@ class MinibarStockAdjustment(BaseModel):
     kind: Literal['WASTE','COUNT_PLUS','COUNT_MINUS','RETURN','REVERSAL']
     quantity: int = Field(ge=1, le=1000000)
     expected_revision: int = Field(ge=1, le=2**63-1)
+    expected_physical_quantity: int = Field(ge=0, le=2**63-1)
     room_id: str | None = Field(default=None,min_length=1,max_length=128)
     expected_stay_id: str | None = Field(default=None,min_length=1,max_length=128)
     original_id: str | None = Field(default=None,min_length=1,max_length=128)

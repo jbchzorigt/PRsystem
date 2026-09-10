@@ -22,7 +22,7 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
    else if(tail.endsWith('/adjustments')){
     if(receipts.has(body.idempotency_key))return r.fulfill({json:receipts.get(body.idempotency_key)});
     if(conflict){conflict=false;revision++;return r.fulfill({status:409,json:{code:'REVISION_CONFLICT'}});}
-    assert.equal(body.expected_revision,revision);assert.equal(body.expected_stay_id,body.room_id?'stay1':null);assert(body.reason);assert(!('reviewed' in body));
+    assert.equal(body.expected_revision,revision);assert.equal(body.expected_physical_quantity,body.room_id?inRoom:total-inRoom);assert.equal(body.expected_stay_id,body.room_id?'stay1':null);assert(body.reason);assert(!('reviewed' in body));
     const item={adjustment_id:'a'+history.length,kind:body.kind,quantity:body.quantity,room_id:body.room_id,room_number:body.room_id?'101':null,stay_id:body.expected_stay_id,reason:body.reason,actor_label:'Manager',recorded_at:'2026-09-10T09:00:00Z',cost,reversed:false};
     let hotel=body.kind==='RETURN'?0:body.kind==='COUNT_PLUS'?body.quantity:-body.quantity,room=body.room_id?-body.quantity:0;
     if(body.kind==='COUNT_PLUS'&&body.room_id)room=body.quantity;

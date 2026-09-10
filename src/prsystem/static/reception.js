@@ -176,7 +176,7 @@
     if(original)parent.append(node('p',`Буцаах тоо: ${original.quantity}. Анхны өртөг: ${inventoryCost(original.cost)}.`));
     if(kind==='COUNT_PLUS'&&preview.total_quantity===0)fields.push(field('unit_cost_mnt','Өртөггүй нөөцийн нэгж өртөг (₮)','number',{min:0}));
     fields.push(field('reason','Шалтгаан','textarea',{max:1000}),field('reviewed','Тоо, байршил болон үр дүнг шалгасан','checkbox'));
-    form(parent,adjustmentNames[kind],fields,'Хөдөлгөөн баталгаажуулах',v=>api(path(`minibar/products/${enc(product.product_id)}/adjustments`),{kind,quantity:original?.quantity??v.quantity,room_id:preview.room_id,expected_stay_id:preview.stay_id,expected_revision:preview.stock_revision,reason:v.reason,unit_cost_mnt:v.unit_cost_mnt??null,original_id:original?.adjustment_id??null,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('inventory');say('Нөөцийн хөдөлгөөн бүртгэгдлээ.');}});
+    form(parent,adjustmentNames[kind],fields,'Хөдөлгөөн баталгаажуулах',v=>api(path(`minibar/products/${enc(product.product_id)}/adjustments`),{kind,quantity:original?.quantity??v.quantity,room_id:preview.room_id,expected_stay_id:preview.stay_id,expected_revision:preview.stock_revision,expected_physical_quantity:preview.physical_quantity,reason:v.reason,unit_cost_mnt:v.unit_cost_mnt??null,original_id:original?.adjustment_id??null,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('inventory');say('Нөөцийн хөдөлгөөн бүртгэгдлээ.');}});
   }
   async function inventoryAdjustments(container,product,after=''){
     const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Залруулгын түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');

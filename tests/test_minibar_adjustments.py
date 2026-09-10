@@ -28,7 +28,7 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
 
     def adjust(self,kind='WASTE',quantity=1,room=None,token=None,**extra):
         c=self.preview(room)
-        data=dict(kind=kind,quantity=quantity,room_id=room,expected_stay_id=c['stay_id'],expected_revision=c['stock_revision'],reason='Бодит тооллогын шалтгаан')
+        data=dict(kind=kind,quantity=quantity,room_id=room,expected_stay_id=c['stay_id'],expected_revision=c['stock_revision'],expected_physical_quantity=c['physical_quantity'],reason='Бодит тооллогын шалтгаан')
         data.update(extra)
         return self.api(f'minibar/products/{self.product}/adjustments',data,token)
 
@@ -119,11 +119,11 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
 
     def test_current_manager_authority_and_package_required_before_retry(self):
         key=uuid4().hex;r=self.assert_status(self.adjust(idempotency_key=key),201)
-        self.assertEqual(self.assert_status(self.adjust(expected_revision=1,idempotency_key=key),201),r)
-        self.assert_status(self.adjust(expected_revision=1,idempotency_key=key,token=self.worker_token),403)
+        self.assertEqual(self.assert_status(self.adjust(expected_revision=1,expected_physical_quantity=10,idempotency_key=key),201),r)
+        self.assert_status(self.adjust(expected_revision=1,expected_physical_quantity=10,idempotency_key=key,token=self.worker_token),403)
         self.assert_status(self.adjust(token=self.admin),403)
         with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.hotel_access SET package_mnt=20000 WHERE tenant_id=%s',(self.tenant,))
-        self.assert_status(self.api(f'minibar/products/{self.product}/adjustments',dict(kind='WASTE',quantity=1,expected_revision=1,reason='Reason')),403)
+        self.assert_status(self.api(f'minibar/products/{self.product}/adjustments',dict(kind='WASTE',quantity=1,expected_revision=1,expected_physical_quantity=9,reason='Reason')),403)
 
     def test_reason_direction_and_payload_validation(self):
         for extra in (dict(reason=''),dict(quantity=0),dict(quantity=True),dict(kind='OTHER')):
@@ -140,7 +140,7 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
         gate=Barrier(2)
         def command():
             gate.wait()
-            return self.api(f'minibar/products/{self.product}/adjustments',dict(kind='WASTE',quantity=6,expected_revision=1,reason='Concurrent'))
+            return self.api(f'minibar/products/{self.product}/adjustments',dict(kind='WASTE',quantity=6,expected_revision=1,expected_physical_quantity=10,reason='Concurrent'))
         with ThreadPoolExecutor(2) as pool:r=[f.result() for f in(pool.submit(command),pool.submit(command))]
         self.assertEqual(sorted(x.status_code for x in r),[201,409]);self.assertEqual(self.preview()['total_quantity'],4)
 
@@ -182,3 +182,13 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
         before=self.preview()
         self.assertEqual(self.adjust('REVERSAL',quantity=2,original_id=original['adjustment_id']).json()['code'],'ADJUSTMENT_COST_CONFLICT')
         self.assertEqual(self.preview(),before)
+
+    def test_physical_preview_stale_after_transfer_is_rejected(self):
+        before=self.preview()
+        guest_support.MinibarGuestTests.configured(self)
+        current=self.preview()
+        self.assertEqual(before['stock_revision'],current['stock_revision'])
+        self.assertNotEqual(before['physical_quantity'],current['physical_quantity'])
+        r=self.adjust(expected_physical_quantity=before['physical_quantity'])
+        self.assertEqual(r.json()['code'],'REVISION_CONFLICT')
+        self.assertEqual(self.preview(),current)

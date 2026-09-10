@@ -4,8 +4,8 @@ Implementation candidate; full source acceptance is pending.
 
 Manager/package-scoped WASTE, COUNT_PLUS, COUNT_MINUS and room RETURN commands
 create immutable adjustment evidence and a matching stock receipt in one
-transaction. A stock revision and exact current stay guard protect against stale
-selection; reason and current role/package are checked before receipt replay.
+transaction. A stock revision, expected location quantity and exact current stay protect
+against stale selection, including transfers that do not change stock revision; reason and current role/package are checked before receipt replay.
 All movements preserve actor, location, reason, quantity and exact rational cost.
 Warehouse and room quantities cannot become negative; zero stock cannot retain
 positive valuation. Existing inactive products allow controlled adjustments.

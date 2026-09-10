@@ -39,7 +39,8 @@ class MinibarAdjustments(MinibarWarehouse):
             if replay is not None:return replay
             self._catalog_lock(conn,tenant)
             before=self.context(conn,tenant,product,data.get('room_id'))
-            if before['stock_revision']!=data['expected_revision'] or before['stay_id']!=data.get('expected_stay_id'):
+            if (before['stock_revision']!=data['expected_revision'] or before['stay_id']!=data.get('expected_stay_id')
+                    or before['physical_quantity']!=data['expected_physical_quantity']):
                 raise DomainError('REVISION_CONFLICT')
             if before['report_locked']:raise DomainError('STOCK_ADJUSTMENT_LOCKED')
             original=None;kind=data['kind'];quantity=data['quantity'];room=before['room_id'];stay=before['stay_id']
