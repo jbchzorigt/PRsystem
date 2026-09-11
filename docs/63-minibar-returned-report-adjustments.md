@@ -1,5 +1,9 @@
 # Returned unpaid minibar report stock reconciliation
 
+Later extension: [paid quantity correction for active stays](64-minibar-paid-corrections.md)
+provides a separate Manager payment-release/report-replacement command. This document
+records the earlier unpaid-report path; its existing paid-report guard remains.
+
 Accepted source: `1abf10237621c4f7ddf4679793127d7e5738a01a`.
 [Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34562376377):
 **751/751 backend tests without skips in 879.780 seconds**, including 37 stock

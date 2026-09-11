@@ -1,7 +1,15 @@
 # Paid minibar quantity correction for active stays
 
-Implementation pending full PostgreSQL/browser acceptance. The preceding accepted
-source remains the 751-test increment in document 63.
+Accepted source: `9da71b3679b203f03968f8cb7554373ae8b97d1e`.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34570981166):
+**767/767 backend tests without skips in 777.670 seconds**, including all
+**16 focused paid-correction tests** (28.527 seconds). All other focused PostgreSQL
+gates, **16 Chromium suites and 107 actual browser/API command checks**, domain,
+design and token checks passed. Strict local UI audit found zero issues; six
+pre-existing design warnings remain. Local discovery passed 106 tests with 661
+database skips; the linked PostgreSQL run is the full acceptance evidence.
+CI generated 320px screenshots; local visual inspection of remote artifacts is
+not claimed. The preceding accepted increment is recorded in document 63.
 
 Manager/eligible Manager Plus can correct the physical counts of the current
 canonical REPORTED, paid minibar report while the stay is ACTIVE. Reason, exact
@@ -53,7 +61,7 @@ preservation, RLS/immutability, concurrency, pending payment and both cash/route
 refund completion. A new Chromium suite covers read failure, validation, conflict,
 unknown outcome, refund access, reduced motion, 320px and private storage.
 
-Full acceptance is pending. Post-checkout paid correction, financial-only disputes,
+Post-checkout paid correction, financial-only disputes,
 configuration variance/shortage override, partial physical rollback, Restaurant,
 Operation, Police and production readiness remain. Provider integrations retain
 the approved development mock boundary; no merge or deployment is included.
@@ -76,3 +84,11 @@ with migration 064's deferred update proof, application INSERT/UPDATE privileges
 cannot create or change credit without linked PAYMENT release/reallocation evidence.
 A restricted-role regression checks rejected initial credit and both upward and
 downward unsupported projection changes, preserving the prior statement atomically.
+
+The intermediate service-credit fix at source
+`c42d3719c03b4315572efd07202a4fe85f414f2d` passed **766/766 backend tests without
+skips in 988.705 seconds**, 15 focused paid-correction tests (32.647 seconds),
+16 Chromium suites and 107 API commands in
+[CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34570522076).
+The later migration-065 source includes the sixteenth focused test and passed the
+full 767-test acceptance recorded at the top of this document.

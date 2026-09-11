@@ -1,5 +1,9 @@
 # Atomic minibar stock adjustment correction
 
+Later extension: [paid quantity correction for active stays](64-minibar-paid-corrections.md)
+connects inventory restoration to immutable paid-report replacement and refunds.
+The acceptance below records the earlier inventory-only correction increment.
+
 Accepted source: `8da79f221399e55a3b3574bf0c05543425cd3795`.
 [Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34558835222):
 **744/744 backend tests without skips in 833.251 seconds**, including the

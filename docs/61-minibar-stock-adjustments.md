@@ -1,5 +1,9 @@
 # Manager minibar stock adjustments
 
+Later extension: [paid quantity correction for active stays](64-minibar-paid-corrections.md)
+uses a separate Manager command with payment release/reallocation and linked refunds.
+The acceptance below records the earlier inventory-only increment.
+
 Accepted source: `ce0b1a9c8a2a94656c57177c5eb3dd99f2773334`.
 [Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34453610097):
 **736/736 backend tests without skips in 889.954 seconds**, including the
