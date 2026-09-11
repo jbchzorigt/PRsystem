@@ -385,5 +385,5 @@ Restaurant, Operation, Police болон production readiness үлдсэн.
 locked-price report → төлсөн мөнгийг дахин хуваарилах урсгал атомикаар ажиллана.
 Илүү дүн анхны receipt дээр буцаах үлдэгдэл, дутуу дүн шинэ авлага болно.
 Reception existing refund reserve/complete урсгалаар бодит буцаалтыг гүйцэтгэнэ.
-Нэмэгдсэн 15 PostgreSQL тесттэй нийт 766 тест болон шинэ браузерийн багцын CI
+Нэмэгдсэн 16 PostgreSQL тесттэй нийт 767 тест болон шинэ браузерийн багцын CI
 хүлээгдэж байна. Historical post-checkout болон financial-only dispute үлдсэн.

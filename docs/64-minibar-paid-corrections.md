@@ -46,7 +46,7 @@ acknowledgement, finance/report revision, dirty guard, error feedback and exact
 unknown-outcome retry. Reception sees released PAYMENT credit in the existing refund
 form. No price override, provider success flag or cash completion is client supplied.
 
-Fifteen new PostgreSQL tests cover full/partial payment, overcharge/full reversal,
+Sixteen new PostgreSQL tests cover full/partial payment, overcharge/full reversal,
 increased consumption, chained corrections, exact replay, stale revision, role and
 payload guards, rollback during report/deferred proof, historical price/report
 preservation, RLS/immutability, concurrency, pending payment and both cash/routed
@@ -70,3 +70,9 @@ combined liability reservation/refund counters and receipt-scoped evidence.
 New deposit-funded and mixed-source tests check this separation. The initial browser
 interaction suite passed, but its API contract gate requires five commands; the
 suite now also executes the actual refund-completion form as its fifth command.
+
+Migration 065 requires zero service credit on initial finance insertion. Together
+with migration 064's deferred update proof, application INSERT/UPDATE privileges
+cannot create or change credit without linked PAYMENT release/reallocation evidence.
+A restricted-role regression checks rejected initial credit and both upward and
+downward unsupported projection changes, preserving the prior statement atomically.

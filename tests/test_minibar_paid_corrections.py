@@ -145,3 +145,18 @@ class MinibarPaidCorrectionTests(MinibarConfigurationCase):
         r=self.assert_status(self.correct(),201);b=r['balance']
         self.assertEqual(b['service_credit']+4000-b['allocated'],3000)
         self.assertEqual(sum(x['amount_mnt'] for x in r['refundable_credits']),3000)
+
+    def test_service_credit_cannot_be_created_or_changed_without_release_evidence(self):
+        self.pay();self.assert_status(self.correct(),201);before=self.statement().json()
+        # Before-insert validation must run even before this existing stay's PK
+        # check; application INSERT privileges cannot manufacture opening credit.
+        with self.assertRaisesRegex(psycopg.errors.CheckViolation,'Initial service credit must be zero'):
+            with psycopg.connect(self.app_dsn) as conn:
+                conn.execute('INSERT INTO prsystem.guest_finance(tenant_id,stay_id,service_credit) VALUES(%s,%s,1)',(self.tenant,self.stay['stay_id']))
+        for delta in (-1,1):
+            with self.assertRaisesRegex(psycopg.errors.CheckViolation,'Service credit requires linked payment release'):
+                with psycopg.connect(self.app_dsn) as conn:
+                    conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(self.tenant,))
+                    conn.execute('UPDATE prsystem.guest_finance SET service_credit=service_credit+%s WHERE tenant_id=%s AND stay_id=%s',(delta,self.tenant,self.stay['stay_id']))
+                    conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
+        self.assertEqual(self.statement().json(),before)
