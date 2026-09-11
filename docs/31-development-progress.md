@@ -364,3 +364,11 @@ Source `8da79f221399e55a3b3574bf0c05543425cd3795`: [бүрэн CI](https://githu
 15 Chromium suite болон 102 API хүсэлтийн шалгалт давсан. Энэ нэмэлт 8 шинэ backend
 тесттэй; локал 106 тест давж, 638 DB тест skip болсон тул DB acceptance-д CI ашигласан.
 Төлбөр/тайлангийн дараах залруулга болон 5/6-р шатны бусад үлдэгдэл хэвээр.
+
+## Minibar — буцаасан төлбөргүй тайлангийн нөөцийн залруулга
+
+[63-р contract](63-minibar-returned-report-adjustments.md): Reception тайланг
+залруулгад буцаасан REQUESTED төлөвт, paid/pending payment байхгүй үед Manager
+stay-scoped non-guest adjustment хийж, Cleaner шинэ immutable тайлангаар дуусгана.
+Төлсөн, төлбөр хүлээгдэж буй, маргаантай болон буцаагаагүй тайлангийн түгжээ хэвээр.
+Нэмэгдсэн 7 PostgreSQL тесттэй нийт 751 тестийн CI баталгаажуулалт хүлээгдэж байна.

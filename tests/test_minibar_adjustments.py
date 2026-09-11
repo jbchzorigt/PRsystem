@@ -279,3 +279,61 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
                 conn.execute('DROP TRIGGER fail_correction ON prsystem.minibar_adjustment_correction');conn.execute('DROP FUNCTION prsystem.fail_correction()')
         self.assertEqual(self.preview(),before);self.assertEqual(len(self.history()),1)
         self.assert_status(self.correct(original,quantity=2,idempotency_key=key),201)
+
+    def return_report(self):
+        self.assert_status(guest_support.MinibarGuestTests.review(self),200)
+        self.task=self.assert_status(guest_support.MinibarGuestTests.claim(self,revision=1),201)
+
+    def test_returned_unpaid_report_allows_non_guest_reclassification(self):
+        self.guest();original=self.assert_status(self.report(1,False),201)
+        self.return_report();self.assertFalse(self.preview(self.room)['report_locked'])
+        self.assert_status(self.adjust(room=self.room),201)
+        corrected=self.assert_status(guest_support.MinibarGuestTests.report(self,actual=1,revision=1,no_consumption=True),201)
+        self.assertEqual(corrected['amount_mnt'],0)
+        with psycopg.connect(self.owner_dsn) as conn:
+            reports=conn.execute('SELECT revision,amount_mnt FROM prsystem.reception_minibar_report WHERE tenant_id=%s AND stay_id=%s ORDER BY revision',(self.tenant,self.stay['stay_id'])).fetchall()
+            self.assertEqual(reports,[(1,3000),(2,0)])
+            self.assertEqual(conn.execute('SELECT sum(amount_mnt) FROM prsystem.guest_charge_adjustment WHERE tenant_id=%s AND charge_id=%s',(self.tenant,original['charge_id'])).fetchone()[0],-3000)
+        self.assertTrue(self.preview(self.room)['report_locked'])
+
+    def test_returned_report_adjustment_does_not_change_old_report_or_current_price(self):
+        self.guest();self.assert_status(self.report(1,False),201);self.return_report()
+        self.assert_status(self.adjust(room=self.room),201)
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.minibar_product SET selling_price_mnt=9000 WHERE tenant_id=%s AND id=%s',(self.tenant,self.product))
+        result=self.assert_status(guest_support.MinibarGuestTests.report(self,actual=0,revision=1,no_consumption=False),201)
+        self.assertEqual(result['amount_mnt'],3000)
+
+    def test_disputed_report_stays_locked_until_explicit_return(self):
+        self.guest();self.assert_status(self.report(1,False),201)
+        self.assert_status(guest_support.MinibarGuestTests.review(self,action='DISPUTE'),200)
+        self.assertEqual(self.adjust(room=self.room).json()['code'],'STOCK_ADJUSTMENT_LOCKED')
+
+    def test_paid_report_cannot_be_returned_or_adjusted(self):
+        self.guest();report=self.assert_status(self.report(1,False),201)
+        finance=self.statement().json()['balance']['revision']
+        self.assert_status(self.command('cash-receipts',dict(channel='CASH',received=True,purpose='PAYMENT',amount_mnt=3000,charge_id=report['charge_id'],expected_revision=finance,idempotency_key=uuid4().hex)),201)
+        self.assertEqual(guest_support.MinibarGuestTests.review(self).json()['code'],'MINIBAR_REPORT_LOCKED')
+        self.assertEqual(self.adjust(room=self.room).json()['code'],'STOCK_ADJUSTMENT_LOCKED')
+
+    def test_paid_guard_defends_even_stale_requested_inspection(self):
+        self.guest();report=self.assert_status(self.report(1,False),201);self.return_report()
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.guest_charge SET paid_mnt=1 WHERE tenant_id=%s AND id=%s',(self.tenant,report['charge_id']))
+        self.assertTrue(self.preview(self.room)['report_locked'])
+        self.assertEqual(self.adjust(room=self.room).json()['code'],'STOCK_ADJUSTMENT_LOCKED')
+
+    def test_returned_report_atomic_adjustment_correction_then_repost(self):
+        self.guest();self.assert_status(self.report(1,False),201);self.return_report()
+        original=self.assert_status(self.adjust(room=self.room),201)
+        self.assert_status(self.correct(original,kind='RETURN',room=self.room),201)
+        result=self.assert_status(guest_support.MinibarGuestTests.report(self,actual=1,revision=1,no_consumption=True),201)
+        self.assertEqual(result['amount_mnt'],0)
+
+    def test_pending_payment_guard_defends_returned_inspection(self):
+        self.guest();report=self.assert_status(self.report(1,False),201);self.return_report()
+        with psycopg.connect(self.owner_dsn) as conn:
+            drawer=conn.execute('SELECT id FROM prsystem.cash_drawer WHERE tenant_id=%s AND shift_id=%s',(self.tenant,self.shift)).fetchone()[0]
+            conn.execute("INSERT INTO prsystem.guest_payment_intent(tenant_id,stay_id,id,charge_id,provider,merchant_id,amount_mnt,actor_id,shift_id,drawer_id,recorded_at) VALUES(%s,%s,%s,%s,'QPAY','fixture',3000,%s,%s,%s,clock_timestamp())",(self.tenant,self.stay['stay_id'],uuid4().hex,report['charge_id'],self.worker,self.shift,drawer))
+        self.assertTrue(self.preview(self.room)['report_locked'])
+        self.assertEqual(self.adjust(room=self.room).json()['code'],'STOCK_ADJUSTMENT_LOCKED')

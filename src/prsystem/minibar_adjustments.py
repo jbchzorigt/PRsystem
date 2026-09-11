@@ -20,7 +20,7 @@ class MinibarAdjustments(MinibarWarehouse):
         revision,total,value=self.stock(conn,tenant,product)
         all_rooms=conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s)',(tenant,product)).fetchone()[0]
         physical=conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(tenant,product,room)).fetchone()[0] if room else total-all_rooms
-        locked=bool(stay and conn.execute('SELECT 1 FROM prsystem.reception_minibar_report WHERE tenant_id=%s AND stay_id=%s',(tenant,stay)).fetchone())
+        locked=conn.execute('SELECT prsystem.minibar_adjustment_report_locked(%s,%s)',(tenant,stay)).fetchone()[0]
         room_number=conn.execute('SELECT number FROM prsystem.room WHERE tenant_id=%s AND id=%s',(tenant,room)).fetchone()[0] if room else None
         return dict(product_id=product,room_id=room,room_number=room_number,stay_id=stay,stock_revision=revision,physical_quantity=physical,
                     report_locked=locked,**{k:v for k,v in self.balance(revision,total,value,all_rooms).items() if k!='stock_revision'})
