@@ -1,7 +1,16 @@
 # Atomic minibar stock adjustment correction
 
-Implementation pending full PostgreSQL acceptance. The preceding accepted code
-remains the 736-test source documented in [61](61-minibar-stock-adjustments.md).
+Accepted source: `8da79f221399e55a3b3574bf0c05543425cd3795`.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34558835222):
+**744/744 backend tests without skips in 833.251 seconds**, including the
+30-test adjustment gate (50.055 seconds). All focused PostgreSQL gates,
+15 Chromium suites and 102 actual browser/API command checks passed. Strict local
+UI audit had zero findings; design/token CI passed with six pre-existing design
+warnings. Local discovery passed 106 tests with 638 database skips; full database
+acceptance is the linked CI run. Chromium was unavailable locally; browser
+validation and screenshot generation ran in CI. The screenshot artifact download
+returned HTTP 403 locally, so no local visual inspection is claimed.
+The preceding 736-test milestone is documented in [61](61-minibar-stock-adjustments.md).
 
 Manager can correct an inventory adjustment with one command. The server first
 reverses the original movement at its exact original cost, then posts the correct
@@ -38,7 +47,7 @@ failure, original versus restored-average cost, room non-guest exclusion, posted
 report lock, current authority, idempotency, stale preview, concurrency, tenant
 isolation, immutable/incomplete source proof and deferred failure/retry. The
 existing stock-adjustment Chromium suite also covers replacement and lost-response
-retry at 320px. Full CI results will be recorded after completion.
+retry at 320px. The linked CI run is the full acceptance evidence.
 
 Paid/post-report minibar corrections still need payment allocation release and
 service refund/new receivable integration at the locked stay price; this inventory

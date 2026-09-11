@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle болон [нөөцийн хорогдол/залруулга/буцаалт](61-minibar-stock-adjustments.md) баталгаажсан: **736/736 тест skip-гүй**, 15 Chromium suite, 100 API хүсэлт. Paid/post-report correction, configuration variance/override, partial rollback, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle болон [нөөцийн хорогдол/залруулга/буцаалт](61-minibar-stock-adjustments.md) болон [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md) баталгаажсан: **744/744 тест skip-гүй**, 15 Chromium suite, 102 API хүсэлт. Paid/post-report correction, configuration variance/override, partial rollback, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Тухайн үеийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.
@@ -74,8 +74,9 @@ count томьёог хэрэглэж, adjustment ID, physical/billable quantity
 давсан. Энэ үргэлжлэлээр 22 backend тест нэмэгдэв. Local discovery нь 106
 executed / 630 database skip; skip-ийг баталгаажуулалт гэж тооцоогүй.
 
-Үлдсэн зааг: paid/post-report correction, reversal + replacement-ийг нэг
-command-аар атомикаар хийх, configuration task-ийн count variance resolution,
+Reversal + replacement-ийг нэг command-аар атомикаар хийх нэмэлтийг
+[62-р contract](62-minibar-atomic-adjustment-corrections.md)-аар дараа нь баталгаажуулсан.
+Үлдсэн зааг: paid/post-report correction, configuration task-ийн count variance resolution,
 shortage override, partial physical rollback, Restaurant, Operation, Police болон
 production readiness. Бодит provider-ууд зөвшөөрөгдсөн mock boundary-тай хэвээр.
 
@@ -354,10 +355,12 @@ canonical room capacity, Restaurant, Operation болон 6-р шат үлдсэ
 explicit same-version configuration/count/apply-аар stock сэргээж болно.
 Гадаад provider-ууд зөвшөөрсөн mock горимд; merge/deployment хийгээгүй.
 
-## Minibar — атомик нөөцийн залруулга (баталгаажуулалт хүлээгдэж байна)
+## Minibar — атомик нөөцийн залруулга (баталгаажсан)
 
 [62-р contract](62-minibar-atomic-adjustment-corrections.md): анхны хөдөлгөөнийг
 анхны өртгөөр буцаах + зөв хөдөлгөөнөөр солихыг нэг transaction-аар бүртгэнэ.
-Нэмэгдсэн 8 PostgreSQL regression-тай нийт 744 тестийн бүрэн CI хүлээгдэж байна;
-736 гэсэн өмнөх баталгаажсан тоог эцсийн дүн хүртэл хэвээр хадгална.
+Source `8da79f221399e55a3b3574bf0c05543425cd3795`: [бүрэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34558835222)
+дээр **744/744 backend тест skip-гүй, 833.251 секунд**, залруулгын 30 тусгай тест,
+15 Chromium suite болон 102 API хүсэлтийн шалгалт давсан. Энэ нэмэлт 8 шинэ backend
+тесттэй; локал 106 тест давж, 638 DB тест skip болсон тул DB acceptance-д CI ашигласан.
 Төлбөр/тайлангийн дараах залруулга болон 5/6-р шатны бусад үлдэгдэл хэвээр.
