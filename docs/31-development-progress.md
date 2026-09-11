@@ -404,7 +404,7 @@ partial physical rollback, Restaurant, Operation, Police болон production r
 үлдсэн. 5/6-р шат бүхэлдээ дуусаагүй; provider-ууд зөвшөөрсөн development mock
 заагтай хэвээр. Merge/deployment хийгээгүй.
 
-## Minibar — тохиргооны тооллогын зөрүү (баталгаажуулалт хүлээгдэж байна)
+## Minibar — тохиргооны тооллогын зөрүү ба бүрэн count scope (баталгаажсан)
 
 [65-р contract](65-minibar-count-variance.md): Manager анхны тооллогын зөрүүг
 шалтгаантай COUNT/WASTE шийдвэрээр батална. Cleaner-ийн эцсийн full-plan application
@@ -414,9 +414,9 @@ partial physical rollback, Restaurant, Operation, Police болон production r
 өмнө inventory хөдөлгөөн үүсгэхгүй. Shortage override ба partial rollback үлдсэн.
 
 18 шинэ PostgreSQL тест, нийт 785 collected / 106 local passed / 679 DB skipped.
-Сүүлийн source `4285d3976cd578d6662f5e8af05f976cc6619818` дээр 18/18 тусгай тест,
+Үндсэн багцын source `4285d3976cd578d6662f5e8af05f976cc6619818` дээр 18/18 тусгай тест,
 17 браузерийн багц, 114 API-model command шалгалт давсан. CI `34577238851` дээр
-бүрэн regression үргэлжилж байна; хамгийн сүүлийн баталгаажсан нийт тоо 767 хэвээр. Repository-ийн эзэмшил, public төлөв, push эрхийг
+785/785 backend тест skip-гүй (950.826 секунд) давсан. Repository-ийн эзэмшил, public төлөв, push эрхийг
 баталгаажуулсны дараа нийтлэлт зөвшөөрөгдсөн. Эхний CI (34576676372) шинэ браузерийн
 урсгал болон PostgreSQL 16/18 тестийг давсан; хоёр тестийн fixture/HTTP хүлээлтийг
 зассан. Migration 066 болон серверийн дүрэм өөрчлөгдөөгүй.
@@ -425,4 +425,14 @@ partial physical rollback, Restaurant, Operation, Police болон production r
 Migration 067 бүх барааг count/return-д хамруулж, эхэлсэн тооллогын хамрах барааг
 өөрчлөхөөс хамгаална. Хуучин дутуу scope-той pending хүсэлтийг цуцалж шинэ тооллого
 үүсгэнэ. Таван шинэ regression нэмэгдсэн: нийт 790 / local 106 passed, 684 skipped.
-Энэ нэмэлттэй source-ийн бүрэн CI хүлээгдэж байна.
+Эцсийн [source `7ef6596ec4c190572399b9caf7e06f5a14e4dad9`](https://github.com/jbchzorigt/PRsystem/commit/7ef6596ec4c190572399b9caf7e06f5a14e4dad9)-ийн
+[бүрэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34579344577) дээр
+**790/790 backend тест skip-гүй, 1059.694 секунд**, **23/23 тусгай PostgreSQL тест
+(47.089 секунд), 17 браузерийн багц, 114 API шалгалт** давсан. Design/token шалгалт
+амжилттай; strict UI audit 0 finding, өмнөх 6 design warning хэвээр. Энэ баримтын
+follow-up нь код өөрчлөхгүйгээр дээрх source-ийн acceptance-ийг бүртгэв.
+
+5/6-р шат үргэлжилж байна: historical post-checkout/financial-only correction,
+shortage override, partial physical rollback, Restaurant, Operation, Police болон
+production readiness үлдсэн. Зөвшөөрсөн development provider mock зааг хэвээр;
+merge/deployment хийгээгүй.

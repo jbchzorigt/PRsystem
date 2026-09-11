@@ -1,7 +1,11 @@
 # Minibar configuration count variance
 
-Local implementation pending PostgreSQL and browser acceptance. The preceding
-accepted source remains the 767-test paid-correction increment in document 64.
+Accepted source: [7ef6596ec4c190572399b9caf7e06f5a14e4dad9](https://github.com/jbchzorigt/PRsystem/commit/7ef6596ec4c190572399b9caf7e06f5a14e4dad9).
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34579344577) passed
+**790/790 backend tests without skips in 1059.694 seconds**, including **23 focused
+variance/scope tests** (47.089 seconds). All **17 Chromium suites and 114 actual
+browser/API command checks** passed. Domain/design/token gates passed; six existing
+design warnings remain. This documentation-only follow-up records that tested source.
 
 Business authority: docs/22 §§7–11 and docs/26 §§18–22. Current Manager at package
 25,000/30,000 and Manager Plus at 30,000 resolve configuration count discrepancies.
@@ -52,15 +56,19 @@ reconciled. Legacy pending scopes missing a product are blocked by the plan and
 database count proof; Manager cancels and creates a new complete count. No historical
 baseline or stock movement is rewritten. Five additional PostgreSQL tests cover
 ON/OFF returns, variance on adjustment-only stock, service/database scope guards and
-legacy pending recovery. This follow-up still needs its own complete CI.
+legacy pending recovery. Source 7ef6596ec4c190572399b9caf7e06f5a14e4dad9 passed
+23/23 focused variance tests and all 17 browser suites / 114 API-model commands.
+The same source passed the full 790-test PostgreSQL regression linked above.
 
 Runtime grants: reconciliation readers need SELECT on minibar_count_resolution and
 minibar_count_resolution_posting. The Manager command needs INSERT on the decision
 table; the application adapter needs INSERT on its posting table and the existing
 minibar_adjustment/minibar_receipt/audit grants. Existing account/membership, request,
 task, room and application grants remain. Immutable tables need no UPDATE/DELETE.
-The Cleaner API does not gain a generic adjustment command; its source is the
-validated Manager decision. Public Cleaner plans omit unit-cost values.
+The adjustment adapter also needs SELECT on minibar_reconciliation and
+minibar_configuration_request for migration 067 scope validation; baseline readers
+use the existing SELECT on minibar_adjustment. The Cleaner API does not gain a
+generic adjustment command; its source is the validated Manager decision. Public Cleaner plans omit unit-cost values.
 
 The existing shared Reception form, native select, table, feedback, dirty guard and
 retry owners render the Manager decision in room reconciliation details. The form
@@ -76,7 +84,8 @@ history, atomic failure and mismatched adjustment-proof rejection. The new brows
 suite covers Cleaner count, Manager validation/native keyboard, read failure, CAS,
 unknown-outcome retry, stale approval, reapproval, Cleaner application and 320px.
 
-Local discovery after scope coverage: 790 collected, 106 executed successfully, 684 database skips.
+Local discovery after scope coverage: 790 collected, 106 executed successfully,
+684 database skips. The linked skip-free PostgreSQL run is the acceptance evidence.
 Strict UI audit: zero findings; JavaScript syntax and token drift checks passed.
 Chromium download timed out locally. Publication succeeded after verifying the
 connected user's repository ownership, public visibility and push permissions.
@@ -87,8 +96,9 @@ and expect the existing 409 INSUFFICIENT_STOCK response. The second run
 (34576961650) passed 17/18: changing roles correctly revoked the old session. The
 test now checks old-session 401 and fresh Reception-session 403 independently.
 Production rules and migration 066 were unchanged. Source
-4285d3976cd578d6662f5e8af05f976cc6619818 passed all 18 focused variance tests; full
-acceptance awaits CI 34577238851. The same source passed 17 browser suites and
+4285d3976cd578d6662f5e8af05f976cc6619818 passed 785/785 without skips, including
+all 18 focused variance tests, in [CI 34577238851](https://github.com/jbchzorigt/PRsystem/actions/runs/34577238851)
+in 950.826 seconds. It passed 17 browser suites and
 114 API-model command checks. Artifact ZIP download was exposed by GitHub, but
 local retrieval returned HTTP 403; local visual inspection is not claimed.
 
