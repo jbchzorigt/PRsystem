@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle болон [нөөцийн хорогдол/залруулга/буцаалт](61-minibar-stock-adjustments.md) болон [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md) баталгаажсан: **744/744 тест skip-гүй**, 15 Chromium suite, 102 API хүсэлт. Paid/post-report correction, configuration variance/override, partial rollback, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle болон [нөөцийн хорогдол/залруулга/буцаалт](61-minibar-stock-adjustments.md) болон [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md) болон [буцаасан төлбөргүй тайлангийн залруулга](63-minibar-returned-report-adjustments.md) баталгаажсан: **751/751 тест skip-гүй**, 15 Chromium suite, 102 API хүсэлт. Paid/post-report correction, configuration variance/override, partial rollback, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Тухайн үеийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.
@@ -371,4 +371,9 @@ Source `8da79f221399e55a3b3574bf0c05543425cd3795`: [бүрэн CI](https://githu
 залруулгад буцаасан REQUESTED төлөвт, paid/pending payment байхгүй үед Manager
 stay-scoped non-guest adjustment хийж, Cleaner шинэ immutable тайлангаар дуусгана.
 Төлсөн, төлбөр хүлээгдэж буй, маргаантай болон буцаагаагүй тайлангийн түгжээ хэвээр.
-Нэмэгдсэн 7 PostgreSQL тесттэй нийт 751 тестийн CI баталгаажуулалт хүлээгдэж байна.
+Source `1abf10237621c4f7ddf4679793127d7e5738a01a`: [бүрэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34562376377)
+дээр **751/751 backend тест skip-гүй, 879.780 секунд**, залруулгын 37 тусгай тест,
+15 Chromium suite болон 102 API хүсэлтийн шалгалт давсан. Энэ нэмэлт 7 шинэ
+backend тесттэй; локал 106 тест давж, 645 DB тест skip болсон тул DB acceptance-д CI ашигласан.
+Төлбөрийн дараах залруулга/refund, configuration variance/override, partial rollback,
+Restaurant, Operation, Police болон production readiness үлдсэн.

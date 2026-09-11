@@ -54,3 +54,8 @@ service refund/new receivable integration at the locked stay price; this invento
 command does not create those financial effects. Configuration variance, shortage
 override, partial physical rollback, Restaurant, Operation, Police and production
 readiness remain. Approved development provider mocks remain unchanged.
+
+Later extension: [returned unpaid report reconciliation](63-minibar-returned-report-adjustments.md)
+permits stock adjustment only after explicit RETURN to REQUESTED and while unpaid
+with no pending payment. Other posted-report locks remain. See document 63 for
+the shared report-lock predicate and additional runtime SELECT grants.

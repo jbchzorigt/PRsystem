@@ -81,3 +81,8 @@ variance resolution for configuration tasks, shortage override, partial physical
 rollback, Restaurant fulfillment and Operation. Police and production readiness
 also remain. External providers retain the approved development mock boundary.
 No merge or deployment is included.
+
+Later extension: [returned unpaid report reconciliation](63-minibar-returned-report-adjustments.md)
+permits stock adjustment only after explicit RETURN to REQUESTED and while unpaid
+with no pending payment. Other posted-report locks remain. See document 63 for
+the shared report-lock predicate and additional runtime SELECT grants.

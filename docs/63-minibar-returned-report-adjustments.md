@@ -1,7 +1,13 @@
 # Returned unpaid minibar report stock reconciliation
 
-Acceptance pending. Previous accepted source remains the 744-test increment in
-[62](62-minibar-atomic-adjustment-corrections.md).
+Accepted source: `1abf10237621c4f7ddf4679793127d7e5738a01a`.
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34562376377):
+**751/751 backend tests without skips in 879.780 seconds**, including 37 stock
+adjustment tests in 64.169 seconds. All focused PostgreSQL gates, 15 Chromium
+suites and 102 actual browser/API command checks passed. Design/token checks
+passed with six pre-existing design warnings. Local discovery passed 106 tests
+with 645 database skips; the linked CI is full database acceptance.
+The previous 744-test milestone is [62](62-minibar-atomic-adjustment-corrections.md).
 
 Reception can explicitly return an unpaid report to REQUESTED through the existing
 review command. Manager can then record or atomically correct a stay-scoped
@@ -32,7 +38,7 @@ cash payment lock, defensive paid/pending-payment state checks, and atomic stock
 replacement followed by report completion. Existing Manager and Cleaner forms
 already consume the preview and report workflow; no new UI or endpoint is needed.
 
-Full CI acceptance and results will be recorded here. Paid/post-report financial
+Paid/post-report financial
 correction, configuration variance/shortage override, partial physical rollback,
 Restaurant, Operation, Police and production readiness remain. External providers
 retain the approved development mocks; no merge or deployment is included.
