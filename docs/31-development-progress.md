@@ -403,3 +403,17 @@ Historical post-checkout болон financial-only dispute, configuration varian
 partial physical rollback, Restaurant, Operation, Police болон production readiness
 үлдсэн. 5/6-р шат бүхэлдээ дуусаагүй; provider-ууд зөвшөөрсөн development mock
 заагтай хэвээр. Merge/deployment хийгээгүй.
+
+## Minibar — тохиргооны тооллогын зөрүү (баталгаажуулалт хүлээгдэж байна)
+
+[65-р contract](65-minibar-count-variance.md): Manager анхны тооллогын зөрүүг
+шалтгаантай COUNT/WASTE шийдвэрээр батална. Cleaner-ийн эцсийн full-plan application
+дээр нөөцийн залруулга, шилжүүлэлт, тохиргоо нэг transaction-аар бүртгэгдэнэ.
+Өмнөх count/decision түүх хадгалагдах бөгөөд шийдвэр дангаараа stock өөрчлөхгүй.
+Нөөц эсвэл Manager-ийн эрх өөрчлөгдвөл дахин шийдвэр шаардана. Цуцлалт application-оос
+өмнө inventory хөдөлгөөн үүсгэхгүй. Shortage override ба partial rollback үлдсэн.
+
+18 шинэ PostgreSQL тест, нийт 785 collected / 106 local passed / 679 DB skipped.
+Шинэ браузерийн багц болон PostgreSQL acceptance хүлээгдэж байна; хамгийн сүүлийн
+баталгаажсан тоо 767 хэвээр. GitHub нийтлэлтийн автомат хяналт зөвшөөрлийн нотолгоо
+шаардсан; repository нь холбогдсон хэрэглэгчийн эзэмшлийн public repo болохыг шалгасан.

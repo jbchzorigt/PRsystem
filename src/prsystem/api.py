@@ -200,6 +200,14 @@ class MinibarApplyCommand(MinibarTemplateCommand):
     physical_transfers_confirmed: Literal[True]
 
 
+class MinibarCountResolution(MinibarTemplateCommand):
+    expected_stock_revision: int = Field(ge=1,le=2**63-1)
+    expected_physical_quantity: int = Field(ge=0,le=1000000)
+    kind: Literal['COUNT','WASTE']
+    unit_cost_mnt: int | None = Field(default=None,ge=0,le=2**63-1)
+    reason: str = Field(min_length=1,max_length=1000)
+
+
 class MinibarDraftSave(MinibarTemplateCommand):
     items: list[MinibarTemplateItem] = Field(max_length=100)
 
@@ -1041,6 +1049,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.get('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/reconciliation')
     def minibar_reconciliation_detail(tenant_id: str,request_id: str,secret: Annotated[str,Depends(token)]):
         return reconciliation.detail(secret,tenant_id,request_id)
+
+    @app.post('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/count-resolutions/{product_id}',status_code=201)
+    def minibar_count_resolution(tenant_id: str,request_id: str,product_id: str,body: MinibarCountResolution,secret: Annotated[str,Depends(token)]):
+        return reconciliation.resolve_count(secret,tenant_id,request_id,product_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/claim-next-stay',status_code=201)
     def minibar_claim_next_stay(tenant_id: str,task_id: str,body: MinibarTemplateCommand,secret: Annotated[str,Depends(token)]):

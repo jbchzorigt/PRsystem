@@ -42,6 +42,10 @@ jobs:
           python-version: "3.12"
       - name: Install backend and API test dependencies
         run: python -m pip install '.[postgres,api,test]'
+      - name: Verify minibar count variance
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_variance.py -v
       - name: Verify paid minibar corrections
         env:
           PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
@@ -123,6 +127,8 @@ jobs:
         run: node tests/browser/minibar-adjustments.cjs
       - name: Verify paid minibar correction UI
         run: node tests/browser/minibar-paid-corrections.cjs
+      - name: Verify minibar count variance UI
+        run: node tests/browser/minibar-variance.cjs
       - name: Validate browser payloads against API models
         run: |
           python -m pip install '.[api]'
@@ -141,6 +147,7 @@ jobs:
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-lifecycle-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-adjustment-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-paid-correction-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-variance-requests.json
       - name: Save browser evidence
         uses: actions/upload-artifact@v4
         with:

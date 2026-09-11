@@ -288,3 +288,18 @@ form/number/reason/acknowledgement/dirty-guard/retry owners. Only Manager on the
 current paid canonical report sees the form; server validation remains authoritative.
 Released service PAYMENT credit uses the existing Reception refund form, channel
 selector and completion flow. Evidence: tests/browser/minibar-paid-corrections.cjs.
+
+## Configuration count variance
+
+Docs/22 §§7–11, docs/26 §§18–22 and docs/65 own the Manager decision/atomic-application
+boundary. `reconciliationManagerDetail` extends the existing room reconciliation
+panel through the canonical `form`, native `select`, `table`, `guard`, `api` and
+feedback owners. Current versus counted quantity and the derived consequence appear
+before reason/acknowledgement. A decision refreshes the owning room detail; it does
+not claim inventory has moved. The existing full-plan Cleaner confirmation applies
+the approved stock change and transfers together. Stale decisions have explicit
+text and no enabled application form. Unknown outcomes retain the same key and
+values; CAS requires explicit refresh/discard. Unit-cost input appears only for
+Manager's positive adjustment at zero hotel stock; Cleaner plans omit that value.
+Evidence: tests/browser/minibar-variance.cjs and test_minibar_variance.py. Existing
+natural scrolling, 320px layout, localization and in-memory privacy rules apply.

@@ -1,12 +1,14 @@
 """Assigned counts and full-plan atomic transfers/apply; no partial stock posts.
 
-Variance and shortages block completion. No override, waste or count adjustment
-is inferred, and legacy mock stock never enters the canonical ledger.
+Variance requires a current Manager decision; its adjustment posts atomically
+with completion. Shortages block completion. Legacy mock stock stays separate.
 """
 import secrets
 from psycopg.types.json import Jsonb
+from prsystem.auth import digest
 from prsystem.common import DomainError
 from prsystem.minibar_configuration import MinibarConfiguration
+from prsystem.minibar_adjustments import MinibarAdjustments
 from prsystem.postgres.connection import transaction
 from prsystem.room_lifecycle import RoomLifecycle
 
@@ -115,14 +117,93 @@ class MinibarReconciliation(MinibarConfiguration):
             product=item['product_id'];current=conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(tenant,product,data['room_id'])).fetchone()[0]
             stock=self.stock(conn,tenant,product)
             warehouse=stock[1]-conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s)',(tenant,product)).fetchone()[0]
-            count=conn.execute('''SELECT a.id,p.actual_count FROM prsystem.cleaning_action a LEFT JOIN prsystem.cleaning_posting p
+            count=conn.execute('''SELECT a.id,p.actual_count,p.id FROM prsystem.cleaning_action a LEFT JOIN prsystem.cleaning_posting p
                 ON(p.tenant_id,p.source_id,p.action_id)=(a.tenant_id,a.source_id,a.id) WHERE a.tenant_id=%s AND a.source_id=%s AND a.product_id=%s''',(tenant,source,product)).fetchone()
-            target=targets.get(product,0);delta=target-current
+            decision=self.count_resolution(conn,tenant,data['request_id'],product)
+            valid=decision and decision['ready'];posted=decision and decision['posted']
+            natural=count[1] is not None and count[1]==item['quantity']==current
+            matched=bool(natural or valid or posted)
+            planned=count[1] if valid else current
+            target=targets.get(product,0);delta=target-planned
             lines.append(dict(item,baseline_quantity=item['quantity'],current_quantity=current,target_quantity=target,warehouse_quantity=warehouse,
-                action_id=count[0],actual_count=count[1],direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta),shortage=max(0,delta-warehouse)))
+                action_id=count[0],actual_count=count[1],posting_id=count[2],stock_revision=stock[0],zero_stock=stock[1]==0,
+                count_matches=matched,resolution={k:v for k,v in decision.items() if k not in {'unit_cost_mnt'}} if decision else None,
+                direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta),shortage=max(0,delta-warehouse)))
         return dict(source_id=source,lines=lines,
             counts_complete=all(i['actual_count'] is not None for i in lines),
-            counts_match=all(i['actual_count']==b['quantity'] for i,b in zip(lines,baseline)),shortage=any(i['shortage'] for i in lines))
+            counts_match=all(i['count_matches'] for i in lines),shortage=any(i['shortage'] for i in lines))
+
+    @staticmethod
+    def count_resolution(conn,tenant,request,product):
+        row=conn.execute('''SELECT v.id,v.kind,v.reason,v.actor_id,v.actor_label,v.recorded_at,v.unit_cost_mnt,
+            prsystem.minibar_count_resolution_ready(v.tenant_id,v.id),
+            EXISTS(SELECT 1 FROM prsystem.minibar_count_resolution_posting x WHERE x.tenant_id=v.tenant_id AND x.resolution_id=v.id)
+            FROM prsystem.minibar_count_resolution v WHERE v.tenant_id=%s AND v.request_id=%s AND v.product_id=%s
+            ORDER BY v.request_revision DESC LIMIT 1''',(tenant,request,product)).fetchone()
+        return dict(zip(('resolution_id','kind','reason','actor_id','actor_label','recorded_at','unit_cost_mnt','ready','posted'),row)) if row else None
+
+    def resolve_count(self,bearer,tenant,request,product,data,key):
+        data=dict(data,reason=self._text(data['reason'],1000))
+        command=dict(action='RESOLVE_MINIBAR_COUNT',request_id=request,product_id=product,data=data)
+        with transaction(self.auth.dsn) as conn:
+            self._actors(conn,bearer,tenant);actor,roles,package=self.actor(conn,bearer,tenant)
+            replay=self._receipt(conn,tenant,key,actor,command)
+            if replay is not None:return replay
+            req=self.lock_request(conn,tenant,request,data['expected_revision'])
+            execution=self.execution(conn,tenant,request)
+            if not execution:raise DomainError('COUNT_REQUIRED')
+            self.safe(conn,tenant,req,execution[0]);self.target(conn,tenant,req)
+            plan=self.plan(conn,tenant,req)
+            if not plan['counts_complete']:raise DomainError('COUNT_REQUIRED')
+            line=next((i for i in plan['lines'] if i['product_id']==product),None)
+            if not line:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if (line['stock_revision']!=data['expected_stock_revision'] or line['current_quantity']!=data['expected_physical_quantity']):raise DomainError('REVISION_CONFLICT')
+            if line['count_matches']:raise DomainError('COUNT_VARIANCE_NOT_FOUND')
+            delta=line['actual_count']-line['current_quantity']
+            if not 0<=line['actual_count']<=1000000 or(data['kind']=='WASTE' and delta>=0):raise DomainError('INVALID_REQUEST')
+            if (delta>0 and line['zero_stock'])!=(data.get('unit_cost_mnt') is not None):raise DomainError('INVALID_REQUEST')
+            identity=secrets.token_hex(16)
+            conn.execute('''INSERT INTO prsystem.minibar_count_resolution(tenant_id,id,request_id,source_id,product_id,room_id,posting_id,
+                request_revision,stock_revision,baseline_quantity,physical_quantity,actual_count,kind,unit_cost_mnt,actor_id,actor_label,reason)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'',%s)''',
+                (tenant,identity,request,execution[0],product,req['room_id'],line['posting_id'],req['revision'],line['stock_revision'],
+                 line['baseline_quantity'],line['current_quantity'],line['actual_count'],data['kind'],data.get('unit_cost_mnt'),actor,data['reason']))
+            plan=self.plan(conn,tenant,req)
+            state='BLOCKED_VARIANCE' if not plan['counts_match'] else 'BLOCKED_STOCK' if plan['shortage'] else 'IN_PROGRESS'
+            conn.execute('UPDATE prsystem.minibar_configuration_request SET state=%s,revision=revision+1 WHERE tenant_id=%s AND id=%s',(state,tenant,request))
+            result=dict(resolution_id=identity,request_id=request,state=state,revision=req['revision']+1,product_id=product,quantity_delta=delta)
+            self.event(conn,tenant,actor,'MINIBAR_COUNT_RESOLVED',request,dict(result,reason=data['reason'],kind=data['kind'],actor_roles=roles,package_mnt=package))
+            self._save_receipt(conn,tenant,key,actor,command,result);return result
+
+    def lock_count_actors(self,conn,bearer,tenant,task):
+        principal=conn.execute('SELECT account_id FROM prsystem.staff_session WHERE token_hash=%s',(digest(bearer),)).fetchone()
+        if not principal:raise DomainError('UNAUTHENTICATED')
+        conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+        rows=conn.execute('''SELECT DISTINCT ON(v.product_id) v.actor_id FROM prsystem.minibar_count_resolution v
+            JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(v.tenant_id,v.source_id)
+            WHERE v.tenant_id=%s AND t.id=%s ORDER BY v.product_id,v.request_revision DESC''',(tenant,task)).fetchall()
+        actors={principal[0],*(r[0] for r in rows)}
+        self._lock_accounts(conn,actors)
+        conn.execute('SELECT account_id FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=ANY(%s) ORDER BY account_id FOR SHARE',(tenant,list(actors))).fetchall()
+        return actors
+
+    def post_count_resolutions(self,conn,tenant,data,plan,task,assignment,cleaner,locked_actors):
+        changes=MinibarAdjustments(self.auth);results=[]
+        for line in plan['lines']:
+            decision=self.count_resolution(conn,tenant,data['request_id'],line['product_id'])
+            if not decision or not decision['ready']:continue
+            if decision['actor_id'] not in locked_actors:raise DomainError('REVISION_CONFLICT')
+            before=changes.context(conn,tenant,line['product_id'],data['room_id'])
+            if before['stay_id'] is not None:raise DomainError('RECONCILIATION_NOT_READY')
+            delta=line['actual_count']-before['physical_quantity'];identity=secrets.token_hex(16) if delta else None
+            conn.execute('''INSERT INTO prsystem.minibar_count_resolution_posting(tenant_id,resolution_id,request_id,product_id,adjustment_id,task_id,actor_id,assignment_version)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(tenant,decision['resolution_id'],data['request_id'],line['product_id'],identity,task,cleaner,assignment))
+            if delta:
+                roles,package=conn.execute('SELECT m.roles,h.package_mnt FROM prsystem.staff_membership m JOIN prsystem.hotel_access h ON h.tenant_id=m.tenant_id WHERE m.tenant_id=%s AND m.account_id=%s',(tenant,decision['actor_id'])).fetchone()
+                change=dict(kind='WASTE' if decision['kind']=='WASTE' else 'COUNT_PLUS' if delta>0 else 'COUNT_MINUS',quantity=abs(delta),reason=decision['reason'],unit_cost_mnt=decision['unit_cost_mnt'])
+                changes.post(conn,tenant,line['product_id'],change,before,decision['actor_id'],roles,package,identity=identity)
+            results.append(dict(resolution_id=decision['resolution_id'],adjustment_id=identity))
+        return results
 
     def count(self,bearer,tenant,task,assignment,action,actual,key):
         command=dict(action='COUNT_MINIBAR_CONFIGURATION',task_id=task,assignment=assignment,action_id=action,actual=actual)
@@ -148,6 +229,7 @@ class MinibarReconciliation(MinibarConfiguration):
     def apply(self,bearer,tenant,task,assignment,revision,key):
         command=dict(action='APPLY_MINIBAR_CONFIGURATION',task_id=task,assignment=assignment,revision=revision)
         with transaction(self.auth.dsn) as conn:
+            locked_actors=self.lock_count_actors(conn,bearer,tenant,task)
             actor,taskrow=self.task_actor(conn,bearer,tenant,task,assignment)
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
@@ -157,6 +239,7 @@ class MinibarReconciliation(MinibarConfiguration):
             if not plan['counts_complete']:raise DomainError('COUNT_REQUIRED')
             if not plan['counts_match']:raise DomainError('COUNT_VARIANCE')
             if plan['shortage']:raise DomainError('INSUFFICIENT_STOCK')
+            resolutions=self.post_count_resolutions(conn,tenant,data,plan,task,assignment,actor,locked_actors)
             movements=[]
             for line in plan['lines']:
                 if not line['quantity']:continue
@@ -169,7 +252,7 @@ class MinibarReconciliation(MinibarConfiguration):
             conn.execute('''INSERT INTO prsystem.minibar_configuration_application(tenant_id,request_id,room_id,source_id,task_id,actor_id,assignment_version)
                 VALUES(%s,%s,%s,%s,%s,%s,%s)''',(tenant,data['request_id'],data['room_id'],taskrow[1],task,actor,assignment))
             RoomLifecycle.sweep(conn,tenant)
-            result=dict(request_id=data['request_id'],state='APPLIED',revision=revision+1,movement_ids=movements)
+            result=dict(request_id=data['request_id'],state='APPLIED',revision=revision+1,movement_ids=movements,count_resolutions=resolutions)
             self.event(conn,tenant,actor,'MINIBAR_CONFIGURATION_APPLIED',data['request_id'],dict(result,task_id=task,room_id=data['room_id'],target=data['target_snapshot']))
             self._save_receipt(conn,tenant,key,actor,command,result);return result
 
