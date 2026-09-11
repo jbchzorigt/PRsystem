@@ -100,6 +100,9 @@ class MinibarVarianceTests(MinibarConfigurationCase):
         task=self.variance();self.assert_status(self.resolve(task),201)
         with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.staff_membership SET roles=ARRAY['RECEPTION'] WHERE tenant_id=%s AND account_id=%s",(self.tenant,self.manager))
         self.assertFalse(self.task(task)['plan']['counts_match']);self.assertEqual(self.apply(task).json()['code'],'COUNT_VARIANCE')
+        self.assert_status(self.resolve(task),401)
+        login=self.client.post('/auth/login',json=dict(email=self.manager+'@example.test',password=self.password,tenant_id=self.tenant))
+        self.manager_token=self.assert_status(login,200)['access_token']
         self.assert_status(self.resolve(task),403);self.assertEqual(self.evidence('minibar_adjustment'),0)
 
     def test_role_package_product_and_payload_guards(self):
