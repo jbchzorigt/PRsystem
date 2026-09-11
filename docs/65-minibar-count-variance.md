@@ -1,0 +1,107 @@
+# Minibar configuration count variance
+
+Accepted source: [7ef6596ec4c190572399b9caf7e06f5a14e4dad9](https://github.com/jbchzorigt/PRsystem/commit/7ef6596ec4c190572399b9caf7e06f5a14e4dad9).
+[Full CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34579344577) passed
+**790/790 backend tests without skips in 1059.694 seconds**, including **23 focused
+variance/scope tests** (47.089 seconds). All **17 Chromium suites and 114 actual
+browser/API command checks** passed. Domain/design/token gates passed; six existing
+design warnings remain. This documentation-only follow-up records that tested source.
+
+Business authority: docs/22 §§7–11 and docs/26 §§18–22. Current Manager at package
+25,000/30,000 and Manager Plus at 30,000 resolve configuration count discrepancies.
+Cleaner records immutable physical counts and completes assigned bounded transfers;
+Reception does not approve waste or stock adjustment. Hotel Admin needs a separate
+operational Manager role. Shortage override and partial physical rollback remain
+outside this increment.
+
+The Manager decision pins the request revision, counted product/posting, original
+baseline, current physical quantity, stock revision, reason and actor. COUNT derives
+a positive/negative adjustment from the recorded count; WASTE is valid only for a
+decrease. The server determines quantity and does not accept a client replacement
+count, charge or selling price. Existing average cost applies; a positive count at
+zero hotel stock requires the Manager's explicit unit cost. No guest charge or cash
+event is created. If a separate earlier adjustment already matches the physical
+count, the decision records that reconciliation without duplicating stock movement.
+
+A decision alone does not post inventory. Cleaner final confirmation commits the
+approved adjustment, immutable decision posting, complete return/refill plan,
+configuration application, task/blocker transitions, audit and command receipt in
+one transaction. The original count and every superseded decision remain immutable.
+Cancellation before application retains decision history and changes no inventory.
+Application still requires all counts, resolved variance, full warehouse funding,
+current exact target/version/lifecycle, a safe room and current assigned Cleaner.
+
+Changing the pinned stock revision/physical quantity or losing the approving
+Manager's current authority makes a pending decision stale. Manager must record a
+new decision; Cleaner cannot silently adopt it or change the count. Account and
+membership locks precede catalog/room locks during application; approving actors
+are revalidated, and a concurrent new approval outside those locks is rejected.
+Exact command retries return the original decision/application with no duplicate
+movement. A failed adjustment or deferred database proof rolls back all effects.
+
+Migration 066 adds forced tenant RLS and immutable decision/posting tables. The
+decision trigger proves the request, original count, current inventory and Manager
+authority. The posting trigger requires the latest valid decision and assigned
+Cleaner. Deferred proof links each posting to a complete application and an exact
+adjustment at the approved actor/reason/quantity/cost. A decision posting cannot
+commit without application. The shared count proof also rejects physical drift
+since an exact count, accounting for the current request's own transfers.
+
+Migration 067 closes an integration gap: adjustment-only room products were absent
+from the original target/transfer-derived baseline. Baselines now include adjustment
+history; both ON and OFF plans count and return non-target stock. An immutable count
+scope cannot silently gain a new product after preparation: the adjustment service
+and a room-locked database trigger reject it. Existing products can still be
+reconciled. Legacy pending scopes missing a product are blocked by the plan and
+database count proof; Manager cancels and creates a new complete count. No historical
+baseline or stock movement is rewritten. Five additional PostgreSQL tests cover
+ON/OFF returns, variance on adjustment-only stock, service/database scope guards and
+legacy pending recovery. Source 7ef6596ec4c190572399b9caf7e06f5a14e4dad9 passed
+23/23 focused variance tests and all 17 browser suites / 114 API-model commands.
+The same source passed the full 790-test PostgreSQL regression linked above.
+
+Runtime grants: reconciliation readers need SELECT on minibar_count_resolution and
+minibar_count_resolution_posting. The Manager command needs INSERT on the decision
+table; the application adapter needs INSERT on its posting table and the existing
+minibar_adjustment/minibar_receipt/audit grants. Existing account/membership, request,
+task, room and application grants remain. Immutable tables need no UPDATE/DELETE.
+The adjustment adapter also needs SELECT on minibar_reconciliation and
+minibar_configuration_request for migration 067 scope validation; baseline readers
+use the existing SELECT on minibar_adjustment. The Cleaner API does not gain a
+generic adjustment command; its source is the validated Manager decision. Public Cleaner plans omit unit-cost values.
+
+The existing shared Reception form, native select, table, feedback, dirty guard and
+retry owners render the Manager decision in room reconciliation details. The form
+shows recorded versus physical quantity, derived change, reason and confirmation.
+Cleaner sees approval/expiry text and cannot complete a stale decision. Refresh
+revalidates revisions; uncertain responses preserve the exact idempotency key.
+No new visual tokens, URL state or persistent browser storage are introduced.
+
+Eighteen new PostgreSQL tests cover negative/positive counts, waste, OFF return,
+fractional and zero-stock cost, no-movement acknowledgement, cancellation, current
+permissions/package, stale stock/revisions, concurrency/replay, immutable RLS
+history, atomic failure and mismatched adjustment-proof rejection. The new browser
+suite covers Cleaner count, Manager validation/native keyboard, read failure, CAS,
+unknown-outcome retry, stale approval, reapproval, Cleaner application and 320px.
+
+Local discovery after scope coverage: 790 collected, 106 executed successfully,
+684 database skips. The linked skip-free PostgreSQL run is the acceptance evidence.
+Strict UI audit: zero findings; JavaScript syntax and token drift checks passed.
+Chromium download timed out locally. Publication succeeded after verifying the
+connected user's repository ownership, public visibility and push permissions.
+The first CI run (34576676372, source 1c60fa25764d32b7cfe3dc5e3a31ccf0907bae57)
+passed the new browser flow and 16 of 18 focused PostgreSQL tests. Two fixture
+errors were corrected: use a valid RECEPTION role to remove Manager authority,
+and expect the existing 409 INSUFFICIENT_STOCK response. The second run
+(34576961650) passed 17/18: changing roles correctly revoked the old session. The
+test now checks old-session 401 and fresh Reception-session 403 independently.
+Production rules and migration 066 were unchanged. Source
+4285d3976cd578d6662f5e8af05f976cc6619818 passed 785/785 without skips, including
+all 18 focused variance tests, in [CI 34577238851](https://github.com/jbchzorigt/PRsystem/actions/runs/34577238851)
+in 950.826 seconds. It passed 17 browser suites and
+114 API-model command checks. Artifact ZIP download was exposed by GitHub, but
+local retrieval returned HTTP 403; local visual inspection is not claimed.
+
+Historical post-checkout/financial-only correction, shortage override, partial
+physical rollback, Restaurant, Operation, Police and production readiness remain.
+Approved development provider mocks remain; this increment does not merge or deploy.

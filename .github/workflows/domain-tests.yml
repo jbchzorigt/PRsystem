@@ -1,0 +1,160 @@
+name: Backend tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Run domain tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install backend and API test dependencies
+        run: python -m pip install '.[postgres,api,test]'
+      - name: Verify minibar count variance
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_variance.py -v
+      - name: Verify paid minibar corrections
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_paid_corrections.py -v
+      - name: Verify Manager stock adjustments
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_adjustments.py -v
+      - name: Verify minibar entity lifecycle
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_lifecycle.py -v
+      - name: Verify canonical minibar booking capacity
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_booking.py -v
+      - name: Verify rollout batch database boundary
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_batches.py -v
+      - name: Verify Manager minibar exceptions
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_exception.py -v
+      - name: Verify automatic next-stay minibar
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_next_stay.py -v
+      - name: Verify stay minibar refill
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_refill.py -v
+      - name: Verify canonical minibar guest flow
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -p test_minibar_guest.py -v
+      - name: Run domain and real PostgreSQL tests
+        env:
+          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python -m unittest discover -s tests -v
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install browser test runner
+        run: npm install --no-save --package-lock=false playwright@1.62.1
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify shared staff forms
+        run: node tests/browser/staff.cjs
+      - name: Verify Reception operations
+        run: node tests/browser/reception.cjs
+      - name: Verify booking portal and finance
+        run: node tests/browser/booking.cjs
+      - name: Verify minibar warehouse
+        run: node tests/browser/minibar.cjs
+      - name: Verify minibar template authoring
+        run: node tests/browser/minibar-templates.cjs
+      - name: Verify minibar reconciliation
+        run: node tests/browser/minibar-reconciliation.cjs
+      - name: Verify minibar version archive
+        run: node tests/browser/minibar-archive.cjs
+      - name: Verify explicit minibar rollout
+        run: node tests/browser/minibar-rollout.cjs
+      - name: Verify multi-room minibar batches
+        run: node tests/browser/minibar-batches.cjs
+      - name: Verify canonical minibar guest reports
+        run: node tests/browser/minibar-guest.cjs
+      - name: Verify stay minibar refill
+        run: node tests/browser/minibar-refill.cjs
+      - name: Verify automatic next-stay minibar
+        run: node tests/browser/minibar-next-stay.cjs
+      - name: Verify Manager minibar exceptions
+        run: node tests/browser/minibar-exception.cjs
+      - name: Verify minibar entity lifecycle
+        run: node tests/browser/minibar-lifecycle.cjs
+      - name: Verify minibar stock adjustment UI
+        run: node tests/browser/minibar-adjustments.cjs
+      - name: Verify paid minibar correction UI
+        run: node tests/browser/minibar-paid-corrections.cjs
+      - name: Verify minibar count variance UI
+        run: node tests/browser/minibar-variance.cjs
+      - name: Validate browser payloads against API models
+        run: |
+          python -m pip install '.[api]'
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/reception-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/booking-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-template-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-reconciliation-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-archive-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-rollout-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-batch-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-guest-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-refill-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-next-stay-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-exception-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-lifecycle-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-adjustment-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-paid-correction-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-variance-requests.json
+      - name: Save browser evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: reception-browser-evidence
+          path: artifacts/*.png
+          retention-days: 7
+      - name: Check design tokens
+        run: python scripts/export_ui_tokens.py --check
+      - name: Lint design contract
+        run: npx --yes -p @google/design.md designmd lint DESIGN.md

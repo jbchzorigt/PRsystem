@@ -1,0 +1,48 @@
+.operations main { max-width: 72rem; margin: 2rem auto; overflow: visible; }
+.console { min-width: 0; padding: 2rem; }
+.operations a { color: var(--primary); text-underline-offset: .2em; }
+.skip { display: block; padding: .5rem 1rem; }
+.operations nav, .toolbar, .actions { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+.operations nav { border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
+.operations nav a { padding: .75rem; border-radius: var(--radius); font-weight: 600; }
+.operations nav a[aria-current=page] { background: var(--primary); color: var(--surface); }
+.toolbar { justify-content: space-between; margin: 1rem 0; }
+.toolbar h1 { margin: .5rem 0; }
+#status { min-height: 3.2rem; }
+.operations form { max-width: 38rem; margin: 1rem 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.operations label { display: block; font-weight: 600; }
+.operations input, .operations select, .operations textarea { width: 100%; min-width: 0; border: 1px solid var(--muted); border-radius: var(--radius); padding: .75rem; font: inherit; color: var(--ink); background: var(--surface); }
+.operations textarea { resize: none; min-height: 6rem; }
+.operations input[type=checkbox] { width: 1.2rem; height: 1.2rem; accent-color: var(--primary); }
+.operations .field { margin: .75rem 0; }
+.operations .error { min-height: 1.6rem; font-size: .875rem; }
+.operations .primary { width: auto; }
+.operations button { max-width: 100%; overflow-wrap: anywhere; }
+.operations .notice { border-inline-start: .25rem solid var(--focus); padding: .75rem 1rem; background: var(--paper); }
+.operations .record { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.operations .record h3 { margin: .25rem 0; }
+.operations .record p { margin: .5rem 0; }
+.operations .muted { color: var(--muted); }
+.operations dl { display: grid; grid-template-columns: minmax(8rem,1fr) minmax(0,2fr); gap: .5rem 1rem; }
+.operations dd { margin: 0; overflow-wrap: anywhere; }
+.operations dt { color: var(--muted); }
+.operations .table-wrap { overflow: auto; max-width: 100%; }
+.operations table { border-collapse: collapse; width: 100%; }
+.operations th, .operations td { border-bottom: 1px solid var(--line); padding: .75rem; text-align: left; }
+.operations thead { position: sticky; top: 0; background: var(--surface); }
+.operations .result { min-height: 3.2rem; overflow-wrap: anywhere; }
+.operations dialog { max-width: min(36rem,calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); padding: 1.5rem; color: var(--ink); background: var(--surface); }
+.operations dialog::backdrop { background: rgb(23 45 56 / .55); }
+.operations [aria-invalid=true] { border-color: var(--danger); }
+.operations .secret { overflow-wrap: anywhere; border: 1px solid var(--line); padding: 1rem; }
+@media(max-width:600px) { .operations main { margin: 1rem; } .console { padding: 1rem; } .operations header { flex-wrap: wrap; } .operations form { padding: 1rem; } .operations dl { grid-template-columns: 1fr; } .operations dd { margin-bottom: .5rem; } }
+
+.operations .qr-card { width: min(100%,22rem); height: auto; background: white; fill: black; display: block; }
+
+.booking-photos { display: flex; flex-wrap: wrap; gap: 1rem; }
+.booking-photos img { max-width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius); }
+
+.operations summary { cursor: pointer; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.operations summary:hover { background: var(--paper); }
+.operations summary:active { background: var(--surface); }
+.operations summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }

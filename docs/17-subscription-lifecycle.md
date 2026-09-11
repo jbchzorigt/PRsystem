@@ -172,33 +172,28 @@ Grace period-ийн турш:
 
 Renewal төлбөр grace period дотор provider/server талаас амжилттай баталгаажвал сонгосон саруудыг анхны `expires_at`-ээс үргэлжлүүлэн нэмнэ. Төлбөр баталгаажсан мөчөөс шинээр эхлүүлэхгүй; ингэснээр renewal бүрд 2 үнэгүй хоног хуримтлагдахгүй.
 
-Grace period дууссаны дараа төлбөр баталгаажаагүй бол тухайн hotel-ийн төлбөртэй operational эрхүүд бүгд hard lock болно.
+Grace period дууссаны дараа шинэ үйлчилгээ эхлүүлэх operational эрхүүд hard lock болно. Харин өмнө эхэлсэн үйлчилгээ болон мөнгөн үүргийг дуусгах үйлдэл `LIFE-DEC-008`-ын нарийн allowlist-аар нээлттэй үлдэнэ.
 
 ### Нээлттэй үлдэх үйлдэл
 
-Hotel Admin-д зөвхөн:
+- Hotel Admin: subscription сунгах/төлөх; бүх хэрэглэгч: тусламж, гарах.
+- Lock-оос өмнө check-in хийсэн stay: шаардлагатай detail, checkout, room/minibar үлдсэн төлбөр, deposit allocation/refund болон үүнийг дуусгахад зайлшгүй report/dispute resolution.
+- Lock-оос өмнө төлөгдөж баталгаажсан Restaurant order: fulfillment, handoff болон refund.
+- Lock-оос өмнөх shift/transfer: count, terminal confirm/cancel, reconciliation, close/handover. Шинэ ээлж зөвхөн хуучин obligation дуусгах continuation scope-той; шинэ худалдах эрхгүй.
+- Existing payment intent/capture/obligation-ийн server-verified callback, refund, settlement, reconciliation system actor-аар үргэлжилнэ. Late capture нь өмнөх intent-тэй холбогдсон refund obligation үүсгэж болно.
 
-- `Subscription сунгах/төлөх`;
-- `Тусламж/оператортой холбогдох`;
-- `Гарах`
-
-үйлдэл нээлттэй байна.
-
-Бусад hotel staff expired төлөвийн мэдэгдэл харж, `Гарах` болон тусламжийн мэдээлэлд хандаж болох боловч operational дэлгэц/үйлдэлд орохгүй.
+Allowlist нь role/package/tenant/resource-state болон account/membership security gate-ийг алгасахгүй. Root stay/order/shift/intent-ийг сервер хадгалсан түүхээс нотолж, `root_started_at < grace_expires_at` болон root тухайн boundary дээр eligible байсныг шалгана. Child task/refund lock-оос хойш үүссэн байж болно; энэ нь өмнөх root obligation-ийг дуусгахтай холбоотой байна. Actual check-in backdate эрх нээхгүй: immutable recorded-at ашиглана. Нарийвчилсан matrix: [27-approved-risk-controls.md](./27-approved-risk-controls.md).
 
 ### Хаагдах ажиллагаа
 
-- шинэ online booking болон walk-in check-in;
-- checkout, room/minibar payment болон барьцааны ажиллагаа;
-- өрөө, үнэ, minibar, staff болон Restaurant тохиргоо;
-- Cleaner-ийн task, minibar report болон cleaning status update;
-- Restaurant-ийн шинэ болон идэвхтэй order processing;
-- Reception shift-ийн гүйлгээ, хаалт болон хүлээлцэх ажиллагаа;
-- Admin/Manager тайлан, Excel export болон бусад operational үйлдэл.
+- шинэ online booking, hold/invoice, walk-in болон урьдчилан захиалсан боловч lock-оос өмнө check-in хийгдээгүй stay-ийн check-in;
+- шинэ Restaurant order, шинэ stock/configuration/rollout, шинэ худалдах үйлчилгээ;
+- ердийн room/price/staff/Restaurant тохиргоо, full report/Excel export;
+- өөрийн role/package/scope-оос давсан ямар ч ажиллагаа.
 
-UI дээр button нуух/идэвхгүй болгохоос гадна backend/API бүр тухайн hotel-ийн subscription status-ийг шалгаж `SUBSCRIPTION_EXPIRED` үр дүнгээр үйлдлийг хориглоно. Идэвхтэй session байсан ч `grace_expires_at`-ийн дараа operational API ашиглахгүй; `expires_at`-аас хойших 48 цагийн grace үед §5.1-ийн эрх хэвийн байна.
+UI болон API ижил policy ашиглана. Allowlist-д ороогүй хүсэлт `SUBSCRIPTION_EXPIRED` байна. Root-linked continuation нь хязгааргүй шинэ ажиллагаа үүсгэх эрх биш. Security suspension үед дээрх exception үйлчлэхгүй; STAFF lifecycle-ийн эрх бүхий replacement урсгалыг мөрдөнө.
 
-Grace дууссан hard lock нь өгөгдөл устгах ажиллагаа биш. Hotel, room, staff, stay, booking, payment, minibar, Restaurant, report болон audit data хадгалагдана. Идэвхтэй workflow-ууд renewal хүртэл царцсан төлөвт үлдэнэ.
+Hard lock өгөгдөл устгахгүй. Өмнөх stay/order/payment/shift түүхийг хадгалж, зөвшөөрөгдсөн terminalization-ийг renewal шаардахгүйгээр дуусгана; public listing hide хэвээр.
 
 ### Нийтийн landing page ба online booking
 
@@ -226,7 +221,7 @@ Subscription дуусахаас өмнөх болон grace period-ийн сан
 ### LIFE-DEC-003 — Expiry hard lock, 48 цагийн grace-ээр шинэчилсэн
 
 - **Төлөв:** Шинэчлэн батлагдсан
-- **Шийдвэр:** Subscription-ийн `expires_at` болсон мөчид шууд hard lock хийхгүй. 48 цагийн grace period-ийн турш бүх одоогийн package эрх хэвийн ажиллана. `grace_expires_at` хүртэл төлбөр баталгаажаагүй бол бүх operational UI/API хаагдаж, идэвхтэй stay, checkout, payment, Cleaner, Restaurant order болон shift renewal хүртэл царцана. Hotel Admin-д зөвхөн subscription сунгах/төлөх, тусламж авах болон гарах үйлдэл нээлттэй үлдэнэ. Өгөгдлийг устгахгүй.
+- **Шийдвэр:** Subscription-ийн `expires_at` болсон мөчид шууд hard lock хийхгүй. 48 цагийн grace period-ийн турш бүх одоогийн package эрх хэвийн ажиллана. `grace_expires_at` хүртэл төлбөр баталгаажаагүй бол шинэ operational ажиллагаа хаагдана. Өмнө эхэлсэн stay/order/мөнгөн үүргийг LIFE-DEC-008-ын allowlist-аар дуусгана. Subscription төлөх, тусламж, гарах хэвээр; account security suspension exception авахгүй. Өгөгдлийг устгахгүй.
 
 ### LIFE-DEC-004 — Landing page-ээс нуух
 
@@ -248,6 +243,11 @@ Subscription дуусахаас өмнөх болон grace period-ийн сан
 - **Төлөв:** Батлагдсан
 - **Шийдвэр:** Pending upgrade-гүй higher-package renewal active term дуусахаас өмнө paid бол entitlement previous `expires_at` дээр, grace/expired үед paid бол confirmation мөчид хэрэгжинэ. Boundary worker болон upgrade callback ижил subscription lock/revision ашиглаж, callback commit үед `effective_at <= now` бол target шууд apply хийнэ. Stale/second paid payment зөвхөн `SUBSCRIPTION_PAYMENT_RECONCILE` permission-тэй Operation/finance queue-д орж, ordinary entitlement/expiry-г автоматаар өөрчлөхгүй.
 
+### LIFE-DEC-008 — Hard lock-ийн өмнөх үүргийг дуусгах
+
+- **Төлөв:** 2026-09-06 хэрэглэгчийн зөвшөөрлөөр батлагдсан (R01).
+- **Шийдвэр:** Grace boundary-оос өмнөх eligible root ажиллагааг серверийн immutable түүхээр нотолсны дараа existing role/package/scope дотор checkout, өмнөх төлбөр/барьцаа/refund, Restaurant completion, shift/transfer terminalization болон system reconciliation-ийг зөвшөөрнө. Шинэ үйлчилгээ хаалттай. Boundary-тэй тэнцүү timestamp өмнөх ажилд тооцогдохгүй. Security suspension болон inactive membership-ийг тойрохгүй. Canonical action/root matrix нь 27-р баримт.
+
 ## 7. Хаагдсан төлөв
 
-Subscription lifecycle-ийн P0 үндсэн шийдвэрүүд LIFE-DEC-001–007-гоор хаагдсан. Subscription provider reconciliation-ийн SLA/alert нь implementation configuration боловч owner permission, package floor, upgrade/renewal state болон entitlement schema-г дахин нээхгүй.
+Subscription lifecycle-ийн P0 үндсэн шийдвэрүүд LIFE-DEC-001–008-аар хаагдсан. Subscription provider reconciliation-ийн SLA/alert нь implementation configuration боловч owner permission, package floor, upgrade/renewal state болон entitlement schema-г дахин нээхгүй.

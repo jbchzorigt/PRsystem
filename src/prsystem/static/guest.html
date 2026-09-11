@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="mn">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Зочны нэвтрэх — PRsystem</title><link rel="stylesheet" href="/staff/assets/staff.css"><link rel="stylesheet" href="/staff/assets/reception.css"><script src="/staff/assets/reception.js" defer></script></head>
+<body class="operations">
+<a class="skip" href="#workspace">Ажлын хэсэг рүү</a>
+<header><span class="brand">PRsystem</span><span>Зочны үйлчилгээ</span><button disabled type="button" id="logout" class="secondary" hidden>Гарах</button></header>
+<main id="workspace" tabindex="-1"><div class="rail" aria-hidden="true"></div><div class="console">
+<p id="mode" class="notice" hidden>Туршилтын орчин · Гадаад үйлчилгээ mock горимоор ажиллаж байна.</p>
+<div id="login"></div>
+<div id="app" hidden>
+<nav id="navigation" aria-label="Үндсэн цэс"></nav>
+<div class="toolbar"><h1 id="page-title" tabindex="-1">Зочин бүртгэх</h1><button disabled type="button" id="refresh" class="secondary">Мэдээлэл шинэчлэх</button></div>
+<p id="status" role="status" aria-live="polite"></p>
+<div id="content" aria-busy="false"></div>
+</div></div></main>
+<dialog id="discard" aria-labelledby="discard-title"><h2 id="discard-title">Хадгалаагүй мэдээллээ орхих уу?</h2><p>Энэ маягтын оруулсан утга устна. Серверт бүртгэгдсэн ажил хэвээр хадгалагдана.</p><div class="actions"><button disabled type="button" id="keep" class="primary" autofocus>Үргэлжлүүлэн засах</button><button disabled type="button" id="leave" class="secondary">Маягтыг орхих</button></div></dialog>
+<footer>Цагийг Улаанбаатарын цагаар харуулна. Мөнгөн дүн төгрөгөөр.</footer>
+</body></html>
