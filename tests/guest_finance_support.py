@@ -49,7 +49,7 @@ class GuestFinanceCase(WalkInCase):
                 'GRANT UPDATE(state,decider_id,decided_at,decision_reason,self_approved) ON prsystem.stay_time_amendment TO {}',
                 'GRANT SELECT,INSERT ON prsystem.deposit_hotel_settings,prsystem.deposit_category_settings,prsystem.guest_finance,prsystem.guest_charge,prsystem.guest_receipt,prsystem.guest_allocation,prsystem.guest_refund,prsystem.guest_finance_event,prsystem.shift_obligation TO {}',
                 'GRANT UPDATE (amount_mnt,revision) ON prsystem.deposit_hotel_settings,prsystem.deposit_category_settings TO {}',
-                'GRANT UPDATE (revision,received,reversed,allocated,refund_reserved,refunded) ON prsystem.guest_finance TO {}',
+                'GRANT UPDATE (revision,received,reversed,allocated,refund_reserved,refunded,service_credit) ON prsystem.guest_finance TO {}',
                 'GRANT UPDATE (allocated,refund_reserved,refunded,reversed) ON prsystem.guest_receipt TO {}',
                 'GRANT UPDATE (paid_mnt) ON prsystem.guest_charge TO {}',
                 'GRANT UPDATE (state,completed_at,released_at,confirmation_envelope) ON prsystem.guest_refund TO {}',

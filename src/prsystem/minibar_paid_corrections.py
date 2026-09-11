@@ -43,15 +43,18 @@ class MinibarPaidCorrections(MinibarGuest):
             if sum(a[2] for a in allocations)!=paid:raise DomainError('DEPOSIT_BALANCE_CONFLICT')
             correction=secrets.token_hex(16)
             conn.execute('INSERT INTO prsystem.minibar_paid_correction(tenant_id,stay_id,id,original_revision,replacement_revision,original_charge_id,paid_mnt,actor_id,reason,counts) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(tenant,stay,correction,revision,revision+1,old[0],paid,actor,reason,Jsonb(counts)))
+            after=dict(before);purposes={}
             for allocation,receipt,amount in allocations:
                 self.no_pending_correction(conn,tenant,receipt)
                 funding=self.load_receipt(conn,tenant,stay,receipt)
                 if funding[1]<amount:raise DomainError('DEPOSIT_BALANCE_CONFLICT')
+                purposes[receipt]=funding[5]
+                if funding[5]=='DEPOSIT':after['allocated']-=amount
+                else:after['service_credit']+=amount
                 conn.execute('INSERT INTO prsystem.minibar_paid_release(tenant_id,stay_id,correction_id,allocation_id,receipt_id,amount_mnt) VALUES(%s,%s,%s,%s,%s,%s)',(tenant,stay,correction,allocation,receipt,amount))
                 conn.execute('UPDATE prsystem.guest_receipt SET allocated=allocated-%s WHERE tenant_id=%s AND id=%s',(amount,tenant,receipt))
             conn.execute('UPDATE prsystem.guest_charge SET paid_mnt=0 WHERE tenant_id=%s AND id=%s',(tenant,old[0]))
             now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
-            after=dict(before,allocated=before['allocated']-paid)
             self.save(conn,tenant,stay,before,after,actor,'MINIBAR_PAYMENT_RELEASED',correction,dict(original_charge_id=old[0],amount_mnt=paid),now)
             conn.execute("UPDATE prsystem.reception_minibar_inspection SET state='REQUESTED' WHERE tenant_id=%s AND stay_id=%s",(tenant,stay))
             self.ensure_source(conn,tenant,stay,revision)
@@ -72,7 +75,8 @@ class MinibarPaidCorrections(MinibarGuest):
                     conn.execute('UPDATE prsystem.guest_receipt SET allocated=allocated+%s WHERE tenant_id=%s AND id=%s',(take,tenant,receipt))
                     conn.execute('INSERT INTO prsystem.guest_allocation VALUES(%s,%s,%s,%s,%s,%s,%s,clock_timestamp())',(tenant,stay,allocation,receipt,report['charge_id'],take,actor))
                     conn.execute('INSERT INTO prsystem.minibar_paid_reallocation(tenant_id,stay_id,correction_id,allocation_id,receipt_id,amount_mnt) VALUES(%s,%s,%s,%s,%s,%s)',(tenant,stay,correction,allocation,receipt,take))
-                    after['allocated']+=take
+                    if purposes[receipt]=='DEPOSIT':after['allocated']+=take
+                    else:after['service_credit']-=take
                 if amount>take:credits.append(dict(receipt_id=receipt,amount_mnt=amount-take))
             now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
             balance=self.save(conn,tenant,stay,before,after,actor,'PAID_MINIBAR_CORRECTED',correction,dict(original_revision=revision,replacement_revision=revision+1,refundable_credits=credits,charge_id=report['charge_id']),now)

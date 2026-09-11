@@ -46,7 +46,7 @@ acknowledgement, finance/report revision, dirty guard, error feedback and exact
 unknown-outcome retry. Reception sees released PAYMENT credit in the existing refund
 form. No price override, provider success flag or cash completion is client supplied.
 
-Thirteen new PostgreSQL tests cover full/partial payment, overcharge/full reversal,
+Fifteen new PostgreSQL tests cover full/partial payment, overcharge/full reversal,
 increased consumption, chained corrections, exact replay, stale revision, role and
 payload guards, rollback during report/deferred proof, historical price/report
 preservation, RLS/immutability, concurrency, pending payment and both cash/routed
@@ -57,3 +57,16 @@ Full acceptance is pending. Post-checkout paid correction, financial-only disput
 configuration variance/shortage override, partial physical rollback, Restaurant,
 Operation, Police and production readiness remain. Provider integrations retain
 the approved development mock boundary; no merge or deployment is included.
+
+The first focused CI run exposed a projection mismatch: the original guest_finance
+allocated counter tracks deposit allocations, not service PAYMENT allocations.
+Migration 064 adds service_credit separately; received/allocated retain deposit
+semantics, while refundable available includes service credit. PAYMENT release and
+reapplication update this credit; DEPOSIT release and reapplication update only the
+existing allocated counter. Deferred proof derives service credit from all linked
+PAYMENT releases minus reallocations. Runtime finance writers need UPDATE on
+service_credit. Cash/routed refund reservation and completion retain their existing
+combined liability reservation/refund counters and receipt-scoped evidence.
+New deposit-funded and mixed-source tests check this separation. The initial browser
+interaction suite passed, but its API contract gate requires five commands; the
+suite now also executes the actual refund-completion form as its fifth command.

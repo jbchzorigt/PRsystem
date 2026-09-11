@@ -45,6 +45,7 @@ class MinibarPaidCorrectionTests(MinibarConfigurationCase):
         payment=self.pay();r=self.assert_status(self.correct(),201)
         self.assertEqual((r['amount_mnt'],r['reallocated_mnt'],r['new_receivable_mnt']),(3000,3000,0))
         self.assertEqual(sum(x['amount_mnt'] for x in r['refundable_credits']),3000)
+        self.assertEqual((r['balance']['received'],r['balance']['allocated'],r['balance']['service_credit']),(60000,0,3000))
         receipt=r['refundable_credits'][0]['receipt_id'];finance=self.statement().json()
         self.assertTrue(next(x for x in finance['receipts'] if x['id']==receipt)['refund_eligible'])
         reserved=self.assert_status(self.command('cash-refunds',dict(receipt_id=receipt,amount_mnt=3000,expected_revision=finance['balance']['revision'],idempotency_key=uuid4().hex)),201)
@@ -131,3 +132,16 @@ class MinibarPaidCorrectionTests(MinibarConfigurationCase):
                 conn.execute('DROP TRIGGER fail_paid_correction ON prsystem.minibar_paid_correction');conn.execute('DROP FUNCTION prsystem.fail_paid_correction()')
         self.assertEqual(self.statement().json(),before)
         self.assert_status(self.correct(idempotency_key=key),201)
+
+    def test_deposit_funded_report_retains_deposit_projection(self):
+        finance=self.statement().json()['balance']['revision']
+        self.assert_status(self.command('deposit-allocations',dict(receipt_id=self.stay['deposit_receipt_id'],charge_id=self.original['charge_id'],amount_mnt=6000,expected_revision=finance,idempotency_key=uuid4().hex)),201)
+        r=self.assert_status(self.correct(),201)
+        self.assertEqual((r['balance']['received'],r['balance']['allocated'],r['balance']['service_credit']),(60000,3000,0))
+
+    def test_mixed_payment_and_deposit_keep_receipt_liabilities_conserved(self):
+        self.pay(2000);finance=self.statement().json()['balance']['revision']
+        self.assert_status(self.command('deposit-allocations',dict(receipt_id=self.stay['deposit_receipt_id'],charge_id=self.original['charge_id'],amount_mnt=4000,expected_revision=finance,idempotency_key=uuid4().hex)),201)
+        r=self.assert_status(self.correct(),201);b=r['balance']
+        self.assertEqual(b['service_credit']+4000-b['allocated'],3000)
+        self.assertEqual(sum(x['amount_mnt'] for x in r['refundable_credits']),3000)

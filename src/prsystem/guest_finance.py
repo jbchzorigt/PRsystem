@@ -83,16 +83,16 @@ class GuestFinance(RoomService):
 
     @staticmethod
     def balance(row):
-        return dict(row,available=available(row['received'],row['reversed'],row['allocated'],row['refund_reserved'],row['refunded']))
+        return dict(row,available=available(row['received']+row.get('service_credit',0),row['reversed'],row['allocated'],row['refund_reserved'],row['refunded']))
 
     def lock(self,conn,tenant,stay,revision=None,*,active=False,allow_frozen=False):
         source=conn.execute('SELECT state,snapshot FROM prsystem.stay WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,stay)).fetchone()
         if not source:raise DomainError('WORK_SOURCE_NOT_FOUND')
         if source[1].get('financial_integration')!=self.mode:raise DomainError('FINANCIAL_SOURCE_NOT_READY')
         if active and source[0]!='ACTIVE':raise DomainError('WORK_NOT_OPEN')
-        row=conn.execute('SELECT revision,received,reversed,allocated,refund_reserved,refunded,frozen FROM prsystem.guest_finance WHERE tenant_id=%s AND stay_id=%s FOR UPDATE',(tenant,stay)).fetchone()
+        row=conn.execute('SELECT revision,received,reversed,allocated,refund_reserved,refunded,frozen,service_credit FROM prsystem.guest_finance WHERE tenant_id=%s AND stay_id=%s FOR UPDATE',(tenant,stay)).fetchone()
         if not row:raise DomainError('FINANCIAL_SOURCE_NOT_READY')
-        result=dict(zip(('revision','received','reversed','allocated','refund_reserved','refunded','frozen'),row))
+        result=dict(zip(('revision','received','reversed','allocated','refund_reserved','refunded','frozen','service_credit'),row))
         if result['frozen'] and not allow_frozen:raise DomainError('FINANCIAL_AGGREGATE_FROZEN')
         if revision is not None and (type(revision) is not int or revision!=result['revision']):raise DomainError('REVISION_CONFLICT')
         return result
@@ -100,8 +100,8 @@ class GuestFinance(RoomService):
     def save(self,conn,tenant,stay,before,after,actor,kind,source,details,now):
         self.balance(after)
         after=dict(after,revision=before['revision']+1)
-        conn.execute('''UPDATE prsystem.guest_finance SET revision=%s,received=%s,reversed=%s,allocated=%s,refund_reserved=%s,refunded=%s
-            WHERE tenant_id=%s AND stay_id=%s''',(after['revision'],after['received'],after['reversed'],after['allocated'],after['refund_reserved'],after['refunded'],tenant,stay))
+        conn.execute('''UPDATE prsystem.guest_finance SET revision=%s,received=%s,reversed=%s,allocated=%s,refund_reserved=%s,refunded=%s,service_credit=%s
+            WHERE tenant_id=%s AND stay_id=%s''',(after['revision'],after['received'],after['reversed'],after['allocated'],after['refund_reserved'],after['refunded'],after.get('service_credit',0),tenant,stay))
         self.audit(conn,tenant,stay,actor,kind,source,dict(details,before=self.balance(before),after=self.balance(after)),after['revision'],now)
         return self.balance(after)
 
