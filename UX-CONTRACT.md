@@ -276,3 +276,9 @@ retry behavior. Loading and failure use the existing panel/status owners.
 Cleaner count bounds use physical quantity; a separate column shows billable
 availability. Generic additions never silently become a guest sale. Evidence:
 `tests/browser/minibar-adjustments.cjs` and the existing guest/exception suites.
+
+Atomic inventory correction reuses the Manager adjustment history, native kind
+select, shared form validation/acknowledgement, unknown-outcome retry and owning
+inventory refresh. It fixes product/location/stay to the selected history item.
+The form explains that reversal and replacement commit together, with no guest
+payment effect. Browser evidence: tests/browser/minibar-adjustments.cjs.

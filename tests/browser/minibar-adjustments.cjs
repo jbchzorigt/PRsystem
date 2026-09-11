@@ -19,6 +19,14 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
    else if(tail==='rooms'){if(failRooms){failRooms=false;return r.fulfill({status:503,json:{code:'SERVICE_UNAVAILABLE'}});}result=[{room_id:'room1',number:'101'}];}
    else if(tail.endsWith('/adjustment-preview')){const room=url.searchParams.get('room_id');result={product_id:'water',room_id:room,room_number:room?'101':null,stay_id:room?'stay1':null,stock_revision:revision,total_quantity:total,physical_quantity:room?inRoom:total-inRoom,average_cost:total?cost:null,report_locked:locked};}
    else if(tail.endsWith('/adjustments')&&!body){if(failHistory){failHistory=false;return r.fulfill({status:503,json:{code:'SERVICE_UNAVAILABLE'}});}result={items:history,next_after:null};}
+   else if(tail.endsWith('/adjustment-corrections')){
+    if(receipts.has(body.idempotency_key))return r.fulfill({json:receipts.get(body.idempotency_key)});
+    const old=history.find(x=>x.adjustment_id===body.original_id);assert(old&&!old.reversed);assert.equal(body.expected_revision,revision);assert.equal(body.expected_physical_quantity,total-inRoom);assert.equal(body.kind,'COUNT_MINUS');assert.equal(body.quantity,2);assert(body.reason);
+    old.reversed=true;total-=old.hotel;inRoom-=old.room;total-=body.quantity;revision+=2;
+    result={correction_id:'correction1',original_id:old.adjustment_id,reversal:{adjustment_id:'reverse1'},replacement:{adjustment_id:'replacement1',total_quantity:total,stock_revision:revision}};
+    receipts.set(body.idempotency_key,structuredClone(result));
+    return r.fulfill({status:503,json:{code:'SERVICE_UNAVAILABLE'}});
+   }
    else if(tail.endsWith('/adjustments')){
     if(receipts.has(body.idempotency_key))return r.fulfill({json:receipts.get(body.idempotency_key)});
     if(conflict){conflict=false;revision++;return r.fulfill({status:409,json:{code:'REVISION_CONFLICT'}});}
@@ -45,6 +53,12 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   await open('RETURN','room1');await fill();await submit();await ready();assert.equal(inRoom,1);assert.equal(total,9);
   await page.getByRole('button',{name:'Залруулгын түүх',exact:true}).click();await page.getByRole('button',{name:'Залруулгын түүхийг дахин ачаалах'}).click();await page.getByRole('button',{name:'Энэ хөдөлгөөнийг буцаах'}).last().click();await page.getByLabel('Шалтгаан',{exact:true}).fill('Буцаалтыг залруулах');await page.getByLabel('Тоо, байршил болон үр дүнг шалгасан').check();await submit();await ready();assert.equal(inRoom,2);
   await open('COUNT_PLUS');await fill('2');await submit();await ready();await open('COUNT_MINUS');await fill();await submit();await ready();assert.equal(total,10);
+  await page.getByRole('button',{name:'Залруулгын түүх',exact:true}).click();await page.getByRole('button',{name:'Зөв хөдөлгөөнөөр солих'}).first().click();
+  await page.getByLabel('Зөв хөдөлгөөний төрөл').selectOption('COUNT_MINUS');await page.getByRole('button',{name:'Залруулгыг шалгах'}).click();await fill('2');
+  assert(await page.getByText('Анхны хөдөлгөөнийг буцааж, доорх зөв хөдөлгөөнөөр хамтад нь солино.',{exact:false}).count());
+  await page.screenshot({path:'artifacts/minibar-atomic-correction-mobile.png',fullPage:true});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  await submit();await page.locator('.result.error').waitFor();await submit();await ready();assert.equal(total,9);
+  const corrections=requests.filter(r=>r.tail.endsWith('/adjustment-corrections'));assert.equal(corrections.length,2);assert.deepEqual(corrections[0].body,corrections[1].body);
   total=0;inRoom=0;await open('COUNT_PLUS');await fill('2');await page.getByLabel('Өртөггүй нөөцийн нэгж өртөг').fill('1500');await submit();await ready();assert.equal(total,2);
   locked=true;await page.getByRole('button',{name:'Нөөцийн хөдөлгөөн бүртгэх',exact:true}).click();await page.getByLabel('Байршил').selectOption('room1');await page.getByRole('button',{name:'Үлдэгдлийг шалгах'}).click();await page.getByText('Энэ байрлалтын тайлан бүртгэгдсэн эсвэл зочин солигдсон тул хөдөлгөөнийг эндээс өөрчлөхгүй.').waitFor();assert.equal(await page.getByRole('button',{name:'Хөдөлгөөн баталгаажуулах'}).count(),0);
   assert.equal(requests[1].body.idempotency_key,requests[2].body.idempotency_key);assert.notEqual(requests[0].body.idempotency_key,requests[1].body.idempotency_key);

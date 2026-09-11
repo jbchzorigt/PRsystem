@@ -166,17 +166,19 @@
       parent.append(node('p',`Энэ хэсэгт ${list.length} өрөө. Агуулах нь бүх хэсэгт сонгогдоно.`));
     }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Хөдөлгөөнийг дахин ачаалах',()=>inventoryAdjustment(container,product,after)));}finally{parent.setAttribute('aria-busy','false');}
   }
-  function inventoryAdjustmentForm(parent,product,preview,kind,original=null){
+  function inventoryAdjustmentForm(parent,product,preview,kind,original=null,replacement=false){
     parent.replaceChildren(node('h3',`${product.name} — ${preview.room_id?'Өрөө '+preview.room_number:'Агуулах'}`));
     parent.append(node('p',`Бодит бүртгэлийн үлдэгдэл: ${preview.physical_quantity}. Дундаж өртөг: ${inventoryCost(preview.average_cost)}.`));
     if(preview.report_locked||(original&&preview.stay_id!==original.stay_id)){parent.append(node('p','Энэ байрлалтын тайлан бүртгэгдсэн эсвэл зочин солигдсон тул хөдөлгөөнийг эндээс өөрчлөхгүй.'));return;}
     parent.append(node('p',`${adjustmentNames[kind]}. ${kind==='RETURN'?'Өрөөний тоо буурч, агуулахын тоо нэмэгдэнэ; нийт нөөц, өртөг хэвээр.':kind==='REVERSAL'?'Анхны хөдөлгөөний тоо, өртгийг холбоостой бичлэгээр буцаана.':'Тоо болон нөөцийн үнэлгээг өөрчилнө.'} Зочны төлбөр, кассын бичлэг үүсгэхгүй.`));
     if(preview.stay_id)parent.append(node('p','Одоогийн зочны байрлалтад холбоно. Нэмэх залруулга нь зочинд тооцох боломжит тоог нэмэхгүй.'));
-    const fields=original?[]:[field('quantity','Хөдөлгөөний тоо','number',{min:1})];
+    if(replacement)parent.append(node('p','Анхны хөдөлгөөнийг буцааж, доорх зөв хөдөлгөөнөөр хамтад нь солино. Баталгаажуулалт бүтэлгүйтвэл хоёр хөдөлгөөн хоёулаа буцна.'));
+    const fields=original&&!replacement?[]:[field('quantity','Хөдөлгөөний тоо','number',{min:1})];
     if(original)parent.append(node('p',`Буцаах тоо: ${original.quantity}. Анхны өртөг: ${inventoryCost(original.cost)}.`));
-    if(kind==='COUNT_PLUS'&&preview.total_quantity===0)fields.push(field('unit_cost_mnt','Өртөггүй нөөцийн нэгж өртөг (₮)','number',{min:0}));
+    const restoredTotal=replacement?preview.total_quantity+(original.kind==='COUNT_PLUS'?-original.quantity:original.kind==='RETURN'?0:original.quantity):preview.total_quantity;
+    if(kind==='COUNT_PLUS'&&restoredTotal===0)fields.push(field('unit_cost_mnt','Өртөггүй нөөцийн нэгж өртөг (₮)','number',{min:0}));
     fields.push(field('reason','Шалтгаан','textarea',{max:1000}),field('reviewed','Тоо, байршил болон үр дүнг шалгасан','checkbox'));
-    form(parent,adjustmentNames[kind],fields,'Хөдөлгөөн баталгаажуулах',v=>api(path(`minibar/products/${enc(product.product_id)}/adjustments`),{kind,quantity:original?.quantity??v.quantity,room_id:preview.room_id,expected_stay_id:preview.stay_id,expected_revision:preview.stock_revision,expected_physical_quantity:preview.physical_quantity,reason:v.reason,unit_cost_mnt:v.unit_cost_mnt??null,original_id:original?.adjustment_id??null,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('inventory');say('Нөөцийн хөдөлгөөн бүртгэгдлээ.');}});
+    form(parent,replacement?'Буруу хөдөлгөөнийг зөвөөр солих':adjustmentNames[kind],fields,'Хөдөлгөөн баталгаажуулах',v=>api(path(`minibar/products/${enc(product.product_id)}/${replacement?'adjustment-corrections':'adjustments'}`),{kind,quantity:replacement?v.quantity:original?.quantity??v.quantity,room_id:preview.room_id,expected_stay_id:preview.stay_id,expected_revision:preview.stock_revision,expected_physical_quantity:preview.physical_quantity,reason:v.reason,unit_cost_mnt:v.unit_cost_mnt??null,original_id:original?.adjustment_id??null,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('inventory');say('Нөөцийн хөдөлгөөн бүртгэгдлээ.');}});
   }
   async function inventoryAdjustments(container,product,after=''){
     const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Залруулгын түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');
@@ -184,6 +186,13 @@
       parent.replaceChildren();if(!data.items.length)parent.append(node('p','Энэ хэсэгт нөөцийн залруулга алга.'));
       for(const item of data.items){const row=record(parent,`${adjustmentNames[item.kind]} · ${item.quantity} ${product.unit}`,`${item.room_id?'Өрөө '+item.room_number:'Агуулах'} · ${time(item.recorded_at)} · ${item.actor_label}`);row.append(node('p',item.reason),node('p',`Нэгж өртөг: ${inventoryCost(item.cost)}${item.reversed?' · Буцаасан':''}`));
         if(item.kind!=='REVERSAL'&&!item.reversed)actions(row).append(btn('Энэ хөдөлгөөнийг буцаах',()=>guard(async()=>{try{const preview=await api(path(`minibar/products/${enc(product.product_id)}/adjustment-preview`)+(item.room_id?`?room_id=${enc(item.room_id)}`:''));if(seq===generation&&parent.isConnected)inventoryAdjustmentForm(parent,product,preview,'REVERSAL',item);}catch(e){say(e.message,true);}})));
+        if(item.correction_id)row.append(node('p','Холбоостой буцаалт ба орлуулалт бүртгэгдсэн.'));
+        if(item.kind!=='REVERSAL'&&!item.reversed)actions(row).append(btn('Зөв хөдөлгөөнөөр солих',()=>guard(async()=>{
+          const preview=await api(path(`minibar/products/${enc(product.product_id)}/adjustment-preview`)+(item.room_id?`?room_id=${enc(item.room_id)}`:''));
+          if(seq!==generation||!parent.isConnected)return;
+          parent.replaceChildren(node('p',`${adjustmentNames[item.kind]} · ${item.quantity} ${product.unit} · ${item.reason}`));
+          form(parent,'Орлуулах хөдөлгөөний төрөл',[select('kind','Зөв хөдөлгөөний төрөл',Object.entries(adjustmentNames).filter(([k])=>k!=='REVERSAL'&&(item.room_id||k!=='RETURN')))],'Залруулгыг шалгах',async v=>v,{success:v=>inventoryAdjustmentForm(parent,product,preview,v.kind,item,true)});
+        })));
       }
       const pages=actions(parent);pages.append(btn('Залруулгын эхний хэсэг',()=>guard(()=>inventoryAdjustments(container,product))),btn('Залруулгын дараагийн хэсэг',()=>guard(()=>inventoryAdjustments(container,product,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
     }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Залруулгын түүхийг дахин ачаалах',()=>inventoryAdjustments(container,product,after)));}finally{parent.setAttribute('aria-busy','false');}

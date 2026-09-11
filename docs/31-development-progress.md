@@ -353,3 +353,11 @@ canonical room capacity, Restaurant, Operation болон 6-р шат үлдсэ
 өрөөг дараагийн зочинд өгөхөд stock/cleaning/buffer gate хэвээр; одоогоор existing
 explicit same-version configuration/count/apply-аар stock сэргээж болно.
 Гадаад provider-ууд зөвшөөрсөн mock горимд; merge/deployment хийгээгүй.
+
+## Minibar — атомик нөөцийн залруулга (баталгаажуулалт хүлээгдэж байна)
+
+[62-р contract](62-minibar-atomic-adjustment-corrections.md): анхны хөдөлгөөнийг
+анхны өртгөөр буцаах + зөв хөдөлгөөнөөр солихыг нэг transaction-аар бүртгэнэ.
+Нэмэгдсэн 8 PostgreSQL regression-тай нийт 744 тестийн бүрэн CI хүлээгдэж байна;
+736 гэсэн өмнөх баталгаажсан тоог эцсийн дүн хүртэл хэвээр хадгална.
+Төлбөр/тайлангийн дараах залруулга болон 5/6-р шатны бусад үлдэгдэл хэвээр.

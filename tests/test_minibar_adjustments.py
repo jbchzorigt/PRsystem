@@ -18,6 +18,7 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
                 'GRANT INSERT ON prsystem.minibar_adjustment TO {}',
+                'GRANT SELECT,INSERT ON prsystem.minibar_adjustment_correction TO {}',
                 'GRANT INSERT ON prsystem.minibar_reconciliation,prsystem.minibar_transfer,prsystem.minibar_configuration_application TO {}',
                 'GRANT UPDATE(minibar_application_id) ON prsystem.room TO {}',
                 'GRANT INSERT ON prsystem.minibar_guest_inspection,prsystem.minibar_guest_report TO {}',
@@ -192,3 +193,89 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
         r=self.adjust(expected_physical_quantity=before['physical_quantity'])
         self.assertEqual(r.json()['code'],'REVISION_CONFLICT')
         self.assertEqual(self.preview(),current)
+
+    def correct(self,original,kind='WASTE',quantity=1,room=None,token=None,**extra):
+        c=self.preview(room)
+        data=dict(kind=kind,quantity=quantity,room_id=room,expected_stay_id=c['stay_id'],expected_revision=c['stock_revision'],expected_physical_quantity=c['physical_quantity'],original_id=original['adjustment_id'],reason='Буруу хөдөлгөөнийг зөвөөр солих')
+        data.update(extra)
+        return self.api(f'minibar/products/{self.product}/adjustment-corrections',data,token)
+
+    def test_atomic_replacement_preserves_original_and_links_both_movements(self):
+        original=self.assert_status(self.adjust(quantity=3),201)
+        r=self.assert_status(self.correct(original,quantity=2),201)
+        self.assertEqual(r['replacement']['total_quantity'],8)
+        self.assertEqual(r['replacement']['inventory_value_mnt'],'8000')
+        items=self.history();self.assertEqual(len(items),3)
+        self.assertEqual(len([i for i in items if i['correction_id']==r['correction_id']]),2)
+        self.assertTrue(next(i for i in items if i['adjustment_id']==original['adjustment_id'])['reversed'])
+        self.assert_status(self.correct(original),409)
+        # A later correction can target the replacement, retaining the chain.
+        second=self.assert_status(self.correct(r['replacement']),201)
+        self.assertEqual(second['replacement']['total_quantity'],9)
+
+    def test_replacement_failure_rolls_back_reversal_and_allows_exact_retry(self):
+        original=self.assert_status(self.adjust(quantity=3),201);before=self.preview()
+        r=self.correct(original,quantity=11)
+        self.assertEqual(r.json()['code'],'INSUFFICIENT_STOCK');self.assertEqual(self.preview(),before)
+        self.assertEqual(len(self.history()),1)
+        self.assert_status(self.correct(original,quantity=2),201)
+
+    def test_atomic_correction_uses_original_reversal_and_restored_average(self):
+        original=self.assert_status(self.adjust(quantity=2),201)
+        self.assert_status(self.api(f'minibar/products/{self.product}/receipts',dict(quantity=2,unit_cost_mnt=2000,expected_revision=2)),201)
+        r=self.assert_status(self.correct(original,quantity=3),201)
+        self.assertEqual(r['replacement']['inventory_value_exact'],dict(numerator='10500',denominator='1'))
+        with psycopg.connect(self.owner_dsn) as conn:
+            cost=conn.execute('SELECT cost_numerator,cost_denominator FROM prsystem.minibar_receipt WHERE tenant_id=%s AND id=%s',(self.tenant,r['reversal']['receipt_id'])).fetchone()
+            self.assertEqual(cost,(1000,1))
+
+    def test_atomic_room_reclassification_preserves_non_guest_exclusion(self):
+        self.guest();original=self.assert_status(self.adjust(room=self.room),201)
+        r=self.assert_status(self.correct(original,kind='RETURN',room=self.room),201)
+        self.assertEqual((r['replacement']['total_quantity'],r['replacement']['room_quantity']),(10,1))
+        self.assertEqual(self.assert_status(self.report(1,True),201)['amount_mnt'],0)
+        self.assertEqual(self.correct(r['replacement'],room=self.room).json()['code'],'STOCK_ADJUSTMENT_LOCKED')
+
+    def test_atomic_correction_idempotency_current_authority_and_stale_preview(self):
+        original=self.assert_status(self.adjust(quantity=3),201);key=uuid4().hex
+        r=self.assert_status(self.correct(original,quantity=2,idempotency_key=key),201)
+        self.assertEqual(self.assert_status(self.correct(original,quantity=2,expected_revision=2,expected_physical_quantity=7,idempotency_key=key),201),r)
+        self.assert_status(self.correct(original,quantity=2,idempotency_key=key,token=self.worker_token),403)
+        self.assertEqual(self.correct(r['replacement'],expected_revision=2).json()['code'],'REVISION_CONFLICT')
+        self.assert_status(self.correct(r['replacement'],kind='REVERSAL'),422)
+
+    def test_concurrent_atomic_corrections_have_one_winner(self):
+        original=self.assert_status(self.adjust(quantity=3),201);gate=Barrier(2)
+        def send():
+            gate.wait()
+            return self.correct(original,quantity=2,expected_revision=2,expected_physical_quantity=7)
+        with ThreadPoolExecutor(2) as pool:r=[f.result() for f in(pool.submit(send),pool.submit(send))]
+        self.assertEqual(sorted(x.status_code for x in r),[201,409]);self.assertEqual(len(self.history()),3)
+
+    def test_correction_proof_and_history_are_tenant_scoped_and_immutable(self):
+        original=self.assert_status(self.adjust(),201)
+        r=self.assert_status(self.correct(original,quantity=2),201)
+        with psycopg.connect(self.app_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.minibar_adjustment_correction').fetchone()[0],0)
+        with psycopg.connect(self.owner_dsn) as conn:
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                conn.execute("UPDATE prsystem.minibar_adjustment_correction SET reason='Changed' WHERE tenant_id=%s",(self.tenant,))
+        with psycopg.connect(self.owner_dsn) as conn:
+            actor=conn.execute('SELECT actor_id FROM prsystem.minibar_adjustment WHERE tenant_id=%s AND id=%s',(self.tenant,original['adjustment_id'])).fetchone()[0]
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                with conn.transaction():
+                    conn.execute('INSERT INTO prsystem.minibar_adjustment_correction(tenant_id,id,original_id,reversal_id,replacement_id,actor_id,reason) VALUES(%s,%s,%s,%s,%s,%s,%s)',(self.tenant,uuid4().hex,r['replacement']['adjustment_id'],uuid4().hex,uuid4().hex,actor,'Unmatched source'))
+                    # Run the proof ahead of missing-reference FK checks.
+                    conn.execute('SET CONSTRAINTS prsystem.prove_correction IMMEDIATE')
+
+    def test_deferred_correction_failure_rolls_back_both_movements_and_receipt(self):
+        original=self.assert_status(self.adjust(quantity=3),201);before=self.preview();key=uuid4().hex
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute("CREATE FUNCTION prsystem.fail_correction() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END; $$")
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_correction AFTER INSERT ON prsystem.minibar_adjustment_correction DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN(NEW.tenant_id={}) EXECUTE FUNCTION prsystem.fail_correction()').format(sql.Literal(self.tenant)))
+        try:self.assert_status(self.correct(original,quantity=2,idempotency_key=key),503)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:
+                conn.execute('DROP TRIGGER fail_correction ON prsystem.minibar_adjustment_correction');conn.execute('DROP FUNCTION prsystem.fail_correction()')
+        self.assertEqual(self.preview(),before);self.assertEqual(len(self.history()),1)
+        self.assert_status(self.correct(original,quantity=2,idempotency_key=key),201)

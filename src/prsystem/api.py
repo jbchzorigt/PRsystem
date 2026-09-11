@@ -90,6 +90,11 @@ class MinibarStockAdjustment(BaseModel):
     idempotency_key: str = Field(min_length=1,max_length=128)
 
 
+class MinibarStockCorrection(MinibarStockAdjustment):
+    kind: Literal['WASTE','COUNT_PLUS','COUNT_MINUS','RETURN']
+    original_id: str = Field(min_length=1,max_length=128)
+
+
 class MinibarTemplateCreate(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     name: str = Field(min_length=1, max_length=200)
@@ -1133,6 +1138,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/products/{product_id}/adjustments',status_code=201)
     def minibar_adjustment(tenant_id: str,product_id: str,body: MinibarStockAdjustment,secret: Annotated[str,Depends(token)]):
         return MinibarAdjustments(service).change(secret,tenant_id,product_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/products/{product_id}/adjustment-corrections',status_code=201)
+    def minibar_adjustment_correction(tenant_id: str,product_id: str,body: MinibarStockCorrection,secret: Annotated[str,Depends(token)]):
+        return MinibarAdjustments(service).correct(secret,tenant_id,product_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
 
     @app.get('/hotels/{tenant_id}/minibar/products/{product_id}/adjustments')
     def minibar_adjustments(tenant_id: str,product_id: str,secret: Annotated[str,Depends(token)],after: str=Query('',max_length=128),limit: int=Query(50,ge=1,le=100)):
