@@ -98,7 +98,7 @@ class MinibarVarianceTests(MinibarConfigurationCase):
 
     def test_manager_permission_change_invalidates_decision(self):
         task=self.variance();self.assert_status(self.resolve(task),201)
-        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.staff_membership SET roles=ARRAY['HOTEL_ADMIN'] WHERE tenant_id=%s AND account_id=%s",(self.tenant,self.manager))
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.staff_membership SET roles=ARRAY['RECEPTION'] WHERE tenant_id=%s AND account_id=%s",(self.tenant,self.manager))
         self.assertFalse(self.task(task)['plan']['counts_match']);self.assertEqual(self.apply(task).json()['code'],'COUNT_VARIANCE')
         self.assert_status(self.resolve(task),403);self.assertEqual(self.evidence('minibar_adjustment'),0)
 
@@ -137,7 +137,7 @@ class MinibarVarianceTests(MinibarConfigurationCase):
     def test_application_failure_rolls_back_adjustment_and_resolution_posting(self):
         task=self.variance();self.assert_status(self.resolve(task),201);before=self.stocks()
         with patch.object(MinibarAdjustments,'post',side_effect=DomainError('INSUFFICIENT_STOCK')):
-            self.assert_status(self.apply(task),422)
+            self.assertEqual(self.assert_status(self.apply(task),409)['code'],'INSUFFICIENT_STOCK')
         self.assertEqual(self.stocks(),before);self.assertEqual(self.evidence('minibar_count_resolution_posting'),0)
         self.assert_status(self.apply(task),200)
 

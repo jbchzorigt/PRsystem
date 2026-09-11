@@ -67,9 +67,13 @@ unknown-outcome retry, stale approval, reapproval, Cleaner application and 320px
 
 Local discovery: 785 collected, 106 executed successfully, 679 database skips.
 Strict UI audit: zero findings; JavaScript syntax and token drift checks passed.
-Chromium download timed out locally. GitHub upload was rejected by automatic
-approval review; repository ownership/public status has since been verified, but
-full acceptance is not claimed before an authorized publication and successful CI.
+Chromium download timed out locally. Publication succeeded after verifying the
+connected user's repository ownership, public visibility and push permissions.
+The first CI run (34576676372, source 1c60fa25764d32b7cfe3dc5e3a31ccf0907bae57)
+passed the new browser flow and 16 of 18 focused PostgreSQL tests. Two fixture
+errors were corrected: use a valid RECEPTION role to remove Manager authority,
+and expect the existing 409 INSUFFICIENT_STOCK response. Production rules and
+migration 066 were unchanged. Full acceptance awaits the corrected source's CI.
 
 Historical post-checkout/financial-only correction, shortage override, partial
 physical rollback, Restaurant, Operation, Police and production readiness remain.

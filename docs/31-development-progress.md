@@ -415,5 +415,7 @@ partial physical rollback, Restaurant, Operation, Police болон production r
 
 18 шинэ PostgreSQL тест, нийт 785 collected / 106 local passed / 679 DB skipped.
 Шинэ браузерийн багц болон PostgreSQL acceptance хүлээгдэж байна; хамгийн сүүлийн
-баталгаажсан тоо 767 хэвээр. GitHub нийтлэлтийн автомат хяналт зөвшөөрлийн нотолгоо
-шаардсан; repository нь холбогдсон хэрэглэгчийн эзэмшлийн public repo болохыг шалгасан.
+баталгаажсан тоо 767 хэвээр. Repository-ийн эзэмшил, public төлөв, push эрхийг
+баталгаажуулсны дараа нийтлэлт зөвшөөрөгдсөн. Эхний CI (34576676372) шинэ браузерийн
+урсгал болон PostgreSQL 16/18 тестийг давсан; хоёр тестийн fixture/HTTP хүлээлтийг
+зассан. Migration 066 болон серверийн дүрэм өөрчлөгдөөгүй.
