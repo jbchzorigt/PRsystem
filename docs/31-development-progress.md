@@ -414,8 +414,15 @@ partial physical rollback, Restaurant, Operation, Police болон production r
 өмнө inventory хөдөлгөөн үүсгэхгүй. Shortage override ба partial rollback үлдсэн.
 
 18 шинэ PostgreSQL тест, нийт 785 collected / 106 local passed / 679 DB skipped.
-Шинэ браузерийн багц болон PostgreSQL acceptance хүлээгдэж байна; хамгийн сүүлийн
-баталгаажсан тоо 767 хэвээр. Repository-ийн эзэмшил, public төлөв, push эрхийг
+Сүүлийн source `4285d3976cd578d6662f5e8af05f976cc6619818` дээр 18/18 тусгай тест,
+17 браузерийн багц, 114 API-model command шалгалт давсан. CI `34577238851` дээр
+бүрэн regression үргэлжилж байна; хамгийн сүүлийн баталгаажсан нийт тоо 767 хэвээр. Repository-ийн эзэмшил, public төлөв, push эрхийг
 баталгаажуулсны дараа нийтлэлт зөвшөөрөгдсөн. Эхний CI (34576676372) шинэ браузерийн
 урсгал болон PostgreSQL 16/18 тестийг давсан; хоёр тестийн fixture/HTTP хүлээлтийг
 зассан. Migration 066 болон серверийн дүрэм өөрчлөгдөөгүй.
+
+Хяналтаар adjustment-аар өрөөнд орсон бараа анхны baseline-д орохгүй байсныг олсон.
+Migration 067 бүх барааг count/return-д хамруулж, эхэлсэн тооллогын хамрах барааг
+өөрчлөхөөс хамгаална. Хуучин дутуу scope-той pending хүсэлтийг цуцалж шинэ тооллого
+үүсгэнэ. Таван шинэ regression нэмэгдсэн: нийт 790 / local 106 passed, 684 skipped.
+Энэ нэмэлттэй source-ийн бүрэн CI хүлээгдэж байна.

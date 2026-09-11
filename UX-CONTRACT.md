@@ -303,3 +303,8 @@ values; CAS requires explicit refresh/discard. Unit-cost input appears only for
 Manager's positive adjustment at zero hotel stock; Cleaner plans omit that value.
 Evidence: tests/browser/minibar-variance.cjs and test_minibar_variance.py. Existing
 natural scrolling, 320px layout, localization and in-memory privacy rules apply.
+
+Count-scope drift uses the same reconciliation notice owner: Manager cancels the
+old pending request and creates a complete count without rewriting history. Stock
+adjustment errors explain why a new room product cannot join an already prepared
+count. Migration 067 and the variance PostgreSQL suite own this boundary.

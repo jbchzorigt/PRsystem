@@ -111,6 +111,8 @@ class MinibarReconciliation(MinibarConfiguration):
         execution=self.execution(conn,tenant,data['request_id'])
         if not execution:return None
         source,baseline=execution
+        current_scope=conn.execute('SELECT prsystem.minibar_configuration_baseline(%s,%s)',(tenant,data['request_id'])).fetchone()[0]
+        scope_changed=data['state'] not in {'APPLIED','CANCELLED'} and bool({i['product_id'] for i in current_scope}-{i['product_id'] for i in baseline})
         targets={i['product_id']:i['target_quantity'] for i in data['target_snapshot']['items']}
         lines=[]
         for item in baseline:
@@ -129,9 +131,9 @@ class MinibarReconciliation(MinibarConfiguration):
                 action_id=count[0],actual_count=count[1],posting_id=count[2],stock_revision=stock[0],zero_stock=stock[1]==0,
                 count_matches=matched,resolution={k:v for k,v in decision.items() if k not in {'unit_cost_mnt'}} if decision else None,
                 direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta),shortage=max(0,delta-warehouse)))
-        return dict(source_id=source,lines=lines,
-            counts_complete=all(i['actual_count'] is not None for i in lines),
-            counts_match=all(i['count_matches'] for i in lines),shortage=any(i['shortage'] for i in lines))
+        return dict(source_id=source,lines=lines,scope_changed=scope_changed,
+            counts_complete=not scope_changed and all(i['actual_count'] is not None for i in lines),
+            counts_match=not scope_changed and all(i['count_matches'] for i in lines),shortage=any(i['shortage'] for i in lines))
 
     @staticmethod
     def count_resolution(conn,tenant,request,product):

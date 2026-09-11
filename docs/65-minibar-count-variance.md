@@ -43,6 +43,17 @@ adjustment at the approved actor/reason/quantity/cost. A decision posting cannot
 commit without application. The shared count proof also rejects physical drift
 since an exact count, accounting for the current request's own transfers.
 
+Migration 067 closes an integration gap: adjustment-only room products were absent
+from the original target/transfer-derived baseline. Baselines now include adjustment
+history; both ON and OFF plans count and return non-target stock. An immutable count
+scope cannot silently gain a new product after preparation: the adjustment service
+and a room-locked database trigger reject it. Existing products can still be
+reconciled. Legacy pending scopes missing a product are blocked by the plan and
+database count proof; Manager cancels and creates a new complete count. No historical
+baseline or stock movement is rewritten. Five additional PostgreSQL tests cover
+ON/OFF returns, variance on adjustment-only stock, service/database scope guards and
+legacy pending recovery. This follow-up still needs its own complete CI.
+
 Runtime grants: reconciliation readers need SELECT on minibar_count_resolution and
 minibar_count_resolution_posting. The Manager command needs INSERT on the decision
 table; the application adapter needs INSERT on its posting table and the existing
@@ -65,15 +76,21 @@ history, atomic failure and mismatched adjustment-proof rejection. The new brows
 suite covers Cleaner count, Manager validation/native keyboard, read failure, CAS,
 unknown-outcome retry, stale approval, reapproval, Cleaner application and 320px.
 
-Local discovery: 785 collected, 106 executed successfully, 679 database skips.
+Local discovery after scope coverage: 790 collected, 106 executed successfully, 684 database skips.
 Strict UI audit: zero findings; JavaScript syntax and token drift checks passed.
 Chromium download timed out locally. Publication succeeded after verifying the
 connected user's repository ownership, public visibility and push permissions.
 The first CI run (34576676372, source 1c60fa25764d32b7cfe3dc5e3a31ccf0907bae57)
 passed the new browser flow and 16 of 18 focused PostgreSQL tests. Two fixture
 errors were corrected: use a valid RECEPTION role to remove Manager authority,
-and expect the existing 409 INSUFFICIENT_STOCK response. Production rules and
-migration 066 were unchanged. Full acceptance awaits the corrected source's CI.
+and expect the existing 409 INSUFFICIENT_STOCK response. The second run
+(34576961650) passed 17/18: changing roles correctly revoked the old session. The
+test now checks old-session 401 and fresh Reception-session 403 independently.
+Production rules and migration 066 were unchanged. Source
+4285d3976cd578d6662f5e8af05f976cc6619818 passed all 18 focused variance tests; full
+acceptance awaits CI 34577238851. The same source passed 17 browser suites and
+114 API-model command checks. Artifact ZIP download was exposed by GitHub, but
+local retrieval returned HTTP 403; local visual inspection is not claimed.
 
 Historical post-checkout/financial-only correction, shortage override, partial
 physical rollback, Restaurant, Operation, Police and production readiness remain.

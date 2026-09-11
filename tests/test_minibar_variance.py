@@ -41,7 +41,7 @@ class MinibarVarianceTests(MinibarConfigurationCase):
         task=self.assert_status(self.prepare(request),201);self.count_all(task,actual=actual);return task
 
     def resolve(self,task,token=None,product=None,**extra):
-        detail=self.task(task);line=detail['plan']['lines'][0]
+        detail=self.task(task);line=next((i for i in detail['plan']['lines'] if i['product_id']==(product or self.product)),detail['plan']['lines'][0])
         data=dict(expected_revision=detail['request']['revision'],expected_stock_revision=line['stock_revision'],
                   expected_physical_quantity=line['current_quantity'],kind='COUNT',reason='Бодит тооллогыг шалгасан')
         data.update(extra)
@@ -187,3 +187,64 @@ class MinibarVarianceTests(MinibarConfigurationCase):
         with patch.object(MinibarAdjustments,'post',wrong_reason):self.assert_status(self.apply(task),503)
         self.assertEqual(self.stocks(),before);self.assertEqual(self.evidence('minibar_count_resolution_posting'),0)
         self.assert_status(self.apply(task),200)
+
+    def extra_product(self):
+        return self.assert_status(self.api('minibar/products',dict(name='Нэмэлт '+uuid4().hex[:8],category='Ундаа',unit='ш',selling_price_mnt=5000,unit_cost_mnt=2000,opening_quantity=3)),201)['product_id']
+
+    def add_extra_to_room(self,product):
+        return self.api(f'minibar/products/{product}/adjustments',dict(kind='COUNT_PLUS',quantity=2,room_id=self.room,expected_stay_id=None,expected_revision=1,expected_physical_quantity=0,reason='Өрөөнд олдсон бараа'))
+
+    def test_adjustment_only_products_are_counted_and_returned_on_on_and_off_plans(self):
+        for off in (False,True):
+            with self.subTest(off=off):
+                extra=self.extra_product();self.assert_status(self.add_extra_to_room(extra),201)
+                request=self.assert_status(self.request(**(dict(target_mode='OFF',target_template_id=None,target_version_id=None) if off else {})),201)
+                task=self.assert_status(self.prepare(request),201)
+                line=next(i for i in self.task(task)['plan']['lines'] if i['product_id']==extra)
+                self.assertEqual((line['baseline_quantity'],line['target_quantity'],line['direction'],line['quantity']),(2,0,'RETURN',2))
+                self.count_all(task);self.assert_status(self.apply(task),200)
+                with psycopg.connect(self.owner_dsn) as conn:
+                    self.assertEqual(conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(self.tenant,extra,self.room)).fetchone()[0],0)
+                    self.assertEqual(conn.execute('SELECT direction,quantity FROM prsystem.minibar_transfer WHERE tenant_id=%s AND request_id=%s AND product_id=%s',(self.tenant,task['request_id'],extra)).fetchone(),('RETURN',2))
+
+    def test_adjustment_only_product_variance_is_resolved_before_return(self):
+        extra=self.extra_product();self.assert_status(self.add_extra_to_room(extra),201)
+        task=self.assert_status(self.prepare(),201);line=next(i for i in self.task(task)['plan']['lines'] if i['product_id']==extra)
+        self.assert_status(self.api(f'minibar/reconciliation/tasks/{task["task_id"]}/count',dict(assignment_version=task['assignment_version'],action_id=line['action_id'],actual_count=1),self.worker_token),200)
+        self.count_all(task);self.assertEqual(self.apply(task).json()['code'],'COUNT_VARIANCE')
+        self.assert_status(self.resolve(task,product=extra,kind='WASTE'),201);self.assert_status(self.apply(task),200)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(self.tenant,extra,self.room)).fetchone()[0],0)
+            self.assertEqual(conn.execute('SELECT total_quantity_after FROM prsystem.minibar_receipt WHERE tenant_id=%s AND product_id=%s ORDER BY stock_revision DESC LIMIT 1',(self.tenant,extra)).fetchone()[0],4)
+
+    def test_new_room_product_cannot_bypass_prepared_count_scope(self):
+        task=self.assert_status(self.prepare(),201);extra=self.extra_product()
+        self.assertEqual(self.assert_status(self.add_extra_to_room(extra),409)['code'],'MINIBAR_COUNT_SCOPE_LOCKED')
+        self.assertEqual(self.evidence('minibar_adjustment'),0)
+        self.assert_status(self.cancel(self.task(task)['request']),200)
+        self.assert_status(self.add_extra_to_room(extra),201)
+        next_task=self.assert_status(self.prepare(),201)
+        self.assertIn(extra,{i['product_id'] for i in self.task(next_task)['plan']['lines']})
+
+    def test_database_rejects_scope_change_even_if_application_guard_is_bypassed(self):
+        self.assert_status(self.prepare(),201);extra=self.extra_product()
+        with patch.object(MinibarAdjustments,'ensure_count_scope'):
+            self.assert_status(self.add_extra_to_room(extra),503)
+        self.assertEqual(self.evidence('minibar_adjustment'),0)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT prsystem.minibar_room_quantity(%s,%s,%s)',(self.tenant,extra,self.room)).fetchone()[0],0)
+
+    def test_legacy_pending_scope_requires_cancel_and_new_counts_after_upgrade(self):
+        task=self.assert_status(self.prepare(),201);self.count_all(task);extra=self.extra_product()
+        # Reproduce a valid pre-067 adjustment without rewriting the frozen count.
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute('ALTER TABLE prsystem.minibar_adjustment DISABLE TRIGGER adjustment_scope_guard')
+        try:
+            with patch.object(MinibarAdjustments,'ensure_count_scope'):self.assert_status(self.add_extra_to_room(extra),201)
+        finally:
+            with psycopg.connect(self.owner_dsn) as conn:conn.execute('ALTER TABLE prsystem.minibar_adjustment ENABLE TRIGGER adjustment_scope_guard')
+        detail=self.task(task);self.assertTrue(detail['plan']['scope_changed']);self.assertFalse(detail['plan']['counts_complete'])
+        with psycopg.connect(self.owner_dsn) as conn:self.assertFalse(conn.execute('SELECT prsystem.minibar_counts_match(%s,%s)',(self.tenant,task['request_id'])).fetchone()[0])
+        self.assertEqual(self.apply(task).json()['code'],'COUNT_REQUIRED')
+        self.assert_status(self.cancel(detail['request']),200)
+        next_task=self.assert_status(self.prepare(),201);self.assertFalse(self.task(next_task)['plan']['scope_changed'])
+        self.count_all(next_task);self.assert_status(self.apply(next_task),200)

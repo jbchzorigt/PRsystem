@@ -46,8 +46,14 @@ class MinibarAdjustments(MinibarWarehouse):
             result=self.post(conn,tenant,product,data,before,actor,roles,package)
             self._save_receipt(conn,tenant,key,actor,command,result);return result
 
+    @staticmethod
+    def ensure_count_scope(conn,tenant,product,room):
+        if not conn.execute('SELECT prsystem.minibar_adjustment_scope_ready(%s,%s,%s)',(tenant,product,room)).fetchone()[0]:
+            raise DomainError('MINIBAR_COUNT_SCOPE_LOCKED')
+
     def post(self,conn,tenant,product,data,before,actor,roles,package,*,identity=None,correction_id=None):
         original=None;kind=data['kind'];quantity=data['quantity'];room=before['room_id'];stay=before['stay_id']
+        self.ensure_count_scope(conn,tenant,product,room)
         if kind=='REVERSAL':
             original=conn.execute('''SELECT a.id,a.kind,a.quantity,a.hotel_delta,a.room_delta,a.billable_delta,r.cost_numerator,r.cost_denominator
                 FROM prsystem.minibar_adjustment a JOIN prsystem.minibar_receipt r ON(r.tenant_id,r.id)=(a.tenant_id,a.receipt_id)
