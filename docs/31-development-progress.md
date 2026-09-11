@@ -377,3 +377,13 @@ Source `1abf10237621c4f7ddf4679793127d7e5738a01a`: [бүрэн CI](https://githu
 backend тесттэй; локал 106 тест давж, 645 DB тест skip болсон тул DB acceptance-д CI ашигласан.
 Төлбөрийн дараах залруулга/refund, configuration variance/override, partial rollback,
 Restaurant, Operation, Police болон production readiness үлдсэн.
+
+## Minibar — active stay-ийн төлсөн тайлангийн залруулга (CI хүлээгдэж байна)
+
+[64-р contract](64-minibar-paid-corrections.md): Manager төлсөн тайлангийн бодит
+тоог залруулахад allocation release → original-cost consumption reversal → шинэ
+locked-price report → төлсөн мөнгийг дахин хуваарилах урсгал атомикаар ажиллана.
+Илүү дүн анхны receipt дээр буцаах үлдэгдэл, дутуу дүн шинэ авлага болно.
+Reception existing refund reserve/complete урсгалаар бодит буцаалтыг гүйцэтгэнэ.
+Нэмэгдсэн 13 PostgreSQL тесттэй нийт 764 тест болон шинэ браузерийн багцын CI
+хүлээгдэж байна. Historical post-checkout болон financial-only dispute үлдсэн.

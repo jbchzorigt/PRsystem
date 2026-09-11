@@ -30,7 +30,7 @@ class RoutedRefunds(GuestPayments):
             shift=StayService._shift(conn,tenant,actor)
             self.no_pending_correction(conn,tenant,receipt)
             source=self.load_receipt(conn,tenant,stay,receipt)
-            if source[5]!='DEPOSIT':raise DomainError('INVALID_FINANCIAL_SOURCE')
+            if not self.refundable_source(conn,tenant,stay,receipt,source[5]):raise DomainError('INVALID_FINANCIAL_SOURCE')
             if channel==source[7]=='CASH' and source[6]!=shift[2]:raise DomainError('ORIGINAL_CASH_DRAWER_REQUIRED')
             require_available(amount,self.receipt_balance(source));require_available(amount,self.balance(before)['available'])
             refund=secrets.token_hex(16);now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
@@ -206,9 +206,10 @@ class RoutedRefunds(GuestPayments):
             if evidence['status']=='SUCCEEDED':
                 confirmed=evidence.get('confirmed_at');now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
                 if not isinstance(confirmed,datetime) or confirmed.tzinfo is None or not source[4]<=confirmed<=now:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+                conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
                 covered=min(self.balance(before)['available'],source[3]);shortfall=source[3]-covered
                 remaining=covered
-                receipts=conn.execute("SELECT id,amount_mnt-allocated-refund_reserved-refunded-reversed FROM prsystem.guest_receipt WHERE tenant_id=%s AND stay_id=%s AND purpose='DEPOSIT' ORDER BY (id=%s) DESC,id FOR UPDATE",(tenant,source[0],source[2])).fetchall()
+                receipts=conn.execute("SELECT id,amount_mnt-allocated-refund_reserved-refunded-reversed FROM prsystem.guest_receipt WHERE tenant_id=%s AND stay_id=%s AND (purpose='DEPOSIT' OR EXISTS(SELECT 1 FROM prsystem.minibar_paid_release x WHERE x.tenant_id=guest_receipt.tenant_id AND x.receipt_id=guest_receipt.id)) ORDER BY (id=%s) DESC,id FOR UPDATE",(tenant,source[0],source[2])).fetchall()
                 for receipt_id,available in receipts:
                     take=min(remaining,available)
                     if take:conn.execute('UPDATE prsystem.guest_receipt SET refunded=refunded+%s WHERE tenant_id=%s AND id=%s',(take,tenant,receipt_id))

@@ -213,6 +213,12 @@ class GuestFinance(RoomService):
             result=dict(allocation_id=allocation,balance=balance)
             self._save_receipt(conn,tenant,key,actor,command,result);return result
 
+    @staticmethod
+    def refundable_source(conn,tenant,stay,receipt,purpose):
+        if purpose=='DEPOSIT':return True
+        conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+        return purpose=='PAYMENT' and bool(conn.execute('SELECT 1 FROM prsystem.minibar_paid_release WHERE tenant_id=%s AND stay_id=%s AND receipt_id=%s',(tenant,stay,receipt)).fetchone())
+
     def reserve_refund(self,bearer,tenant,stay,receipt,amount,revision,key):
         money(amount,positive=True)
         command=dict(action='RESERVE_CASH_REFUND',stay_id=stay,receipt_id=receipt,amount_mnt=amount,revision=revision)
@@ -225,7 +231,7 @@ class GuestFinance(RoomService):
             shift=StayService._shift(conn,tenant,actor)
             self.no_pending_correction(conn,tenant,receipt)
             funding=self.load_receipt(conn,tenant,stay,receipt)
-            if funding[5]!='DEPOSIT':raise DomainError('INVALID_FINANCIAL_SOURCE')
+            if not self.refundable_source(conn,tenant,stay,receipt,funding[5]):raise DomainError('INVALID_FINANCIAL_SOURCE')
             if funding[7]!='CASH':raise DomainError('INVALID_FINANCIAL_SOURCE')
             if funding[6]!=shift[2]:raise DomainError('ORIGINAL_CASH_DRAWER_REQUIRED')
             require_available(amount,self.receipt_balance(funding));require_available(amount,self.balance(before)['available'])
@@ -316,5 +322,5 @@ class GuestFinance(RoomService):
                         reversals=[dict(zip(('id','correction_id','receipt_id','replacement_receipt_id','amount_mnt','recorded_at'),r)) for r in reversals],
                         payment_intents=[dict(zip(('id','charge_id','provider','amount_mnt','state','last_provider_state','invoice_id','receipt_id'),r)) for r in intents],
                         charges=[dict(zip(('id','kind','amount_mnt','paid_mnt'),r)) for r in charges],
-                        receipts=[dict(zip(('id','purpose','channel','amount_mnt','allocated','refund_reserved','refunded','reversed'),r)) for r in receipts],
+                        receipts=[dict(zip(('id','purpose','channel','amount_mnt','allocated','refund_reserved','refunded','reversed'),r),refund_eligible=self.refundable_source(conn,tenant,stay,r[0],r[1])) for r in receipts],
                         refunds=[dict(zip(('id','receipt_id','amount_mnt','state'),r)) for r in refunds])

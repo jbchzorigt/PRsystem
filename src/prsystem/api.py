@@ -35,6 +35,7 @@ from prsystem.minibar_batches import MinibarBatches
 from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.minibar_guest import MinibarGuest
+from prsystem.minibar_paid_corrections import MinibarPaidCorrections
 from prsystem.minibar_refill import MinibarRefill
 from prsystem.minibar_lifecycle import MinibarLifecycle
 from prsystem.readiness import ReadinessService
@@ -640,6 +641,12 @@ class ManagerMinibarException(InvitationChange):
     counts: dict[str,int]=Field(min_length=1,max_length=100)
     no_consumption: bool=False
     reason: str=Field(min_length=1,max_length=1000)
+
+
+class PaidMinibarCorrection(ReasonCommand):
+    counts: dict[str,int]=Field(min_length=1,max_length=100)
+    expected_revision: int=Field(ge=1,le=2**63-1)
+    expected_finance_revision: int=Field(ge=0,le=2**63-1)
 
 
 class CanonicalMinibarReport(InvitationChange):
@@ -1299,6 +1306,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-exception-report',status_code=201)
     def manager_minibar_exception(tenant_id: str,stay_id: str,body: ManagerMinibarException,secret: Annotated[str,Depends(token)]):
         return MinibarGuest(service,identity_vault,runtime_mode).report(secret,tenant_id,stay_id,None,None,body.counts,body.no_consumption,body.expected_revision,body.idempotency_key,exception_reason=body.reason)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-paid-corrections',status_code=201)
+    def paid_minibar_correction(tenant_id: str,stay_id: str,body: PaidMinibarCorrection,secret: Annotated[str,Depends(token)]):
+        return MinibarPaidCorrections(service,identity_vault,runtime_mode).correct(secret,tenant_id,stay_id,body.counts,body.expected_revision,body.expected_finance_revision,body.reason,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-report',status_code=201)
     def canonical_minibar_report(tenant_id: str,stay_id: str,body: CanonicalMinibarReport,secret: Annotated[str,Depends(token)]):

@@ -282,3 +282,9 @@ select, shared form validation/acknowledgement, unknown-outcome retry and owning
 inventory refresh. It fixes product/location/stay to the selected history item.
 The form explains that reversal and replacement commit together, with no guest
 payment effect. Browser evidence: tests/browser/minibar-adjustments.cjs.
+
+Paid minibar correction reuses openStay, locked price display and the canonical
+form/number/reason/acknowledgement/dirty-guard/retry owners. Only Manager on the
+current paid canonical report sees the form; server validation remains authoritative.
+Released service PAYMENT credit uses the existing Reception refund form, channel
+selector and completion flow. Evidence: tests/browser/minibar-paid-corrections.cjs.

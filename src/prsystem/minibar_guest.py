@@ -4,6 +4,7 @@ Prices come only from the stay. Cost is the exact weighted average at posting;
 an unpaid correction reverses the preceding consumption at its original cost.
 """
 import secrets
+from contextlib import nullcontext
 from fractions import Fraction
 from psycopg.types.json import Jsonb
 from prsystem.common import DomainError, money
@@ -89,12 +90,12 @@ class MinibarGuest(ReceptionDependencies):
              actor,label,roles,package,Jsonb(snapshot),'Stay minibar report '+str(revision)))
         return identity
 
-    def report(self,bearer,tenant,stay,task,assignment,counts,no_consumption,revision,key,*,exception_reason=None):
+    def report(self,bearer,tenant,stay,task,assignment,counts,no_consumption,revision,key,*,exception_reason=None,_connection=None):
         command=dict(action='CANONICAL_MINIBAR_REPORT',stay_id=stay,task_id=task,assignment_version=assignment,counts=counts,no_consumption=no_consumption,revision=revision)
         if exception_reason is not None:
             exception_reason=self._text(exception_reason,1000)
             command=dict(action='MANAGER_MINIBAR_EXCEPTION',stay_id=stay,counts=counts,no_consumption=no_consumption,revision=revision,reason=exception_reason)
-        with transaction(self.auth.dsn) as conn:
+        with (transaction(self.auth.dsn) if _connection is None else nullcontext(_connection)) as conn:
             if exception_reason is not None:
                 actor=self.actor(conn,bearer,tenant,stay,manager=True,action=Action.CHECKOUT_REPORT)
                 conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
