@@ -887,13 +887,13 @@ class BookingBeneficiary(BaseModel):
     expected_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1,max_length=128)
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None, restaurant_gateways=None) -> FastAPI:
     if runtime_mode not in {'production','development','test'}:
         raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if type(mock_stay_finance) is not bool:
         raise ValueError('mock_stay_finance must be boolean')
-    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, *(payment_gateways or {}).values()])
+    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, *(payment_gateways or {}).values(), *(restaurant_gateways or {}).values()])
     if mocked:
         from prsystem.mock_providers import require_development_database
         require_development_database(service.dsn, runtime_mode)
@@ -940,6 +940,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         if credentials is None or not 20 <= len(credentials.credentials) <= 256:
             raise DomainError("UNAUTHENTICATED")
         return credentials.credentials
+
+    from prsystem.restaurant_orders import RestaurantOrders
+    from prsystem.restaurant_api import install as install_restaurant_routes
+    install_restaurant_routes(app, RestaurantOrders(service, restaurants, restaurant_gateways, runtime_mode), token)
 
     def peer(request):
         # Ignore user-supplied X-Forwarded-For. Configure trusted proxies at deployment.

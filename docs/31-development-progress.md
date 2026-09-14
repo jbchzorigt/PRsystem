@@ -531,3 +531,15 @@ Strict UI audit 0 finding, design lint 0 error / өмнөх 6 warning, token che
 **5/6-р шат бүхэлдээ дуусаагүй:** partial physical rollback, Restaurant, Operation,
 Police болон production readiness үлдсэн. Бодит provider-уудын зөвшөөрсөн
 development mock зааг хэвээр; merge/deployment хийгээгүй.
+
+## Remaining work — Restaurant ordering source in progress
+
+Migration 071, restaurant policy/service/API болон 24 domain + 11 PostgreSQL
+шалгалт нэмэв. Үнэ түгжсэн invoice intent, merchant тулгалт, хүргэлт, буцаалт,
+immutable audit, checkout handoff-ийн код [68-р баримт](68-restaurant-orders.md)-д
+тайлбарлагдсан. Local 873 тестээс 130 pass, 743 skip; PostgreSQL CI pending.
+
+**Бүх ажил дуусаагүй.** Restaurant UI/notification/schedule/image/provider worker,
+partial minibar rollback, Operation болон production evidence үлдсэн. Зочдыг бүх
+буудлаар төвлөрүүлэн хайж мөрдөх Police функцийг энэ ажлын хүрээнд хэрэгжүүлэхгүй.
+Provider mock зааг хэвээр; production deployment хийгээгүй.

@@ -185,8 +185,14 @@ class ReceptionDependencies(GuestFinance):
         # Both order insertion and final checkout hold the same stay lock.
         # No extra UPDATE privilege on read-only service projections is needed.
         orders=conn.execute("SELECT id FROM prsystem.reception_restaurant_order WHERE tenant_id=%s AND stay_id=%s AND state NOT IN ('DONE','REFUNDED')",(tenant,stay)).fetchall()
-        if len(choices)!=len({x['order_id'] for x in choices}) or {x['order_id'] for x in choices}!={r[0] for r in orders} or (orders and not guest_informed):raise DomainError('RESTAURANT_ACK_REQUIRED')
-        for choice in choices:conn.execute('INSERT INTO prsystem.restaurant_checkout_outbox(tenant_id,order_id,stay_id,choice,actor_id,guest_informed) VALUES(%s,%s,%s,%s,%s,true)',(tenant,choice['order_id'],stay,choice['choice'],actor))
+        from prsystem.restaurant_orders import RestaurantOrders
+        canonical=RestaurantOrders.checkout_orders(conn,tenant,stay)
+        canonical_ids={r[0] for r in canonical}
+        expected={r[0] for r in orders}|canonical_ids
+        if len(choices)!=len({x['order_id'] for x in choices}) or {x['order_id'] for x in choices}!=expected or (expected and not guest_informed):raise DomainError('RESTAURANT_ACK_REQUIRED')
+        for choice in choices:
+            if choice['order_id'] in canonical_ids:RestaurantOrders.checkout_apply(conn,tenant,stay,actor,choice)
+            else:conn.execute('INSERT INTO prsystem.restaurant_checkout_outbox(tenant_id,order_id,stay_id,choice,actor_id,guest_informed) VALUES(%s,%s,%s,%s,%s,true)',(tenant,choice['order_id'],stay,choice['choice'],actor))
 
     def order(self,bearer,tenant,stay,name,phone,state,key):
         self.mock();name=self._text(name,200);phone=self._text(phone,30)
@@ -209,6 +215,8 @@ class ReceptionDependencies(GuestFinance):
             reports=conn.execute('SELECT revision,items,amount_mnt,reason FROM prsystem.reception_minibar_report WHERE tenant_id=%s AND stay_id=%s ORDER BY revision DESC LIMIT 1',(tenant,stay)).fetchone()
             book,state=conn.execute("SELECT snapshot->'minibar_snapshot',state FROM prsystem.stay WHERE tenant_id=%s AND id=%s",(tenant,stay)).fetchone()
             orders=conn.execute("SELECT id,restaurant_name,contact_phone,state FROM prsystem.reception_restaurant_order WHERE tenant_id=%s AND stay_id=%s AND state NOT IN ('DONE','REFUNDED') ORDER BY id LIMIT 100",(tenant,stay)).fetchall()
+            from prsystem.restaurant_orders import RestaurantOrders
+            orders+=RestaurantOrders.checkout_orders(conn,tenant,stay)
             availability=None
             if state=='ACTIVE' and book and book.get('mode')=='CANONICAL':
                 conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
