@@ -97,6 +97,17 @@ class GuestFinance(RoomService):
         if revision is not None and (type(revision) is not int or revision!=result['revision']):raise DomainError('REVISION_CONFLICT')
         return result
 
+    def lock_payment(self,conn,tenant,stay,charge,revision):
+        balance=self.lock(conn,tenant,stay,revision)
+        state=conn.execute('SELECT state FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
+        if state!='ACTIVE':
+            conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
+            valid=state=='CLOSED' and conn.execute('''SELECT 1 FROM prsystem.minibar_billing_correction b
+                WHERE b.tenant_id=%s AND b.stay_id=%s AND b.charge_id=%s
+                AND NOT EXISTS(SELECT 1 FROM prsystem.minibar_billing_correction n WHERE n.tenant_id=b.tenant_id AND n.stay_id=b.stay_id AND n.billing_revision>b.billing_revision)''',(tenant,stay,charge)).fetchone()
+            if not valid:raise DomainError('WORK_NOT_OPEN')
+        return balance
+
     def save(self,conn,tenant,stay,before,after,actor,kind,source,details,now):
         self.balance(after)
         after=dict(after,revision=before['revision']+1)
@@ -179,7 +190,7 @@ class GuestFinance(RoomService):
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             ShiftService._book(conn,tenant)
-            before=self.lock(conn,tenant,stay,revision,active=True);after=dict(before)
+            before=self.lock_payment(conn,tenant,stay,charge,revision);after=dict(before)
             shift=StayService._shift(conn,tenant,actor)
             now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
             self.charge(conn,tenant,stay,charge,amount)
@@ -198,7 +209,7 @@ class GuestFinance(RoomService):
             replay=self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             ShiftService._book(conn,tenant)
-            before=self.lock(conn,tenant,stay,revision,active=True);after=dict(before)
+            before=self.lock_payment(conn,tenant,stay,charge,revision);after=dict(before)
             StayService._shift(conn,tenant,actor)
             self.no_pending_correction(conn,tenant,receipt)
             funding=self.load_receipt(conn,tenant,stay,receipt)
@@ -217,7 +228,7 @@ class GuestFinance(RoomService):
     def refundable_source(conn,tenant,stay,receipt,purpose):
         if purpose=='DEPOSIT':return True
         conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
-        return purpose=='PAYMENT' and bool(conn.execute('SELECT 1 FROM prsystem.minibar_paid_release WHERE tenant_id=%s AND stay_id=%s AND receipt_id=%s',(tenant,stay,receipt)).fetchone())
+        return purpose=='PAYMENT' and conn.execute('SELECT prsystem.minibar_receipt_released(%s,%s,%s)',(tenant,stay,receipt)).fetchone()[0]
 
     def reserve_refund(self,bearer,tenant,stay,receipt,amount,revision,key):
         money(amount,positive=True)

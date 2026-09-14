@@ -29,7 +29,7 @@ class GuestCorrections(GuestFinance):
         if (row[6] != 'CASH' and not allow_noncash) or row[2] or row[3] or row[4]:
             raise DomainError('CORRECTION_SOURCE_IN_USE')
         conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
-        if conn.execute('SELECT 1 FROM prsystem.minibar_paid_release WHERE tenant_id=%s AND stay_id=%s AND receipt_id=%s',(tenant,stay,receipt)).fetchone():raise DomainError('CORRECTION_SOURCE_IN_USE')
+        if conn.execute('SELECT prsystem.minibar_receipt_released(%s,%s,%s)',(tenant,stay,receipt)).fetchone()[0]:raise DomainError('CORRECTION_SOURCE_IN_USE')
         allocations = conn.execute('''SELECT id,charge_id,amount_mnt FROM prsystem.guest_allocation
             WHERE tenant_id=%s AND stay_id=%s AND receipt_id=%s ORDER BY id''', (tenant,stay,receipt)).fetchall()
         if row[5] == 'DEPOSIT' and (row[1] or allocations) and not allow_noncash:

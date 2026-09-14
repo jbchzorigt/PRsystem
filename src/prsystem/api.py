@@ -36,6 +36,7 @@ from prsystem.minibar_configuration import MinibarConfiguration
 from prsystem.minibar_reconciliation import MinibarReconciliation
 from prsystem.minibar_guest import MinibarGuest
 from prsystem.minibar_paid_corrections import MinibarPaidCorrections
+from prsystem.minibar_billing import MinibarBilling
 from prsystem.minibar_refill import MinibarRefill
 from prsystem.minibar_lifecycle import MinibarLifecycle
 from prsystem.readiness import ReadinessService
@@ -663,6 +664,14 @@ class PaidMinibarCorrection(ReasonCommand):
     expected_finance_revision: int=Field(ge=0,le=2**63-1)
 
 
+class HistoricalMinibarBilling(ReasonCommand):
+    quantities: dict[str,int]=Field(min_length=1,max_length=100)
+    expected_revision: int=Field(ge=0,le=2**63-1)
+    expected_report_revision: int=Field(ge=1,le=2**63-1)
+    expected_finance_revision: int=Field(ge=0,le=2**63-1)
+    financial_only_reviewed: Literal[True]
+
+
 class CanonicalMinibarReport(InvitationChange):
     task_id: str=Field(min_length=1,max_length=128)
     assignment_version: int=Field(ge=0,le=2**63-1)
@@ -991,7 +1000,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                           'BATCH_RETRY_NOT_READY':409,'ROLLOUT_REQUIRES_MINIBAR':409,'ROLLOUT_TEMPLATE_MISMATCH':409,'ROLLOUT_UNCHANGED':409,
                           'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_ARCHIVE_BLOCKED':409,'TEMPLATE_VERSION_IMMUTABLE':409,
                           'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409,
-                          'SHORTAGE_APPROVAL_NOT_READY':409,'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
+                          'MINIBAR_BILLING_NOT_READY':409,'SHORTAGE_APPROVAL_NOT_READY':409,'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -1329,6 +1338,18 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-exception-report',status_code=201)
     def manager_minibar_exception(tenant_id: str,stay_id: str,body: ManagerMinibarException,secret: Annotated[str,Depends(token)]):
         return MinibarGuest(service,identity_vault,runtime_mode).report(secret,tenant_id,stay_id,None,None,body.counts,body.no_consumption,body.expected_revision,body.idempotency_key,exception_reason=body.reason)
+
+    @app.get('/hotels/{tenant_id}/minibar/billing-stays')
+    def historical_minibar_stays(tenant_id: str,secret: Annotated[str,Depends(token)],after: str='',limit: int=Query(default=25,ge=1,le=100)):
+        return MinibarBilling(service,identity_vault,runtime_mode).stays(secret,tenant_id,after,limit)
+
+    @app.get('/hotels/{tenant_id}/stays/{stay_id}/minibar-billing')
+    def historical_minibar_basis(tenant_id: str,stay_id: str,secret: Annotated[str,Depends(token)],after: int=Query(default=0,ge=0),limit: int=Query(default=25,ge=1,le=100)):
+        return MinibarBilling(service,identity_vault,runtime_mode).read(secret,tenant_id,stay_id,after,limit)
+
+    @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-billing-corrections',status_code=201)
+    def historical_minibar_correction(tenant_id: str,stay_id: str,body: HistoricalMinibarBilling,secret: Annotated[str,Depends(token)]):
+        return MinibarBilling(service,identity_vault,runtime_mode).correct(secret,tenant_id,stay_id,body.quantities,body.expected_revision,body.expected_report_revision,body.expected_finance_revision,body.reason,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/minibar-paid-corrections',status_code=201)
     def paid_minibar_correction(tenant_id: str,stay_id: str,body: PaidMinibarCorrection,secret: Annotated[str,Depends(token)]):

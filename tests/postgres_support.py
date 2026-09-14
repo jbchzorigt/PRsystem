@@ -30,6 +30,7 @@ class PostgresCase(unittest.TestCase):
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
                 "GRANT SELECT ON prsystem.minibar_lifecycle_intent,prsystem.minibar_adjustment,prsystem.minibar_paid_release TO {}",
+                "GRANT SELECT ON prsystem.minibar_billing_correction,prsystem.minibar_billing_release,prsystem.minibar_billing_reallocation TO {}",
                 "GRANT SELECT ON prsystem.minibar_shortage_approval,prsystem.minibar_shortage_posting,prsystem.minibar_shortage_permit,prsystem.minibar_shortage_use TO {}",
                 "GRANT USAGE ON SCHEMA prsystem TO {}",
                 "GRANT SELECT ON prsystem.cash_book, prsystem.cash_drawer, prsystem.cash_transfer, "

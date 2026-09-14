@@ -63,7 +63,7 @@ class GuestPayments(GuestFinance):
             replay = self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             ShiftService._book(conn,tenant)
-            before = self.lock(conn,tenant,stay,revision,active=True)
+            before = self.lock_payment(conn,tenant,stay,charge,revision)
             shift = StayService._shift(conn,tenant,actor)
             now = conn.execute('SELECT clock_timestamp()').fetchone()[0]
             source = conn.execute('SELECT recorded_at FROM prsystem.guest_charge WHERE tenant_id=%s AND stay_id=%s AND id=%s',(tenant,stay,charge)).fetchone()
@@ -84,7 +84,7 @@ class GuestPayments(GuestFinance):
             replay = self._receipt(conn,tenant,key,actor,command)
             if replay is not None:return replay
             ShiftService._book(conn,tenant)
-            before = self.lock(conn,tenant,stay,revision,active=True)
+            before = self.lock_payment(conn,tenant,stay,charge,revision)
             shift = StayService._shift(conn,tenant,actor)
             from prsystem.reception_dependencies import ReceptionDependencies
             ReceptionDependencies.payment_guard(conn,tenant,stay,charge)
