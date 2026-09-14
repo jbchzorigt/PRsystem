@@ -1,6 +1,6 @@
 # Хөгжүүлэлтийн явц
 
-**Шинэчилсэн:** 2026-09-11. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
+**Шинэчилсэн:** 2026-09-14. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
 ## Одоогийн Reception acceptance
 
@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle, [нөөцийн хөдөлгөөн](61-minibar-stock-adjustments.md), [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md), [буцаасан төлбөргүй тайлан](63-minibar-returned-report-adjustments.md) болон [active stay-ийн төлсөн тайлангийн залруулга/refund](64-minibar-paid-corrections.md) баталгаажсан: **767/767 тест skip-гүй**, 16 Chromium suite, 107 API хүсэлт. Historical post-checkout/financial-only correction, configuration variance/override, partial rollback, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle, [нөөцийн хөдөлгөөн](61-minibar-stock-adjustments.md), [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md), [буцаасан төлбөргүй тайлан](63-minibar-returned-report-adjustments.md) болон [active stay-ийн төлсөн тайлангийн залруулга/refund](64-minibar-paid-corrections.md) дээр [тооллогын зөрүүний шийдвэр](65-minibar-count-variance.md), [нэг удаагийн SHORT нээлт](66-minibar-shortage-opening.md) нэмэгдэж баталгаажсан: **814/814 тест skip-гүй**, 18 Chromium suite, 121 API хүсэлт. Historical post-checkout/financial-only correction, partial rollback, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Тухайн үеийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.
@@ -437,7 +437,7 @@ shortage override, partial physical rollback, Restaurant, Operation, Police бо
 production readiness үлдсэн. Зөвшөөрсөн development provider mock зааг хэвээр;
 merge/deployment хийгээгүй.
 
-## Controlled shortage opening — хэрэгжүүлэлт, CI хүлээгдэж байна
+## Controlled shortage opening — 2026-09-14 баталгаажсан
 
 [66-р contract](66-minibar-shortage-opening.md): бүх барааны тооллого, шийдвэрлэсэн
 зөрүү, бодит агуулахын боломж дээр Manager дутуу нөөцийг зөвшөөрнө. Cleaner бүрэн
@@ -456,11 +456,29 @@ skip болсон тул backend-ийн шинэ source баталгаажааг
 
 Нийтлэхийг автомат approval review хоёр удаа хориглосон. Public repository-ийн
 эзэмшил, push/admin эрх болон PR #1 branch/base tree-г баталсан ч тухайн кодыг
-public destination-д нийтлэх илэрхий зөвшөөрөл шаардсан. Remote PR өөрчлөгдөөгүй,
-`8737516f22e8758412b6596a7efa77555c5011aa` хэвээр. Зөвшөөрсний дараа одоогийн
+public destination-д нийтлэх илэрхий зөвшөөрөл шаардсан. Тэр үед remote PR өөрчлөгдөөгүй,
+`8737516f22e8758412b6596a7efa77555c5011aa` хэвээр байсан. Зөвшөөрсний дараа одоогийн
 local HEAD-ээс payload-ийг шинэчлэн нийтэлж, PostgreSQL focused/full CI-г дуусгана.
 5/6-р шат бүхэлдээ дуусаагүй; шинэ нэмэлт ч PostgreSQL acceptance хүлээгдсэн.
 
 Хэрэглэгч “зөвшөөрнө.” гэж public PR #1-д эдгээр өөрчлөлтийг нийтэлж CI-г дуусгахыг
 илэрхий зөвшөөрсөн. Нийтлэх хоригийн зөвшөөрөл шийдэгдсэн; PostgreSQL acceptance
 ажлыг үргэлжлүүлж байна.
+
+Эцсийн [source `96cc3bdba0a73e559d3795421bf3b581c19f134d`](https://github.com/jbchzorigt/PRsystem/commit/96cc3bdba0a73e559d3795421bf3b581c19f134d)-ийн
+[CI 34807672321](https://github.com/jbchzorigt/PRsystem/actions/runs/34807672321)
+**814/814 backend тестийг skip-гүй, 920.267 секундэд** давсан. Шинэ **24/24 тусгай
+PostgreSQL тест 41.649 секундэд**, өмнөх 10 тусгай багц, **18/18 браузерийн багц,
+121 API хүсэлтийн шалгалт** мөн амжилттай. Design/token шалгалт алдаагүй; өмнөх
+6 design warning хэвээр, local strict UI audit 0 finding.
+
+CI-д илэрсэн PostgreSQL алхмын браузерийн job дахь давхардлыг арилгасан. Migration
+069 нь SQL baseline alias болон PL/pgSQL хувьсагчийн нэрийн давхцлыг зассан;
+нийтэлсэн 068 өөрчлөгдөөгүй. Дараагийн гүйлт 23/24 тест давж, нэг тестийн static
+орлуулалтын аргументын алдааг илрүүлсэн; засвартай дээрх source бүх тестийг давсан.
+[66-р acceptance](66-minibar-shortage-opening.md)-д гүйлтүүд, засвар, runtime эрх
+болон эцсийн нотолгоог бүртгэв. Энэ documentation follow-up нь код өөрчлөхгүй.
+
+**5/6-р шат бүхэлдээ дуусаагүй.** Historical post-checkout/financial-only correction,
+partial physical rollback, Restaurant, Operation, Police болон production readiness
+үлдсэн. Зөвшөөрсөн development provider mock зааг хэвээр.

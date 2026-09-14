@@ -1,6 +1,6 @@
 # Controlled SHORT opening for one next stay
 
-Authority: docs/22 §8, docs/25 and docs/26 §§18–22. Implementation: migration 068,
+Authority: docs/22 §8, docs/25 and docs/26 §§18–22. Implementation: migrations 068–069,
 MinibarShortages, reconciliation, canonical opening and shared Reception UI.
 
 Manager at 25,000/30,000₮ or Manager Plus at 30,000₮ may approve a shortage after
@@ -67,8 +67,8 @@ Tests: test_minibar_shortages.py and tests/browser/minibar-shortages.cjs, plus f
 PostgreSQL regression and actual browser/API request-model validation. The browser
 covers reason/review validation, keyboard, loading/retry, CAS/discard, uncertain
 approval/application retries, stale approval, Reception read-only and 320px.
-Acceptance is pending exact-source CI; the previous accepted baseline is 790/790
-in docs/65. Stage 5/6 is not complete: partial physical rollback, historical
+The exact-source CI status is recorded below; the previous accepted baseline is
+790/790 in docs/65. Stage 5/6 is not complete: partial physical rollback, historical
 post-checkout/financial-only correction, Restaurant, Operation, Police and production
 readiness remain separate work.
 
@@ -92,14 +92,62 @@ GitHub automatic approval review rejected the tree upload twice. The second
 rejection followed verification that authenticated jbchzorigt owns the public
 jbchzorigt/PRsystem repository with push/admin access, and that local baseline tree
 matches PR #1 head. Review still requires explicit user authorization to publish
-this source payload to that public destination. No upload, commit/ref change or PR
-update was performed. Remote remains `8737516f22e8758412b6596a7efa77555c5011aa`.
+this source payload to that public destination. At that point no upload, commit/ref change or PR
+update was performed; remote remained `8737516f22e8758412b6596a7efa77555c5011aa`.
 
-After explicit authorization: rebuild the payload from the current local HEAD
-against the unchanged PR branch, publish normally without force, run the 24 focused
-PostgreSQL tests and complete 814-test regression, fix any failures, then record
-exact-source acceptance. These local results do not replace PostgreSQL execution.
+The blocked next action was to rebuild and publish the current payload without
+force, then run the 24 focused PostgreSQL tests and complete 814-test regression.
+These local results do not replace PostgreSQL execution.
 
 The user explicitly authorized publishing these changes to public PR #1 and
 completing CI in the follow-up message “зөвшөөрнө.” The publication block is resolved;
 exact-source PostgreSQL validation is the remaining acceptance gate.
+
+## Published CI follow-up — 2026-09-14
+
+The approved source was published to PR #1. Initial CI
+[34807128322](https://github.com/jbchzorigt/PRsystem/actions/runs/34807128322)
+exposed two integration errors: the database-focused step had also been inserted
+into the browser job, and the shortage plan used `b` for both a PL/pgSQL loop
+variable and a baseline query alias. The first caused the browser job to fail;
+the second failed all 24 focused tests at the initial task read, before approval.
+
+The workflow-only correction is source `70868a90e31637c18bed7d4b510a32a115ff8703`.
+Forward migration 069 disambiguates the baseline alias; published migration 068
+is unchanged. Source `3a95ed86e0cbd012ca4ab1f7aaaf5a4ba556ba6c` is under
+[CI 34807508176](https://github.com/jbchzorigt/PRsystem/actions/runs/34807508176).
+Neither failed run is acceptance evidence.
+
+That run passed 23/24 focused PostgreSQL tests in 49.816 seconds and all 18 browser
+suites, 121 API command checks and design/token gates. The remaining test replaced
+a static preview function with an ordinary bound function, causing TypeError before
+it could exercise the database tampering guard. The fixture now preserves static
+binding. Current source `96cc3bdba0a73e559d3795421bf3b581c19f134d` is under
+[CI 34807672321](https://github.com/jbchzorigt/PRsystem/actions/runs/34807672321).
+
+The latest source passed all 24 focused shortage tests and all 18 browser suites,
+121 actual API command checks and design/token gates (zero errors, six existing
+design warnings). The final full regression subsequently passed, as recorded below.
+
+## Exact-source acceptance — 2026-09-14
+
+[Source `96cc3bdba0a73e559d3795421bf3b581c19f134d`](https://github.com/jbchzorigt/PRsystem/commit/96cc3bdba0a73e559d3795421bf3b581c19f134d)
+(tree `76d0823c51ab3d6bfb637e2b448805cf623df91a`) passed
+[CI 34807672321](https://github.com/jbchzorigt/PRsystem/actions/runs/34807672321).
+
+- **814/814 backend tests passed without skips in 920.267 seconds.**
+- **24/24 focused shortage PostgreSQL tests passed in 41.649 seconds**, together
+  with all ten existing focused database gates.
+- **18/18 Chromium suites and 121 actual browser/API command checks passed.**
+- Domain, design and token gates passed. Design lint has zero errors and six
+  pre-existing warnings; local strict UI audit has zero findings. Local desktop
+  and 320px screenshots were visually inspected.
+
+This accepts the Manager review → atomic Cleaner application → one-use SHORT
+opening flow, including immutable/RLS protections, authority and stock invalidation,
+concurrent/idempotent commands, rollback, zero opening and locked-price refill
+billing. The documentation follow-up changes no application code.
+
+Stage 5/6 is still incomplete: historical post-checkout/financial-only correction,
+partial physical rollback, Restaurant, Operation, Police and production readiness
+remain. The user-approved development provider mock boundary is unchanged.
