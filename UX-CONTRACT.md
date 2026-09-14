@@ -308,3 +308,24 @@ Count-scope drift uses the same reconciliation notice owner: Manager cancels the
 old pending request and creates a complete count without rewriting history. Stock
 adjustment errors explain why a new room product cannot join an already prepared
 count. Migration 067 and the variance PostgreSQL suite own this boundary.
+
+## Controlled shortage opening
+
+Docs/22 §8, docs/25, docs/26 §§18–22 and docs/66 own the one-next-stay exception.
+Manager review extends `reconciliationManagerDetail` using the existing form,
+reason/review checkbox, table, `api`, `guard` and feedback. `shortageQuantities`
+and `shortageReview` share exact-target/actual/approved/missing rows and actor,
+time and reason across Manager, Cleaner, room detail and immutable stay price book.
+Full target quantity and approved physical quantity are separately labeled. The
+named command confirms scope before saving; success refreshes the owning room
+and explains that Cleaner execution remains. No new token or popup owner exists.
+Reception reads the exact "Дутуу — Manager зөвшөөрсөн" status and cannot approve.
+Stale approval has explicit text; Cleaner apply is unavailable until a fresh
+approval or full stock permits it. Existing exact retry, dirty/CAS recovery,
+natural scroll, keyboard and 320px rules apply. Evidence: minibar-shortages.cjs.
+
+The shared submit owner ignores events from detached forms as well as pending
+commands. A completed create form cannot emit a second mutation after navigation,
+even when an already queued/programmatic submit arrives late. The warehouse
+browser test now checks the detached element explicitly in addition to its busy
+submit guard.

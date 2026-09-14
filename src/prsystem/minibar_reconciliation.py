@@ -1,7 +1,7 @@
 """Assigned counts and full-plan atomic transfers/apply; no partial stock posts.
 
 Variance requires a current Manager decision; its adjustment posts atomically
-with completion. Shortages block completion. Legacy mock stock stays separate.
+with completion. A reviewed shortage may open exactly one next stay.
 """
 import secrets
 from psycopg.types.json import Jsonb
@@ -131,7 +131,16 @@ class MinibarReconciliation(MinibarConfiguration):
                 action_id=count[0],actual_count=count[1],posting_id=count[2],stock_revision=stock[0],zero_stock=stock[1]==0,
                 count_matches=matched,resolution={k:v for k,v in decision.items() if k not in {'unit_cost_mnt'}} if decision else None,
                 direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta),shortage=max(0,delta-warehouse)))
-        return dict(source_id=source,lines=lines,scope_changed=scope_changed,
+        from prsystem.minibar_shortages import MinibarShortages
+        approval=MinibarShortages.latest(conn,tenant,data['request_id'])
+        approved=bool(approval and approval['ready'])
+        if approved:
+            goals={i['product_id']:i['approved_quantity'] for i in approval['plan']['lines']}
+            for line in lines:
+                goal=goals[line['product_id']];delta=goal-line['actual_count']
+                line.update(approved_quantity=goal,direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta))
+        return dict(source_id=source,lines=lines,scope_changed=scope_changed,shortage_approval=approval,
+            shortage_approved=approved,shortage_preview=MinibarShortages.preview(conn,tenant,data['request_id']),
             counts_complete=not scope_changed and all(i['actual_count'] is not None for i in lines),
             counts_match=not scope_changed and all(i['count_matches'] for i in lines),shortage=any(i['shortage'] for i in lines))
 
@@ -184,6 +193,10 @@ class MinibarReconciliation(MinibarConfiguration):
         rows=conn.execute('''SELECT DISTINCT ON(v.product_id) v.actor_id FROM prsystem.minibar_count_resolution v
             JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(v.tenant_id,v.source_id)
             WHERE v.tenant_id=%s AND t.id=%s ORDER BY v.product_id,v.request_revision DESC''',(tenant,task)).fetchall()
+        rows+=conn.execute('''SELECT a.actor_id FROM prsystem.minibar_shortage_approval a
+            JOIN prsystem.minibar_reconciliation e ON(e.tenant_id,e.request_id)=(a.tenant_id,a.request_id)
+            JOIN prsystem.cleaning_task t ON(t.tenant_id,t.source_id)=(e.tenant_id,e.source_id)
+            WHERE a.tenant_id=%s AND t.id=%s ORDER BY a.request_revision DESC LIMIT 1''',(tenant,task)).fetchall()
         actors={principal[0],*(r[0] for r in rows)}
         self._lock_accounts(conn,actors)
         conn.execute('SELECT account_id FROM prsystem.staff_membership WHERE tenant_id=%s AND account_id=ANY(%s) ORDER BY account_id FOR SHARE',(tenant,list(actors))).fetchall()
@@ -240,7 +253,12 @@ class MinibarReconciliation(MinibarConfiguration):
             plan=self.plan(conn,tenant,data)
             if not plan['counts_complete']:raise DomainError('COUNT_REQUIRED')
             if not plan['counts_match']:raise DomainError('COUNT_VARIANCE')
-            if plan['shortage']:raise DomainError('INSUFFICIENT_STOCK')
+            if plan['shortage'] and not plan['shortage_approved']:raise DomainError('INSUFFICIENT_STOCK')
+            approval=plan['shortage_approval'] if plan['shortage_approved'] else None
+            if approval:
+                if approval['actor_id'] not in locked_actors:raise DomainError('REVISION_CONFLICT')
+                conn.execute('''INSERT INTO prsystem.minibar_shortage_posting(tenant_id,request_id,approval_id,task_id,actor_id,assignment_version)
+                    VALUES(%s,%s,%s,%s,%s,%s)''',(tenant,data['request_id'],approval['approval_id'],task,actor,assignment))
             resolutions=self.post_count_resolutions(conn,tenant,data,plan,task,assignment,actor,locked_actors)
             movements=[]
             for line in plan['lines']:
@@ -249,12 +267,15 @@ class MinibarReconciliation(MinibarConfiguration):
                 conn.execute('''INSERT INTO prsystem.minibar_transfer(tenant_id,id,request_id,source_id,task_id,product_id,room_id,actor_id,
                     direction,quantity,warehouse_after,room_after,cost_value,cost_quantity,cost_denominator) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                     (tenant,move,data['request_id'],taskrow[1],task,line['product_id'],data['room_id'],actor,line['direction'],line['quantity'],
-                     line['warehouse_quantity']+(line['quantity'] if line['direction']=='RETURN' else -line['quantity']),line['target_quantity'],stock[2].numerator,stock[1],stock[2].denominator))
+                     line['warehouse_quantity']+(line['quantity'] if line['direction']=='RETURN' else -line['quantity']),line.get('approved_quantity',line['target_quantity']),stock[2].numerator,stock[1],stock[2].denominator))
                 movements.append(move)
             conn.execute('''INSERT INTO prsystem.minibar_configuration_application(tenant_id,request_id,room_id,source_id,task_id,actor_id,assignment_version)
                 VALUES(%s,%s,%s,%s,%s,%s,%s)''',(tenant,data['request_id'],data['room_id'],taskrow[1],task,actor,assignment))
+            if approval:
+                conn.execute('''INSERT INTO prsystem.minibar_shortage_permit(tenant_id,id,room_id,room_revision,inventory_stamp)
+                    VALUES(%s,%s,%s,0,'{}')''',(tenant,approval['approval_id'],data['room_id']))
             RoomLifecycle.sweep(conn,tenant)
-            result=dict(request_id=data['request_id'],state='APPLIED',revision=revision+1,movement_ids=movements,count_resolutions=resolutions)
+            result=dict(shortage_permit_id=approval['approval_id'] if approval else None,request_id=data['request_id'],state='APPLIED',revision=revision+1,movement_ids=movements,count_resolutions=resolutions)
             self.event(conn,tenant,actor,'MINIBAR_CONFIGURATION_APPLIED',data['request_id'],dict(result,task_id=task,room_id=data['room_id'],target=data['target_snapshot']))
             self._save_receipt(conn,tenant,key,actor,command,result);return result
 

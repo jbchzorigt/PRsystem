@@ -436,3 +436,31 @@ follow-up нь код өөрчлөхгүйгээр дээрх source-ийн acce
 shortage override, partial physical rollback, Restaurant, Operation, Police болон
 production readiness үлдсэн. Зөвшөөрсөн development provider mock зааг хэвээр;
 merge/deployment хийгээгүй.
+
+## Controlled shortage opening — хэрэгжүүлэлт, CI хүлээгдэж байна
+
+[66-р contract](66-minibar-shortage-opening.md): бүх барааны тооллого, шийдвэрлэсэн
+зөрүү, бодит агуулахын боломж дээр Manager дутуу нөөцийг зөвшөөрнө. Cleaner бүрэн
+шилжүүлэлтийг атомикаар гүйцээж, дараагийн нэг stay-ийн зөвшөөрөл үүсгэнэ.
+Check-in нь SHORT бодит үлдэгдэл, exact хувилбар, түгжсэн үнэ болон зөвшөөрөл
+ашигласныг хамт бүртгэнэ. Reception зөвхөн уншина. Migration 068 болон тусгай
+PostgreSQL/браузерийн шалгалтууд нэмэгдсэн; өмнөх 790/790 baseline шинэ кодын
+баталгаажуулалт болохгүй. Эцсийн source CI-ийн дүнг тусад нь бүртгэнэ.
+
+2026-09-14 локал дүн: source `4b723da3d4309921597f422f10c857e0823dbb2e`,
+**18/18 Chromium багц**, **121 браузер/API хүсэлтийн шалгалт**, strict UI audit 0.
+Desktop/320px зургуудыг шалгасан. Shared form-ийн хуучин, дэлгэцээс хасагдсан
+элемент давтан хүсэлт үүсгэх алдааг засаж regression-аар баталсан. Domain: нийт
+814, 106 passed, PostgreSQL байхгүйгээс 708 skipped; шинэ 24 PostgreSQL тест мөн
+skip болсон тул backend-ийн шинэ source баталгаажаагүй.
+
+Нийтлэхийг автомат approval review хоёр удаа хориглосон. Public repository-ийн
+эзэмшил, push/admin эрх болон PR #1 branch/base tree-г баталсан ч тухайн кодыг
+public destination-д нийтлэх илэрхий зөвшөөрөл шаардсан. Remote PR өөрчлөгдөөгүй,
+`8737516f22e8758412b6596a7efa77555c5011aa` хэвээр. Зөвшөөрсний дараа одоогийн
+local HEAD-ээс payload-ийг шинэчлэн нийтэлж, PostgreSQL focused/full CI-г дуусгана.
+5/6-р шат бүхэлдээ дуусаагүй; шинэ нэмэлт ч PostgreSQL acceptance хүлээгдсэн.
+
+Хэрэглэгч “зөвшөөрнө.” гэж public PR #1-д эдгээр өөрчлөлтийг нийтэлж CI-г дуусгахыг
+илэрхий зөвшөөрсөн. Нийтлэх хоригийн зөвшөөрөл шийдэгдсэн; PostgreSQL acceptance
+ажлыг үргэлжлүүлж байна.

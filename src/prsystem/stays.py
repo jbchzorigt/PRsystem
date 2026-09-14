@@ -99,6 +99,8 @@ class StayService(RoomService):
         from prsystem.guest_finance import GuestFinance
         finance=GuestFinance(self.auth,self.vault,self.runtime_mode)
         with transaction(self.auth.dsn) as conn:
+            from prsystem.minibar_shortages import MinibarShortages
+            opening_actors=MinibarShortages.lock_opening_actors(conn,bearer,tenant,data['room_id'])
             actor = self._actor(conn, bearer, tenant)
             if self.vault is None:
                 raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
@@ -139,6 +141,8 @@ class StayService(RoomService):
             actual = actual_time(recorded, shift[1], requested, data.get('backdate_reason'))
             from prsystem.reception_dependencies import ReceptionDependencies
             minibar=ReceptionDependencies.opening(conn,tenant,row[0],row[21],actual,self.runtime_mode,recorded)
+            if minibar and minibar.get('shortage_approval',{}).get('actor_id') not in opening_actors|{None}:
+                raise DomainError('REVISION_CONFLICT')
             booking=None
             if booking_id:
                 from prsystem.mock_providers import require_development_database

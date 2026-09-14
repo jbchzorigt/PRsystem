@@ -208,6 +208,12 @@ class MinibarCountResolution(MinibarTemplateCommand):
     reason: str = Field(min_length=1,max_length=1000)
 
 
+class MinibarShortageApproval(MinibarTemplateCommand):
+    expected_preview: str = Field(pattern=r'^[0-9a-f]{32}$')
+    reason: str = Field(min_length=1,max_length=1000)
+    physical_counts_reviewed: Literal[True]
+
+
 class MinibarDraftSave(MinibarTemplateCommand):
     items: list[MinibarTemplateItem] = Field(max_length=100)
 
@@ -985,7 +991,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
                           'BATCH_RETRY_NOT_READY':409,'ROLLOUT_REQUIRES_MINIBAR':409,'ROLLOUT_TEMPLATE_MISMATCH':409,'ROLLOUT_UNCHANGED':409,
                           'TEMPLATE_NOT_ACTIVE':409,'TEMPLATE_ARCHIVE_BLOCKED':409,'TEMPLATE_VERSION_IMMUTABLE':409,
                           'TEMPLATE_EMPTY':409,'TEMPLATE_NOT_PUBLISHED':409,
-                          'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
+                          'SHORTAGE_APPROVAL_NOT_READY':409,'RECONCILIATION_NOT_READY':409,'MOCK_INVENTORY_NOT_SUPPORTED':409,'COUNT_REQUIRED':409,'COUNT_VARIANCE':409,'CANONICAL_TASK_REQUIRED':409,'CONFIGURATION_PENDING':409,'CONFIGURATION_UNCHANGED':409,'CONFIGURATION_TERMINAL':409}
         status = {"PAYMENT_ALREADY_PENDING":409,"PROVISION_RETRY_BLOCKED":409,"ONBOARDING_UNAVAILABLE":503,"PROVIDER_EVIDENCE_INVALID":503,"PAYMENT_REQUIRED":409,"PHONE_PROOF_REQUIRED":409,"APPLICATION_ALREADY_PAID":409,
                   "PLATFORM_UNAVAILABLE":503,"MFA_REQUIRED":403,"INVALID_CREDENTIALS": 401, "UNAUTHENTICATED": 401, "RATE_LIMITED": 429,
                   "INVALID_PASSWORD": 422, "INVALID_EMAIL": 422, "INVALID_LINK": 400,
@@ -1053,6 +1059,11 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/count-resolutions/{product_id}',status_code=201)
     def minibar_count_resolution(tenant_id: str,request_id: str,product_id: str,body: MinibarCountResolution,secret: Annotated[str,Depends(token)]):
         return reconciliation.resolve_count(secret,tenant_id,request_id,product_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/configuration-requests/{request_id}/shortage-approvals',status_code=201)
+    def minibar_shortage_approval(tenant_id: str,request_id: str,body: MinibarShortageApproval,secret: Annotated[str,Depends(token)]):
+        from prsystem.minibar_shortages import MinibarShortages
+        return MinibarShortages(service).approve(secret,tenant_id,request_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/claim-next-stay',status_code=201)
     def minibar_claim_next_stay(tenant_id: str,task_id: str,body: MinibarTemplateCommand,secret: Annotated[str,Depends(token)]):

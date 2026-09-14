@@ -137,5 +137,6 @@ class MinibarConfiguration(MinibarTemplates):
             items = [self.request_data(conn,tenant,r[0]) for r in history[:limit]]
             return dict(room_id=room,room_number=row[2],current=dict(mode=row[0],room_revision=row[1],application_id=row[3],
                 configuration=self.request_data(conn,tenant,row[3])['target_snapshot'] if row[3] else None),
+                shortage=conn.execute('SELECT prsystem.minibar_shortage_room(%s,%s)',(tenant,room)).fetchone()[0],
                 pending=self.request_data(conn,tenant,pending[0]) if pending else None,items=items,
                 next_after=items[-1]['request_id'] if len(history)>limit else None)
