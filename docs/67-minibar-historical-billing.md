@@ -75,7 +75,7 @@ test was corrected without changing production authorization; the next run
 (34814024203, source ee4f5d2c777e7953345c34e1ddf1e9ececce309e) passed all 22 focused
 tests and 836/836 full backend tests without skips (852.578 seconds). UI and two expiry-boundary regressions extend the new suite to 24 tests.
 
-Implementation is present; final UI-source PostgreSQL acceptance is pending.
+The complete UI source is now accepted; see the final CI evidence below.
 The backend source above is accepted at 836/836; it does not validate the two
 new expiry-boundary tests or the complete UI source. Local discovery collects
 838 tests: 106 execute successfully and 732 require PostgreSQL, so local skips
@@ -91,7 +91,7 @@ and production readiness. This increment does not provide retroactive physical
 inventory edits or remove those remaining implementation gates.
 
 
-## 2026-09-14 — local verification and publication gate
+## 2026-09-14 — local verification and initial publication gate (resolved)
 
 Local source `378e0c312b7a75b3d5f22defb10a44cf55b83bea` passed all 19 Chromium
 suites and 129 actual API-model command checks. The configured accessibility
@@ -113,3 +113,35 @@ focused/full CI. Current 838-test source is not yet database-accepted.
 The user explicitly approved publishing this complete new package to public
 PR #1 and completing CI ("зөвшөөрнө."). The approval gate is resolved; publication
 and exact-source PostgreSQL acceptance continue from the current local HEAD.
+
+
+## Final source acceptance — 2026-09-14
+
+[Source e58e34127d027f5c72dd31e94f71029d0c7fea4b](https://github.com/jbchzorigt/PRsystem/commit/e58e34127d027f5c72dd31e94f71029d0c7fea4b)
+passed [full CI 34817833737](https://github.com/jbchzorigt/PRsystem/actions/runs/34817833737):
+
+- **838/838 backend tests without skips**, 1092.908 seconds.
+- **24/24 historical billing PostgreSQL tests**, 56.759 seconds, plus all eleven
+  existing focused PostgreSQL gates.
+- **19/19 Chromium suites and 129 actual browser/API-model command checks**.
+- Domain, token and design gates passed; design lint has zero errors and six
+  existing warnings. Local strict UI audit has zero findings; desktop/320px
+  screenshots and the configured accessibility suite were verified.
+
+The full run validates the UI-source expiry fixes as well as the original billing
+implementation. Coverage includes immutable physical/financial history, current
+Manager authority, tenant isolation, exact retries/concurrency, stale revisions,
+frozen finance, deferred rollback, mixed receipt funding, zero rebilling, original
+prices, later room replenishment, and eligible pre-expiry settlement. Browser
+coverage includes Manager Plus, Reception refund/collection, bounded discovery
+and history, consistent read revisions, unknown outcomes and session revocation.
+
+The user explicitly approved this public package; publication succeeded and no
+CI repair was required in this continuation. This follow-up only records accepted
+evidence; it does not change application code or database migrations.
+
+Historical post-checkout/financial-only minibar correction is accepted within
+this contract. Stage 5/6 is still incomplete: partial physical rollback, Restaurant,
+Operation, Police and production readiness remain. Approved development provider
+mocks remain the integration boundary; live-provider/security/restore/load/retention
+acceptance still gates production release.

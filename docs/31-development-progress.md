@@ -21,7 +21,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle, [нөөцийн хөдөлгөөн](61-minibar-stock-adjustments.md), [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md), [буцаасан төлбөргүй тайлан](63-minibar-returned-report-adjustments.md) болон [active stay-ийн төлсөн тайлангийн залруулга/refund](64-minibar-paid-corrections.md) дээр [тооллогын зөрүүний шийдвэр](65-minibar-count-variance.md), [нэг удаагийн SHORT нээлт](66-minibar-shortage-opening.md) нэмэгдэж баталгаажсан: **814/814 тест skip-гүй**, 18 Chromium suite, 121 API хүсэлт. Historical post-checkout/financial-only correction, partial rollback, Restaurant/Operation үлдсэн |
+| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle, [нөөцийн хөдөлгөөн](61-minibar-stock-adjustments.md), [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md), [буцаасан төлбөргүй тайлан](63-minibar-returned-report-adjustments.md) болон [active stay-ийн төлсөн тайлангийн залруулга/refund](64-minibar-paid-corrections.md) дээр [тооллогын зөрүүний шийдвэр](65-minibar-count-variance.md), [нэг удаагийн SHORT нээлт](66-minibar-shortage-opening.md), [хаасан байрлалтын төлбөрийн залруулга](67-minibar-historical-billing.md) нэмэгдэж баталгаажсан: **838/838 тест skip-гүй**, 19 Chromium suite, 129 API хүсэлт. Partial physical rollback, Restaurant/Operation үлдсэн |
 | 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
 
 Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Тухайн үеийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.
@@ -510,3 +510,24 @@ Strict UI audit 0 finding, design lint 0 error / өмнөх 6 warning, token che
 зөвшөөрөл шаардан хориглосон. Remote branch/PR өөрчлөгдөөгүй; дэлгэрэнгүй
 [67-р баримтын publication gate](67-minibar-historical-billing.md)-д байна.
 Зөвшөөрлийн дараа шинэ source-ийн PostgreSQL CI-г дуусгана.
+
+
+## Historical minibar billing — 2026-09-14 баталгаажсан
+
+[Эцсийн source e58e341](https://github.com/jbchzorigt/PRsystem/commit/e58e34127d027f5c72dd31e94f71029d0c7fea4b)-ийн
+[CI 34817833737](https://github.com/jbchzorigt/PRsystem/actions/runs/34817833737)
+**838/838 backend тестийг skip-гүй, 1092.908 секундэд** давсан. Шинэ багцын
+**24/24 тусгай PostgreSQL тест 56.759 секундэд**, өмнөх 11 тусгай багц,
+**19/19 Chromium багц, 129 API хүсэлтийн шалгалт** мөн амжилттай. Design/token
+шалгалт алдаагүй; өмнөх 6 warning хэвээр. Local strict UI audit 0 finding.
+
+Хэрэглэгч шинэ public багцыг нийтэлж CI-г дуусгахыг илэрхий зөвшөөрсөн тул
+нийтлэх хориг шийдэгдсэн. Код branch-д нийтлэгдэж, бүх CI засвар шаардахгүй
+давсан. Энэ documentation follow-up нь application code/migration өөрчлөхгүй.
+
+Хаасан байрлалтын minibar төлбөрийг анхны үнээр залруулах, Manager/Reception
+дэлгэц, холбоостой авлага/буцаалт болон зөвшөөрөгдсөн pre-expiry тооцооны урсгал
+[67-р contract](67-minibar-historical-billing.md)-ийн хүрээнд баталгаажсан.
+**5/6-р шат бүхэлдээ дуусаагүй:** partial physical rollback, Restaurant, Operation,
+Police болон production readiness үлдсэн. Бодит provider-уудын зөвшөөрсөн
+development mock зааг хэвээр; merge/deployment хийгээгүй.
