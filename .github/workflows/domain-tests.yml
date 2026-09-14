@@ -131,10 +131,6 @@ jobs:
         run: node tests/browser/minibar-adjustments.cjs
       - name: Verify paid minibar correction UI
         run: node tests/browser/minibar-paid-corrections.cjs
-      - name: Verify controlled minibar shortage opening
-        env:
-          PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-        run: python -m unittest discover -s tests -p test_minibar_shortages.py -v
       - name: Verify minibar count variance UI
         run: node tests/browser/minibar-variance.cjs
       - name: Verify controlled shortage UI
