@@ -203,7 +203,7 @@ class MinibarShortageTests(MinibarConfigurationCase):
         task=self.shortage();original=MinibarShortages.preview
         def wrong(conn,tenant,request):
             p=original(conn,tenant,request);p['plan']['lines'][0]['approved_quantity']=2;return p
-        with patch.object(MinibarShortages,'preview',wrong):self.assert_status(self.approve(task),503)
+        with patch.object(MinibarShortages,'preview',staticmethod(wrong)):self.assert_status(self.approve(task),503)
         self.assertEqual(self.evidence('minibar_shortage_approval'),0)
 
     def test_history_is_immutable_and_tenant_scoped_without_update_delete_grants(self):
