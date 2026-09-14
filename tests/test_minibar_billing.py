@@ -134,7 +134,9 @@ class MinibarBillingTests(MinibarConfigurationCase):
     def test_revoked_manager_cannot_correct_or_replay(self):
         self.close();key=uuid4().hex;self.assert_status(self.correct(idempotency_key=key),201)
         with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.staff_account SET status='SUSPENDED' WHERE id=%s",(self.manager,))
-        self.assert_status(self.correct(idempotency_key=key),403)
+        response=self.assert_status(self.correct(idempotency_key=key),401)
+        self.assertEqual(response['code'],'UNAUTHENTICATED')
+        self.assertEqual(len(self.billing(token=self.worker_token).json()['history']),1)
 
     def test_tampered_server_snapshot_is_rejected_by_database(self):
         self.close();original=MinibarBilling.basis
