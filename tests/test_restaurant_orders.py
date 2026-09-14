@@ -35,6 +35,7 @@ class RestaurantOrderTests(GuestFinanceCase):
                 'GRANT SELECT ON prsystem.restaurant,prsystem.hotel_restaurant,prsystem.restaurant_menu_item,prsystem.restaurant_schedule_exception,prsystem.restaurant_command_receipt TO {}',
                 'GRANT INSERT ON prsystem.restaurant_menu_item,prsystem.restaurant_command_receipt,prsystem.restaurant_order_record TO {}',
                 'GRANT UPDATE(revision) ON prsystem.restaurant TO {}',
+                'GRANT UPDATE(revision) ON prsystem.restaurant_membership TO {}',
                 'GRANT UPDATE(active,revision) ON prsystem.hotel_restaurant TO {}',
                 'GRANT UPDATE(category,name,description,price_mnt,active,available,revision) ON prsystem.restaurant_menu_item TO {}',
             ):
@@ -214,4 +215,3 @@ class RestaurantOrderTests(GuestFinanceCase):
         response = self.client.post(path,headers=self.headers(self.guest_token),json=dict(quantities={'soup':2},idempotency_key='api'))
         self.assertEqual(response.status_code,201,response.text)
         self.assertEqual(response.json()['amount_mnt'],8000)
-
