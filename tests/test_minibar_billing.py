@@ -67,6 +67,27 @@ class MinibarBillingTests(MinibarConfigurationCase):
         self.assertEqual((r['balance']['service_credit'],sum(x['amount_mnt'] for x in r['refundable_credits'])),(3000,3000))
         self.assertEqual(self.physical(),before);self.assertEqual(self.drawer(),cash)
         self.assertEqual(self.billing().json()['basis']['original_revision'],1)
+        preview=self.client.get(f'/hotels/{self.tenant}/stays/{self.stay["stay_id"]}/checkout/preview',headers=self.headers(self.worker_token))
+        self.assertEqual(self.assert_status(preview,200)['stay_state'],'CLOSED')
+        self.assertIsNone(preview.json()['availability'])
+
+    def test_expired_subscription_lists_and_settles_only_eligible_historical_stays(self):
+        self.close()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours'+interval '1 millisecond' WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+        path=f'/hotels/{self.tenant}/minibar/billing-stays'
+        for token in (self.manager_token,self.worker_token):
+            page=self.assert_status(self.client.get(path,headers=self.headers(token)),200)
+            self.assertEqual([x['stay_id'] for x in page['items']],[self.stay['stay_id']])
+        self.assert_status(self.correct(),201)
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours' WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+        self.assertEqual(self.assert_status(self.client.get(path,headers=self.headers(self.manager_token)),200)['items'],[])
+        self.assertEqual(self.billing().json()['code'],'SUBSCRIPTION_EXPIRED')
+
+    def test_expired_list_never_bypasses_security_suspension(self):
+        self.close()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours'+interval '1 millisecond',security_suspended=true WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+        response=self.client.get(f'/hotels/{self.tenant}/minibar/billing-stays',headers=self.headers(self.manager_token))
+        self.assertEqual(response.json()['code'],'SECURITY_SUSPENDED')
 
     def test_credit_uses_existing_cash_refund_completion(self):
         self.close();r=self.assert_status(self.correct(),201);receipt=r['refundable_credits'][0]['receipt_id']
@@ -88,7 +109,7 @@ class MinibarBillingTests(MinibarConfigurationCase):
         self.assertEqual(self.drawer(),cash)
         self.assertEqual(self.cash_payment(self.stay['room_charge_id'],1).json()['code'],'WORK_NOT_OPEN')
 
-    def test_active_stay_and_mock_report_are_not_historical_billing_sources(self):
+    def test_active_stay_is_not_a_historical_billing_source(self):
         self.assertEqual(self.correct().json()['code'],'MINIBAR_BILLING_NOT_READY')
         self.assert_status(self.billing(),409)
 

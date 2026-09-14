@@ -31,13 +31,21 @@ class MinibarBilling(GuestFinance):
 
     def stays(self,bearer,tenant,after='',limit=25):
         with transaction(self.auth.dsn) as conn:
-            self._reader(conn,bearer,tenant)
+            completion_only=False
+            try:self._reader(conn,bearer,tenant)
+            except DomainError as exc:
+                if str(exc)!='SUBSCRIPTION_EXPIRED':raise
+                completion_only=True
             conn.execute("SELECT set_config('prsystem.tenant_id',%s,true)",(tenant,))
             rows=conn.execute('''SELECT s.id,s.room_id,s.snapshot->>'room_number',s.check_in_recorded_at,s.actual_checkout_at
-                FROM prsystem.stay s WHERE s.tenant_id=%s AND s.id>%s AND s.state='CLOSED'
+                FROM prsystem.stay s JOIN prsystem.hotel_access h ON h.tenant_id=s.tenant_id
+                WHERE s.tenant_id=%s AND s.id>%s AND s.state='CLOSED'
+                AND (NOT %s OR s.check_in_recorded_at<h.expires_at+interval '48 hours')
                 AND EXISTS(SELECT 1 FROM prsystem.minibar_guest_report g WHERE g.tenant_id=s.tenant_id AND g.stay_id=s.id)
-                ORDER BY s.id LIMIT %s''',(tenant,after,limit+1)).fetchall()
+                ORDER BY s.id LIMIT %s''',(tenant,after,completion_only,limit+1)).fetchall()
             items=[dict(zip(('stay_id','room_id','room_number','check_in_recorded_at','actual_checkout_at'),r)) for r in rows[:limit]]
+            if completion_only:
+                for item in items:self.read_actor(conn,bearer,tenant,item['stay_id'])
             return dict(items=items,next_after=items[-1]['stay_id'] if len(rows)>limit else None)
 
     def correct(self,bearer,tenant,stay,quantities,revision,report_revision,finance_revision,reason,key):

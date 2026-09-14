@@ -482,3 +482,31 @@ CI-д илэрсэн PostgreSQL алхмын браузерийн job дахь �
 **5/6-р шат бүхэлдээ дуусаагүй.** Historical post-checkout/financial-only correction,
 partial physical rollback, Restaurant, Operation, Police болон production readiness
 үлдсэн. Зөвшөөрсөн development provider mock зааг хэвээр.
+
+
+## Historical minibar billing — UI source acceptance in progress (2026-09-14)
+
+[67-р contract](67-minibar-historical-billing.md): хаасан байрлалтын анхны үнээр
+төлбөрийн тоо залруулах backend source `ee4f5d2c777e7953345c34e1ddf1e9ececce309e`
+нь [CI 34814024203](https://github.com/jbchzorigt/PRsystem/actions/runs/34814024203)-д
+836/836 backend тестийг skip-гүй, 852.578 секундэд давсан; 22/22 тусгай тест
+37.787 секундэд давсан. Энэ нь дараах UI source-ийн acceptance биш.
+
+Төлбөрийн хэсгээс хаасан байрлалт, түгжсэн үнэ, анхны/одоогийн тоо, засварын
+түүхийг нээнэ. Manager төлбөр залруулж, Reception одоогийн холбоостой авлагыг
+төлүүлэх эсвэл анхны баримтаар илүү төлөлтийг буцаана. Нөөц, checkout болон
+дараагийн зочны мэдээлэл өөрчлөгдөхгүй. Шинэ дэлгэц нь shared form/finance
+renderer, pagination, dirty guard, CAS болон exact retry-г ашиглана.
+
+Өмнөх локал ажилд байсан subscription expiry-ийн зөвшөөрөгдсөн байрлалтыг
+ялгах засвар, хоёр regression-ийг нэгтгэсэн. Нийт 838 тестээс локал 106 нь
+давж, PostgreSQL шаарддаг 732 нь skip болсон; full CI acceptance хүлээгдэнэ.
+19 дэх browser suite нэмэгдсэн. Partial physical rollback, Restaurant, Operation,
+Police болон production readiness үлдсэн; 5/6-р шат бүхэлдээ дуусаагүй.
+
+Локал UI acceptance: **19/19 Chromium багц, 129 API-model хүсэлт** давсан.
+Strict UI audit 0 finding, design lint 0 error / өмнөх 6 warning, token check
+амжилттай. Шинэ public source upload-ыг automatic approval review илэрхий
+зөвшөөрөл шаардан хориглосон. Remote branch/PR өөрчлөгдөөгүй; дэлгэрэнгүй
+[67-р баримтын publication gate](67-minibar-historical-billing.md)-д байна.
+Зөвшөөрлийн дараа шинэ source-ийн PostgreSQL CI-г дуусгана.

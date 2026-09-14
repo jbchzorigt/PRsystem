@@ -329,3 +329,25 @@ commands. A completed create form cannot emit a second mutation after navigation
 even when an already queued/programmatic submit arrives late. The warehouse
 browser test now checks the detached element explicitly in addition to its busy
 submit guard.
+
+
+## Historical minibar billing
+
+Docs/67 and the historical billing API own closed-stay financial correction.
+The Payments destination opens a bounded 25-stay list; room label and dates come
+from the historical snapshot, without loading guest PII or current room inventory.
+`historicalMinibarStays` and `historicalMinibarDetail` reuse canonical records,
+tables, forms, reason/acknowledgement, feedback, native inputs and dirty guard.
+Billing/finance reads must agree on revision before actionable detail appears.
+Manager reviews original/current/bounded quantities and an exact locked-price
+proposed total. Successful correction reloads detail and reports refundable credit
+and new receivable. Uncertain outcomes retain the exact command key and values;
+conflict requires explicit refresh/discard. All panel reads discard detached results.
+History uses 25-revision pages. Cursors and forms stay in memory only.
+
+`financeRecords` is shared with active-stay detail. Its historical variant permits
+new collection only on the latest linked correction charge, and reuses existing
+receipt/refund/approval/reconciliation forms. It does not expose active-stay
+checkout, guest codes, physical counts or receipt replacement commands.
+Server authority, finance locks, source receipt and shift rules remain final.
+Verification: tests/browser/minibar-billing.cjs; backend test_minibar_billing.py.
