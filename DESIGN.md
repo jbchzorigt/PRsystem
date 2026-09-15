@@ -224,3 +224,9 @@ arrival corrections. Native checkbox labels provide a full touch target. Long
 textareas have an explicit expand/collapse control. Focus moves into explicitly
 opened forms and returns to the originating control when closed. No animation,
 network font, new palette, icon library or framework was introduced.
+
+Daily-workflow follow-up retains the shared form/notice/card owners. Cleaner
+cards lead with room number, floor and category; assigned and unclaimed room
+work precedes the grouped minibar shortcuts on phones. Confirmed Manager and
+Cleaner commands retire their form before refresh. Existing photo previews
+sit in the public-profile form; revision bookkeeping remains internal.

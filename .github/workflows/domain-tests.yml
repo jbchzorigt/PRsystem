@@ -106,11 +106,14 @@ jobs:
         run: node tests/browser/minibar-shortages.cjs
       - name: Verify historical minibar billing UI
         run: node tests/browser/minibar-billing.cjs
+      - name: Verify daily Manager and Cleaner workflows
+        run: node tests/browser/daily-workflows.cjs
       - name: Verify shared UX and accessibility
         run: node tests/browser/ui-quality.cjs
       - name: Validate browser payloads against API models
         run: |
           python -m pip install '.[api]'
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/daily-workflow-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/reception-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/restaurant-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/booking-requests.json

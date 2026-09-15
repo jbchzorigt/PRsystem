@@ -105,16 +105,18 @@ class CheckoutService(GuestFinance):
             except DomainError as exc:
                 if str(exc)!='SUBSCRIPTION_EXPIRED':raise
                 expired=True
-            rows=conn.execute("""SELECT c.stay_id,c.room_id,c.cleaning_source_id,t.id,t.assignment_version,a.id
+            rows=conn.execute("""SELECT c.stay_id,c.room_id,c.cleaning_source_id,t.id,t.assignment_version,a.id,r.number,r.floor,rc.name
                 FROM prsystem.stay_checkout c JOIN prsystem.stay s ON (s.tenant_id,s.id)=(c.tenant_id,c.stay_id)
                 JOIN prsystem.hotel_access h ON h.tenant_id=c.tenant_id
                 JOIN prsystem.room_cleaning_request b ON (b.tenant_id,b.source_id)=(c.tenant_id,c.cleaning_source_id)
                 JOIN prsystem.cleaning_action a ON (a.tenant_id,a.source_id)=(b.tenant_id,b.source_id) AND a.kind='CLEAN'
                 LEFT JOIN prsystem.cleaning_task t ON (t.tenant_id,t.source_id)=(c.tenant_id,c.cleaning_source_id) AND t.state='OPEN'
+                JOIN prsystem.room r ON (r.tenant_id,r.id)=(c.tenant_id,c.room_id)
+                JOIN prsystem.room_category rc ON (rc.tenant_id,rc.id)=(r.tenant_id,r.category_id)
                 WHERE c.tenant_id=%s AND c.stay_id>%s AND b.state='OPEN' AND (t.id IS NULL OR t.assignee_id=%s)
                 AND (NOT %s OR s.check_in_recorded_at<h.expires_at+interval '48 hours')
                 ORDER BY c.stay_id LIMIT %s""",(tenant,after,actor,expired,limit)).fetchall()
-            return [dict(zip(('stay_id','room_id','source_id','task_id','assignment_version','action_id'),r)) for r in rows]
+            return [dict(zip(('stay_id','room_id','source_id','task_id','assignment_version','action_id','room_number','floor','category_name'),r)) for r in rows]
 
     def manager_clean(self,bearer,tenant,stay,revision,key):
         command=dict(action='MANAGER_CHECKOUT_CLEAN',stay_id=stay,room_revision=revision)

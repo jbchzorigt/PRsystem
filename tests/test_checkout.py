@@ -124,6 +124,36 @@ class CheckoutTests(GuestFinanceCase):
         self.assertEqual(self.client.get(url,headers=self.headers(self.replacement_token)).json(),[])
         self.assert_status(self.client.get(url,headers=self.headers(self.admin)),403)
 
+    def test_cleaner_room_labels_are_scoped_private_and_available_after_expiry(self):
+        self.start();self.settle();self.assert_status(self.close(),200)
+        _,cleaner=self.add_staff(['CLEANER'])
+        _,other_cleaner=self.add_staff(['CLEANER'])
+        queue=f'/hotels/{self.tenant}/cleaning/checkouts'
+        operations=f'/hotels/{self.tenant}/operations'
+        with psycopg.connect(self.owner_dsn) as conn:
+            expected=conn.execute('SELECT r.number,r.floor,c.name FROM prsystem.room r JOIN prsystem.room_category c ON (c.tenant_id,c.id)=(r.tenant_id,r.category_id) WHERE r.tenant_id=%s AND r.id=%s',(self.tenant,self.room)).fetchone()
+        unclaimed=self.assert_status(self.client.get(queue,headers=self.headers(cleaner)),200)
+        self.assertEqual(tuple(unclaimed[0][k] for k in ('room_number','floor','category_name')),expected)
+        self.assertEqual(set(unclaimed[0]),{'stay_id','room_id','source_id','task_id','assignment_version','action_id','room_number','floor','category_name'})
+        task=self.assert_status(self.claim(cleaner),201)
+        for expired in (False,True):
+            if expired:
+                with psycopg.connect(self.owner_dsn) as conn:
+                    conn.execute("UPDATE prsystem.hotel_access SET expires_at=%s::timestamptz-interval '48 hours'+interval '1 millisecond' WHERE tenant_id=%s",(self.stay['check_in_recorded_at'],self.tenant))
+            data=self.assert_status(self.client.get(operations,headers=self.headers(cleaner)),200)
+            row=data['cleaning'][0]
+            self.assertEqual(row['task_id'],task['task_id'])
+            self.assertEqual(tuple(row[k] for k in ('room_number','floor','category_name')),expected)
+            self.assertEqual(set(row),{'task_id','source_id','room_id','assignment_version','started_at','action_id','kind','product_id','remaining','room_number','floor','category_name'})
+            self.assertFalse(data.get('rooms'));self.assertFalse(data.get('stays'))
+            for forbidden in ('given_name','family_name','document_number','amount_mnt','hourly_price','nightly_price'):
+                self.assertNotIn(forbidden,str(data))
+            self.assertEqual(self.client.get(operations,headers=self.headers(other_cleaner)).json()['cleaning'],[])
+            self.assertEqual(self.client.get(queue,headers=self.headers(other_cleaner)).json(),[])
+            own=self.assert_status(self.client.get(queue,headers=self.headers(cleaner)),200)
+            self.assertEqual(tuple(own[0][k] for k in ('room_number','floor','category_name')),expected)
+        self.assert_status(self.client.get(f'/hotels/{self.other}/operations',headers=self.headers(cleaner)),403)
+
     def test_twenty_thousand_manager_cleans_exact_checkout_after_subscription_lock(self):
         self.start();self.settle()
         with psycopg.connect(self.owner_dsn) as conn:

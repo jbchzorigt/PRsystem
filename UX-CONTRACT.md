@@ -429,3 +429,30 @@ not authored calendar translation. `premium-ui.json` now runs a dedicated axe
 accessibility suite in addition to workflow tests. Automated WCAG-tagged scans
 are bounded evidence, not a complete WCAG certification or real-user usability
 acceptance. See docs/74 for results and the remaining human validation boundary.
+
+## Daily Manager and Cleaner workflow recovery
+
+Sources: docs/04 (Cleaner room identity), docs/47 (booking publication), and
+existing tenant/assignee and revision contracts. `savedWorkflow` extends the
+shared `form` success option for room lifecycle/tariffs/cleaning, Manager hotel
+settings/category/room commands, Cleaner claim/start/post, and public-profile,
+rank and category-publication settings. It replaces a confirmed command with a
+notice before attempting reads. A failed refresh offers only read recovery;
+it never presents the confirmed command as an unconfirmed retry. Another dirty
+form prevents automatic navigation and retains the existing discard guard.
+Unconfirmed failures still retain the original form, values and idempotency key.
+
+Cleaner work labels come from existing authorized projections, with same-tenant
+room/category joins and no guest or financial fields. Legacy sources without a
+catalog room remain visible with an explicit unknown-room label. Task quantities
+cannot exceed displayed remaining work. Claim, start and complete reload the
+owning queue; assigned/unclaimed work precedes grouped minibar shortcuts.
+
+Manager online forms bind revisions to the loaded category/profile snapshot;
+changing category prefills its rank/publication state. Conflicts require explicit
+refresh, never silent rebasing. Profile editing preserves existing photos when
+no replacement is chosen and validates latitude/longitude bounds. Category
+publication explicitly requires a replacement photo, as the existing read model
+does not return its photos. These choices do not change publication authority.
+Evidence: daily-workflows.cjs, real API-model validation, and the PostgreSQL
+Checkout projection test, including pure Cleaner, another assignee and expiry.
