@@ -51,6 +51,7 @@ class SubscriptionContactTests(OperationCase):
         result=self.ok(self.finish_contact(request,key));self.assertEqual(self.ok(self.finish_contact(request,key)),result)
         with psycopg.connect(self.owner_dsn) as conn:
             self.assertEqual(conn.execute('SELECT revision,phone FROM prsystem.subscription_contact WHERE tenant_id=%s',(self.tenant,)).fetchone(),(1,'+97688112233'))
+            self.assertEqual(conn.execute("SELECT count(*) FROM prsystem.auth_event WHERE tenant_id=%s AND kind='SUBSCRIPTION_CONTACT_CHANGED'",(self.tenant,)).fetchone()[0],1)
             self.assertEqual(conn.execute('SELECT channel,recipient FROM prsystem.subscription_contact_notice WHERE tenant_id=%s ORDER BY channel',(self.tenant,)).fetchall(),[('EMAIL',self.email),('SMS','+97699112233')])
             self.assertEqual(conn.execute("SELECT original_contact->>'phone' FROM prsystem.subscription_owner WHERE id=(SELECT owner_id FROM prsystem.hotel_subscription WHERE tenant_id=%s)",(self.tenant,)).fetchone()[0],'99112233')
         worker=SubscriptionContact(StaffAuth(self.app_dsn,self.settings),None,None,self.notices)
