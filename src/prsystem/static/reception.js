@@ -1,0 +1,1131 @@
+'use strict';
+(() => {
+  const $=s=>document.querySelector(s), enc=encodeURIComponent;
+  let token='',tenant='',overview=null,roles=[],packageMnt=0,view='guests',generation=0,dirty=false,pending=false;
+  let rooms=[],categories=[],stays=[],bookings=[],roomAfter='',stayAfter='',selected=null,inventoryAfter='',templateAfter='',templateSelection=null;
+  const money=n=>`${new Intl.NumberFormat('mn-MN').format(n)} ₮`;
+  const time=v=>{if(!v)return '—';const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Ulaanbaatar',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(v)).map(x=>[x.type,x.value]));return `${p.year}.${p.month}.${p.day} ${p.hour}:${p.minute}`;};
+  const portalMode=location.pathname==='/booking'?'booker':location.pathname==='/platform/booking'?'finance':location.pathname==='/operation'?'operation':location.pathname==='/subscription/contact'?'contact':null;
+  const names={templates:'Минибарын загвар',inventory:'Агуулах',online:'Онлайн захиалга',guests:'Зочин бүртгэх',rooms:'Өрөөнүүд',payments:'Төлбөр',restaurant:'Ресторан',shift:'Ээлж',manager:'Удирдлага',cleaning:'Цэвэрлэгээ'};
+  const labels={ROLLBACK_REQUIRED:'Буцаалт шаардлагатай',ROLLED_BACK:'Анхны үлдэгдэл сэргэсэн',IN_PROGRESS:'Тооллого, тулгалт хийж буй',BLOCKED_VARIANCE:'Тооллогын зөрүүтэй',BLOCKED_STOCK:'Нөөц хүрэлцэхгүй',SCHEDULED_AFTER_STAY:'Зочны дараа тохируулах',READY_FOR_RECONCILIATION:'Тооллого, тулгалт хүлээж буй',HOLDING:'Төлбөр хүлээж буй',CHECKED_IN:'Байрлаж буй',NO_SHOW:'Ирээгүй',CANCELLED_GUEST:'Зочин цуцалсан',CANCELLED_HOTEL:'Буудал цуцалсан',EXPIRED:'Хугацаа дууссан',UNKNOWN:'Тулгалт шаардлагатай',FAILED:'Амжилтгүй',NO_PAYABLE:'Шилжүүлэх үлдэгдэлгүй',ELIGIBLE:'Шилжүүлэгт бэлэн',HELD:'Тулгалт хүлээсэн',NOT_ELIGIBLE:'Хугацаа болоогүй',BATCHED:'Багцалсан',VOIDED:'Багц цуцалсан',ACTIVE:'Идэвхтэй',INACTIVE:'Идэвхгүй',RETIRING:'Хаахаар хүлээж буй',DIRTY:'Бохир',CLEANING:'Цэвэрлэж буй',CLEAN:'Цэвэр',OPEN:'Нээлттэй',CLOSED:'Хаасан',SUBMITTED:'Хүлээлгэн өгсөн',ACCEPTED:'Хүлээн авсан',RETURNED:'Буцаасан',PENDING:'Хүлээгдэж буй',REFUNDING:'Буцаалт хүлээгдэж буй',CONFIRMED:'Баталгаажсан',APPLIED:'Ашигласан',CANCELLED:'Цуцалсан',SUCCEEDED:'Амжилттай',COMPLETED:'Дууссан',RESERVED:'Нөөцөлсөн',RELEASED:'Чөлөөлсөн',APPROVED:'Зөвшөөрсөн',REJECTED:'Татгалзсан',MANAGER_REQUIRED:'Менежерийн хяналт',ADMIN_REQUIRED:'Админы хяналт',NOT_REQUIRED:'Хяналт шаардахгүй',NOT_SUBMITTED:'Илгээгээгүй',DISPUTED:'Маргаантай',REQUESTED:'Тайлан хүлээж буй',REPORTED:'Тайлан ирсэн',CASH:'Бэлэн',MANUAL_POS:'Карт / POS',QPAY:'QPay',KHAAN:'Хаан банк',ROOM:'Өрөө',MINIBAR:'Минибар',PAYMENT:'Төлбөр',DEPOSIT:'Барьцаа',REFILL:'Нөхөн дүүргэх',COUNT:'Тоолох',RETURN:'Буцаах',HOURLY:'Цагаар',NIGHTLY:'Хоногоор',READY:'Бэлэн',PREPARING:'Бэлтгэж буй',PAID_PENDING:'Төлсөн, хүлээгдэж буй'};
+  const errors={ROLLBACK_REQUIRED:"Буцаалтын ажил нээгдсэн. Анхны үлдэгдлийг сэргээж дуусгана уу.",SMS_PREVIEW_STALE:"Хүлээн авагч, төлөв эсвэл үнэ өөрчлөгдсөн. SMS-ийг дахин урьдчилан харна уу.",SMS_BATCH_LIMIT:"Туршилтын багцад 100 хүртэл давхардалгүй утас сонгоно уу.",SMS_NO_RECIPIENTS:"Зөв дугаартай хүлээн авагч олдсонгүй.",OPERATION_PROVIDER_UNAVAILABLE:"Энэ орчинд үйлчилгээний холболт тохируулагдаагүй.",PHONE_PROOF_REQUIRED:"Хүчинтэй кодоор шаардлагатай дугааруудаа баталгаажуулна уу.",MINIBAR_BILLING_NOT_READY:'Энэ хаасан байрлалтад залруулах боломжтой минибарын тайлан алга.',CORRECTION_PENDING:'Төлбөрийн өмнөх засварын шийдвэрийг хүлээнэ үү.',SHORTAGE_APPROVAL_NOT_READY:'Цэвэрлэгээ, бүх барааны тооллого, зөрүүний шийдвэр болон дутуу нөөцийг дахин шалгана уу.',CORRECTION_HAS_NO_CHANGE:'Тоо өөрчлөгдөөгүй байна.',CORRECTION_SOURCE_IN_USE:'Энэ төлбөр өөр залруулга эсвэл буцаалттай холбогдсон байна.',ADJUSTMENT_COST_CONFLICT:'Анхны өртгөөр буцаахад тоо тэг болж, үнэлгээ үлдэх тул энэ буцаалт боломжгүй. Хөдөлгөөний өртгийн түүхийг шалгана уу.',MINIBAR_COUNT_SCOPE_LOCKED:'Энэ өрөөний тооллого эхэлсэн тул шинэ бараа нэмэх боломжгүй. Manager одоогийн тохиргооны хүсэлтийг цуцалж, барааг бүртгэсний дараа шинэ тооллого эхлүүлнэ үү.',STOCK_ADJUSTMENT_LOCKED:'Тайлан бүртгэгдсэн тул энэ байрлалтын нөөцийн хөдөлгөөнийг эндээс өөрчлөхгүй.',INSUFFICIENT_STOCK:'Сонгосон байршлын нөөц хүрэлцэхгүй. Үлдэгдэл болон тоогоо дахин шалгана уу.',ROLLOUT_REQUIRES_MINIBAR:'Өрөөнд минибарын бодит бүрдэл ашиглаж байх шаардлагатай.',ROLLOUT_TEMPLATE_MISMATCH:'Өрөө өөр загвар ашиглаж байна. Тохиргоо солих хүсэлтийг ашиглана уу.',ROLLOUT_UNCHANGED:'Өрөө энэ хувилбарыг аль хэдийн ашиглаж байна.',TEMPLATE_ARCHIVE_BLOCKED:'Энэ хувилбарыг үндсэн бүрдэл, өрөө эсвэл дуусаагүй ажилд ашиглаж байна. Архивлах нөхцөлийг дахин шалгана уу.',RECONCILIATION_NOT_READY:'Өмнөх байрлалт, төлбөр эсвэл минибарын ажил дуусаагүй байна.',MOCK_INVENTORY_NOT_SUPPORTED:'Туршилтын минибарын барааг бодит агуулахад шилжүүлэхгүй. Туршилтын тохиргоог эхлээд тусад нь шийднэ үү.',COUNT_REQUIRED:'Өрөөний бүх барааг тоолж батална уу.',COUNT_VARIANCE_NOT_FOUND:'Шийдвэрлэх тооллогын зөрүү алга. Мэдээллээ шинэчилнэ үү.',COUNT_VARIANCE:'Бодит тоо бүртгэлтэй зөрсөн. Менежерт мэдэгдэнэ үү.',CANONICAL_TASK_REQUIRED:'Минибарын тохиргооны ажлаас энэ тооллогыг нээнэ үү.',CONFIGURATION_PENDING:'Минибарын тохиргооны хүсэлт хүлээгдэж байна. Өрөөний тохиргоог нээж шалгана уу.',CONFIGURATION_UNCHANGED:'Өрөөний минибар аль хэдийн унтраалттай байна.',CONFIGURATION_TERMINAL:'Энэ хүсэлт цуцлагдсан байна. Жагсаалтаа шинэчилнэ үү.',TEMPLATE_NOT_ACTIVE:'Загвар идэвхгүй байна. Идэвхтэй загвар сонгоно уу.',TEMPLATE_VERSION_IMMUTABLE:'Нийтэлсэн бүрдлийг засахгүй. Шинэ ноорог хувилбар үүсгэнэ үү.',TEMPLATE_EMPTY:'Нийтлэхээс өмнө дор хаяж нэг бүтээгдэхүүн нэмнэ үү.',TEMPLATE_NOT_PUBLISHED:'Эхлээд энэ хувилбарыг нийтэлнэ үү.',PRODUCT_NOT_ACTIVE:'Зөвхөн идэвхтэй бүтээгдэхүүн сонгоно уу. Загварын бүрдэл болон бүтээгдэхүүний төлөвийг шалгана уу.',PACKAGE_REQUIRED:'Таны багцад энэ боломж байхгүй.',STOCK_SOURCE_NOT_FOUND:'Нөөцийн эх үүсвэр олдсонгүй. Мэдээллээ шинэчилнэ үү.',INVALID_CREDENTIALS:'Утас, нууц үг эсвэл баталгаажуулах кодоо шалгана уу.',RATE_LIMITED:'Олон удаа оролдсон байна. Түр хүлээгээд дахин оролдоно уу.',BOOKING_ROOM_AVAILABLE:'Ижил эсвэл өндөр ангиллын боломжит өрөөг эхлээд онооно уу.',NO_SHOW_CUTOFF_NOT_PASSED:'Ирэх өдрийн 23:59:59 өнгөрсний дараа ирээгүй төлөвт шилжүүлнэ.',BOOKING_CAPACITY_UNAVAILABLE:'Сонгосон хугацааны сул өрөө дууссан эсвэл захиалга авахгүй байна.',MFA_REQUIRED:'Шинэ MFA кодоор эрхээ баталгаажуулна уу.',SETTLEMENT_REFRESH_REQUIRED:'Тулгалтын дүн өөрчлөгдсөн. Илгээгээгүй багцаа цуцалж дахин тооцно уу.',SETTLEMENT_HELD:'Шийдэгдээгүй санхүүгийн тулгалт байна.',PAYOUT_PENDING:'Өмнөх шилжүүлгийн төлөвийг эхлээд тулгана уу.',PAYOUT_TERMINAL:'Энэ шилжүүлэг эцсийн төлөвт орсон байна.',REVISION_CONFLICT:'Мэдээлэл өөрчлөгджээ. Шинэчилж, дүнгээ дахин шалгана уу.',FORBIDDEN:'Энэ үйлдлийг хийх эрх алга.',SUBSCRIPTION_EXPIRED:'Багцын хугацаа дууссан. Зөвхөн өмнө эхэлсэн ажлыг дуусгах эрх үйлчилнэ.',UNAUTHENTICATED:'Нэвтрэх эрх дууссан. Дахин нэвтэрнэ үү.',OPEN_SHIFT_REQUIRED:'Өөрийн нээлттэй ээлж шаардлагатай.',CHECKOUT_FINANCE_PENDING:'Төлбөр, барьцаа, хүлээгдэж буй үйлдлээ эхлээд шийдвэрлэнэ үү.',MINIBAR_REPORT_REQUIRED:'Минибарын баталгаажсан тайлан шаардлагатай.',MINIBAR_REFILL_PENDING:'Дуусаагүй нөхөлтийн хүсэлтийг гүйцээх эсвэл цуцалсны дараа checkout эхлүүлнэ үү.',MINIBAR_REFILL_LOCKED:'Checkout эхэлсэн тул шинэ нөхөлт бүртгэх боломжгүй.',MINIBAR_REPORT_LOCKED:'Төлбөр орсон тайланг энэ үйлдлээр засахгүй.',ROOM_NOT_READY:'Өрөөний цэвэрлэгээ, хугацаа, минибарын бэлэн байдлыг шалгана уу.',RESTAURANT_ACK_REQUIRED:'Дуусаагүй захиалга бүрийн сонголт, зочинд мэдээлсэн баталгааг оруулна уу.',GUARDIAN_REQUIRED:'18 нас хүрээгүй зочны асран хамгаалагчийг бүртгэнэ үү.',INVALID_GUEST_IDENTITY:'Зочны баримт болон төрсөн огноо тохирч байгаа эсэхийг шалгана уу.',AMENDMENT_PENDING:'Ирсэн цагийн засварын шийдвэрийг хүлээнэ үү.',INSUFFICIENT_CASH:'Кассын боломжит үлдэгдэл хүрэлцэхгүй.',PHYSICAL_COUNT_REQUIRED:'Системийн дүнг харахын өмнө биечлэн тоолж бүртгэнэ үү.',SERVICE_UNAVAILABLE:'Үйлчилгээ түр хариу өгөхгүй байна. Үр дүн тодорхойгүй тул энэ маягтаас дахин оролдож болно.',GUEST_PROVIDER_UNAVAILABLE:'Төлбөрийн үйлчилгээ энэ орчинд холбогдоогүй.',CHARGE_OVERPAYMENT:'Үлдэгдлээс давсан дүн оруулсан байна.',RECOUNT_REQUIRED:'Зөрүүтэй тул дахин биечлэн тоолно уу.'};
+  function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
+  function say(text,error=false){$('#status').textContent=text;$('#status').className=error?'error':'';}
+  function btn(text,fn,cls='secondary'){const b=node('button',text,cls);b.type='button';b.addEventListener('click',fn);return b;}
+  function role(r){return roles.includes(r);} function manager(){return role('MANAGER')||(role('MANAGER_PLUS')&&packageMnt===30000);}
+  function path(s){return `/hotels/${enc(tenant)}/${s}`;} function stayPath(s,suffix){return path(`stays/${enc(s)}/${suffix}`);}
+  async function api(url,body,method='POST',access=token){
+    const requestToken=access,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+    try { const response=await fetch(url,{method:body===undefined?'GET':method,headers:{...(access?{Authorization:`Bearer ${access}`} : {}),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal,cache:'no-store'});
+      if(response.headers.get('X-PRsystem-Mode')==='MOCK_ONLY')$('#mode').hidden=false;
+      const data=response.status===204?{}:await response.json();
+      if(!response.ok){const e=new Error((body===undefined&&[502,503,504].includes(response.status)?'Мэдээллийг ачаалж чадсангүй. Холболтоо шалгаад дахин ачаална уу.':errors[data.code])||(response.status===422?'Оруулсан талбар, дүн, хугацаагаа шалгана уу.':'Үйлдлийг бүртгэж чадсангүй. Мэдээллээ шинэчлээд дахин шалгана уу.'));e.code=data.code;e.status=response.status;if(response.status===401&&token&&token===requestToken){token='';dirty=false;pending=false;if(location.pathname==='/guest/entry'){generation++;$('#app').hidden=true;$('#logout').hidden=true;$('#login').hidden=false;content().replaceChildren();$('#login').replaceChildren(node('h1','Нэвтрэх эрх дууссан'),node('p','Өрөөний QR-г дахин уншуулж, Reception-оос шинэ код авна уу.'));}else if(portalMode)portalHome('Нэвтрэх эрх дууссан. Дахин нэвтэрнэ үү.');else showLogin('Нэвтрэх эрх дууссан. Дахин нэвтэрнэ үү.');}throw e;}return data;
+    } catch(e){if(!e.code)e.message=body===undefined?'Мэдээллийг ачаалж чадсангүй. Холболтоо шалгаад дахин ачаална уу.':'Холболт тасарсан эсвэл хугацаа хэтэрсэн. Үр дүн тодорхойгүй; энэ маягтаас дахин оролдоно уу.';throw e;} finally{clearTimeout(timer);}
+  }
+  const field=(name,label,type='text',extra={})=>({name,label,type,...extra});
+  const amount=(name='amount_mnt',label='Дүн (₮)',value)=>field(name,label,'number',{min:1,value});
+  const reason=()=>field('reason','Шалтгаан','textarea',{max:1000});
+  const option=(value,label)=>[value,label];
+  const channels=()=>['CASH','MANUAL_POS','QPAY','KHAAN'].map(v=>option(v,labels[v]));
+  const dirtyForms=new Set();
+  function hasDirtyForms(){for(const f of dirtyForms)if(!f.isConnected)dirtyForms.delete(f);return dirtyForms.size>0;}
+  function form(parent,title,fields,submit,action,opts={}){
+    const origin=document.activeElement,f=node('form'),heading=node(parent.id==='login'?'h1':'h2',title);heading.tabIndex=-1;f.noValidate=true;f.append(heading);const controls=new Map(),id=crypto.randomUUID();let key=crypto.randomUUID(),fingerprint='',busy=false,composing=false;
+    if(opts.variant)f.classList.add(opts.variant);heading.id=`form-${id}`;f.setAttribute('aria-labelledby',heading.id);
+    f.addEventListener('compositionstart',()=>{composing=true;});f.addEventListener('compositionend',()=>{composing=false;});
+    f.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.isComposing||composing))e.preventDefault();});
+    let fieldParent=f;
+    for(const spec of fields){if(spec.section){fieldParent=node('fieldset');fieldParent.append(node('legend',spec.section));f.append(fieldParent);}const wrap=node('div',undefined,'field'),input=node(spec.type==='select'?'select':spec.type==='textarea'?'textarea':'input');input.id=`f-${id}-${spec.name}`;input.name=spec.name;
+      if(input.tagName==='INPUT')input.type=spec.type;input.required=!spec.optional;input.autocomplete=spec.autocomplete||'off';
+      if(spec.type==='select'){for(const [v,label] of spec.options||[]){const o=node('option',label);o.value=v;input.append(o);}}
+      if(spec.type==='checkbox')input.checked=spec.value===true;else if(spec.value!==undefined&&spec.value!==null)input.value=String(spec.value);
+      if(spec.accept)input.accept=spec.accept;if(spec.decimal)input.step='any';if(spec.min!==undefined)input.min=spec.min;if(spec.max!==undefined){if(spec.type==='number')input.max=spec.max;else input.maxLength=spec.max;}
+      const label=node('label',spec.label+(spec.optional?' (сонголттой)':''));label.htmlFor=input.id;const error=node('p','', 'error');error.id=input.id+'-error';input.setAttribute('aria-describedby',error.id);
+      if(spec.type==='checkbox'){wrap.classList.add('check-field');wrap.append(input,label);}else wrap.append(label,input);
+      if(spec.type==='number')input.inputMode=spec.decimal?'decimal':'numeric';
+      if(spec.autocomplete==='one-time-code')input.inputMode='numeric';
+      if(spec.type==='textarea'){input.rows=4;const expand=btn('Бичих талбарыг томруулах',()=>{const expanded=input.rows===10;input.rows=expanded?4:10;expand.textContent=expanded?'Бичих талбарыг томруулах':'Бичих талбарыг хураах';expand.setAttribute('aria-expanded',String(!expanded));});expand.setAttribute('aria-controls',input.id);expand.setAttribute('aria-expanded','false');wrap.append(expand);}
+      if(spec.type==='password'){const reveal=btn('Нууц үг харуулах',()=>{const show=input.type==='password';input.type=show?'text':'password';reveal.textContent=show?'Нууц үг нуух':'Нууц үг харуулах';reveal.setAttribute('aria-pressed',String(show));});reveal.setAttribute('aria-pressed','false');wrap.append(reveal);}
+      if(spec.clearable){const clear=btn('Хайлтыг цэвэрлэх',()=>{if(busy||pending)return;input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));if(opts.clear)opts.clear();else f.requestSubmit();input.focus();});clear.hidden=!input.value;input.addEventListener('input',()=>{clear.hidden=!input.value;});wrap.append(clear);}
+      wrap.append(error);fieldParent.append(wrap);controls.set(spec.name,{input,error,spec});
+      input.addEventListener('input',()=>{if(!opts.login){dirty=true;dirtyForms.add(f);}error.textContent='';input.removeAttribute('aria-invalid');});
+    }
+    const status=node('div','', 'result');status.setAttribute('role','status');status.setAttribute('aria-live','polite');const send=node('button',submit,'primary');send.type='submit';const actions=node('div',undefined,'actions');actions.append(send);if(!opts.login&&opts.dismissible!==false)actions.append(btn('Маягтыг хаах',()=>guard(()=>{f.remove();dirtyForms.delete(f);dirty=hasDirtyForms();if(origin?.isConnected)origin.focus();else $('#page-title').focus();},f)));
+    f.append(status,actions);parent.append(f);
+    // Move into an explicitly opened form, never steal focus during a page render.
+    if(opts.focus||(origin?.matches('button')&&!origin.closest('form')))queueMicrotask(()=>{if(f.isConnected&&(opts.focus||document.activeElement===origin)&&f.getClientRects().length)heading.focus();});
+    f.addEventListener('submit',async event=>{event.preventDefault();if(!f.isConnected||busy||pending||composing)return;const values={};let first=null;
+      for(const {input,error,spec} of controls.values()){const raw=spec.type==='checkbox'?input.checked:spec.type==='file'?(input.files[0]||''):spec.type==='password'?input.value:input.value.trim();let message='';
+        if(!spec.optional&&(raw===''||raw===false))message=spec.type==='checkbox'?'Баталгаажуулах сонголтыг тэмдэглэнэ үү.':'Энэ талбарыг бөглөнө үү.';
+        if(raw!==''&&spec.type==='number'&&!(spec.decimal?Number.isFinite(Number(raw)):Number.isSafeInteger(Number(raw))))message=spec.decimal?'Зөв тоон утга оруулна уу.':'Бүхэл тоо оруулна уу.';
+        else if(raw!==''&&spec.type==='number'&&(Number(raw)<(spec.min??0)||Number(raw)>(spec.max??Infinity)))message=`${spec.min??0}-аас ${spec.max===undefined?'багагүй':`${spec.max} хүртэлх`} тоо оруулна уу.`;
+        if(raw!==''&&spec.type==='email'&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw))message='Имэйл хаягаа шалгана уу.';
+        if(message){error.textContent=message;input.setAttribute('aria-invalid','true');first??=input;}
+        if(raw!==''||!spec.optional)values[spec.name]=spec.type==='number'?Number(raw):raw;
+      }
+      if(first){status.textContent='Алдаатай талбарыг засна уу.';first.focus();return;}
+      const serialized=JSON.stringify(values,(_,v)=>v instanceof File?{name:v.name,size:v.size,modified:v.lastModified}:v);if(fingerprint&&serialized!==fingerprint)key=crypto.randomUUID();fingerprint=serialized;
+      busy=true;pending=true;const locked=Array.from(f.querySelectorAll('input,select,textarea,button')).map(control=>[control,control.disabled]);for(const [control] of locked)control.disabled=true;f.setAttribute('aria-busy','true');send.setAttribute('aria-busy','true');status.className='result';status.textContent='Түр хүлээнэ үү…';
+      try{const result=await action({...values,idempotency_key:key});if(!f.isConnected)return;dirtyForms.delete(f);dirty=hasDirtyForms();status.textContent='Серверт бүртгэгдлээ.';key=crypto.randomUUID();fingerprint='';
+        for(const {input,spec} of controls.values())if(spec.type==='password'){input.value='';input.type='password';}
+        if(opts.success)await opts.success(result,f,status);else {showResult(status,result);if(!portalMode)await reloadOverview();}
+      }catch(e){if(f.isConnected){status.textContent=e.message;status.className='result error';}}finally{busy=false;pending=false;for(const [control,disabled] of locked)control.disabled=disabled;send.removeAttribute('aria-busy');f.setAttribute('aria-busy','false');}
+    });return f;
+  }
+  function showResult(parent,result){parent.replaceChildren(node('p','Серверт бүртгэгдлээ.'));
+    const safe=['state','status','review_state','variance','actual','expected','sender_actual','counts_match','amount_mnt','opening_actual','minibar_report_required'];
+    const titles={state:'Төлөв',status:'Төлөв',review_state:'Хяналт',variance:'Зөрүү',actual:'Тоолсон дүн',expected:'Системийн дүн',sender_actual:'Өгөгчийн тооллого',counts_match:'Тооллого таарсан',amount_mnt:'Дүн',opening_actual:'Эхлэх дүн',minibar_report_required:'Минибарын тайлан шаардлагатай'};
+    for(const k of safe)if(result[k]!==undefined&&result[k]!==null)parent.append(node('p',`${titles[k]}: ${labels[result[k]]??(typeof result[k]==='boolean'?(result[k]?'Тийм':'Үгүй'):result[k])}`));
+    if(result.code||result.guest_access_code){parent.append(node('p','Зочинд өгөх нэг удаагийн код · 10 минут хүчинтэй'));parent.append(node('p',result.code||result.guest_access_code,'secret'));}
+    if(result.qr_token){parent.append(node('p','Өрөөний шинэ QR нэвтрэх түлхүүр. Зөвхөн тухайн өрөөнд байршуулна.'));parent.append(node('p',result.qr_token,'secret'));}
+  }
+  function guard(next,scope=null){if(pending){say('Одоо бүртгэж буй үйлдлийн хариуг хүлээнэ үү.',true);return;}if(!(scope?dirtyForms.has(scope):dirty||hasDirtyForms())){next();return;}
+    const dialog=$('#discard'),origin=document.activeElement;dialog.showModal();$('#keep').focus();
+    const close=()=>{dialog.close();origin?.focus();};$('#keep').onclick=close;$('#leave').onclick=()=>{if(scope)dirtyForms.delete(scope);else dirtyForms.clear();dirty=hasDirtyForms();dialog.close();next();};
+  }
+  window.addEventListener('beforeunload',e=>{if(dirty||hasDirtyForms()){e.preventDefault();e.returnValue='';}});
+  window.addEventListener('pagehide',()=>{dirtyForms.clear();generation++;dirty=false;pending=false;geo=null;portalQuery=null;customerPhone='';token='';tenant='';$('#content').replaceChildren();$('#login').replaceChildren();});
+  function showLogin(message=''){document.title='Ажилтнаар нэвтрэх — PRsystem';if(location.pathname==='/restaurant'){restaurantLogin(message);return;}generation++;$('#app').hidden=true;$('#logout').hidden=true;$('#login').hidden=false;$('#content').replaceChildren();$('#login').replaceChildren();overview=null;roles=[];selected=null;rooms=[];stays=[];categories=[];bookings=[];inventoryAfter='';templateAfter='';templateSelection=null;
+    form($('#login'),'Ажилтнаар нэвтрэх',[field('tenant_id','Буудлын код'),field('email','Имэйл','email',{autocomplete:'username'}),field('password','Нууц үг','password',{autocomplete:'current-password'})],'Нэвтрэх',async v=>api('/auth/login',{tenant_id:v.tenant_id,email:v.email,password:v.password}),{login:true,success:async(r,f,status)=>{token=r.access_token;tenant=f.elements.tenant_id.value.trim();const me=await api('/auth/me');roles=me.roles;await reloadOverview();$('#login').hidden=true;$('#app').hidden=false;$('#logout').hidden=false;f.remove();const desired=location.hash.slice(1),allowed=Array.from($('#navigation').querySelectorAll('a')).map(a=>a.hash.slice(1));await navigate(allowed.includes(desired)?desired:role('RECEPTION')?'guests':manager()?(overview.completion_only?'guests':'manager'):role('HOTEL_ADMIN')?'shift':'cleaning');}});
+    if(message)$('#login').prepend(node('p',message,'notice'));
+  }
+  async function reloadOverview(){const seq=generation,data=await api(path('operations'));if(seq!==generation)return;overview=data;roles=overview.roles;packageMnt=overview.package_mnt;$('#mode').hidden=overview.mode!=='MOCK_CASH_LEDGER';navigation();}
+  function navigation(){const nav=$('#navigation');nav.replaceChildren();let links=[];if(role('RECEPTION')||manager())links=['guests','rooms','payments','online',...(packageMnt===30000?['restaurant']:[])];if(role('RECEPTION')||manager()||role('HOTEL_ADMIN'))links.push('shift');if(manager()&&!overview.completion_only)links.push('manager');if(manager()&&[25000,30000].includes(packageMnt)&&!overview.completion_only)links.push('inventory','templates');if(role('CLEANER')||manager())links.push('cleaning');
+    for(const name of links){const a=node('a',names[name]);a.href=`#${name}`;if(name===view)a.setAttribute('aria-current','page');a.onclick=e=>{e.preventDefault();guard(()=>navigate(name));};nav.append(a);}
+  }
+  async function navigate(next){const seq=++generation;view=next;dirty=false;history.replaceState(null,'',`#${next}`);document.title=`${names[next]} — PRsystem`;navigation();$('#page-title').textContent=names[next];$('#page-title').focus();$('#content').replaceChildren();$('#content').setAttribute('aria-busy','true');say('Мэдээлэл ачаалж байна…');
+    try{await render(next,seq);if(seq===generation)say(overview.completion_only?'Багцын хугацаа дууссан. Зөвхөн хугацаа дуусахаас өмнө эхэлсэн ажлууд харагдана.':'Мэдээлэл шинэчлэгдсэн.');return seq===generation;}catch(e){if(seq===generation){say(e.message,true);content().append(btn('Дахин ачаалах',()=>guard(()=>navigate(next))));}}finally{if(seq===generation)$('#content').setAttribute('aria-busy','false');}
+  }
+  $('#refresh').onclick=()=>guard(async()=>{try{await reloadOverview();await navigate(view);}catch(e){say(e.message,true);}});
+  $('#logout').onclick=()=>guard(async()=>{try{await api('/auth/logout',{});}catch{}token='';tenant='';dirty=false;showLogin();});
+  const content=()=>$('#content');
+  function record(parent,title,description){const r=node('article',undefined,'record');r.append(node('h3',title),node('p',description));parent.append(r);return r;}
+  function actions(r){const a=node('div',undefined,'actions');r.append(a);return a;}
+  function choices(items,key,label){return items.map(x=>[x[key],typeof label==='function'?label(x):x[label]]);}
+  function select(name,label,options,optional=false){return field(name,label,'select',{options,optional});}
+  function command(parent,title,fields,url,base={},method='POST',opts={}){return form(parent,title,fields,'Бүртгэх',v=>api(url,{...base,...v},method),opts);}
+  // A confirmed write is retired before any read refresh; recovery never repeats it.
+  function savedWorkflow(destination,message='Хадгаллаа.'){
+    return {success:async(_result,f)=>{
+      const seq=generation,notice=node('section',undefined,'notice'),heading=node('h2',message);
+      heading.tabIndex=-1;notice.append(heading);f.replaceWith(notice);
+      const preserveDrafts=()=>{notice.replaceChildren(heading,node('p','Өөр маягтад хадгалаагүй өөрчлөлт байна. Түүнийг хадгалсны дараа мэдээллээ шинэчилнэ үү.'),btn('Хадгалсан мэдээллийг дахин ачаалах',()=>guard(refresh)));heading.focus();};
+      const refresh=async()=>{
+        if(seq!==generation||!notice.isConnected)return;
+        try{await reloadOverview();if(seq!==generation||!notice.isConnected)return;
+          if(hasDirtyForms()){preserveDrafts();return;}
+          const nextGeneration=generation+1,loaded=await navigate(destination);if(generation===nextGeneration&&view===destination)say(loaded?message:message+' Шинэ мэдээллийг ачаалж чадсангүй.',!loaded);
+        }catch(e){if(seq===generation&&notice.isConnected){notice.replaceChildren(heading,node('p','Хадгалсан. Шинэ мэдээллийг ачаалж чадсангүй.'),btn('Хадгалсан мэдээллийг дахин ачаалах',()=>guard(refresh)));heading.focus();say(message+' '+e.message,true);}}
+      };
+      if(hasDirtyForms())preserveDrafts();else await refresh();
+    }};
+  }
+  async function roomData(seq){if(overview.completion_only){rooms=overview.rooms;stays=overview.stays;categories=[];return;}const data=await Promise.all([api(path(`rooms?limit=100&after=${enc(roomAfter)}`)),api(path('room-categories')),api(path(`stays/active?limit=100&after=${enc(stayAfter)}`))]);if(seq===generation)[rooms,categories,stays]=data;}
+  function pager(parent,kind,items,key){const a=actions(parent);a.append(btn('Эхний хэсэг',()=>guard(()=>{if(kind==='room')roomAfter='';else stayAfter='';navigate(view);})),btn('Дараагийн 100',()=>guard(()=>{if(kind==='room')roomAfter=items.at(-1)[key];else stayAfter=items.at(-1)[key];navigate(view);})));a.firstChild.disabled=!(kind==='room'?roomAfter:stayAfter);a.lastChild.disabled=items.length<100;parent.append(node('p',`Энэ хэсэгт ${items.length} бүртгэл.`, 'muted'));}
+  async function render(next,seq){const parent=content();
+    if(['guests','rooms','payments','restaurant','manager','online'].includes(next)){await roomData(seq);if(seq!==generation)return;}
+    if(next==='templates'){await templateTools(parent,seq);return;}
+    if(next==='inventory'){await inventoryTools(parent,seq);return;}
+    if(next==='online'){await onlineTools(parent,seq);return;}
+    if(next==='guests'){
+      parent.append(node('p','Шууд ирсэн эсвэл онлайн захиалгатай зочныг бүртгэж, өрөө болон байрлах хугацааг баталгаажуулна.'));
+      if(role('RECEPTION')&&!overview.completion_only){actions(parent).append(btn('Шууд ирсэн зочин бүртгэх',()=>guard(()=>checkin(parent))),btn('POS / банкны барьцаа бэлтгэх',()=>guard(()=>fundingForm(parent))));
+        for(const f of overview.funding||[]){const r=record(parent,'Бүртгэлийн барьцаа',`${labels[f.channel]} · ${money(f.amount_mnt)} · ${labels[f.state]}`);if(f.state==='PENDING'){form(r,'Барьцааны банкны төлөв тулгах',[],'Тулгах',()=>api(path(`check-in-funding/${enc(f.funding_id)}/reconcile`),{}));command(r,'Төлөгдөөгүй барьцааны нэхэмжлэлийг цуцлах',[reason()],path(`check-in-funding/${enc(f.funding_id)}/cancel`));}if(f.state==='CONFIRMED')command(r,'Ашиглаагүй барьцааг буцаах хүсэлт',[reason()],path(`check-in-funding/${enc(f.funding_id)}/return`));if(f.state==='REFUNDING')command(r,'Барьцааны буцаалтыг тулгах',f.channel==='MANUAL_POS'?[field('reference','POS буцаалтын баримтын дугаар'),field('confirmation','Буцаасан баталгаа')]:[],path(`check-in-funding/${enc(f.funding_id)}/return/complete`));}
+      }
+      if(!stays.length)parent.append(node('p','Одоогоор идэвхтэй байрлалт алга.'));
+      for(const s of stays){const room=rooms.find(r=>r.room_id===s.room_id);const r=record(parent,`${room?.number||'Өрөө'} · ${labels[s.kind]}`,`${time(s.actual_checkin_at)} → ${time(s.planned_checkout_at)} · ${money(s.amount_mnt)}${s.overdue?' · Хугацаа хэтэрсэн':''}`);actions(r).append(btn('Байрлалт нээх',()=>guard(()=>openStay(s,r))));}pager(parent,'stay',stays,'stay_id');
+      bookings=overview.completion_only?[]:await api(path('bookings'));if(seq!==generation)return;
+      parent.append(node('h2','Баталгаажсан онлайн захиалга'));
+      for(const b of bookings){const r=record(parent,`${rooms.find(r=>r.room_id===b.room_id)?.number||'Өрөө'} · ${labels[b.state]||b.state}`,`${time(b.planned_checkin_at)} → ${time(b.planned_checkout_at)}`);if(role('RECEPTION')&&b.state==='CONFIRMED')actions(r).append(btn('Захиалгаар зочин бүртгэх',()=>guard(()=>checkin(r,b))));}
+    } else if(next==='rooms'){
+      for(const r of rooms){const card=record(parent,`${r.number} · ${r.category_name}`,`${labels[r.status]} · ${labels[r.cleaning_state]} · ${r.minibar_mode==='OFF'?'Минибаргүй':r.minibar_mode==='ON'?'Минибартай':'Туршилтын минибартай'}`);const a=actions(card);
+        const s=stays.find(s=>s.room_id===r.room_id);if(s)a.append(btn('Байрлалт нээх',()=>guard(()=>openStay(s,card))));
+        else if(role('RECEPTION')&&!overview.completion_only&&r.status==='ACTIVE'&&!r.pending_minibar_change)a.append(btn('Зочин бүртгэх',()=>guard(()=>checkin(card,null,r))));
+        if(r.pending_minibar_change)card.append(node('p','Минибарын тохиргоо хүлээгдэж буй · Шинэ зочин бүртгэхгүй.'));
+        if([25000,30000].includes(packageMnt)&&!overview.completion_only){const panel=node('div');card.append(panel);a.append(btn('Минибарын тохиргоо',()=>guard(()=>roomConfiguration(panel,r.room_id,''))));}
+        if(manager()&&!overview.completion_only){a.append(btn('Өрөө удирдах',()=>guard(()=>roomTools(card,r))));}
+      }pager(parent,'room',rooms,'room_id');
+    } else if(next==='payments'||next==='restaurant'){
+      parent.append(node('p',next==='restaurant'?'Рестораны төлбөр буудлын касст орохгүй. Checkout хийхдээ дуусаагүй захиалга бүрийн сонголтыг зочинд мэдээлнэ.':'Байрлалтаа сонгоод нэхэмжлэл, барьцаа, буцаалт болон засварыг бүртгэнэ.'));
+      if(!stays.length)parent.append(node('p','Идэвхтэй байрлалт алга.'));
+      if(stays.length)form(parent,'Байрлалт сонгох',[select('stay_id','Өрөө / байрлалт',choices(stays,'stay_id',s=>`${rooms.find(r=>r.room_id===s.room_id)?.number||'Өрөө'} · ${time(s.actual_checkin_at)}`))],'Нээх',async v=>{const s=stays.find(s=>s.stay_id===v.stay_id);await openStay(s,parent);return {};},{success:async()=>{}});
+      if(next==='payments'&&[25000,30000].includes(packageMnt)){const historyPanel=node('div');actions(parent).append(btn('Хаасан байрлалтын минибар',()=>guard(()=>historicalMinibarStays(historyPanel))));parent.append(historyPanel);}
+      if(next==='restaurant'){const ordersPanel=node('div');parent.append(ordersPanel);actions(parent).append(btn('Рестораны төлбөртэй захиалгууд',()=>guard(()=>hotelRestaurantOrders(ordersPanel))),btn('Рестораны мэдэгдэл шалгах',()=>guard(()=>restaurantNotices(ordersPanel,false))));}
+      if(next==='restaurant'&&role('MANAGER_PLUS')&&packageMnt===30000&&!overview.completion_only){const settings=node('div');parent.append(settings);actions(parent).append(btn('Ресторан, цагийн хуваарь удирдах',()=>guard(()=>restaurantSettings(settings))));}
+    } else if(next==='shift')await shiftTools(parent,seq);
+    else if(next==='manager')managerTools(parent);
+    else if(next==='cleaning')await cleaningTools(parent,seq);
+  }
+  async function historicalMinibarStays(container,after=''){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);
+    parent.append(node('p','Хаасан байрлалт ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(path(`minibar/billing-stays?limit=25&after=${enc(after)}`));
+      if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren(node('h2','Хаасан байрлалтын минибар'));
+      parent.append(node('p','Гарсан зочны минибарын төлбөрийг хянах байрлалтаа сонгоно уу.'));
+      if(!data.items.length)parent.append(node('p','Энэ хэсэгт минибарын тайлантай хаасан байрлалт алга.'));
+      for(const stay of data.items){
+        const row=record(parent,`Өрөө ${stay.room_number}`,`${time(stay.check_in_recorded_at)} → ${time(stay.actual_checkout_at)}`);
+        actions(row).append(btn('Хаасан байрлалтын төлбөр нээх',()=>guard(()=>historicalMinibarDetail(container,stay,after))));
+      }
+      const pages=actions(parent);pages.append(btn('Хаасан байрлалтын эхний хэсэг',()=>guard(()=>historicalMinibarStays(container))),btn('Хаасан байрлалтын дараагийн хэсэг',()=>guard(()=>historicalMinibarStays(container,data.next_after))));
+      pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+      parent.append(node('p',`Энэ хэсэгт ${data.items.length} байрлалт.`, 'muted'));
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Хаасан байрлалтыг дахин ачаалах',()=>historicalMinibarStays(container,after)));}
+    finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function historicalMinibarDetail(container,stay,listAfter='',historyAfter=0){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);
+    parent.append(node('p','Минибарын төлбөр, түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    const refresh=()=>historicalMinibarDetail(container,stay,listAfter,historyAfter);
+    try{
+      const [data,finance]=await Promise.all([api(stayPath(stay.stay_id,`minibar-billing?limit=25&after=${historyAfter}`)),api(stayPath(stay.stay_id,'finance'))]);
+      if(seq!==generation||!parent.isConnected)return;
+      if(data.balance.revision!==finance.balance.revision)throw new Error(errors.REVISION_CONFLICT);
+      const basis=data.basis;
+      parent.replaceChildren(node('h2',`Өрөө ${stay.room_number} — хаасан байрлалтын минибар`));
+      parent.append(node('p',`${time(stay.check_in_recorded_at)} → ${time(stay.actual_checkout_at)}`));
+      parent.append(node('p','Зөвхөн төлбөрийн тоо өөрчлөгдөнө. Анхны бодит тайлан, барааны хөдөлгөөн, дараагийн зочны нөөц болон checkout хэвээр үлдэнэ. Мөнгө авах, буцаахыг Reception тусад нь бүртгэнэ.'));
+      actions(parent).append(btn('Хаасан байрлалтын жагсаалт',()=>guard(()=>historicalMinibarStays(container,listAfter))),btn('Хаасан байрлалтын төлбөр шинэчлэх',()=>guard(refresh)));
+      parent.append(node('p',`Одоогийн минибарын дүн: ${money(basis.amount_mnt)} · Нийт төлөөгүй: ${money(finance.charge_unpaid_mnt)}`));
+      table(parent,'Анхны үнэ ба одоо тооцсон тоо',['Бүтээгдэхүүн','Анхны хэрэглээ','Одоо тооцсон','Тооцох дээд тоо','Түгжсэн нэгж үнэ','Тооцсон дүн'],basis.items.map(i=>[`${i.name} · ${i.unit}`,i.original_quantity,i.quantity,i.billable_limit,money(i.unit_price),money(i.line_amount)]));
+      if(data.blocked)parent.append(node('p','Санхүүгийн тулгалт эсвэл төлбөрийн шийдвэр хүлээгдэж байна. Шийдвэрлэсний дараа мэдээллээ шинэчилнэ үү.','notice'));
+      if(manager()&&[25000,30000].includes(packageMnt)&&!data.blocked){
+        const fields=basis.items.map((i,index)=>field('billed_'+index,`${i.name} — төлбөрт тооцох тоо`,'number',{min:0,value:i.quantity}));
+        fields.push(reason(),field('financial_only_reviewed','Төлбөрийн шинэ дүнг шалгасан; бодит нөөц өөрчлөхгүйг баталж байна','checkbox'));
+        const f=form(parent,'Хаасан байрлалтын төлбөр залруулах',fields,'Төлбөрийн залруулга батлах',v=>{
+          const quantities={};let changed=false;
+          for(const [index,i] of basis.items.entries()){
+            const n=v['billed_'+index];if(n>Math.min(1000000,i.billable_limit))throw new Error(`${i.name}: тооцох дээд тоо ${i.billable_limit}.`);
+            quantities[i.product_id]=n;changed=changed||n!==i.quantity;
+          }
+          if(!changed)throw new Error(errors.CORRECTION_HAS_NO_CHANGE);
+          return api(stayPath(stay.stay_id,'minibar-billing-corrections'),{quantities,reason:v.reason,financial_only_reviewed:v.financial_only_reviewed,expected_revision:basis.billing_revision,expected_report_revision:basis.original_revision,expected_finance_revision:data.balance.revision,idempotency_key:v.idempotency_key});
+        },{success:async r=>{
+          await refresh();if(seq!==generation||!container.isConnected)return;
+          say(`Төлбөр залруулагдлаа. Шинэ авлага: ${money(r.new_receivable_mnt)}. Буцаах үлдэгдэл: ${money(r.refundable_credits.reduce((sum,x)=>sum+x.amount_mnt,0))}.`);
+        }});
+        const total=node('p');total.setAttribute('role','status');f.querySelector('[name=financial_only_reviewed]').closest('.field').before(total);
+        const update=()=>{let sum=0n;for(const [index,i] of basis.items.entries()){const raw=f.elements['billed_'+index].value,n=Number(raw);if(raw===''||!Number.isSafeInteger(n)||n<0||n>Math.min(1000000,i.billable_limit)){total.textContent='Шинэ дүн: тооцох тоогоо шалгана уу.';return;}sum+=BigInt(n)*BigInt(i.unit_price);}total.textContent=`Түгжсэн үнээр тооцсон шинэ дүн: ${money(sum)}`;};
+        f.addEventListener('input',update);update();
+      }
+      parent.append(node('h3','Төлбөрийн залруулгын түүх'));
+      if(!data.history.length)parent.append(node('p','Энэ хэсэгт төлбөрийн залруулга алга.'));
+      for(const entry of data.history){
+        const row=record(parent,`Залруулга ${entry.billing_revision} · ${money(entry.amount_mnt)}`,`${entry.actor_label} · ${time(entry.recorded_at)}`);
+        row.append(node('p',entry.reason));
+        table(row,'Тухайн залруулгаар тооцсон',['Бүтээгдэхүүн','Тоо','Түгжсэн нэгж үнэ','Дүн'],entry.items.map(i=>[i.name,i.quantity,money(i.unit_price),money(i.line_amount)]));
+      }
+      const pages=actions(parent);pages.append(btn('Төлбөрийн түүхийн эхний хэсэг',()=>guard(()=>historicalMinibarDetail(container,stay,listAfter))),btn('Төлбөрийн түүхийн дараагийн хэсэг',()=>guard(()=>historicalMinibarDetail(container,stay,listAfter,data.next_after))));
+      pages.firstChild.disabled=!historyAfter;pages.lastChild.disabled=!data.next_after;
+      parent.append(node('h3','Төлбөр ба буцаалт'));
+      financeRecords(parent,stay,finance,{historical:true,billingChargeId:basis.billing_revision>0?basis.charge_id:null});
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Минибарын төлбөрийг дахин ачаалах',refresh),btn('Хаасан байрлалтын жагсаалт',()=>historicalMinibarStays(container,listAfter)));}
+    finally{parent.setAttribute('aria-busy','false');}
+  }
+  function inventoryCost(cost){
+    if(!cost)return 'Өртөг тогтоогдоогүй';
+    const n=BigInt(cost.numerator),d=BigInt(cost.denominator);
+    return n%d===0n?money(n/d):`${money(Number(n)/Number(d))} (ойролцоо)`;
+  }
+  async function inventoryTools(parent,seq){
+    if(!manager()||![25000,30000].includes(packageMnt)||overview.completion_only){parent.append(node('p','Агуулахын мэдээлэл харах эрх алга.'));return;}
+    const data=await api(path(`minibar/products?limit=50&after=${enc(inventoryAfter)}`));if(seq!==generation)return;
+    parent.append(node('p','Бүтээгдэхүүний тоо нь агуулахын үлдэгдэл. Худалдах үнэ болон худалдан авалтын өртгийг тусад нь бүртгэнэ.'));
+    const editor=node('div');parent.append(editor);
+    actions(parent).append(btn('Бүтээгдэхүүн бүртгэх',()=>guard(()=>{
+      editor.replaceChildren();const f=form(editor,'Шинэ бүтээгдэхүүн',[
+        field('name','Бүтээгдэхүүний нэр','text',{max:200}),field('category','Бүтээгдэхүүний ангилал','text',{max:200}),field('unit','Хэмжих нэгж','text',{value:'ширхэг',max:50}),
+        amount('selling_price_mnt','Худалдах нэгж үнэ (₮)'),field('unit_cost_mnt','Худалдан авалтын нэгж өртөг (₮)','number',{min:0}),
+        field('opening_quantity','Агуулахын анхны тоо','number',{min:0}),select('status','Эхлэх төлөв',[['ACTIVE','Идэвхтэй'],['INACTIVE','Идэвхгүй']])
+      ],'Бүтээгдэхүүн бүртгэх',v=>api(path('minibar/products'),v),{success:async()=>{inventoryAfter='';await navigate('inventory');say('Бүтээгдэхүүн болон агуулахын анхны үлдэгдэл бүртгэгдлээ.');}});f.querySelector('input').focus();
+    })));
+    if(!data.items.length)parent.append(node('p',inventoryAfter?'Энэ хэсэгт бүтээгдэхүүн алга. Эхний хэсэг рүү буцаж болно.':'Бүтээгдэхүүн бүртгэлгүй байна. Эхний бүтээгдэхүүнээ бүртгэнэ үү.'));
+    for(const p of data.items){
+      const r=record(parent,p.name,`${p.category} · ${labels[p.status]} · Агуулахад ${p.warehouse_quantity} ${p.unit}`);
+      r.append(node('p',`Худалдах үнэ: ${money(p.selling_price_mnt)} · Дундаж өртөг: ${inventoryCost(p.average_cost)}`));
+      const a=actions(r),panel=node('div');r.append(panel);
+      if(p.status==='ACTIVE')a.append(btn('Орлого бүртгэх',()=>guard(()=>{
+        panel.replaceChildren();const f=form(panel,`${p.name} — агуулахын орлого`,[field('quantity','Хүлээн авсан тоо','number',{min:1}),field('unit_cost_mnt','Худалдан авалтын нэгж өртөг (₮)','number',{min:0}),field('reference','Баримтын дугаар / тайлбар','text',{optional:true,max:200})],
+          'Орлого баталгаажуулах',v=>api(path(`minibar/products/${enc(p.product_id)}/receipts`),{...v,expected_revision:p.stock_revision}),{success:async()=>{await navigate('inventory');say('Агуулахын орлого бүртгэгдлээ.');}});f.querySelector('input').focus();
+      })));
+      a.append(btn('Хөдөлгөөний түүх',()=>guard(()=>inventoryLedger(panel,p,0))),btn('Идэвхтэй төлөв удирдах',()=>guard(()=>minibarLifecycle(panel,'products',p.product_id,'inventory'))),btn('Нөөцийн хөдөлгөөн бүртгэх',()=>guard(()=>inventoryAdjustment(panel,p))),btn('Залруулгын түүх',()=>guard(()=>inventoryAdjustments(panel,p))));
+    }
+    const pages=actions(parent);pages.append(btn('Эхний хэсэг',()=>guard(()=>{inventoryAfter='';navigate('inventory');})),btn('Дараагийн хэсэг',()=>guard(()=>{inventoryAfter=data.next_after;navigate('inventory');})));
+    pages.firstChild.disabled=!inventoryAfter;pages.lastChild.disabled=!data.next_after;parent.append(node('p',`Энэ хэсэгт ${data.items.length} бүтээгдэхүүн.`, 'muted'));
+  }
+  const adjustmentNames={WASTE:'Хорогдол / устгал',COUNT_PLUS:'Тооллогын нэмэх залруулга',COUNT_MINUS:'Тооллогын хасах залруулга',RETURN:'Өрөөнөөс агуулахт буцаах',REVERSAL:'Өмнөх хөдөлгөөнийг буцаах'};
+  async function inventoryAdjustment(container,product,after=''){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Өрөөний жагсаалт ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const list=await api(path(`rooms?limit=100&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();form(parent,`${product.name} — нөөцийн хөдөлгөөн`,[select('room_id','Байршил',[['','Агуулах'],...list.map(r=>[r.room_id,`Өрөө ${r.number}`])],true),select('kind','Хөдөлгөөний төрөл',Object.entries(adjustmentNames).filter(([k])=>k!=='REVERSAL'))],
+        'Үлдэгдлийг шалгах',async v=>{const room=v.room_id||null;if(v.kind==='RETURN'&&!room)throw new Error('Агуулахт буцаах өрөөг сонгоно уу.');return {preview:await api(path(`minibar/products/${enc(product.product_id)}/adjustment-preview`)+(room?`?room_id=${enc(room)}`:'')),kind:v.kind};},
+        {success:r=>inventoryAdjustmentForm(parent,product,r.preview,r.kind)});
+      const pages=actions(parent);pages.append(btn('Өрөөний эхний хэсэг',()=>guard(()=>inventoryAdjustment(container,product))),btn('Өрөөний дараагийн хэсэг',()=>guard(()=>inventoryAdjustment(container,product,list.at(-1).room_id))));pages.firstChild.disabled=!after;pages.lastChild.disabled=list.length<100;
+      parent.append(node('p',`Энэ хэсэгт ${list.length} өрөө. Агуулах нь бүх хэсэгт сонгогдоно.`));
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Хөдөлгөөнийг дахин ачаалах',()=>inventoryAdjustment(container,product,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  function inventoryAdjustmentForm(parent,product,preview,kind,original=null,replacement=false){
+    parent.replaceChildren(node('h3',`${product.name} — ${preview.room_id?'Өрөө '+preview.room_number:'Агуулах'}`));
+    parent.append(node('p',`Бодит бүртгэлийн үлдэгдэл: ${preview.physical_quantity}. Дундаж өртөг: ${inventoryCost(preview.average_cost)}.`));
+    if(preview.report_locked||(original&&preview.stay_id!==original.stay_id)){parent.append(node('p','Энэ байрлалтын тайлан бүртгэгдсэн эсвэл зочин солигдсон тул хөдөлгөөнийг эндээс өөрчлөхгүй.'));return;}
+    parent.append(node('p',`${adjustmentNames[kind]}. ${kind==='RETURN'?'Өрөөний тоо буурч, агуулахын тоо нэмэгдэнэ; нийт нөөц, өртөг хэвээр.':kind==='REVERSAL'?'Анхны хөдөлгөөний тоо, өртгийг холбоостой бичлэгээр буцаана.':'Тоо болон нөөцийн үнэлгээг өөрчилнө.'} Зочны төлбөр, кассын бичлэг үүсгэхгүй.`));
+    if(preview.stay_id)parent.append(node('p','Одоогийн зочны байрлалтад холбоно. Нэмэх залруулга нь зочинд тооцох боломжит тоог нэмэхгүй.'));
+    if(replacement)parent.append(node('p','Анхны хөдөлгөөнийг буцааж, доорх зөв хөдөлгөөнөөр хамтад нь солино. Баталгаажуулалт бүтэлгүйтвэл хоёр хөдөлгөөн хоёулаа буцна.'));
+    const fields=original&&!replacement?[]:[field('quantity','Хөдөлгөөний тоо','number',{min:1})];
+    if(original)parent.append(node('p',`Буцаах тоо: ${original.quantity}. Анхны өртөг: ${inventoryCost(original.cost)}.`));
+    const restoredTotal=replacement?preview.total_quantity+(original.kind==='COUNT_PLUS'?-original.quantity:original.kind==='RETURN'?0:original.quantity):preview.total_quantity;
+    if(kind==='COUNT_PLUS'&&restoredTotal===0)fields.push(field('unit_cost_mnt','Өртөггүй нөөцийн нэгж өртөг (₮)','number',{min:0}));
+    fields.push(field('reason','Шалтгаан','textarea',{max:1000}),field('reviewed','Тоо, байршил болон үр дүнг шалгасан','checkbox'));
+    form(parent,replacement?'Буруу хөдөлгөөнийг зөвөөр солих':adjustmentNames[kind],fields,'Хөдөлгөөн баталгаажуулах',v=>api(path(`minibar/products/${enc(product.product_id)}/${replacement?'adjustment-corrections':'adjustments'}`),{kind,quantity:replacement?v.quantity:original?.quantity??v.quantity,room_id:preview.room_id,expected_stay_id:preview.stay_id,expected_revision:preview.stock_revision,expected_physical_quantity:preview.physical_quantity,reason:v.reason,unit_cost_mnt:v.unit_cost_mnt??null,original_id:original?.adjustment_id??null,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('inventory');say('Нөөцийн хөдөлгөөн бүртгэгдлээ.');}});
+  }
+  async function inventoryAdjustments(container,product,after=''){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Залруулгын түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const data=await api(path(`minibar/products/${enc(product.product_id)}/adjustments?limit=50&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();if(!data.items.length)parent.append(node('p','Энэ хэсэгт нөөцийн залруулга алга.'));
+      for(const item of data.items){const row=record(parent,`${adjustmentNames[item.kind]} · ${item.quantity} ${product.unit}`,`${item.room_id?'Өрөө '+item.room_number:'Агуулах'} · ${time(item.recorded_at)} · ${item.actor_label}`);row.append(node('p',item.reason),node('p',`Нэгж өртөг: ${inventoryCost(item.cost)}${item.reversed?' · Буцаасан':''}`));
+        if(item.kind!=='REVERSAL'&&!item.reversed)actions(row).append(btn('Энэ хөдөлгөөнийг буцаах',()=>guard(async()=>{try{const preview=await api(path(`minibar/products/${enc(product.product_id)}/adjustment-preview`)+(item.room_id?`?room_id=${enc(item.room_id)}`:''));if(seq===generation&&parent.isConnected)inventoryAdjustmentForm(parent,product,preview,'REVERSAL',item);}catch(e){say(e.message,true);}})));
+        if(item.correction_id)row.append(node('p','Холбоостой буцаалт ба орлуулалт бүртгэгдсэн.'));
+        if(item.kind!=='REVERSAL'&&!item.reversed)actions(row).append(btn('Зөв хөдөлгөөнөөр солих',()=>guard(async()=>{
+          const preview=await api(path(`minibar/products/${enc(product.product_id)}/adjustment-preview`)+(item.room_id?`?room_id=${enc(item.room_id)}`:''));
+          if(seq!==generation||!parent.isConnected)return;
+          parent.replaceChildren(node('p',`${adjustmentNames[item.kind]} · ${item.quantity} ${product.unit} · ${item.reason}`));
+          form(parent,'Орлуулах хөдөлгөөний төрөл',[select('kind','Зөв хөдөлгөөний төрөл',Object.entries(adjustmentNames).filter(([k])=>k!=='REVERSAL'&&(item.room_id||k!=='RETURN')))],'Залруулгыг шалгах',async v=>v,{success:v=>inventoryAdjustmentForm(parent,product,preview,v.kind,item,true)});
+        })));
+      }
+      const pages=actions(parent);pages.append(btn('Залруулгын эхний хэсэг',()=>guard(()=>inventoryAdjustments(container,product))),btn('Залруулгын дараагийн хэсэг',()=>guard(()=>inventoryAdjustments(container,product,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Залруулгын түүхийг дахин ачаалах',()=>inventoryAdjustments(container,product,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function minibarLifecycle(container,kind,identity,destination){
+    const parent=node('div');container.replaceChildren(parent);const seq=generation;
+    parent.append(node('p','Идэвхтэй төлөв, хамаарлыг шалгаж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const url=path(`minibar/${kind}/${enc(identity)}/lifecycle`),data=await api(url);
+      if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren(node('h3',`${data.name} — ${labels[data.status]}`));
+      const kinds={ROOM_STOCK:'Өрөөнд үлдсэн бараа',ACTIVE_TEMPLATE:'Идэвхтэй загвар',CURRENT_ROOM:'Одоо ашиглаж буй өрөө',ACTIVE_STAY:'Идэвхтэй зочин',PENDING_CONFIGURATION:'Дуусаагүй бүрдлийн өөрчлөлт',PENDING_REFILL:'Дуусаагүй нөхөлт'};
+      if(data.blockers.length)table(parent,'Идэвхгүй болгохоос өмнө дуусгах ажил',['Хамаарал','Тоо'],data.blockers.map(b=>[kinds[b.kind]||b.kind,b.count]));
+      else parent.append(node('p','Дуусгах хамааралгүй байна.'));
+      const action=data.status==='ACTIVE'?'DEACTIVATE':data.status==='RETIRING'?'CANCEL_RETIRING':'REACTIVATE';
+      const label={DEACTIVATE:'Идэвхгүй болгох',CANCEL_RETIRING:'Идэвхгүй болгох хүсэлтийг цуцлах',REACTIVATE:'Дахин идэвхжүүлэх'}[action];
+      parent.append(node('p',action==='DEACTIVATE'?'Шинэ хэрэглээг шууд хаана. Өмнөх зочин, нөхөлт болон өрөөний хамаарлыг дуусгасны дараа идэвхгүй болно.':'Холбоотой бүтээгдэхүүн, бүрдлийн шаардлагыг дахин шалгана.'));
+      form(parent,label,[field('reason','Шалтгаан','text',{max:1000}),field('reviewed','Төлөв өөрчлөх үр дүнг ойлгосон','checkbox')],label,v=>api(url,{action,reason:v.reason,expected_revision:data.revision,idempotency_key:v.idempotency_key}),{success:async r=>{await navigate(destination);say(`${r.name}: ${labels[r.status]}.`);}});
+      if(data.can_delete){
+        const deletion=node('div');parent.append(deletion);
+        actions(parent).append(btn('Ашиглаагүй бүртгэлийг устгах',()=>guard(()=>{
+          deletion.replaceChildren(node('p',`${data.name}: бүртгэлийг бүрмөсөн устгана. Устгасан шалтгаан, ажилтны бүртгэл хадгалагдана.`));
+          form(deletion,'Ашиглаагүй бүртгэлийг устгах',[field('reason','Устгах шалтгаан','text',{max:1000}),field('reviewed','Бүрмөсөн устгахыг зөвшөөрч байна','checkbox')],'Бүрмөсөн устгах',v=>api(url,{action:'HARD_DELETE',reason:v.reason,expected_revision:data.revision,idempotency_key:v.idempotency_key}),{success:async()=>{if(destination==='templates'){templateSelection=null;templateAfter='';}else inventoryAfter='';await navigate(destination);say(`${data.name} бүртгэлийг устгалаа.`);}});
+        })));
+      }
+
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Төлөвийг дахин ачаалах',()=>minibarLifecycle(container,kind,identity,destination)));}
+    finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function inventoryLedger(container,product,after){
+    const parent=node('div');container.replaceChildren(parent);
+    const seq=generation;parent.replaceChildren(node('p','Хөдөлгөөний түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const data=await api(path(`minibar/products/${enc(product.product_id)}/ledger?limit=50&after=${after}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();table(parent,`${product.name} — агуулахын түүх`,['Цаг (Улаанбаатар)','Хөдөлгөөн','Тоо','Нэгж өртөг','Агуулахын үлдэгдэл','Баримт','Бүртгэсэн ажилтан'],data.items.map(r=>[time(r.recorded_at),({OPENING:'Анхны үлдэгдэл',PURCHASE:'Худалдан авалт',CONSUMPTION:'Зочны хэрэглээ',CONSUMPTION_REVERSAL:'Хэрэглээний залруулга',ADJUSTMENT:'Нөөцийн залруулга'})[r.kind]||r.kind,r.quantity,(r.kind.startsWith('CONSUMPTION')||r.kind==='ADJUSTMENT')?inventoryCost(r.cost):money(r.unit_cost_mnt),r.warehouse_quantity,r.reference||'—',r.actor_label]));
+      const a=actions(parent);a.append(btn('Түүхийн эхний хэсэг',()=>inventoryLedger(container,product,0)),btn('Түүхийн дараагийн хэсэг',()=>inventoryLedger(container,product,data.next_after)));a.firstChild.disabled=after===0;a.lastChild.disabled=data.next_after===null;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Түүхийг дахин ачаалах',()=>inventoryLedger(container,product,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  const templatePath=(t,v='')=>path(`minibar/templates/${enc(t)}/versions${v?'/'+enc(v):''}`);
+  function chooseTemplate(selection){templateSelection=selection;navigate('templates');}
+  async function templateTools(parent,seq){
+    if(!manager()||![25000,30000].includes(packageMnt)||overview.completion_only){parent.append(node('p','Минибарын загвар удирдах эрх алга.'));return;}
+    if(templateSelection?.version){await templateDetail(parent,seq);return;}
+    if(templateSelection){await templateVersions(parent,seq);return;}
+    const data=await api(path(`minibar/templates?limit=50&after=${enc(templateAfter)}`));if(seq!==generation)return;
+    parent.append(node('p','Өрөөний минибарт байлгах бүтээгдэхүүн, тоог загварын хувилбараар бэлтгэнэ.'));
+    const editor=node('div');parent.append(editor);
+    actions(parent).append(btn('Загвар үүсгэх',()=>guard(()=>{editor.replaceChildren();const f=form(editor,'Шинэ минибарын загвар',[field('name','Загварын нэр','text',{max:200}),select('status','Эхлэх төлөв',[['ACTIVE','Идэвхтэй'],['INACTIVE','Идэвхгүй']])],'Загвар үүсгэх',v=>api(path('minibar/templates'),v),{success:async r=>{templateAfter='';await navigate('templates');say(r.status==='INACTIVE'?'Идэвхгүй загвар үүслээ. Ашиглахын өмнө идэвхжүүлнэ үү.':'Загвар үүсгэлээ. Бүрдлийн ноорог хувилбараа нэмнэ үү.');}});f.querySelector('input').focus();})));
+    if(!data.items.length)parent.append(node('p','Минибарын загвар бүртгэлгүй байна.'));
+    for(const t of data.items){const r=record(parent,t.name,`${labels[t.status]} · ${t.default_version_id?'Нийтэлсэн үндсэн хувилбартай':'Нийтэлсэн хувилбаргүй'}`);actions(r).append(btn('Хувилбаруудыг нээх',()=>guard(()=>chooseTemplate({id:t.template_id,after:0}))));}
+    const pages=actions(parent);pages.append(btn('Загварын эхний хэсэг',()=>guard(()=>{templateAfter='';navigate('templates');})),btn('Загварын дараагийн хэсэг',()=>guard(()=>{templateAfter=data.next_after;navigate('templates');})));pages.firstChild.disabled=!templateAfter;pages.lastChild.disabled=!data.next_after;
+    parent.append(node('p',`Энэ хэсэгт ${data.items.length} загвар.`, 'muted'));
+  }
+  async function templateVersions(parent,seq){
+    const selected={...templateSelection},data=await api(templatePath(selected.id)+`?limit=50&after=${selected.after||0}`);if(seq!==generation)return;
+    actions(parent).append(btn('Загварын жагсаалт',()=>guard(()=>chooseTemplate(null))));parent.append(node('h2',data.name));
+    const lifecyclePanel=node('div');parent.append(lifecyclePanel);actions(parent).append(btn('Идэвхтэй төлөв удирдах',()=>guard(()=>minibarLifecycle(lifecyclePanel,'templates',selected.id,'templates'))));
+    if(data.status==='ACTIVE')form(parent,'Хоосон ноорог хувилбар',[],'Ноорог үүсгэх',v=>api(templatePath(selected.id),{...v,expected_revision:data.revision}),{success:async r=>{templateSelection={id:selected.id,version:r.version.version_id};await navigate('templates');say('Ноорог хувилбар үүслээ. Бүтээгдэхүүнээ нэмнэ үү.');}});
+    if(!data.items.length)parent.append(node('p','Хувилбар үүсээгүй байна.'));
+    for(const v of data.items){const r=record(parent,`Хувилбар ${v.version_number}`,`${v.state==='DRAFT'?'Ноорог':v.state==='ARCHIVED'?'Архивласан':'Нийтэлсэн'}${data.default_version_id===v.version_id?' · Үндсэн хувилбар':''}`);actions(r).append(btn('Бүрдлийг нээх',()=>guard(()=>chooseTemplate({id:selected.id,version:v.version_id}))));}
+    const pages=actions(parent);pages.append(btn('Хувилбарын эхний хэсэг',()=>guard(()=>chooseTemplate({id:selected.id,after:0}))),btn('Хувилбарын дараагийн хэсэг',()=>guard(()=>chooseTemplate({id:selected.id,after:data.next_after}))));pages.firstChild.disabled=!(selected.after);pages.lastChild.disabled=!data.next_after;
+  }
+  async function templateDetail(parent,seq){
+    const selected={...templateSelection},url=templatePath(selected.id,selected.version),data=await api(url);if(seq!==generation)return;
+    const v=data.version,items=v.items.map(i=>({product_id:i.product_id,target_quantity:i.target_quantity}));
+    actions(parent).append(btn('Хувилбарын жагсаалт',()=>guard(()=>chooseTemplate({id:selected.id,after:0}))));
+    parent.append(node('h2',`${data.name} · Хувилбар ${v.version_number}`),node('p',`${v.state==='DRAFT'?'Ноорог':v.state==='ARCHIVED'?'Архивласан':'Нийтэлсэн'}${data.default_version_id===v.version_id?' · Үндсэн хувилбар':''}`));
+    table(parent,'Минибарын бүрдэл',['Бүтээгдэхүүн','Тоо','Нэгж'],v.items.map(i=>[`${i.name}${i.product_status&&i.product_status!=='ACTIVE'?' · Идэвхгүй':''}`,i.target_quantity,i.unit]));
+    if(!items.length)parent.append(node('p','Бүрдэл хоосон байна. Бүтээгдэхүүн нэмнэ үү.'));
+    if(v.state!=='DRAFT'){
+      const archivePanel=node('div');parent.append(archivePanel);
+      actions(parent).append(btn(v.state==='ARCHIVED'?'Архивын бүртгэл':'Архивлах нөхцөлийг шалгах',()=>guard(()=>archivePreview(archivePanel,data,seq))));
+    }
+    if(data.status!=='ACTIVE')return;
+    const refresh=message=>async()=>{await navigate('templates');say(message);};
+    const panel=node('div');parent.append(panel);
+    if(v.state==='DRAFT'){
+      actions(parent).append(btn('Бүтээгдэхүүн нэмэх',()=>guard(()=>templateProductPicker(panel,data,0))),btn('Тоо өөрчлөх / хасах',()=>guard(()=>{
+        panel.replaceChildren();if(!items.length){panel.append(node('p','Өөрчлөх бүтээгдэхүүн алга.'));return;}
+        const f=form(panel,'Ноорог бүрдлийн тоо өөрчлөх',[select('product_id','Бүрдлийн бүтээгдэхүүн',choices(v.items,'product_id',i=>`${i.name} · ${i.target_quantity} ${i.unit}`)),field('target_quantity','Шинэ тоо (0 бол бүрдлээс хасна)','number',{min:0})],'Бүрдлийг хадгалах',value=>api(url,{items:items.filter(i=>i.product_id!==value.product_id).concat(value.target_quantity?[{product_id:value.product_id,target_quantity:value.target_quantity}]:[]),expected_revision:data.revision,idempotency_key:value.idempotency_key},'PUT'),{success:refresh('Ноорог бүрдэл хадгалагдлаа.')});f.querySelector('select').focus();
+      })));
+      parent.append(node('p','Нийтэлсний дараа энэ хувилбарын бүрдлийг засахгүй. Өөрчлөх бол шинэ ноорог хувилбар үүсгэнэ.'));
+      form(parent,'Бүрдлийг нийтлэх',[field('reviewed','Бүтээгдэхүүн болон тоог шалгасан','checkbox')],'Хувилбарыг нийтлэх',value=>api(url+'/publish',{expected_revision:data.revision,idempotency_key:value.idempotency_key}),{success:refresh('Хувилбар нийтлэгдлээ.')});
+    }else if(v.state==='PUBLISHED'&&data.default_version_id!==v.version_id){
+      parent.append(node('p','Үндсэн хувилбар нь шинэ өрөөний тохиргоонд эхэлж санал болгох бүрдэл болно. Одоо ашиглаж буй өрөөнүүдийн бүрдэл хэвээр байна.'));
+      form(parent,'Үндсэн хувилбар сонгох',[],'Үндсэн хувилбар болгох',value=>api(url+'/default',{expected_revision:data.revision,idempotency_key:value.idempotency_key}),{success:refresh('Үндсэн хувилбар солигдлоо.')});
+    }
+    if(v.state==='PUBLISHED')actions(parent).append(btn('Өрөөнд тохируулах хүсэлт',()=>guard(()=>configurationRoomPicker(panel,data,''))));
+    if(v.state==='PUBLISHED')actions(parent).append(btn('Өрөөний хувилбар шинэчлэх',()=>guard(()=>rolloutRoomPicker(panel,data,''))),btn('Олон өрөөнд шилжүүлэх',()=>guard(()=>batchPicker(panel,data))));
+    if(v.state!=='DRAFT')actions(parent).append(btn('Шилжүүлгийн багцууд',()=>guard(()=>batchHistory(panel,data))));
+    form(parent,'Энэ бүрдлээс шинэ хувилбар бэлтгэх',[],'Ноорог хуулбар үүсгэх',value=>api(templatePath(selected.id),{source_version_id:v.version_id,expected_revision:data.revision,idempotency_key:value.idempotency_key}),{success:async r=>{templateSelection={id:selected.id,version:r.version.version_id};await navigate('templates');say('Бүрдлээс шинэ ноорог хувилбар үүслээ.');}});
+  }
+  async function archivePreview(parent,data,seq){
+    parent.replaceChildren(node('p','Архивлах нөхцөлийг шалгаж байна…'));
+    const url=templatePath(data.template_id,data.version.version_id);
+    try{
+      const result=await api(url+'/archive-preview');if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren(node('h3','Хувилбарын архив'));
+      if(result.archive){parent.append(node('p',`Архивласан: ${time(result.archive.recorded_at)}`),node('p',result.archive.reason));return;}
+      if(result.blockers.length){
+        const titles={DEFAULT:'Үндсэн хувилбар',CURRENT_ROOM:'Өрөөний одоогийн бүрдэл',PENDING_TARGET:'Хүлээгдэж буй шинэ бүрдэл',PENDING_SOURCE:'Дуусаагүй шилжилтийн өмнөх бүрдэл',ACTIVE_STAY:'Идэвхтэй байрлалт',CLEANER_TASK:'Дуусаагүй цэвэрлэгчийн ажил'};
+        table(parent,'Архивлахад саад болж буй хэрэглээ',['Хамаарал','Тоо'],result.blockers.map(b=>[titles[b.kind]||'Холбоотой ажил',b.count]));
+        parent.append(node('p','Холбоотой ажлыг шийдвэрлээд дахин шалгана уу. Үндсэн хувилбар бол эхлээд өөр нийтэлсэн хувилбарыг үндсэн болгоно.'));return;
+      }
+      if(!result.eligible){parent.append(node('p','Зөвхөн нийтэлсэн хувилбарыг архивлана.'));return;}
+      parent.append(node('p','Архивласны дараа энэ хувилбарыг шууд дахин идэвхжүүлэхгүй. Дахин ашиглах бол шинэ ноорог хуулбар үүсгэнэ. Өмнөх бүртгэлийн түүх хадгалагдана.'));
+      form(parent,'Хувилбар архивлах',[reason(),field('reviewed','Архивлах нөхцөл, үр дүнг ойлгосон','checkbox')],'Хувилбарыг архивлах',v=>api(url+'/archive',{reason:v.reason,expected_revision:result.revision,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('templates');say('Хувилбар архивлагдлаа. Түүхэн бүрдэл хадгалагдсан.');}});
+    }catch(e){if(seq!==generation||!parent.isConnected)return;parent.replaceChildren(node('p',e.message,'error'),btn('Архивлах нөхцөлийг дахин ачаалах',()=>guard(()=>archivePreview(parent,data,seq))));}
+  }
+  const batchLabels={...labels,IN_PROGRESS:'Шилжүүлэг үргэлжилж буй',PARTIALLY_COMPLETED:'Хэсэгчлэн дууссан',FAILED_VALIDATION:'Хүлээн авсан өрөө алга',SKIPPED:'Алгассан',ROLLBACK_REQUIRED:'Буцаалт шаардлагатай',ROLLED_BACK:'Буцаасан'};
+  const batchPath=data=>templatePath(data.template_id,data.version.version_id)+'/rollout-batches';
+  const batchRoomName=item=>item.room_number??'Өрөө олдсонгүй';
+  // Shared bounded selection owner: native checkboxes, explicit page scope,
+  // selection retained across pages in memory only, with a live total.
+  function multiSelection(parent,items,chosen,onChange){
+    const group=node('fieldset'),legend=node('legend','Энэ хэсгийн өрөөнүүд'),controls=[];group.append(legend);
+    const update=()=>{for(const {input,item} of controls){input.checked=chosen.has(item.room_id);input.disabled=chosen.size>=100&&!input.checked;}onChange();};
+    for(const item of items){const label=node('label',undefined,'field'),input=node('input');input.type='checkbox';input.checked=chosen.has(item.room_id);label.append(input,document.createTextNode(` ${batchRoomName(item)} өрөө сонгох`));group.append(label);controls.push({input,item});input.addEventListener('change',()=>{if(input.checked)chosen.set(item.room_id,item);else chosen.delete(item.room_id);dirty=true;update();});}
+    const bar=actions(group);bar.append(btn('Энэ хэсгийг сонгох',()=>{for(const item of items){if(chosen.size>=100)break;chosen.set(item.room_id,item);}dirty=true;update();}),btn('Бүх сонголтыг арилгах',()=>{chosen.clear();dirty=true;update();}));parent.append(group);update();
+  }
+  function batchPicker(container,data,retry=null,chosen=new Map()){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);let pageSeq=0;
+    parent.append(node('h3',retry?'Алгассан, цуцалсан өрөөнөөс дахин сонгох':'Шилжүүлэх өрөөнүүд сонгох'),node('p',`Хувилбар ${data.version.version_number} · ${retry?'1–100':'2–100'} өрөө. Сонголт хуудас солиход хадгалагдана. Батлах хүртэл өрөөнд хориг үүсэхгүй.`));
+    const count=node('p',''),selection=node('div'),list=node('div'),feedback=node('p','','error'),bar=actions(parent);count.setAttribute('role','status');
+    const preview=btn('Сонгосон өрөөнүүдийг шалгах',()=>batchPreview(container,data,[...chosen.values()],retry,chosen),'primary');bar.append(preview);parent.append(count,selection,feedback,list);
+    const update=()=>{count.textContent=`Сонгосон: ${chosen.size} / 100`;preview.disabled=chosen.size<(retry?1:2);selection.replaceChildren();for(const item of chosen.values())selection.append(btn(`${batchRoomName(item)} сонголт хасах`,()=>{chosen.delete(item.room_id);dirty=true;renderCurrent();}));};
+    let current=[];const renderCurrent=()=>{list.replaceChildren();multiSelection(list,current,chosen,update);};
+    const pages=actions(parent),first=btn('Сонголтын эхний хэсэг',()=>load('')),next=btn('Сонголтын дараагийн хэсэг',()=>load(current.at(-1).room_id));pages.append(first,next);
+    async function load(after){const request=++pageSeq;list.setAttribute('aria-busy','true');first.disabled=true;next.disabled=true;feedback.textContent='Өрөөнүүд ачаалж байна…';
+      try{const rows=retry?retry.items.filter(i=>['SKIPPED','CANCELLED','ROLLED_BACK'].includes(i.state)):await api(path(`rooms?limit=100&after=${enc(after)}`));if(seq!==generation||request!==pageSeq||!parent.isConnected)return;
+        current=rows.map(r=>({...r,room_number:r.room_number??r.number??null}));renderCurrent();feedback.textContent=rows.length?'':'Энэ хэсэгт өрөө алга.';first.disabled=!!retry||!after;next.disabled=!!retry||rows.length<100;
+      }catch(e){if(seq===generation&&request===pageSeq&&parent.isConnected){feedback.replaceChildren(node('span',e.message),btn('Сонголтыг дахин ачаалах',()=>load(after)));}}
+      finally{if(request===pageSeq)list.setAttribute('aria-busy','false');}
+    }update();load('');
+  }
+  async function batchPreview(container,data,selected,retry,chosen){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.setAttribute('aria-busy','true');parent.append(node('p','Өрөө бүрийн нөхцөл шалгаж байна…'));
+    try{const result=await api(batchPath(data)+'/preview',{room_ids:selected.map(r=>r.room_id),...(retry?{retry_of_batch_id:retry.batch_id}:{})});if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('h3',`Шилжүүлгийн урьдчилсан шалгалт · Хувилбар ${result.target.version_number}`),node('p',`Сонгосон: ${result.items.length} · Боломжтой: ${result.items.filter(i=>i.eligible).length}. Батлах үед өрөө бүрийн нөхцөлийг дахин шалгана.`));
+      table(parent,'Өрөө бүрийн урьдчилсан үр дүн',['Өрөө','Шилжүүлэх нөхцөл'],result.items.map(i=>[batchRoomName(i),i.eligible?(i.disposition==='READY_NOW'?'Тооллого шууд эхэлнэ':'Өмнөх ажлууд дуусахыг хүлээнэ'):(errors[i.code]||'Өрөө олдсонгүй эсвэл шилжүүлэх боломжгүй.')]));
+      parent.append(node('p',configurationNotice),node('p','Боломжгүй өрөөг шалтгаантай нь алгасна. Хүлээн авсан өрөө бүрийн ажил тусдаа үргэлжилнэ.'));
+      actions(parent).append(btn('Өрөөний сонголт руу буцах',()=>guard(()=>batchPicker(container,data,retry,chosen))),btn('Урьдчилсан шалгалт шинэчлэх',()=>guard(()=>batchPreview(container,data,selected,retry,chosen))));
+      form(parent,'Шилжүүлгийн багц батлах',[reason(),field('reviewed','Хувилбар, өрөө бүрийн үр дүн болон хоригийг ойлгосон','checkbox')],'Багцыг батлах',v=>api(batchPath(data),{rooms:result.items.map(i=>({room_id:i.room_id,expected_room_revision:i.room_revision})),reason:v.reason,idempotency_key:v.idempotency_key,...(retry?{retry_of_batch_id:retry.batch_id}:{})}),{success:result=>batchDetail(container,data,result.batch_id)});
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.code==='BATCH_RETRY_NOT_READY'?'Өмнөх багцын төлөв өөрчлөгдсөн. Түүхийг шинэчилж дахин сонгоно уу.':e.message,'error'),btn('Багцын шалгалтыг дахин ачаалах',()=>batchPreview(container,data,selected,retry,chosen)),btn('Өрөөний сонголт руу буцах',()=>guard(()=>batchPicker(container,data,retry,chosen))));}
+    finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function batchDetail(container,data,id){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Багцын явцыг ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const result=await api(path(`minibar/rollout-batches/${enc(id)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('h3',`Шилжүүлгийн багц · Хувилбар ${result.target.version_number}`),node('p',batchLabels[result.state]),node('p',`Сонгосон: ${result.counts.selected} · Хүлээн авсан: ${result.counts.accepted} · Хэрэгжсэн: ${result.counts.APPLIED} · Алгассан: ${result.counts.SKIPPED} · Цуцалсан: ${result.counts.CANCELLED}`),node('p',`Бүртгэсэн: ${time(result.recorded_at)} · Шалтгаан: ${result.reason}`));
+      table(parent,'Төлөв бүрийн өрөөний тоо',['Төлөв','Өрөөний тоо'],['READY_FOR_RECONCILIATION','SCHEDULED_AFTER_STAY','IN_PROGRESS','BLOCKED_STOCK','BLOCKED_VARIANCE','APPLIED','SKIPPED','CANCELLED','ROLLBACK_REQUIRED','ROLLED_BACK'].map(state=>[batchLabels[state],result.counts[state]??0]));
+      if(result.retry_of_batch_id)parent.append(node('p','Өмнөх багцаас дахин оролдсон. Өмнөх түүх хадгалагдсан.'));
+      table(parent,'Өрөө бүрийн шилжүүлгийн явц',['Өрөө','Төлөв','Тайлбар'],result.items.map(i=>[batchRoomName(i),batchLabels[i.state]||i.state,i.code?(errors[i.code]||'Өрөө олдсонгүй эсвэл боломжгүй.'):'—']));
+      const bar=actions(parent);bar.append(btn('Багцын явц шинэчлэх',()=>guard(()=>batchDetail(container,data,id))),btn('Багцын түүх рүү буцах',()=>guard(()=>batchHistory(container,data))));
+      if(result.items.some(i=>['SKIPPED','CANCELLED','ROLLED_BACK'].includes(i.state))&&data.version.state==='PUBLISHED')bar.append(btn('Алгассан, цуцалсан өрөөг дахин сонгох',()=>guard(()=>batchPicker(container,data,result))));
+      if(result.items.some(i=>!['SKIPPED','APPLIED','CANCELLED','ROLLED_BACK','ROLLBACK_REQUIRED'].includes(i.state))){parent.append(node('p','Үлдсэн ажлыг цуцлахад хэрэгжсэн өрөөнүүд хэвээр үлдэнэ. Хөдөлгөөнгүй хүсэлт цуцлагдана. Бараа шилжүүлсэн өрөөнд буцаалтын ажил нээгдэж, дуусах хүртэл хориг хэвээр байна.'));
+        form(parent,'Багцын үлдсэн ажлыг цуцлах',[reason(),field('reviewed','Үлдсэн өрөөнүүдийн ажлыг цуцлахыг баталж байна','checkbox')],'Үлдсэн ажлыг цуцлах',v=>api(path(`minibar/rollout-batches/${enc(id)}/cancel-remaining`),{expected_revision:result.revision,reason:v.reason,idempotency_key:v.idempotency_key}),{success:()=>batchDetail(container,data,id)});
+      }
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Багцын явцыг дахин ачаалах',()=>batchDetail(container,data,id)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function batchHistory(container,data,after=''){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Багцын түүх ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{const result=await api(batchPath(data)+`?limit=20&after=${enc(after)}`);if(seq!==generation||!parent.isConnected)return;parent.replaceChildren();parent.append(node('h3','Шилжүүлгийн багцын түүх'));if(!result.items.length)parent.append(node('p','Энэ хэсэгт шилжүүлгийн багц алга.'));
+      for(const item of result.items){const row=record(parent,`${time(item.recorded_at)} · ${batchLabels[item.state]}`,`Сонгосон: ${item.counts.selected} · Хэрэгжсэн: ${item.counts.APPLIED}`);actions(row).append(btn('Багцын явцыг нээх',()=>guard(()=>batchDetail(container,data,item.batch_id))));}
+      const pages=actions(parent);pages.append(btn('Багцын эхний хэсэг',()=>guard(()=>batchHistory(container,data))),btn('Багцын дараагийн хэсэг',()=>guard(()=>batchHistory(container,data,result.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!result.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Багцын түүхийг дахин ачаалах',()=>batchHistory(container,data,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function rolloutRoomPicker(container,data,after){
+    const parent=node('div');container.replaceChildren(parent);const seq=generation;
+    parent.setAttribute('aria-busy','true');parent.append(node('p','Өрөөнүүдийг ачаалж байна…'));
+    try{
+      const list=await api(path(`rooms?limit=100&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('p','Ижил загварын өөр нийтэлсэн хувилбарт шилжүүлнэ. Эхлээд өрөөний нөхцөлийг шалгана.'));
+      const detail=node('div');
+      for(const room of list){const r=record(parent,room.number,labels[room.status]);actions(r).append(btn('Шилжүүлэх нөхцөл шалгах',()=>guard(()=>rolloutPreview(detail,data,room.room_id))));}
+      if(!list.length)parent.append(node('p','Энэ хэсэгт өрөө алга.'));
+      const pages=actions(parent);pages.append(btn('Өрөөний эхний хэсэг',()=>guard(()=>rolloutRoomPicker(container,data,''))),btn('Өрөөний дараагийн хэсэг',()=>guard(()=>rolloutRoomPicker(container,data,list.at(-1).room_id))));pages.firstChild.disabled=!after;pages.lastChild.disabled=list.length<100;parent.append(detail);
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Өрөөнүүдийг дахин ачаалах',()=>rolloutRoomPicker(container,data,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function rolloutPreview(container,data,room){
+    const parent=node('div');container.replaceChildren(parent);const seq=generation,url=templatePath(data.template_id,data.version.version_id)+`/rollout/${enc(room)}`;
+    parent.setAttribute('aria-busy','true');parent.append(node('p','Шилжүүлэх нөхцөлийг шалгаж байна…'));
+    try{
+      const p=await api(url+'/preview');if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('h3',`${p.room_number} · Хувилбар ${data.version.version_number}`));
+      if(!p.eligible){parent.append(node('p',errors[p.code]||'Энэ өрөөг шилжүүлэх боломжгүй.','error'));const disabled=btn('Шилжүүлэх хүсэлт батлах',()=>{});disabled.disabled=true;parent.append(disabled);return;}
+      parent.append(node('p',p.disposition==='READY_NOW'?'Тооллогын ажил шууд үүснэ. Менежер цэвэрлэгч онооно.':'Өмнөх байрлалт, төлбөр болон минибарын ажил дуусмагц тооллогын ажил үүснэ.'),node('p',configurationNotice));
+      const f=form(parent,'Өрөөний хувилбар шилжүүлэх',[reason(),field('reviewed','Зорилтот хувилбар болон өрөөний хоригийг ойлгосон','checkbox')],'Шилжүүлэх хүсэлт батлах',v=>api(url,{expected_room_revision:p.room_revision,reason:v.reason,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('rooms');say('Шилжүүлэх хүсэлт бүртгэгдлээ. Тооллого, шилжүүлэлт дуусахад өрөөний хувилбар солигдоно.');}});f.querySelector('input').focus();
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Шилжүүлэх нөхцөлийг дахин ачаалах',()=>rolloutPreview(container,data,room)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  const configurationNotice='Хүсэлт илгээмэгц энэ өрөөнд шинэ зочин болон захиалга оноохыг түр хаана. Одоогийн зочин, минибарын горим хэвээр үлдэнэ. Тооллого, барааны шилжүүлэлт дууссаны дараа тохиргоог хэрэгжүүлнэ.';
+  async function configurationRoomPicker(container,data,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Өрөөнүүд ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const list=await api(path(`rooms?limit=100&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('p',configurationNotice));
+      const available=list.filter(r=>r.status==='ACTIVE'&&r.category_status==='ACTIVE'&&!r.pending_minibar_change);
+      if(available.length){const f=form(parent,`${data.name} · Хувилбар ${data.version.version_number} тохируулах`,[select('room_id','Тохируулах өрөө',choices(available,'room_id',r=>`${r.number} · ${r.category_name}`)),reason(),field('reviewed','Өрөөний шинэ бүртгэл түр хаагдахыг ойлгосон','checkbox')],'Тохиргооны хүсэлт илгээх',v=>api(path(`rooms/${enc(v.room_id)}/minibar-configuration/requests`),{target_mode:'ON',target_template_id:data.template_id,target_version_id:data.version.version_id,expected_room_revision:available.find(r=>r.room_id===v.room_id).revision,reason:v.reason,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('rooms');say('Тохиргооны хүсэлт бүртгэгдлээ. Өрөөний шинэ бүртгэл түр хаагдсан.');}});f.querySelector('select').focus();}
+      else parent.append(node('p','Энэ хэсэгт хүсэлт илгээж болох өрөө алга. Дараагийн хэсгийг шалгана уу.'));
+      const pages=actions(parent);pages.append(btn('Өрөөний эхний хэсэг',()=>guard(()=>configurationRoomPicker(container,data,''))),btn('Өрөөний дараагийн хэсэг',()=>guard(()=>configurationRoomPicker(container,data,list.at(-1).room_id))));pages.firstChild.disabled=!after;pages.lastChild.disabled=list.length<100;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Өрөөнүүдийг дахин ачаалах',()=>configurationRoomPicker(container,data,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function roomConfiguration(container,room,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Тохиргоо ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(path(`rooms/${enc(room)}/minibar-configuration?limit=20&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();parent.append(node('h2',`${data.room_number} · Минибарын тохиргоо`),node('p',`Одоогийн горим: ${data.current.mode==='OFF'?'Минибаргүй':data.current.mode==='ON'?'Минибартай':'Туршилтын минибартай'}`));
+      if(data.shortage){const a=data.shortage;parent.append(node('p',a.used_stay_id?'Дутуу нөөцийн зөвшөөрлийг байрлалтад ашигласан':a.ready?'Дутуу — Manager зөвшөөрсөн':'Дутуу нөөцийн зөвшөөрлийг дахин шалгуулах шаардлагатай','notice'));shortageReview(parent,a);}
+      const p=data.pending;
+      if(p){parent.append(node('h3','Хүлээгдэж буй хүсэлт'),node('p',labels[p.state]),node('p',p.target_mode==='OFF'?'Зорилго: минибарыг унтраах':`Зорилго: ${p.target_snapshot.template_name} · Хувилбар ${p.target_snapshot.version_number}`),node('p',`Шалтгаан: ${p.reason}`),node('p',configurationNotice));
+        table(parent,'Хүсэлтийн бүрдэл',['Бүтээгдэхүүн','Тоо','Нэгж'],p.target_snapshot.items.map(i=>[i.name,i.target_quantity,i.unit]));
+        if(manager()&&['SCHEDULED_AFTER_STAY','READY_FOR_RECONCILIATION'].includes(p.state)&&(p.request_kind!=='ROLLOUT'||p.state==='READY_FOR_RECONCILIATION'))form(parent,'Тохиргооны тооллого даалгах',[select('assignee_id','Тоолох цэвэрлэгч',choices((overview.staff||[]).filter(s=>s.roles.includes('CLEANER')),'account_id','email'))],'Тооллого даалгах',v=>api(path(`minibar/configuration-requests/${enc(p.request_id)}/prepare`),{...v,expected_revision:p.revision}),{success:async()=>{await navigate('rooms');say('Тооллогын ажил даалгалаа. Цэвэрлэгч өөрийн ажлаас нээнэ.');}});
+        if(manager()&&!['SCHEDULED_AFTER_STAY','READY_FOR_RECONCILIATION'].includes(p.state)){const detail=node('div');parent.append(detail);actions(parent).append(btn('Тооллого, шилжүүлэлтийн төлөвлөгөө',()=>guard(()=>reconciliationManagerDetail(detail,p.request_id,()=>roomConfiguration(container,room,after)))));}
+        if(manager()&&p.state!=='ROLLBACK_REQUIRED')form(parent,'Хүлээгдэж буй хүсэлтийг цуцлах',[reason()],'Хүсэлтийг цуцлах',v=>api(path(`minibar/configuration-requests/${enc(p.request_id)}/cancel`),{...v,expected_revision:p.revision}),{success:async result=>{await navigate('rooms');say(result.state==='ROLLBACK_REQUIRED'?'Буцаалтын ажил нээгдлээ. Анхны үлдэгдэл сэргэсэн үед өрөөний хориг тайлагдана.':'Хүсэлт цуцлагдлаа. Өрөөний бусад бэлэн байдлын шалгалт хэвээр үйлчилнэ.');}});
+      }else{parent.append(node('p','Хүлээгдэж буй тохиргооны хүсэлт алга.'));
+        if(manager()&&data.current.mode!=='OFF')form(parent,'Минибарыг унтраах хүсэлт',[reason(),field('reviewed','Өрөөний шинэ бүртгэл түр хаагдахыг ойлгосон','checkbox')],'Унтраах хүсэлт илгээх',v=>api(path(`rooms/${enc(room)}/minibar-configuration/requests`),{target_mode:'OFF',expected_room_revision:data.current.room_revision,reason:v.reason,idempotency_key:v.idempotency_key}),{success:async()=>{await navigate('rooms');say('Унтраах хүсэлт бүртгэгдлээ. Барааны тооллого, буцаалт шаардлагатай.');}});
+      }
+      table(parent,'Хүсэлтийн жагсаалт',['Бүртгэсэн цаг','Зорилго','Төлөв','Шалтгаан'],data.items.map(i=>[time(i.recorded_at),i.target_mode==='OFF'?'Унтраах':`${i.target_snapshot.template_name} · ${i.target_snapshot.version_number}`,labels[i.state],i.cancel_reason||i.reason]));
+      const pages=actions(parent);pages.append(btn('Хүсэлтийн эхний хэсэг',()=>guard(()=>roomConfiguration(container,room,''))),btn('Хүсэлтийн дараагийн хэсэг',()=>guard(()=>roomConfiguration(container,room,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Тохиргоог дахин ачаалах',()=>roomConfiguration(container,room,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function templateProductPicker(container,data,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Бүтээгдэхүүн ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const products=await api(path(`minibar/products?limit=50&after=${enc(after||'')}`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();const available=products.items.filter(p=>p.status==='ACTIVE'&&!data.version.items.some(i=>i.product_id===p.product_id));
+      if(available.length){const f=form(parent,'Ноорог бүрдэлд бүтээгдэхүүн нэмэх',[select('product_id','Нэмэх бүтээгдэхүүн',choices(available,'product_id',p=>`${p.name} · ${p.unit}`)),field('target_quantity','Байлгах тоо','number',{min:1})],'Бүрдэлд нэмэх',v=>api(templatePath(data.template_id,data.version.version_id),{expected_revision:data.revision,idempotency_key:v.idempotency_key,items:data.version.items.map(i=>({product_id:i.product_id,target_quantity:i.target_quantity})).concat([{product_id:v.product_id,target_quantity:v.target_quantity}])},'PUT'),{success:async()=>{await navigate('templates');say('Ноорог бүрдэлд бүтээгдэхүүн нэмэгдлээ.');}});f.querySelector('select').focus();}
+      else parent.append(node('p','Энэ хэсэгт нэмж болох бүтээгдэхүүн алга. Агуулахад идэвхтэй бүтээгдэхүүн бүртгэх эсвэл дараагийн хэсгийг шалгана уу.'));
+      const pages=actions(parent);pages.append(btn('Бүтээгдэхүүний эхний хэсэг',()=>guard(()=>templateProductPicker(container,data,''))),btn('Бүтээгдэхүүний дараагийн хэсэг',()=>guard(()=>templateProductPicker(container,data,products.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!products.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Бүтээгдэхүүнийг дахин ачаалах',()=>templateProductPicker(container,data,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  function fundingForm(parent){form(parent,'Бүртгэлийн барьцаа бэлтгэх',[select('room_id','Өрөө',choices(rooms,'room_id','number')),select('channel','Суваг',channels().filter(c=>c[0]!=='CASH')),field('reference','POS баримтын дугаар','text',{optional:true}),field('terminal_id','Терминалын дугаар','text',{optional:true}),field('transacted_at','POS гүйлгээний цаг (Улаанбаатар)','datetime-local',{optional:true})],'Барьцааны эх үүсвэр бүртгэх',v=>{const body={room_id:v.room_id,channel:v.channel,idempotency_key:v.idempotency_key};if(v.channel==='MANUAL_POS')Object.assign(body,{reference:v.reference||'',terminal_id:v.terminal_id||'',transacted_at:v.transacted_at?new Date(v.transacted_at+'+08:00').toISOString():''});return api(path('check-in-funding'),body);});}
+  function checkin(parent,booking=null,room=null){
+    const kinds=[['MN_REG_NO','Монгол регистр'],['FOREIGN_PASSPORT','Гадаад паспорт'],['OTHER_GOV_ID','Бусад төрийн баримт'],['NO_DOCUMENT','Баримтгүй']];
+    const start=node('div');parent.append(start);
+    form(start,'Бүртгэлийн төрөл',[select('identity_type','Баримтын төрөл',kinds)],'Зочны мэдээлэл оруулах',async v=>v,{success:async(r,f)=>{f.remove();const fields=[field('family_name','Овог'),field('given_name','Нэр'),field('date_of_birth','Төрсөн огноо','date'),field('nationality','Иргэншил')];
+      if(r.identity_type!=='NO_DOCUMENT')fields.push(field('document_number','Баримтын дугаар'));
+      if(['FOREIGN_PASSPORT','OTHER_GOV_ID'].includes(r.identity_type))fields.push(field('issuing_country','Олгосон улс (2 үсэг)'));
+      if(r.identity_type==='FOREIGN_PASSPORT')fields.push(field('expiry_date','Баримтын дуусах огноо','date'));
+      if(r.identity_type==='OTHER_GOV_ID')fields.push(field('document_type','Баримтын төрөл'),field('issuing_authority','Олгосон байгууллага'));
+      if(r.identity_type==='NO_DOCUMENT')fields.push(field('no_document_reason','Баримтгүй шалтгаан','textarea'),field('note','Нэмэлт тайлбар','textarea'));
+      fields.push(field('guardian_name','Асран хамгаалагчийн нэр','text',{optional:true}),field('guardian_phone','Асран хамгаалагчийн утас','tel',{optional:true}),field('guardian_relationship','Хамаарал','text',{optional:true}));
+      if(!booking)fields.push(select('room_id','Өрөө',choices(room?[room]:rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id','number')),select('kind','Хугацааны төрөл',[['HOURLY','Цагаар'],['NIGHTLY','Хоногоор']]),amount('duration_units','Цаг / хоногийн тоо',1),select('deposit_channel','Барьцаа авах суваг',[["CASH","Бэлэн"],["FUNDING","Баталгаажсан POS / банкны барьцаа"]]),amount('deposit_amount','Бэлнээр авсан барьцаа (₮)'),field('received','Бэлэн барьцааг биечлэн авсан','checkbox',{optional:true}),select('funding_id','Өмнө баталгаажсан барьцаа',[['','Сонгоогүй'],...choices(overview.funding?.filter(f=>f.state==='CONFIRMED')||[],'funding_id',f=>`${rooms.find(r=>r.room_id===f.room_id)?.number||'Өрөө'} · ${labels[f.channel]} · ${money(f.amount_mnt)}`)],true));
+      const depositField=fields.find(f=>f.name==='deposit_amount');if(depositField)depositField.optional=true;
+      if(booking?.category_id)fields.push(select('room_id','Оноох өрөө',choices(rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id',r=>`${r.number} · ${r.category_name}`)));
+      fields.push(field('actual_checkin_at','Өмнө ирсэн цаг (Улаанбаатар)','datetime-local',{optional:true}),field('backdate_reason','Өмнө ирсэн цагийн шалтгаан','textarea',{optional:true}));
+      const sections={family_name:'Зочны мэдээлэл',guardian_name:'Асран хамгаалагч · 18 нас хүрээгүй зочинд',room_id:'Өрөө ба байрлах хугацаа',deposit_channel:'Барьцааны мэдээлэл',actual_checkin_at:'Ирсэн цагийн нэмэлт мэдээлэл'};for(const spec of fields)if(sections[spec.name])spec.section=sections[spec.name];
+      form(start,booking?'Онлайн захиалгаар зочин бүртгэх':'Шууд ирсэн зочин бүртгэх',fields,'Зочны бүртгэл баталгаажуулах',async v=>{
+        const guest={identity_type:r.identity_type};for(const key of ['family_name','given_name','date_of_birth','nationality','document_number','issuing_country','expiry_date','document_type','issuing_authority','no_document_reason','note'])if(v[key])guest[key]=v[key];
+        if(v.guardian_name||v.guardian_phone||v.guardian_relationship)guest.guardian={name:v.guardian_name||'',phone:v.guardian_phone||'',relationship:v.guardian_relationship||''};
+        const body={guest,idempotency_key:v.idempotency_key};if(v.actual_checkin_at)body.actual_checkin_at=new Date(v.actual_checkin_at+'+08:00').toISOString();if(v.backdate_reason)body.backdate_reason=v.backdate_reason;
+        if(!booking){Object.assign(body,{room_id:v.room_id,kind:v.kind,duration_units:v.duration_units});if(v.deposit_channel==='CASH')body.deposit={channel:'CASH',amount_mnt:v.deposit_amount||0,received:v.received};else body.funding_id=v.funding_id||'';}
+        if(booking?.category_id)body.room_id=v.room_id;
+        return api(booking?path(`${booking.category_id?'booking-holds':'bookings'}/${enc(booking.booking_id)}/check-in`):path('stays/check-in'),body);
+      },{focus:true,success:async(result,f,status)=>{showResult(status,result);f.querySelector('button[type=submit]').hidden=true;await reloadOverview();status.append(btn('Байрлалтыг нээх',()=>openStay({stay_id:result.stay_id,room_id:result.room_id},start)));}});
+    }});
+  }
+  async function openStay(s,parent){if(!s)return;const seq=generation;const panel=node('div');parent.append(panel);panel.append(node('p','Байрлалт ачаалж байна…'));
+    try{const [finance,preview,guest]=await Promise.all([api(stayPath(s.stay_id,'finance')),api(stayPath(s.stay_id,'checkout/preview')),api(stayPath(s.stay_id,'guest'))]);if(seq!==generation)return;
+      panel.replaceChildren();selected=s;panel.append(node('h2',`${guest.room_number} · ${guest.guest.family_name} ${guest.guest.given_name}`));
+      panel.append(node('p',`Төлөөгүй: ${money(finance.charge_unpaid_mnt)} · Төлбөрийн боломжит үлдэгдэл: ${money(finance.balance.available)} · Буцаалтад нөөцөлсөн: ${money(finance.balance.refund_reserved)}`));
+      if(preview.price_book){minibarPriceBook(panel,preview.price_book);const refill=node('div');panel.append(refill);actions(panel).append(btn('Минибар нөхөх хүсэлтүүд',()=>guard(()=>stayRefills(refill,s.stay_id,preview.price_book,''))));}
+      if(preview.report?.exception_reason)panel.append(node('p',`Онцгой минибар тайлан · ${preview.report.exception_reason}`));
+      if(manager()&&preview.price_book&&preview.inspection?.state==='REQUESTED'){
+        const book=preview.price_book,fields=book.items.map((i,index)=>field('count_'+index,`${i.name} — бодитоор үлдсэн тоо`,'number',{min:0}));fields.push(field('no_consumption','Минибар хэрэглээгүйг шалгаж баталсан','checkbox',{optional:true}),reason());
+        form(panel,'Онцгой минибар тайлан',fields,'Онцгой тайлан илгээх',v=>{const counts={};for(const [index,i] of book.items.entries()){const n=v['count_'+index],available=preview.availability?.[i.product_id]?.physical_quantity??preview.availability?.[i.product_id]?.available_quantity??i.opening_quantity;if(n>available)throw new Error(`${i.name}: боломжит ${available} тооноос их байна.`);counts[i.product_id]=n;}return api(stayPath(s.stay_id,'minibar-exception-report'),{counts,no_consumption:v.no_consumption===true,reason:v.reason,expected_revision:preview.inspection.revision,idempotency_key:v.idempotency_key});},{success:async()=>{panel.remove();await openStay(s,parent);say('Онцгой минибар тайлан бүртгэгдлээ.');}});
+      }
+      if(manager()&&preview.price_book&&preview.inspection?.state==='REPORTED'&&!finance.balance.frozen&&!finance.pending_payment_mnt&&finance.charges.some(c=>c.kind==='MINIBAR'&&c.paid_mnt>0)){
+        const book=preview.price_book,fields=book.items.map((i,index)=>field('paid_count_'+index,`${i.name} — залруулсан бодит үлдэгдэл`,'number',{min:0}));
+        panel.append(node('p','Тоо залруулахад анхны тайлан, төлбөрийн түүх хадгалагдана. Төлсөн мөнгийг шинэ тайланд хуваарилж, илүү дүнг буцаах үлдэгдэл, дутуу дүнг авлага болгоно. Мөнгө буцаахыг Reception тусад нь батална.'));
+        fields.push(reason(),field('reviewed','Бодит тоо, төлбөрийн өөрчлөлтийг шалгасан','checkbox'));
+        form(panel,'Төлсөн минибарын тоо залруулах',fields,'Төлсөн тайланг залруулах',v=>{
+          const counts={};for(const [index,i] of book.items.entries()){const n=v['paid_count_'+index],max=preview.availability?.[i.product_id]?.physical_quantity??i.opening_quantity;if(n>max)throw new Error(`${i.name}: боломжит ${max} тооноос их байна.`);counts[i.product_id]=n;}
+          return api(stayPath(s.stay_id,'minibar-paid-corrections'),{counts,reason:v.reason,expected_revision:preview.inspection.revision,expected_finance_revision:finance.balance.revision,idempotency_key:v.idempotency_key});
+        },{success:async r=>{panel.remove();await openStay(s,parent);say(`Тайлан залруулагдлаа. Шинэ авлага: ${money(r.new_receivable_mnt)}. Буцаах үлдэгдэл: ${money(r.refundable_credits.reduce((sum,x)=>sum+x.amount_mnt,0))}.`);}});
+      }
+      if(finance.balance.frozen)panel.append(node('p','Санхүүгийн тулгалт хүлээгдэж байна. Platform-ийн хяналт шаардлагатай.','notice'));
+      const rev={expected_revision:finance.balance.revision},prefix=suffix=>stayPath(s.stay_id,suffix);
+      const a=actions(panel);a.append(btn('Байрлалт шинэчлэх',()=>guard(()=>{panel.remove();openStay(s,parent);})));if(role('RECEPTION')){
+        if(packageMnt===30000)a.append(btn('Нэг удаагийн код өгөх',()=>guard(()=>command(panel,'Зочны нэвтрэх код',[],prefix('guest-codes')))));
+        a.append(btn('Төхөөрөмж удирдах',()=>guard(async()=>{try{const devices=await api(prefix('guest-sessions'));for(const d of devices){const r=record(panel,'Зочны төхөөрөмж',time(d.created_at));command(r,'Энэ төхөөрөмжийн эрхийг цуцлах',[],prefix(`guest-sessions/${enc(d.session_id)}/revoke`));}if(!devices.length)panel.append(node('p','Идэвхтэй төхөөрөмж алга.'));}catch(e){say(e.message,true);}})));
+        a.append(btn('Ирсэн цагийн засвар хүсэх',()=>guard(()=>form(panel,'Ирсэн цагийн засвар',[field('actual_checkin_at','Зөв ирсэн цаг (Улаанбаатар)','datetime-local'),reason()],'Хүсэлт илгээх',v=>api(prefix('time-amendments'),{...v,actual_checkin_at:new Date(v.actual_checkin_at+'+08:00').toISOString()})))));
+        a.append(btn('Checkout эхлүүлэх',()=>guard(()=>command(panel,'Checkout эхлүүлэх',[],prefix('checkout/initiate')))));
+      }
+      if(manager()||role('RECEPTION'))a.append(btn('Ирсэн цагийн хүсэлтүүд',()=>guard(async()=>{try{const amendments=await api(prefix('time-amendments'));for(const m of amendments){const r=record(panel,labels[m.state],time(m.actual_checkin_at));if(role('MANAGER')&&m.state==='PENDING')form(r,'Шийдвэр',[select('approve','Шийдвэр',[['yes','Зөвшөөрөх'],['no','Татгалзах']]),reason()],'Шийдвэр бүртгэх',v=>api(prefix(`time-amendments/${enc(m.amendment_id||m.id)}/decision`),{...v,approve:v.approve==='yes'}));}if(!amendments.length)panel.append(node('p','Цагийн засварын хүсэлт алга.'));}catch(e){say(e.message,true);}})));
+      financeRecords(panel,s,finance);
+      if(preview.inspection){panel.append(node('h3',`Минибар · ${labels[preview.inspection.state]}`));if(preview.report)for(const item of preview.report.items)panel.append(node('p',`${item.name} · ${item.used_quantity} хэрэглэсэн`));
+        if(role('RECEPTION')||manager())form(panel,'Минибарын тайлан хянах',[select('action','Үйлдэл',role('RECEPTION')?[['RETURN','Дахин шалгуулах'],['DISPUTE','Маргаан үүсгэх']]:[['UPHOLD','Тайланг хэвээр батлах'],['WAIVE','Төлбөрөөс чөлөөлөх']]),reason()],'Шийдвэр бүртгэх',v=>api(prefix('minibar-review'),v));}
+      const checkoutFields=[];for(const order of preview.restaurant_orders){panel.append(node('p',`${order.restaurant_name} · ${order.contact_phone} · ${labels[order.state]||order.state}`));checkoutFields.push(select('order_'+order.order_id,`${order.restaurant_name} — зочны сонголт`,[['RECEPTION_PICKUP','Reception дээр хүлээн авах'],['GUEST_PICKUP','Зочин өөрөө авах'],['REFUND_REQUEST','Буцаалт хүсэх'] ]));}
+      if(preview.restaurant_orders.length)checkoutFields.push(field('guest_informed','Дуусаагүй захиалга бүрийг зочинд мэдээлсэн','checkbox'));
+      if(role('RECEPTION'))form(panel,'Checkout дуусгах',checkoutFields,'Зочны checkout баталгаажуулах',v=>api(prefix('checkout'),{...rev,idempotency_key:v.idempotency_key,restaurant_choices:preview.restaurant_orders.map(o=>({order_id:o.order_id,choice:v['order_'+o.order_id]})),guest_informed:!!v.guest_informed}),{success:async(result,f,status)=>{showResult(status,result);await reloadOverview();f.querySelector('button[type=submit]').hidden=true;}});
+    }catch(e){panel.replaceChildren(node('p',e.message,'error'));panel.append(btn('Дахин ачаалах',()=>{panel.remove();openStay(s,parent);}));}
+  }
+  function financeRecords(panel,s,finance,{historical=false,billingChargeId=null}={}){
+    const rev={expected_revision:finance.balance.revision},prefix=suffix=>stayPath(s.stay_id,suffix);
+      for(const charge of finance.charges){const r=record(panel,labels[charge.kind],`${money(charge.amount_mnt)} · Төлсөн ${money(charge.paid_mnt)}`);
+        if(role('RECEPTION')&&charge.amount_mnt>charge.paid_mnt&&(!historical||(!finance.balance.frozen&&charge.id===billingChargeId))){const acts=actions(r);
+          acts.append(btn('Төлбөр авах',()=>guard(()=>paymentForm(r,s,charge,rev))));
+          if(finance.balance.available>0)acts.append(btn('Барьцаанаас суутгах',()=>guard(()=>command(r,'Барьцаанаас суутгах',[select('receipt_id','Барьцааны эх үүсвэр',choices(finance.receipts.filter(r=>r.purpose==='DEPOSIT'&&r.amount_mnt-r.allocated-r.refund_reserved-r.refunded-r.reversed>0),'id',r=>`${labels[r.channel]} · ${money(r.amount_mnt-r.allocated-r.refund_reserved-r.refunded-r.reversed)}`)),amount()],prefix('deposit-allocations'),{...rev,charge_id:charge.id}))));}
+      }
+      for(const receipt of finance.receipts){const r=record(panel,`${labels[receipt.purpose]} · ${labels[receipt.channel]}`,`${money(receipt.amount_mnt)} · Суутгасан ${money(receipt.allocated)} · Буцаасан ${money(receipt.refunded)} · Reversal ${money(receipt.reversed)}`);
+        if(role('RECEPTION')){const acts=actions(r);if((receipt.purpose==='DEPOSIT'||receipt.refund_eligible)&&receipt.amount_mnt-receipt.allocated-receipt.refund_reserved-receipt.refunded-receipt.reversed>0)acts.append(btn('Буцаалт нөөцлөх',()=>guard(()=>command(r,receipt.purpose==='DEPOSIT'?'Барьцааны буцаалт':'Илүү төлөлтийн буцаалт',[amount(),select('channel','Буцаах суваг',channels()),field('recipient','Хүлээн авагч / данс'),reason()],prefix('refunds'),{...rev,receipt_id:receipt.id}))));
+          if(!historical&&!receipt.reversed&&!receipt.refunded&&!receipt.refund_reserved)acts.append(btn('Бүртгэл залруулах',()=>guard(()=>correctionForm(r,s,receipt,rev))));}
+      }
+      for(const p of finance.payment_intents){const r=record(panel,`${labels[p.provider]} · ${money(p.amount_mnt)}`,labels[p.state]||p.state);if(p.state==='PENDING'&&role('RECEPTION')){form(r,'Банкны төлөв тулгах',[],'Тулгах',()=>api(prefix(`payment-intents/${enc(p.id)}/reconcile`),{}));command(r,'Төлөгдөөгүй нэхэмжлэлийг цуцлах',[reason()],prefix(`payment-intents/${enc(p.id)}/cancel`),rev);}}
+      for(const refund of finance.refunds){const r=record(panel,'Буцаалт',`${money(refund.amount_mnt)} · ${labels[refund.state]}`);if(refund.state==='RESERVED'){
+        if(role('RECEPTION')){command(r,'Биечлэн дууссан буцаалтыг батлах',[field('recipient_confirmation','Хүлээн авсан баталгаа'),field('reference','POS буцаалтын дугаар','text',{optional:true})],prefix(`refunds/${enc(refund.id)}/complete`),rev);form(r,'Банкны буцаалт тулгах',[],'Тулгах',()=>api(prefix(`refunds/${enc(refund.id)}/reconcile`),{}));}
+        if(manager()){form(r,'Өөр сувгийн буцаалтын шийдвэр',[select('approve','Шийдвэр',[['yes','Зөвшөөрөх'],['no','Татгалзах']]),reason()],'Шийдвэр бүртгэх',v=>api(prefix(`refunds/${enc(refund.id)}/approval`),{...v,approve:v.approve==='yes'}));command(r,'Илгээгээгүй / амжилтгүйг баталсан буцаалтыг чөлөөлөх',[reason(),field('cash_not_handed','Зочинд мөнгө очоогүйг баталж байна','checkbox')],prefix(`refunds/${enc(refund.id)}/release`),rev);}
+      }}
+      for(const correction of finance.corrections){const r=record(panel,'Төлбөрийн засвар',`${labels[correction.state]} · Шинэ дүн ${money(correction.replacement_amount_mnt)}`);if(correction.state==='PENDING'){
+        if(role('RECEPTION'))form(r,'Засварын банкны нэхэмжлэл',[],'Нэхэмжлэл үүсгэх',()=>api(prefix(`financial-corrections/${enc(correction.id)}/invoice`),{}));
+        if(manager())form(r,'Засварын шийдвэр',[select('approve','Шийдвэр',[['yes','Зөвшөөрөх'],['no','Татгалзах']]),reason()],'Шийдвэр бүртгэх',v=>api(prefix(`financial-corrections/${enc(correction.id)}/decision`),{...rev,...v,approve:v.approve==='yes'}));}}
+  }
+  function paymentForm(parent,s,charge,rev){form(parent,'Төлбөрийн суваг',[select('channel','Суваг',channels())],'Дүн оруулах',async v=>v,{success:async(result,f)=>{f.remove();const channel=result.channel;const fields=[amount('amount_mnt','Авах дүн (₮)',charge.amount_mnt-charge.paid_mnt)];if(channel==='CASH')fields.push(field('received','Бэлэн мөнгийг биечлэн авсан','checkbox'));if(channel==='MANUAL_POS')fields.push(field('reference','POS баримтын дугаар'),field('terminal_id','Терминалын дугаар'),field('transacted_at','Гүйлгээний цаг (Улаанбаатар)','datetime-local'));
+      form(parent,`${labels[channel]} төлбөр`,fields,'Төлбөр бүртгэх',v=>{const body={...rev,...v,charge_id:charge.id};let suffix;if(channel==='CASH'){suffix='cash-receipts';Object.assign(body,{channel:'CASH',purpose:'PAYMENT'});}else if(channel==='MANUAL_POS'){suffix='pos-payments';body.transacted_at=new Date(v.transacted_at+'+08:00').toISOString();}else{suffix='payment-intents';body.provider=channel;}return api(stayPath(s.stay_id,suffix),body);});}});}
+  function correctionForm(parent,s,receipt,rev){form(parent,'Бүртгэлийн засвар',[field('replacement_amount_mnt','Зөв дүн (₮)','number',{min:0,value:receipt.amount_mnt}),select('channel','Зөв суваг',channels()),reason(),field('reference','Шинэ POS баримтын дугаар','text',{optional:true}),field('terminal_id','Шинэ POS терминал','text',{optional:true}),field('transacted_at','POS гүйлгээний цаг (Улаанбаатар)','datetime-local',{optional:true})],'Засвар хүсэх',v=>{const body={...rev,idempotency_key:v.idempotency_key,receipt_id:receipt.id,replacement_amount_mnt:v.replacement_amount_mnt,replacement_channel:v.channel,reason:v.reason};if(v.channel==='MANUAL_POS'&&v.replacement_amount_mnt>0)body.proof={reference:v.reference||'',terminal_id:v.terminal_id||'',transacted_at:v.transacted_at?new Date(v.transacted_at+'+08:00').toISOString():''};return api(stayPath(s.stay_id,'financial-corrections'),body);});}
+  async function shiftTools(parent,seq){
+    if(role('HOTEL_ADMIN')&&!overview.completion_only){
+      command(parent,'Касс шинээр тохируулах',[field('code','Кассын код'),field('name','Кассын нэр'),field('physical_location','Байршил'),field('expected_float','Тохируулсан эхлэх үлдэгдэл (₮)','number',{min:0,value:0})],path('cash/drawers'));
+      const policy=overview.shift_policy||[false,0];form(parent,'Ганцаар ажиллах горим',[select('single_worker','Горим',[['no','Ердийн хүлээлцэх'],['yes','Ганцаар ажиллахыг зөвшөөрөх']])],'Бодлого хадгалах',v=>api(path('shifts/policy'),{...v,expected_revision:policy[1],single_worker:v.single_worker==='yes'},'PUT'));
+      for(const o of overview.opening_reviews||[]){const r=record(parent,'Анхны кассын зөрүү',`Тохируулсан ${money(o.expected)} · Тоолсон ${money(o.actual)} · Зөрүү ${money(o.variance)}`);for(const decision of ['approve','dispute'])command(r,decision==='approve'?'Зөрүүг хянаж батлах':'Зөрүүг маргаантай үлдээх',[reason()],path(`cash/drawers/${enc(o.drawer_id)}/opening-review/${decision}`),{expected_revision:0});}
+    }
+    if(role('RECEPTION')){
+      const unused=overview.drawers.filter(d=>d.unused);if(unused.length)form(parent,'Анхны ээлж нээх',[select('drawer_id','Касс',choices(unused,'drawer_id','name')),field('actual','Биечлэн тоолсон бэлэн мөнгө (₮)','number',{min:0})],'Тооллогоор ээлж нээх',v=>api(path(`cash/drawers/${enc(v.drawer_id)}/open`),{actual:v.actual,idempotency_key:v.idempotency_key}));
+    }
+    if(overview.shifts?.some(s=>s.owner_id===overview.account_id&&s.state==='OPEN')||overview.custodies?.length){
+      const fields=[field('actual','Биечлэн тоолсон бэлэн мөнгө (₮)','number',{min:0}),select('receiver_id','Хүлээн авагч',choices(overview.staff,'account_id',s=>`${s.email} · ${s.roles.map(r=>({RECEPTION:'Reception',MANAGER:'Менежер',HOTEL_ADMIN:'Админ',CLEANER:'Цэвэрлэгч',MANAGER_PLUS:'Менежер+'})[r]).join(', ')}`)),reason(),select('self_close','Хүлээлцэх төрөл',[['no','Өөр ажилтанд хүлээлгэх'],['yes','Зөвшөөрөгдсөн ганцаар хаалт']])];
+      if(overview.custodies?.length)fields.push(select('custody_id','Хадгалж буй касс',[['','Өөрийн нээлттэй ээлж'],...choices(overview.custodies,'custody_id',c=>overview.drawers.find(d=>d.drawer_id===c.drawer_id)?.name||'Касс')],true));
+      form(parent,'Ээлж / касс хүлээлгэн өгөх',fields,'Тооллого илгээж үйлдлүүдийг царцаах',v=>api(path('handovers'),{...v,self_close:v.self_close==='yes'}));
+    }
+    const inbox=await api(path('handovers'));if(seq!==generation)return;
+    for(const h of inbox){const r=record(parent,'Хүлээн авах ээлж',time(h.submitted_at));form(r,'Биечлэн тоолох',[field('actual','Тоолсон мөнгө (₮)','number',{min:0})],'Тооллого бүртгэх',v=>api(path(`handovers/${enc(h.handover_id)}/counts`),v),{success:async(result,f,status)=>{showResult(status,result);form(r,'Хүлээлцэх шийдвэр',[select('accept','Шийдвэр',[['yes','Хүлээн авах'],['no','Өгөгчид буцаах']]),reason()],'Шийдвэр бүртгэх',v=>api(path(`handovers/${enc(h.handover_id)}/decision`),{...v,accept:v.accept==='yes',count_id:result.count_id}));}});}
+    for(const s of overview.shifts||[]){const r=record(parent,`${overview.drawers.find(d=>d.drawer_id===s.drawer_id)?.name||'Касс'} · ${labels[s.state]}`,`${time(s.opened_at)} → ${time(s.closed_at)} · ${labels[s.review_state]}`);actions(r).append(btn('Ээлжийн тайлан',()=>guard(async()=>{try{const report=await api(path(`shifts/${enc(s.shift_id)}/report`));r.append(node('h3','Ээлжийн эх үүсвэрийн тайлан'),node('p',`Эхэлсэн ${money(report.opening_actual)} · Тайлангийн цаг ${time(report.as_of)}`),node('p','Эдгээр нь тухайн ээлжид бүртгэгдсэн эх үүсвэрийн дүн. Барьцаа, эхлэх үлдэгдэл, шилжүүлгийг орлого гэж нэгтгээгүй.'));table(r,'Хүлээн авсан мөнгө',['Зориулалт','Суваг','Нийт'],report.gross_receipts.map(x=>[labels[x.purpose],labels[x.channel],money(x.amount_mnt)]));table(r,'Кассын хөдөлгөөн',['Төрөл','Өөрчлөлт','Нөөцийн өөрчлөлт'],report.cash_movements.map(x=>[cashLabel(x.kind),money(x.posted_delta),money(x.reserved_delta)]));table(r,'Дууссан буцаалт',['Суваг','Дүн'],report.completed_refunds.map(x=>[labels[x.channel],money(x.amount_mnt)]));r.append(node('p',`Хүлээгдэж буй санхүүгийн ажил: ${report.pending_obligations.length}`));}catch(e){say(e.message,true);}})));
+      if((manager()||role('HOTEL_ADMIN'))&&['MANAGER_REQUIRED','ADMIN_REQUIRED','DISPUTED'].includes(s.review_state)){for(const decision of ['approve','dispute'])command(r,decision==='approve'?'Ээлжийн тайланг батлах':'Маргаантай үлдээх',[reason()],path(`shifts/${enc(s.shift_id)}/review/${decision}`),{expected_revision:0});}
+    }
+    if(overview.shifts?.length===overview.limit)parent.append(node('p','Эхний 50 ээлж харагдаж байна. Дараагийн хэсгийг нээнэ үү.'));
+    actions(parent).append(btn('Дараагийн ээлжүүд',()=>guard(async()=>{try{const after=overview.shifts.at(-1)?.shift_id||'';overview=await api(path(`operations?after=${enc(after)}`));await navigate('shift');}catch(e){say(e.message,true);}})));
+  }
+  function cashLabel(k){return ({INITIAL_FLOAT:'Анхны кассын санхүүжилт',GUEST_DEPOSIT:'Зочны барьцаа',GUEST_PAYMENT:'Зочны төлбөр',GUEST_REFUND:'Буцаалт',GUEST_REFUND_RESERVED:'Буцаалт нөөцлөх',GUEST_REFUND_RELEASED:'Нөөц чөлөөлөх',TRANSFER_IN:'Шилжүүлэг авсан',TRANSFER_OUT:'Шилжүүлэг өгсөн',CASH_DEBIT:'Кассын зарлага',GUEST_CORRECTION:'Бүртгэлийн залруулга'})[k]||'Кассын бусад хөдөлгөөн';}
+  const tableObserver=new ResizeObserver(entries=>{for(const {target} of entries){if(!target.isConnected){tableObserver.unobserve(target);continue;}const wrap=target.closest('.table-wrap'),hint=wrap?.parentElement.querySelector('.table-hint');if(hint){const overflow=wrap.scrollWidth>wrap.clientWidth+1;hint.hidden=!overflow;if(overflow)wrap.setAttribute('aria-describedby',hint.id);else wrap.removeAttribute('aria-describedby');}}});
+  function table(parent,caption,headers,data){const panel=node('div',undefined,'table-panel'),wrap=node('div',undefined,'table-wrap');wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label',caption);const t=node('table'),head=node('thead'),tr=node('tr'),body=node('tbody');t.append(node('caption',caption));for(const label of headers){const th=node('th',label);th.scope='col';tr.append(th);}head.append(tr);for(const row of data){const tr=node('tr');for(const value of row)tr.append(node('td',value));body.append(tr);}t.append(head,body);wrap.append(t);const hint=node('p','Бүх баганыг харахын тулд хүснэгтийг хажуу тийш гүйлгэнэ үү.','table-hint');hint.hidden=true;hint.id='table-help-'+crypto.randomUUID();wrap.setAttribute('aria-describedby',hint.id);panel.append(wrap,hint);parent.append(panel);tableObserver.observe(wrap);tableObserver.observe(t);if(!data.length)panel.append(node('p','Энэ хэсэгт бүртгэл алга.','empty-state'));}
+  function roomTools(parent,r){
+    form(parent,`${r.number} өрөөний төлөв`,[select('action','Үйлдэл',[['DEACTIVATE','Идэвхгүй болгох / хаахаар хүлээлгэх'],['REACTIVATE','Дахин идэвхжүүлэх'],['CANCEL_RETIRING','Хаах хүсэлтийг цуцлах'],['REASSIGN_CATEGORY','Ангилал солих']]),select('category_id','Шилжүүлэх ангилал',[['','Ангилал солихгүй'],...choices(categories.filter(c=>c.status==='ACTIVE'),'category_id','name')],true),reason()],'Төлөв өөрчлөх',v=>api(path(`rooms/${enc(r.room_id)}/lifecycle`),{...v,expected_revision:r.revision}),savedWorkflow('rooms'));
+    command(parent,'Өрөөний тусгай тариф',[{...amount('hourly_price','Цагийн үнэ'),optional:true},{...amount('nightly_price','Хоногийн үнэ'),optional:true}],path(`rooms/${enc(r.room_id)}/tariffs`),{expected_revision:r.revision,hourly_price:null,nightly_price:null},'PUT',savedWorkflow('rooms'));
+    if(packageMnt===30000)actions(parent).append(btn('Өрөөний QR карт харах',()=>guard(async()=>{try{const card=await api(path(`rooms/${enc(r.room_id)}/guest-qr/card`));qrCard(parent,card);}catch(e){say(e.message,true);}})));
+    if(packageMnt===30000)command(parent,'Өрөөний QR шинэчлэх',[reason()],path(`rooms/${enc(r.room_id)}/guest-qr`),{expected_revision:overview.qrs?.find(q=>q.room_id===r.room_id)?.revision||0});
+    if(packageMnt===20000)command(parent,'Цэвэрлэгээг батлах',[],path(`rooms/${enc(r.room_id)}/manager-clean`),{expected_revision:r.revision},'POST',savedWorkflow('rooms'));
+    else command(parent,'Цэвэрлэгээ даалгах',[select('assignee_id','Цэвэрлэгч',choices(overview.staff.filter(s=>s.roles.includes('CLEANER')),'account_id','email'))],path(`rooms/${enc(r.room_id)}/cleaning-requests`),{expected_revision:r.revision},'POST',savedWorkflow('rooms'));
+    if(overview.mode==='MOCK_CASH_LEDGER'&&packageMnt>=25000){parent.append(node('p','Дараах минибарын тохиргоо нь бэлэн болоогүй үйлчилгээний туршилтын өгөгдөл.','notice'));
+      form(parent,'Туршилтын минибарын нэг бараа',[field('product_id','Барааны код'),field('name','Барааны нэр'),amount('unit_price','Нэгжийн үнэ (₮)'),amount('opening_quantity','Өрөөнд байх тоо',2)],'Mock минибар тохируулах',v=>{const {idempotency_key,...item}=v;return api(path(`mock/rooms/${enc(r.room_id)}/minibar`),{items:[item],expected_revision:r.revision,idempotency_key},'PUT');});
+      command(parent,'Туршилтын минибар унтраах',[],path(`mock/rooms/${enc(r.room_id)}/minibar`),{items:[],expected_revision:r.revision},'PUT');}
+  }
+  function managerTools(parent){
+    const settings=overview.settings||[null,null,'12:00',0],deposit=overview.deposit_settings||[null,0];
+    command(parent,'Буудлын тариф',[amount('hourly_price','Цагийн үндсэн үнэ (₮)',settings[0]),amount('nightly_price','Хоногийн үндсэн үнэ (₮)',settings[1]),field('checkout_time','Гарах тогтмол цаг (HH:MM)','text',{value:String(settings[2]).slice(0,5)})],path('rooms/settings'),{expected_revision:settings[3]},'PUT',savedWorkflow('manager'));
+    command(parent,'Барьцааны үндсэн тохиргоо',[amount('amount_mnt','Барьцаа 50,000–100,000₮',deposit[0])],path('deposit-settings'),{expected_revision:deposit[1]},'PUT',savedWorkflow('manager'));
+    command(parent,'Өрөөний ангилал үүсгэх',[field('name','Ангиллын нэр'),field('description','Тайлбар','textarea',{optional:true}),field('cleaning_buffer_minutes','Зочин гарснаас хойших бэлтгэлийн хугацаа (минут)','number',{min:0,value:30})],path('room-categories'),{},'POST',savedWorkflow('manager','Өрөөний ангилал үүслээ. Өрөө бүртгэхэд сонгож болно.'));
+    command(parent,'Өрөө бүртгэх',[field('number','Өрөөний дугаар'),field('floor','Давхар'),select('category_id','Ангилал',choices(categories.filter(c=>c.status==='ACTIVE'),'category_id','name'))],path('rooms'),{},'POST',savedWorkflow('manager','Өрөө бүртгэгдлээ.'));
+    for(const c of categories){const r=record(parent,c.name,labels[c.status]);form(r,'Ангиллын төлөв',[select('action','Үйлдэл',[['DEACTIVATE','Идэвхгүй болгох'],['REACTIVATE','Идэвхжүүлэх'],['CANCEL_RETIRING','Хаах хүсэлтийг цуцлах']]),reason()],'Төлөв өөрчлөх',v=>api(path(`room-categories/${enc(c.category_id)}/lifecycle`),{...v,expected_revision:c.revision}),savedWorkflow('manager'));command(r,'Ангиллын тариф',[{...amount('hourly_price','Цагийн үнэ'),optional:true},{...amount('nightly_price','Хоногийн үнэ'),optional:true}],path(`room-categories/${enc(c.category_id)}/tariffs`),{expected_revision:c.revision,hourly_price:null,nightly_price:null},'PUT',savedWorkflow('manager'));}
+    if(overview.mode==='MOCK_CASH_LEDGER'){
+      form(parent,'Туршилтын төлөгдсөн онлайн захиалга',[select('room_id','Өрөө',choices(rooms,'room_id','number')),select('kind','Хугацааны төрөл',[['HOURLY','Цагаар'],['NIGHTLY','Хоногоор']]),amount('duration_units','Цаг / хоногийн тоо',1),field('planned_checkin_at','Ирэх цаг (Улаанбаатар)','datetime-local')],'Mock захиалга үүсгэх',v=>api(path('mock/bookings'),{...v,planned_checkin_at:new Date(v.planned_checkin_at+'+08:00').toISOString()}));
+      if(packageMnt===30000)form(parent,'Туршилтын рестораны захиалга',[select('stay_id','Байрлалт',choices(stays,'stay_id',s=>rooms.find(r=>r.room_id===s.room_id)?.number||'Өрөө')),field('restaurant_name','Рестораны нэр'),field('contact_phone','Холбоо барих утас','tel'),select('state','Төлөв',['PAID_PENDING','ACCEPTED','PREPARING','READY'].map(v=>[v,labels[v]])),reason()],'Mock захиалга үүсгэх',v=>{const {stay_id,...body}=v;return api(path(`mock/stays/${enc(stay_id)}/restaurant-orders`),body);});
+    }
+  }
+  function minibarPriceBook(parent,book){
+    if(book.stock_status==='SHORT'){parent.append(node('p','Дутуу — Manager зөвшөөрсөн','notice'));shortageReview(parent,book.shortage_approval);parent.append(node('p','Нээлтийн тоо 0 байсан барааг баримттай нөхөлтөөс өмнө хэрэглээнд тооцохгүй.'));}
+    parent.append(node('h3','Зочны минибарын үнэ'),node('p',`${book.template_name} · Хувилбар ${book.version_number} · Бүртгэсэн ${time(book.recorded_at)}`),node('p','Энэ байрлалтад бүртгэгдсэн үнэ хэрэглээний тооцоонд үйлчилнэ.'));
+    table(parent,'Check-in үеийн минибар',['Бараа','Нээлтийн тоо','Нэгж','Нэгж үнэ'],book.items.map(i=>[i.name,i.opening_quantity,i.unit,money(i.unit_price)]));
+  }
+  async function guestMinibarTasks(container,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Минибар шалгах ажлууд ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(path(`minibar/guest-inspections?limit=50&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;parent.replaceChildren();
+      parent.append(node('h2','Зочны минибар шалгах ажлууд'));actions(parent).append(btn('Минибар шалгах ажлыг шинэчлэх',()=>guard(()=>guestMinibarTasks(container,after))));
+      if(!data.items.length)parent.append(node('p','Тайлан хүлээсэн, өөрт авах боломжтой эсвэл танд оноосон ажил алга.'));
+      for(const t of data.items){
+        const r=record(parent,`${t.room_number} · Минибар шалгах`,t.report_revision?`Залруулах тайлан · өмнөх хувилбар ${t.report_revision}`:'Анхны тайлан');
+        minibarPriceBook(r,t.price_book);
+        if(!t.task_id){form(r,'Минибар шалгах ажлыг авах',[],'Шалгалтыг өөртөө авах',v=>api(stayPath(t.stay_id,'minibar-inspection/claim'),{...v,expected_revision:t.report_revision}),{success:async()=>{await guestMinibarTasks(container,after);say('Минибар шалгах ажлыг танд оноолоо.');}});continue;}
+        if(t.work_state!=='OPEN'){r.append(node('p','Энэ ажил эрхийн хяналт хүлээж байна. Менежерт мэдэгдэнэ үү.'));continue;}
+        r.append(node('p','Өрөөнд үлдсэн бүтээгдэхүүн бүрийг биечлэн тоолно уу. Хэрэглээ, дүнг нээлтийн бүртгэл болон баримтжуулсан нөхөлтөөс тооцно.'));
+        const available=item=>t.availability?.[item.product_id]?.physical_quantity??t.availability?.[item.product_id]?.available_quantity??item.opening_quantity;
+        if(t.availability)table(r,'Нөхөлт, нөөцийн хөдөлгөөн',['Бараа','Нөхсөн','Зочны бус өөрчлөлт','Бүртгэлийн бодит тоо','Тооцож болох тоо'],t.price_book.items.map(i=>[i.name,t.availability[i.product_id].refill_quantity,t.availability[i.product_id].non_guest_delta??0,available(i),t.availability[i.product_id].available_quantity]));
+        const fields=t.price_book.items.map((item,index)=>field('count_'+index,`${item.name} — бодитоор үлдсэн тоо (0–${available(item)})`,'number',{min:0}));
+        fields.push(field('no_consumption','Минибар хэрэглээгүйг шалгаж баталсан','checkbox',{optional:true}));
+        form(r,'Бодит тооллогын тайлан',fields,'Тооллогын тайлан илгээх',v=>{
+          const counts={};for(const [index,item] of t.price_book.items.entries()){const count=v['count_'+index];if(count>available(item))throw new Error(`${item.name}: боломжит ${available(item)} тооноос их байна. Тооллогоо шалгана уу.`);counts[item.product_id]=count;}
+          return api(stayPath(t.stay_id,'minibar-report'),{task_id:t.task_id,assignment_version:t.assignment_version,expected_revision:t.report_revision,counts,no_consumption:v.no_consumption===true,idempotency_key:v.idempotency_key});
+        },{success:async result=>{await guestMinibarTasks(container,after);say(`Минибарын тайлан бүртгэгдлээ. Хэрэглээний дүн ${money(result.amount_mnt)}.`);}});
+      }
+      const pages=actions(parent);pages.append(btn('Шалгалтын эхний хэсэг',()=>guard(()=>guestMinibarTasks(container,''))),btn('Шалгалтын дараагийн хэсэг',()=>guard(()=>guestMinibarTasks(container,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Минибар шалгах ажлыг дахин ачаалах',()=>guestMinibarTasks(container,after)));}
+    finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function stayRefills(container,stay,book,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Нөхөлтийн хүсэлтүүд ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(stayPath(stay,`minibar-refills?limit=50&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;parent.replaceChildren();
+      parent.append(node('h3','Минибар нөхөх хүсэлтүүд'),node('p','Cleaner бодитоор нөхсөнийг баталсны дараа тоо нэмэгдэнэ. Зочны бүртгэгдсэн үнэ хэвээр үйлчилнэ.'));
+      actions(parent).append(btn('Нөхөлтийн хүсэлт шинэчлэх',()=>guard(()=>stayRefills(container,stay,book,after))));
+      if(!overview.completion_only)form(parent,'Минибар нөхөх хүсэлт',[select('product_id','Нөхөх бараа',book.items.map(i=>[i.product_id,i.name])),field('quantity','Хүсэх тоо','number',{min:1})],'Нөхөх хүсэлт илгээх',v=>api(stayPath(stay,'minibar-refills'),v),{success:async()=>{await stayRefills(container,stay,book,after);say('Нөхөх хүсэлт бүртгэгдлээ. Cleaner-ийн баталгаажуулалт хүлээж байна.');}});
+      if(!data.items.length)parent.append(node('p','Энэ байрлалтад нөхөлтийн хүсэлт алга.'));
+      for(const q of data.items){const state={PENDING:'Гүйцэтгэл хүлээж байна',COMPLETED:'Нөхсөн',CANCELLED:'Цуцалсан',UNAVAILABLE:'Нөхөх боломжгүй'}[q.state];const r=record(parent,q.product.name,`${state} · Хүссэн ${q.requested_quantity} ${q.product.unit} · Бодитоор нөхсөн ${q.actual_quantity??0}`);if(q.reason)r.append(node('p',q.reason));
+        if(q.state==='PENDING')form(r,'Нөхөх хүсэлтийг цуцлах',[reason()],'Хүсэлт цуцлах',v=>api(path(`minibar/refills/${enc(q.request_id)}/cancel`),{...v,expected_revision:q.revision}),{success:async()=>{await stayRefills(container,stay,book,after);say('Нөхөх хүсэлтийг цуцаллаа.');}});
+      }
+      const pages=actions(parent);pages.append(btn('Нөхөлтийн хүсэлтийн эхний хэсэг',()=>guard(()=>stayRefills(container,stay,book,''))),btn('Нөхөлтийн хүсэлтийн дараагийн хэсэг',()=>guard(()=>stayRefills(container,stay,book,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Нөхөлтийн хүсэлтийг дахин ачаалах',()=>stayRefills(container,stay,book,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function refillTasks(container,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Нөхөх ажлууд ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(path(`minibar/refill-tasks?limit=50&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;parent.replaceChildren();
+      parent.append(node('h2','Минибар нөхөх ажлууд'));actions(parent).append(btn('Нөхөх ажлыг шинэчлэх',()=>guard(()=>refillTasks(container,after))));
+      if(!data.items.length)parent.append(node('p','Өөрт авах боломжтой эсвэл танд оноосон нөхөх ажил алга.'));
+      for(const q of data.items){const r=record(parent,`${q.room_number} · ${q.product.name}`,`Хүссэн ${q.requested_quantity} ${q.product.unit}`),prefix=tail=>path(`minibar/refills/${enc(q.request_id)}/${tail}`);
+        if(!q.task_id){form(r,'Нөхөх ажлыг авах',[],'Нөхөх ажлыг өөртөө авах',v=>api(prefix('claim'),{...v,expected_revision:q.revision}),{success:async()=>{await refillTasks(container,after);say('Нөхөх ажлыг танд оноолоо.');}});continue;}
+        if(q.work_state!=='OPEN'){r.append(node('p','Энэ ажил эрхийн хяналт хүлээж байна. Менежерт мэдэгдэнэ үү.'));continue;}
+        const fixed={expected_revision:q.revision,task_id:q.task_id,assignment_version:q.assignment_version};
+        form(r,'Бодит нөхөлт',[field('quantity','Бодитоор нөхсөн тоо','number',{min:1})],'Нөхсөнийг батлах',v=>{if(v.quantity>q.requested_quantity)throw new Error('Хүссэн тооноос их байна. Бодит тоогоо шалгана уу.');return api(prefix('complete'),{...v,...fixed});},{success:async()=>{await refillTasks(container,after);say('Бодит нөхөлт бүртгэгдлээ.');}});
+        form(r,'Нөхөх боломжгүй',[reason()],'Боломжгүй гэж хаах',v=>api(prefix('unavailable'),{...v,...fixed}),{success:async()=>{await refillTasks(container,after);say('Шалтгааныг бүртгэж хүсэлтийг хаалаа.');}});
+      }
+      const pages=actions(parent);pages.append(btn('Нөхөх ажлын эхний хэсэг',()=>guard(()=>refillTasks(container,''))),btn('Нөхөх ажлын дараагийн хэсэг',()=>guard(()=>refillTasks(container,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Нөхөх ажлыг дахин ачаалах',()=>refillTasks(container,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  async function cleaningTools(parent,seq){
+    const minibarTools=node('section');
+    if(role('CLEANER')&&packageMnt>=25000){
+      minibarTools.append(node('h2','Минибарын ажлууд'));const shortcuts=actions(minibarTools);
+      for(const [title,open] of [['Минибар нөхөх ажлууд',refillTasks],['Зочны минибар шалгах',guestMinibarTasks],...(!overview.completion_only?[['Минибарын тохиргооны ажлууд',reconciliationTasks]]:[])]){
+        const panel=node('div');shortcuts.append(btn(title,()=>guard(()=>open(panel,''))));minibarTools.append(panel);
+      }
+    }
+    for(const i of overview.inspections||[]){const r=record(parent,`${i.room_number} · Минибар`,labels[i.state]);if(i.state==='REQUESTED'){
+      const fields=(i.items||[]).map((item,index)=>field('used_'+index,`${item.name} — хэрэглэсэн тоо (0–${item.opening_quantity})`,'number',{min:0,value:0}));fields.push(field('no_consumption','Хэрэглээгүйг шалгаж баталсан','checkbox',{optional:true}));if(!role('CLEANER'))fields.push(field('exception_reason','Менежер орлосон шалтгаан','textarea'));
+      form(r,'Минибарын mock тайлан',fields,'Шалгасан тайлан илгээх',v=>{const used={};i.items.forEach((item,index)=>used[item.product_id]=v['used_'+index]);return api(path(`mock/stays/${enc(i.stay_id)}/minibar-report`),{used,no_consumption:v.no_consumption,exception_reason:v.exception_reason||null,expected_revision:i.revision,idempotency_key:v.idempotency_key});});}}
+    const roomLabel=t=>t.room_number?`${t.room_number} өрөө`:'Өрөөний дугаар тодорхойгүй';
+    const roomLocation=t=>[t.floor?`${t.floor} давхар`:null,t.category_name].filter(Boolean).join(' · ');
+    for(const t of overview.cleaning||[]){const r=record(parent,`${roomLabel(t)} · ${t.kind==='CLEAN'?'Цэвэрлэгээ':labels[t.kind]}`,`${roomLocation(t)} · Үлдсэн ${t.remaining}${t.product_id?' · '+t.product_id.split(':').at(-1):''}`);
+      if(!t.started_at)command(r,'Цэвэрлэгээ эхлүүлэх',[],path(`cleaning/tasks/${enc(t.task_id)}/start`),{expected_revision:t.assignment_version},'POST',savedWorkflow('cleaning','Ажил эхэллээ. Гүйцэтгэсэн ажлаа батална уу.'));
+      else command(r,t.kind==='CLEAN'?'Өрөөний цэвэрлэгээг батлах':`${labels[t.kind]} ажлыг батлах`,[field('quantity','Гүйцэтгэсэн тоо','number',{min:1,max:t.remaining,value:t.remaining}),...(t.kind==='COUNT'?[field('actual_count','Бодит тоо','number',{min:0})]:[])],path(`cleaning/tasks/${enc(t.task_id)}/post`),{expected_revision:t.assignment_version,action_id:t.action_id},'POST',savedWorkflow('cleaning','Гүйцэтгэл бүртгэгдлээ.'));}
+    let unclaimed=0;
+    if(role('CLEANER')){const queue=await api(path('cleaning/checkouts'));if(seq!==generation)return;for(const c of queue.filter(c=>!c.task_id)){unclaimed++;const r=record(parent,`${roomLabel(c)} · Зочин гарсны дараах цэвэрлэгээ`,`${roomLocation(c)} · Хариуцагчгүй ажил`);command(r,'Ажлыг өөртөө авах',[],stayPath(c.stay_id,'checkout-cleaning/claim'),{},'POST',savedWorkflow('cleaning','Ажлыг танд оноолоо. Цэвэрлэгээг эхлүүлнэ үү.'));}}
+    if(!overview.inspections?.length&&!overview.cleaning?.length&&!unclaimed)parent.append(node('p','Бусад цэвэрлэгээний нээлттэй ажил алга.'));
+    if((overview.cleaning?.length||0)>=overview.limit||(overview.inspections?.length||0)>=overview.limit)actions(parent).append(btn('Дараагийн ажлууд',()=>guard(async()=>{try{const after=overview.cleaning?.at(-1)?.task_id||overview.inspections.at(-1).stay_id;overview=await api(path(`operations?after=${enc(after)}`));navigate('cleaning');}catch(e){say(e.message,true);}})));
+    if(minibarTools.children.length)parent.append(minibarTools);
+  }
+  async function reconciliationManagerDetail(container,request,onSuccess){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Төлөвлөгөө ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(path(`minibar/configuration-requests/${enc(request)}/reconciliation`));if(seq!==generation||!parent.isConnected)return;
+      parent.replaceChildren();reconciliationPlan(parent,data.plan);
+      if(data.plan?.partial_movements&&!data.plan.counts_match){parent.append(node('p','Хэсэгчилсэн шилжүүлэлтийн дараах зөрүү байна. Хүсэлтийг цуцалж буцаалтын ажил нээгээд, бодит хорогдлыг шалтгаантай нөөцийн залруулгаар бүртгэнэ үү.','notice'));return;}
+      if(!data.plan?.counts_complete||['APPLIED','CANCELLED','ROLLED_BACK','ROLLBACK_REQUIRED'].includes(data.request.state))return;
+      if(data.plan.shortage_preview&&!data.plan.shortage_approved){
+        const preview=data.plan.shortage_preview;shortageQuantities(parent,preview.plan.lines);
+        parent.append(node('p','Дараагийн нэг зочинд бодит дутуу тоогоор нээнэ. Cleaner боломжит нөөцийн шилжүүлэлтийг гүйцээх ёстой. Бүрдлийн зорилтот тоо хэвээр үлдэнэ.'));
+        form(parent,'Дутуу minibar-тайгаар нээх зөвшөөрөл',[reason(),field('physical_counts_reviewed','Бүх барааны бодит тоо, дутуу үлдэх тоо болон тухайн хувилбарыг шалгасан','checkbox')],'Дутуу нөөцийг зөвшөөрөх',v=>api(path(`minibar/configuration-requests/${enc(request)}/shortage-approvals`),{...v,expected_revision:data.request.revision,expected_preview:preview.token}),{success:async()=>{await onSuccess();say('Дутуу нөөцийн зөвшөөрөл бүртгэгдлээ. Cleaner шилжүүлэлтийг гүйцээнэ.');}});
+      }
+      for(const line of data.plan.lines.filter(i=>i.count_matches===false)){
+        const delta=line.actual_count-line.current_quantity,r=record(parent,`${line.name} · Тооллогын зөрүү`,`Одоогийн бүртгэл ${line.current_quantity} · Бодит тоо ${line.actual_count}`);
+        r.append(node('p',delta===0?'Бүртгэл бодит тоотой таарсан. Шинэ нөөцийн хөдөлгөөн үүсгэхгүйгээр анхны тооллогын зөрүүг шийдвэрлэнэ.':`Бүртгэлийг ${delta>0?'нэмэх':'хасах'} тоо: ${Math.abs(delta)}. Цэвэрлэгч шилжүүлэлтийг дуусгахад хамт бүртгэнэ.`));
+        const fields=[select('kind','Зөрүүг бүртгэх төрөл',[option('COUNT','Тооллогын залруулга'),...(delta<0?[option('WASTE','Хорогдол')]:[])])];
+        if(line.zero_stock&&delta>0)fields.push(field('unit_cost_mnt','Нэгжийн өртөг (₮)','number',{min:0}));
+        fields.push(reason(),field('reviewed','Бодит тоо, шалтгаан болон нөөцийн өөрчлөлтийг шалгасан','checkbox'));
+        form(r,'Зөрүүний шийдвэр',fields,'Зөрүүний шийдвэрийг батлах',v=>api(path(`minibar/configuration-requests/${enc(request)}/count-resolutions/${enc(line.product_id)}`),{kind:v.kind,reason:v.reason,...(v.unit_cost_mnt===undefined?{}:{unit_cost_mnt:v.unit_cost_mnt}),expected_revision:data.request.revision,expected_stock_revision:line.stock_revision,expected_physical_quantity:line.current_quantity,idempotency_key:v.idempotency_key}),{success:async()=>{await onSuccess();say('Зөрүүний шийдвэр бүртгэгдлээ. Цэвэрлэгч төлөвлөгөөг шинэчилж, шилжүүлэлтийг гүйцээнэ.');}});
+      }
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Төлөвлөгөөг дахин ачаалах',()=>reconciliationManagerDetail(container,request,onSuccess)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  function shortageQuantities(parent,lines){
+    table(parent,'Дутуу нөөцийн зөвшөөрлийн тоо',['Бараа','Бодит тооллого','Бүрдлийн зорилго','Байрлуулах тоо','Дутуу'],lines.map(i=>[i.name,i.actual_count,i.target_quantity,i.approved_quantity,i.target_quantity-i.approved_quantity]));
+  }
+  function shortageReview(parent,approval){
+    parent.append(node('p',`${approval.actor_label} · ${time(approval.recorded_at)} · ${approval.reason}`));
+    const target=approval.target||approval.plan?.target;
+    if(target)parent.append(node('p',`${target.template_name} · Хувилбар ${target.version_number}`));
+    shortageQuantities(parent,approval.lines||approval.plan.lines);
+  }
+  function reconciliationPlan(parent,plan){
+    if(!plan){parent.append(node('p','Тооллого хараахан даалгаагүй байна.'));return;}
+    table(parent,'Тооллого ба шилжүүлэлтийн төлөвлөгөө',['Бараа','Анхны бүртгэл','Одоогийн үлдэгдэл','Бодит тоо','Зорилго','Шилжүүлэх','Агуулах'],plan.lines.map(i=>[i.name,i.baseline_quantity,i.current_quantity??'—',i.actual_count??'Тоолоогүй',i.target_quantity,i.direction?`${labels[i.direction]} · ${i.quantity}`:'Шилжүүлэхгүй',i.warehouse_quantity]));
+    for(const line of plan.lines.filter(i=>i.resolution)){
+      const d=line.resolution;parent.append(node('p',`${line.name} · ${d.posted?'Зөрүү бүртгэгдсэн':d.ready?'Manager шийдвэрлэсэн':line.count_matches?'Бүртгэл бодит тоотой таарсан':'Шийдвэрийг дахин шалгуулах шаардлагатай'} · ${d.kind==='WASTE'?'Хорогдол':'Тооллогын залруулга'} · ${d.actor_label} · ${time(d.recorded_at)} · ${d.reason}`,'notice'));
+      if(d.ready&&!d.posted)parent.append(node('p','Нөөцийн өөрчлөлт нь доорх шилжүүлэлт, тохиргооны баталгаатай хамт бүртгэгдэнэ.'));
+    }
+    if(plan.scope_changed)parent.append(node('p','Тооллогод хамрах бараа өөрчлөгдсөн. Manager одоогийн хүсэлтийг цуцалж, бүх бараатай шинэ тооллого эхлүүлнэ үү.','notice'));
+    if(plan.counts_complete&&!plan.counts_match)parent.append(node('p','Тооллогын зөрүүтэй. Бараа шилжүүлэхгүй, менежерт мэдэгдэнэ үү.','notice'));
+    if(plan.shortage_approval){const a=plan.shortage_approval;parent.append(node('p',a.posted?'Дутуу бүрдлийн шилжүүлэлт бүртгэгдсэн':a.ready?'Дутуу — Manager зөвшөөрсөн':'Дутуу нөөцийн зөвшөөрлийг дахин шалгуулах шаардлагатай','notice'));shortageReview(parent,a);}
+    if(plan.shortage&&!plan.shortage_approved)parent.append(node('p','Агуулахын нөөц хүрэлцэхгүй. Бараа шилжүүлэхээс өмнө менежерт мэдэгдэж, мэдээллийг шинэчилнэ үү.','notice'));
+  }
+  async function reconciliationTasks(container,after){
+    const parent=node('div'),seq=generation;container.replaceChildren(parent);parent.append(node('p','Тохиргооны ажлууд ачаалж байна…'));parent.setAttribute('aria-busy','true');
+    try{
+      const data=await api(path(`minibar/reconciliation/tasks?limit=20&after=${enc(after)}`));if(seq!==generation||!parent.isConnected)return;parent.replaceChildren();
+      parent.append(node('h2','Минибарын тохиргооны ажлууд'));actions(parent).append(btn('Тохиргооны ажлуудыг шинэчлэх',()=>guard(()=>reconciliationTasks(container,after))));
+      if(!data.items.length)parent.append(node('p','Өөрт тань оноосон тохиргооны ажил алга.'));
+      for(const t of data.items){const r=record(parent,`${t.room_number} · Минибарын тооллого`,labels[t.request.state]);reconciliationPlan(r,t.plan);
+        if(t.request.request_kind==='NEXT_STAY')r.append(node('p','Дараагийн зочинд зориулж одоогийн бүрдлийг бэлтгэнэ. Цэвэрлэгээг тусад нь батална.'));
+        if(t.claimable){form(r,'Дараагийн зочны минибар бэлтгэх',[],'Бэлтгэх ажлыг өөртөө авах',v=>api(path(`minibar/reconciliation/tasks/${enc(t.task_id)}/claim-next-stay`),{...v,expected_revision:t.request.revision}),{success:async()=>{await reconciliationTasks(container,after);say('Минибар бэлтгэх ажлыг танд оноолоо.');}});continue;}
+        if(t.work_state!=='OPEN'){r.append(node('p','Энэ ажил эрхийн хяналт хүлээж байна.'));continue;}
+        if(t.plan.rollback){
+          r.append(node('p','Анхны бүрдлийн үлдэгдлийг сэргээнэ. Тооллого зөрвөл Manager шалтгаантай хорогдол эсвэл тооллогын залруулга бүртгэсний дараа дахин тоолно.','notice'));
+          for(const line of t.plan.lines.filter(i=>i.quantity))form(r,`${line.name} · ${line.direction==='RETURN'?'Агуулахад буцаах':'Өрөөнд сэргээх'}`,[field('actual_count','Шилжүүлэхийн өмнөх бодит тоо','number',{min:0}),field('quantity','Биечлэн шилжүүлсэн тоо','number',{min:1,max:line.quantity}),field('physical_transfers_confirmed','Шилжүүлэлтийг биечлэн гүйцэтгэсэн','checkbox')],'Буцаалтын хөдөлгөөн бүртгэх',v=>api(path(`minibar/reconciliation/tasks/${enc(t.task_id)}/rollback-transfer`),{...v,product_id:line.product_id,expected_stock_revision:line.stock_revision,assignment_version:t.assignment_version,expected_revision:t.request.revision}),{success:()=>reconciliationTasks(container,after)});
+          if(t.plan.ready_to_complete)form(r,'Буцаалтын эцсийн тооллого',[...t.plan.lines.map((line,i)=>field(`count_${i}`,`${line.name} · Бодит тоо`,'number',{min:0})),field('physical_transfers_confirmed','Анхны үлдэгдлийг биечлэн сэргээсэн','checkbox')],'Буцаалтыг дуусгах',v=>{const observed_counts=Object.fromEntries(t.plan.lines.map((line,i)=>[line.product_id,v[`count_${i}`]]));return api(path(`minibar/reconciliation/tasks/${enc(t.task_id)}/complete-rollback`),{idempotency_key:v.idempotency_key,physical_transfers_confirmed:v.physical_transfers_confirmed,observed_counts,assignment_version:t.assignment_version,expected_revision:t.request.revision});},{success:()=>reconciliationTasks(container,after)});
+          continue;
+        }
+        if(t.plan.counts_complete&&t.plan.counts_match)for(const line of t.plan.lines.filter(i=>i.target_quantity!==i.current_quantity))form(r,`${line.name} · Хэсэгчлэн шилжүүлэх`,[field('quantity','Биечлэн шилжүүлсэн тоо','number',{min:1,max:Math.abs(line.target_quantity-line.current_quantity)}),field('physical_transfers_confirmed','Энэ шилжүүлэлтийг биечлэн гүйцэтгэсэн','checkbox')],'Хэсэгчилсэн хөдөлгөөн бүртгэх',v=>api(path(`minibar/reconciliation/tasks/${enc(t.task_id)}/transfer`),{...v,product_id:line.product_id,expected_stock_revision:line.stock_revision,assignment_version:t.assignment_version,expected_revision:t.request.revision}),{success:()=>reconciliationTasks(container,after)});
+        for(const line of t.plan.lines.filter(i=>i.actual_count===null))form(r,`${line.name} тоолох`,[field('actual_count','Өрөөнд бодитоор байгаа тоо','number',{min:0})],'Тооллогыг батлах',v=>api(path(`minibar/reconciliation/tasks/${enc(t.task_id)}/count`),{...v,assignment_version:t.assignment_version,action_id:line.action_id}),{success:async()=>{await reconciliationTasks(container,after);say('Бодит тооллого бүртгэгдлээ.');}});
+        if(t.plan.counts_complete&&t.plan.counts_match&&(!t.plan.shortage||t.plan.shortage_approved))form(r,'Бүрдлийг байршуулж дуусгах',[field('physical_transfers_confirmed','Дээрх бүх шилжүүлэлтийг биечлэн гүйцэтгэсэн','checkbox')],'Шилжүүлэлт, тохиргоог батлах',v=>api(path(`minibar/reconciliation/tasks/${enc(t.task_id)}/apply`),{...v,assignment_version:t.assignment_version,expected_revision:t.request.revision}),{success:async()=>{await reconciliationTasks(container,after);say('Барааны шилжүүлэлт, тохиргоо бүртгэгдлээ. Цэвэрлэгээг тусад нь батална.');}});
+      }
+      const pages=actions(parent);pages.append(btn('Тохиргооны эхний ажлууд',()=>guard(()=>reconciliationTasks(container,''))),btn('Тохиргооны дараагийн ажлууд',()=>guard(()=>reconciliationTasks(container,data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+    }catch(e){if(seq===generation&&parent.isConnected)parent.replaceChildren(node('p',e.message,'error'),btn('Тохиргооны ажлыг дахин ачаалах',()=>reconciliationTasks(container,after)));}finally{parent.setAttribute('aria-busy','false');}
+  }
+  function qrCard(parent,card){
+    const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),size=card.matrix.length;svg.setAttribute('viewBox',`0 0 ${size} ${size}`);svg.setAttribute('role','img');svg.setAttribute('aria-label',`${card.room_number} өрөөний QR`);svg.classList.add('qr-card');
+    card.matrix.forEach((row,y)=>row.forEach((dark,x)=>{if(dark){const rect=document.createElementNS(ns,'rect');for(const [k,v] of Object.entries({x,y,width:1,height:1}))rect.setAttribute(k,String(v));svg.append(rect);}}));
+    const box=record(parent,`${card.room_number} өрөөний нэвтрэх QR`,'Зочин QR уншуулаад Reception-оос авсан 6 оронтой нэг удаагийн кодоо оруулна.');box.append(svg);actions(box).append(btn('QR зураг татах',()=>{const copy=svg.cloneNode(true);copy.setAttribute('xmlns',ns);copy.setAttribute('style','background:white;fill:black');const blob=new Blob([new XMLSerializer().serializeToString(copy)],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='room-qr.svg';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}),btn('QR картыг хаах',()=>box.remove()));
+  }
+  function guestEntry(){let qr=new URLSearchParams(location.hash.slice(1)).get('qr')||'';history.replaceState(null,'',location.pathname);document.title='Зочны нэвтрэх — PRsystem';$('#login').replaceChildren();
+    if(!/^[A-Za-z0-9_-]{20,128}$/.test(qr)){$('#login').append(node('h1','Өрөөний QR кодоо уншуулна уу'),node('p','Reception-оос тухайн өрөөний нэвтрэх мэдээллийг авна уу.'));return;}
+    form($('#login'),'Өрөөндөө нэвтрэх',[field('code','Reception-оос авсан 6 оронтой код','text',{max:6})],'Нэвтрэх',v=>api('/guest/access',{qr_token:qr,code:v.code}),{login:true,success:async(result,f,status)=>{token=result.access_token;qr='';f.elements.code.value='';const session=await api('/guest/session');guestRoom=session.room_number;f.remove();await guestRestaurantHome();}});
+    window.addEventListener('pagehide',()=>{qr='';});
+  }
+  let restaurantId='',guestRoom='';
+  const restaurantLabels={PENDING_PAYMENT:'Төлбөр хүлээж буй',NOT_STARTED:'Эхлээгүй',AWAITING_ACCEPTANCE:'Ресторан хүлээн авахыг хүлээж буй',PAID:'Төлөгдсөн',NONE:'Байхгүй',MANDATORY:'Заавал буцаах',DISCRETIONARY:'Рестораны шийдвэр хүлээнэ',REFUNDED:'Буцаагдсан',RESOLVED:'Шийдэгдсэн',OUT_FOR_DELIVERY:'Хүргэлтэд гарсан',DELIVERED_TO_ROOM:'Өрөөнд хүргэсэн',HANDED_TO_RECEPTION:'Reception-д хүлээлгэсэн',PICKED_UP_BY_GUEST:'Зочин авсан',RECEPTION:'Reception',GUEST_PICKUP:'Зочин өөрөө авна',REFUND_REQUEST:'Буцаалт хүссэн'};
+  const restaurantLabel=value=>restaurantLabels[value]||labels[value]||value;
+  function restaurantLogin(message=''){
+    $('header span').textContent='Рестораны өдөр тутмын ажил';$('header .brand').href='/restaurant';
+    generation++;token='';restaurantId='';dirty=false;$('#app').hidden=true;$('#logout').hidden=true;$('#login').hidden=false;$('#login').replaceChildren();content().replaceChildren();document.title='Рестораны ажилтан — PRsystem';
+    if(message)$('#login').append(node('p',message,'notice'));
+    form($('#login'),'Рестораны ажилтнаар нэвтрэх',[field('restaurant_id','Рестораны код'),field('email','Имэйл','email',{autocomplete:'username'}),field('password','Нууц үг','password',{autocomplete:'current-password'})],'Нэвтрэх',v=>api('/auth/restaurants/login',{restaurant_id:v.restaurant_id,email:v.email,password:v.password}),{login:true,success:async(result,f)=>{
+      token=result.access_token;restaurantId=f.elements.restaurant_id.value.trim();f.remove();$('#login').hidden=true;$('#app').hidden=false;$('#logout').hidden=false;
+      $('#navigation').replaceChildren(btn('Захиалгууд',()=>guard(()=>restaurantQueue())),btn('Меню удирдах',()=>guard(()=>restaurantMenu())),btn('Рестораны мэдэгдлүүд',()=>guard(()=>restaurantNotices(content(),true))));
+      $('#logout').onclick=()=>guard(async()=>{try{await api('/auth/logout',{});}catch{}restaurantLogin();});await restaurantQueue();
+    }});
+  }
+  function restaurantSummary(parent,order){
+    parent.append(node('p',`${order.restaurant_name_snapshot} · Өрөө ${order.room_number_snapshot} · ${money(order.amount_mnt)}`));
+    const items=node('div',undefined,'restaurant-items');table(items,'Захиалгын бүтээгдэхүүн',['Бүтээгдэхүүн','Тоо','Нэгж үнэ','Нийт'],order.items.map(i=>[i.name,i.quantity,money(i.unit_price_mnt),money(i.amount_mnt)]));parent.append(items);
+    const state=order.state;
+    if(!state){parent.append(node('p','Төлбөрийн нэхэмжлэл үүсгэхэд бэлэн.'));return;}
+    parent.append(node('p',`Захиалга: ${restaurantLabel(state.order)} · Хүргэлт: ${restaurantLabel(state.fulfillment)} · Төлбөр: ${restaurantLabel(state.payment)}`));
+    if(state.refund_request!=='NONE')parent.append(node('p',`Буцаах нөхцөл: ${restaurantLabel(state.refund_policy)} · Хүсэлт: ${restaurantLabel(state.refund_request)} · Мөнгө буцаах явц: ${restaurantLabel(state.refund)}`));
+    if(state.promised_ready_at)parent.append(node('p',`Амласан бэлэн болох цаг: ${time(state.promised_ready_at)}`));
+    if(state.handoff!=='ROOM')parent.append(node('p',`Хүлээлгэн өгөх: ${restaurantLabel(state.handoff)}`));
+    const a=order.alerts||{};
+    if(a.acceptance_warning)parent.append(node('p',a.acceptance_reception?'Ресторан 10 минутын дотор хүлээн аваагүй. Буцаалт хүсэх боломжтой.':'Ресторан хүлээн авах хугацаа 5 минут хэтэрсэн.','notice'));
+    if(a.eta_warning)parent.append(node('p',a.eta_refund_available?'Амласан цагаас 15 минут өнгөрсөн. Буцаалт хүсэх боломжтой.':'Амласан бэлэн болох цаг өнгөрсөн.','notice'));
+    if(a.refund_escalation)parent.append(node('p','Буцаалтын хүсэлт 10 минутаас удаан шийдэгдээгүй байна. Reception болон менежерт мэдэгдэнэ үү.','notice'));
+    if(a.link_paused)parent.append(node('p','Буцаалт шийдэгдэх хүртэл энэ буудлын шинэ захиалга түр хаалттай.','notice'));
+  }
+  async function restaurantQueue(after=''){
+    const seq=++generation;portalTitle('Рестораны захиалгууд');content().replaceChildren();$('#refresh').onclick=()=>guard(()=>restaurantQueue(after));say('Захиалга ачаалж байна…');
+    try{const data=await api(`/restaurants/${enc(restaurantId)}/orders?after=${enc(after)}`);if(seq!==generation)return;say('Төлбөр нь баталгаажсан захиалгууд.');
+      if(!data.orders.length)content().append(node('p','Энэ хэсэгт төлбөр нь баталгаажсан захиалга алга.'));
+      for(const order of data.orders){const r=record(content(),`Захиалга ${order.order_id}`,time(order.created_at));restaurantSummary(r,order);const state=order.state;
+        const endpoint=action=>`/restaurants/${enc(restaurantId)}/hotels/${enc(order.tenant_id)}/orders/${enc(order.order_id)}/${action}`;
+        const submit=(title,fields,action,map=v=>v)=>form(r,title,fields,title,v=>api(endpoint(action),{...map(v),expected_revision:order.revision}),{success:async()=>restaurantQueue(after)});
+        if(state.fulfillment==='AWAITING_ACCEPTANCE')submit('Захиалга хүлээн авах',[select('eta_minutes','Бэлэн болох хугацаа',[15,30,45,60].map(n=>[n,`${n} минут`]))],'accept',v=>({...v,eta_minutes:Number(v.eta_minutes)}));
+        const next={ACCEPTED:['PREPARING'],PREPARING:['READY'],READY:['OUT_FOR_DELIVERY',...(state.handoff==='RECEPTION'?['HANDED_TO_RECEPTION']:state.handoff==='GUEST_PICKUP'?['PICKED_UP_BY_GUEST']:[])],OUT_FOR_DELIVERY:[state.handoff==='RECEPTION'?'HANDED_TO_RECEPTION':state.handoff==='GUEST_PICKUP'?'PICKED_UP_BY_GUEST':'DELIVERED_TO_ROOM']}[state.fulfillment];
+        if(next?.length)submit('Хүргэлтийн явцыг батлах',[select('fulfillment','Бодитоор гүйцэтгэсэн ажил',next.map(x=>[x,restaurantLabel(x)]))],'fulfill');
+        if(state.refund_request==='OPEN')submit('Буцаалтын хүсэлт шийдэх',[select('approve','Шийдвэр',[['yes','Бүтэн буцаалт зөвшөөрөх'],['no','Татгалзах']]),select('reason','Татгалзвал сонгох шалтгаан',[['PREPARATION_STARTED','Хоол бэлтгэж эхэлсэн'],['FOOD_READY','Хоол бэлэн болсон'],['OUT_FOR_DELIVERY','Хүргэлтэд гарсан'],['HANDED_OVER','Хүлээлгэн өгсөн']])],'decide-refund',v=>({...v,approve:v.approve==='yes'}));
+        if(state.refund_request==='APPROVED'&&['NONE','FAILED'].includes(state.refund))submit('Бүтэн дүнгийн буцаалт эхлүүлэх',[field('reviewed','Буцаах дүнг шалгасан','checkbox')],'begin-refund',v=>({idempotency_key:v.idempotency_key}));
+        if(['PENDING','FAILED'].includes(state.refund))submit('Буцаалтын төлөв тулгах',[],'reconcile-refund');
+        if(!['CANCELLED','DELIVERED_TO_ROOM','HANDED_TO_RECEPTION','PICKED_UP_BY_GUEST'].includes(state.fulfillment)&&['NONE','OPEN','REJECTED'].includes(state.refund_request))submit('Гүйцэтгэх боломжгүйг батлах',[field('reviewed','Захиалгыг гүйцэтгэх боломжгүй; бүтэн буцаалт шаардлагатай','checkbox')],'cannot-fulfill',v=>({idempotency_key:v.idempotency_key}));
+      }
+      const pages=actions(content());if(after)pages.append(btn('Эхний захиалгууд',()=>guard(()=>restaurantQueue())));if(data.next_after)pages.append(btn('Дараагийн захиалгууд',()=>guard(()=>restaurantQueue(data.next_after))));
+    }catch(e){if(seq===generation)say(e.message,true);}
+  }
+  async function restaurantMenu(after=''){
+    const seq=++generation;portalTitle('Рестораны меню');content().replaceChildren();$('#refresh').onclick=()=>guard(()=>restaurantMenu(after));say('Меню ачаалж байна…');
+    try{const data=await api(`/restaurants/${enc(restaurantId)}/menu?after=${enc(after)}`);if(seq!==generation)return;say('Менюгийн нэр, үнэ, бэлэн эсэхийг шинэчилнэ.');
+      const editor=(parent,item)=>form(parent,item?'Бүтээгдэхүүн засах':'Бүтээгдэхүүн нэмэх',[
+        ...(!item?[field('item_id','Бүтээгдэхүүний код')]:[]),field('category','Ангилал','text',{value:item?.category,max:100}),field('name','Нэр','text',{value:item?.name,max:200}),field('description','Тайлбар','textarea',{value:item?.description,optional:true,max:2000}),amount('price_mnt','Нэгж үнэ (₮)',item?.price_mnt),field('active','Менюд харуулах','checkbox',{optional:true,value:item?.active??true}),field('available','Одоо захиалах боломжтой','checkbox',{optional:true,value:item?.available??true})
+      ],'Меню хадгалах',v=>{const {item_id,...body}=v;return api(`/restaurants/${enc(restaurantId)}/menu/${enc(item?.item_id||item_id)}`,{...body,description:body.description||'',expected_revision:item?.revision||0},'PUT');},{success:async()=>restaurantMenu(after)});
+      actions(content()).append(btn('Бүтээгдэхүүн нэмэх',()=>guard(()=>editor(content(),null))));
+      if(!data.items.length)content().append(node('p','Энэ хэсэгт бүтээгдэхүүн алга.'));
+      for(const item of data.items){const r=record(content(),item.name,`${item.category} · ${money(item.price_mnt)} · ${item.active?(item.available?'Захиалах боломжтой':'Түр бэлэн биш'):'Менюд харагдахгүй'}`);if(item.image_data)photos(r,[item.image_data],item.name);actions(r).append(btn(`${item.name} засах`,()=>guard(()=>editor(r,item))),btn(`${item.name} зураг`,()=>guard(()=>form(r,'Менюгийн зураг',[photoField()],'Зураг хадгалах',async v=>api(`/restaurants/${enc(restaurantId)}/menu/${enc(item.item_id)}/image`,{image:await imageValue(v.photo),expected_revision:item.revision,idempotency_key:v.idempotency_key},'PUT'),{success:async()=>restaurantMenu(after)}))));if(item.image_data)form(r,'Менюгийн зургийг арилгах',[],'Зураг арилгах',v=>api(`/restaurants/${enc(restaurantId)}/menu/${enc(item.item_id)}/image`,{image:null,expected_revision:item.revision,idempotency_key:v.idempotency_key},'PUT'),{success:async()=>restaurantMenu(after)});}
+      if(after)actions(content()).append(btn('Эхний бүтээгдэхүүнүүд',()=>guard(()=>restaurantMenu())));if(data.next_after)actions(content()).append(btn('Дараагийн бүтээгдэхүүнүүд',()=>guard(()=>restaurantMenu(data.next_after))));
+    }catch(e){if(seq===generation)say(e.message,true);}
+  }
+  const restaurantNoticeLabels={ORDER_PAID:'Төлбөр баталгаажсан',REFUND_REQUESTED:'Буцаалтын хүсэлт бүртгэгдсэн',ACCEPTANCE_WARNING:'Хүлээн авах хугацаа 5 минут хэтэрсэн',ACCEPTANCE_LATE:'Хүлээн авах хугацаа 10 минут хэтэрсэн',ETA_WARNING:'Амласан бэлэн болох цаг өнгөрсөн',ETA_LATE:'Амласан цагаас 15 минут өнгөрсөн',REFUND_REMINDER:'Буцаалтын хүсэлтийн сануулга',REFUND_ESCALATED:'Буцаалтын хүсэлт 10 минут шийдэгдээгүй',LINK_PAUSED:'Шинэ захиалга түр хаалттай',REFUND_FAILED:'Буцаалт амжилтгүй',REFUND_RESOLVED:'Буцаалт дууссан',GUEST_CHECKED_OUT:'Зочин checkout хийсэн; хүлээлгэн өгөх сонголтыг шалгана уу'};
+  async function restaurantNotices(container,restaurantScope,after=''){
+    const seq=generation;container.replaceChildren(node('p','Мэдэгдэл ачаалж байна…'));
+    if(restaurantScope){portalTitle('Рестораны мэдэгдлүүд');$('#refresh').onclick=()=>guard(()=>restaurantNotices(container,true,after));}
+    try{const endpoint=restaurantScope?`/restaurants/${enc(restaurantId)}/notifications`:path('restaurant-notifications');const data=await api(endpoint+'?after='+enc(after));if(seq!==generation||!container.isConnected)return;container.replaceChildren(node('h2','Мэдэгдлийн түүх'));
+      if(!data.items.length)container.append(node('p','Энэ хэсэгт мэдэгдэл алга.'));for(const item of data.items)record(container,`${item.restaurant_name} · Өрөө ${item.room_number}`,`${restaurantNoticeLabels[item.code]||'Захиалгын төлөв өөрчлөгдсөн'} · ${time(item.recorded_at)}`);
+      const pages=actions(container);pages.append(btn('Мэдэгдлүүдийг шинэчлэх',()=>guard(()=>restaurantNotices(container,restaurantScope,after))));if(after)pages.append(btn('Эхний мэдэгдлүүд',()=>guard(()=>restaurantNotices(container,restaurantScope))));if(data.next_after)pages.append(btn('Дараагийн мэдэгдлүүд',()=>guard(()=>restaurantNotices(container,restaurantScope,data.next_after))));
+    }catch(e){if(seq===generation&&container.isConnected)container.replaceChildren(node('p',e.message,'error'),btn('Мэдэгдэл дахин ачаалах',()=>restaurantNotices(container,restaurantScope,after)));}
+  }
+  async function hotelRestaurantOrders(container,after=''){
+    const seq=generation;container.replaceChildren(node('p','Рестораны захиалгуудыг ачаалж байна…'));
+    try{const data=await api(path('restaurant-orders?after='+enc(after)));if(seq!==generation||!container.isConnected)return;container.replaceChildren(node('h2','Рестораны төлбөртэй захиалгууд'));
+      if(!data.orders.length)container.append(node('p','Энэ хэсэгт төлбөр нь баталгаажсан захиалга алга.'));for(const order of data.orders){const r=record(container,order.restaurant_name_snapshot,`Өрөө ${order.room_number_snapshot}`);restaurantSummary(r,order);
+        if(role('RECEPTION')&&order.state.refund_request==='NONE'&&(order.alerts.acceptance_reception||order.alerts.eta_refund_available))form(r,'Зочны буцаалтын хүсэлт бүртгэх',[field('reviewed','Зочин бүтэн буцаалт хүссэн','checkbox')],'Буцаалтын хүсэлт илгээх',v=>api(path(`restaurant-orders/${enc(order.order_id)}/request-refund`),{expected_revision:order.revision,idempotency_key:v.idempotency_key}),{success:async()=>hotelRestaurantOrders(container,after)});
+      }
+      const pages=actions(container);pages.append(btn('Рестораны захиалгуудыг шинэчлэх',()=>guard(()=>hotelRestaurantOrders(container,after))));if(after)pages.append(btn('Эхний рестораны захиалгууд',()=>guard(()=>hotelRestaurantOrders(container))));if(data.next_after)pages.append(btn('Дараагийн рестораны захиалгууд',()=>guard(()=>hotelRestaurantOrders(container,data.next_after))));
+    }catch(e){if(seq===generation&&container.isConnected)container.replaceChildren(node('p',e.message,'error'));}
+  }
+  const restaurantProfileFields=data=>[field('name','Рестораны нэр','text',{value:data?.name,max:200}),field('category','Үйлчилгээний төрөл','text',{value:data?.category,max:100}),field('description','Рестораны тайлбар','textarea',{value:data?.description,max:2000}),field('address','Хаяг','text',{value:data?.address,max:500}),field('latitude','Газрын зургийн өргөрөг','number',{value:data?.latitude,decimal:true,min:-90}),field('longitude','Газрын зургийн уртраг','number',{value:data?.longitude,decimal:true,min:-180}),field('phone','Рестораны холбоо барих утас','tel',{value:data?.phone,max:20})];
+  async function restaurantSettings(container){
+    const seq=generation;container.replaceChildren(node('p','Ресторануудыг ачаалж байна…'));
+    try{const items=await api(path('restaurant-settings'));if(seq!==generation||!container.isConnected)return;container.replaceChildren(node('h2','Ресторануудын тохиргоо'));
+      actions(container).append(btn('Ресторан бүртгэж урилга өгөх',()=>guard(()=>form(container,'Шинэ ресторан',[...restaurantProfileFields(),field('email','Рестораны ажилтны имэйл','email'),field('manager_name','Рестораны ажилтны нэр')],'Ресторан бүртгэх',v=>api(path('restaurants'),{...v,weekly_hours:Array.from({length:7},(_,day)=>({day,closed:true}))}),{success:async()=>{await restaurantSettings(container);say('Ресторан бүртгэгдлээ. Цагийн хуваарийг оруулаад холбоосыг идэвхжүүлнэ үү.');}}))));
+      if(!items.length)container.append(node('p','Таны бүртгэсэн рестораны холбоос алга.'));
+      for(const item of items){const r=record(container,item.name,item.active?'Шинэ захиалга идэвхтэй':'Шинэ захиалга идэвхгүй');actions(r).append(btn(`${item.name} мэдээлэл, цагийн хуваарь`,()=>guard(()=>restaurantProfileEditor(r,item,container))));
+        form(r,item.active?'Шинэ захиалга түр хаах':'Шинэ захиалга нээх',[],item.active?'Холбоосыг идэвхгүй болгох':'Холбоосыг идэвхжүүлэх',v=>api(path(`restaurants/${enc(item.restaurant_id)}/link-state`),{active:!item.active,expected_revision:item.link_revision,idempotency_key:v.idempotency_key},'PUT'),{success:async()=>restaurantSettings(container)});
+      }
+    }catch(e){if(seq===generation&&container.isConnected)container.replaceChildren(node('p',e.message,'error'),btn('Ресторануудыг дахин ачаалах',()=>restaurantSettings(container)));}
+  }
+  async function restaurantProfileEditor(parent,item,container){
+    const seq=generation;
+    try{const data=await api(path(`restaurants/${enc(item.restaurant_id)}/settings`));if(seq!==generation||!parent.isConnected)return;
+      const days=['Даваа','Мягмар','Лхагва','Пүрэв','Баасан','Бямба','Ням'],fields=restaurantProfileFields(data);
+      for(const [day,label] of days.entries()){const hours=data.weekly_hours.find(h=>h.day===day);fields.push(field('closed_'+day,label+' — амарна','checkbox',{optional:true,value:hours.closed}),field('opens_'+day,label+' — нээх цаг','time',{optional:true,value:hours.opens||''}),field('closes_'+day,label+' — хаах цаг','time',{optional:true,value:hours.closes||''}));}
+      fields.push(field('closed_dates','Нэмэлт амралтын огноо · YYYY-MM-DD, таслалаар тусгаарлана','textarea',{optional:true,value:data.closed_dates.join(', '),max:5000}),reason());
+      form(parent,'Мэдээлэл, цагийн хуваарь засах',fields,'Рестораны тохиргоо хадгалах',v=>{const body={idempotency_key:v.idempotency_key,expected_revision:data.revision,reason:v.reason,closed_dates:(v.closed_dates||'').split(',').map(x=>x.trim()).filter(Boolean),weekly_hours:days.map((_,day)=>v['closed_'+day]?{day,closed:true}:{day,closed:false,opens:v['opens_'+day]||null,closes:v['closes_'+day]||null})};for(const f of restaurantProfileFields())body[f.name]=v[f.name];return api(path(`restaurants/${enc(item.restaurant_id)}/settings`),body,'PUT');},{success:async()=>restaurantSettings(container)});
+    }catch(e){if(seq===generation&&parent.isConnected)parent.append(node('p',e.message,'error'));}
+  }
+  async function guestRestaurantHome(){
+    const seq=++generation;$('#login').hidden=true;$('#app').hidden=false;$('#logout').hidden=false;$('#navigation').replaceChildren(btn('Ресторанууд',()=>guard(()=>guestRestaurantHome())),btn('Миний хоолны захиалгууд',()=>guard(()=>guestRestaurantOrders())));portalTitle('Өрөөний хоолны захиалга');content().replaceChildren();$('#refresh').onclick=()=>guard(()=>guestRestaurantHome());
+    $('#logout').onclick=()=>guard(async()=>{try{await api('/guest/logout',{});}catch{}token='';generation++;$('#app').hidden=true;$('#logout').hidden=true;$('#login').hidden=false;content().replaceChildren();$('#login').replaceChildren(node('h1','Нэвтрэх эрхээ хаалаа'),node('p','Дахин нэвтрэх бол өрөөний QR-г уншуулна уу.'));});
+    content().append(node('h2',`${guestRoom} өрөөнд тавтай морил`));
+    try{const restaurants=await api('/guest/restaurants');if(seq!==generation)return;say('Хоолны төлбөрийг рестораны нэхэмжлэлээр төлнө.');if(!restaurants.length)content().append(node('p','Энэ буудалд захиалга авах ресторан бүртгэгдээгүй байна.'));for(const restaurant of restaurants){const r=record(content(),restaurant.name,restaurant.active?'Меню болон захиалах боломжийг шалгах':'Шинэ захиалга түр авахгүй');actions(r).append(btn(`${restaurant.name} меню`,()=>guard(()=>guestRestaurantMenu(restaurant.restaurant_id))));}}catch(e){if(seq===generation)say(e.message,true);}
+  }
+  async function guestRestaurantMenu(id){
+    const seq=++generation;portalTitle('Рестораны меню');content().replaceChildren();$('#refresh').onclick=()=>guard(()=>guestRestaurantMenu(id));
+    try{const data=await api(`/guest/restaurants/${enc(id)}/menu`);if(seq!==generation)return;portalTitle(data.name);say(data.ordering_available?'Бүтээгдэхүүний тоог сонгоно уу.':'Одоогоор шинэ захиалга авахгүй.');
+      if(!data.items.length)content().append(node('p','Менюд бүтээгдэхүүн алга.'));
+      table(content(),'Меню',['Ангилал','Бүтээгдэхүүн','Үнэ','Боломж'],data.items.map(i=>[i.category,`${i.name}${i.description?' · '+i.description:''}`,money(i.price_mnt),i.available?'Захиалж болно':'Түр бэлэн биш']));
+      for(const item of data.items.filter(i=>i.image_data)){const r=record(content(),item.name,money(item.price_mnt));photos(r,[item.image_data],item.name);}
+      const available=data.items.filter(i=>i.available);
+      if(data.ordering_available&&available.length)form(content(),'Захиалгын сагс',available.map((i,n)=>field('q_'+n,`${i.name} · ${money(i.price_mnt)} — тоо`,'number',{min:0,value:0})),'Сагсыг батлах',v=>{const quantities={};for(const [n,i] of available.entries()){if(v['q_'+n]>100)throw new Error('Нэг бүтээгдэхүүнээс 100 хүртэл сонгоно уу.');if(v['q_'+n]>0)quantities[i.item_id]=v['q_'+n];}if(!Object.keys(quantities).length)throw new Error('Дор хаяж нэг бүтээгдэхүүн сонгоно уу.');return api(`/guest/restaurants/${enc(id)}/orders`,{quantities,idempotency_key:v.idempotency_key});},{success:async order=>guestRestaurantOrder(order.order_id)});
+    }catch(e){if(seq===generation)say(e.message,true);}
+  }
+  async function guestRestaurantOrders(after=''){
+    const seq=++generation;portalTitle('Миний хоолны захиалгууд');content().replaceChildren();$('#refresh').onclick=()=>guard(()=>guestRestaurantOrders(after));
+    try{const data=await api('/guest/restaurant-orders?after='+enc(after));if(seq!==generation)return;say('Тухайн өрөөний идэвхтэй байрлалтын захиалгууд.');if(!data.orders.length)content().append(node('p','Энэ хэсэгт хоолны захиалга алга.'));for(const order of data.orders){const r=record(content(),order.restaurant_name_snapshot,`${money(order.amount_mnt)} · ${order.state?restaurantLabel(order.state.order):'Нэхэмжлэл үүсгээгүй'}`);actions(r).append(btn('Хоолны захиалга нээх',()=>guard(()=>guestRestaurantOrder(order.order_id))));}if(after)actions(content()).append(btn('Эхний захиалгууд',()=>guard(()=>guestRestaurantOrders())));if(data.next_after)actions(content()).append(btn('Дараагийн захиалгууд',()=>guard(()=>guestRestaurantOrders(data.next_after))));}catch(e){if(seq===generation)say(e.message,true);}
+  }
+  async function guestRestaurantOrder(id){
+    const seq=++generation;portalTitle('Хоолны захиалгын дэлгэрэнгүй');content().replaceChildren();$('#refresh').onclick=()=>guard(()=>guestRestaurantOrder(id));
+    try{const order=await api('/guest/restaurant-orders/'+enc(id));if(seq!==generation)return;say('Төлбөр, хүргэлтийн төлөвийг серверээс шалгалаа.');restaurantSummary(content(),order);
+      const phone=node('a',`Ресторан руу залгах: ${order.contact_phone}`);phone.href='tel:'+order.contact_phone.replace(/[^+0-9]/g,'');actions(content()).append(phone);
+      const submit=(title,url)=>form(content(),title,[],title,v=>api(url,{expected_revision:order.revision,idempotency_key:v.idempotency_key}),{success:async()=>guestRestaurantOrder(id)});
+      if(!order.invoice_id)form(content(),'Нэхэмжлэл үүсгэх',[field('reviewed',`${money(order.amount_mnt)} дүн, бүтээгдэхүүний тоог шалгасан`,'checkbox')],'Төлбөрийн нэхэмжлэл үүсгэх',()=>api(`/guest/restaurant-orders/${enc(id)}/invoice`,{}),{success:async()=>guestRestaurantOrder(id)});
+      else if(order.state.payment!=='PAID'){content().append(node('p',`Нэхэмжлэлийн дугаар: ${order.invoice_id}`),node('p',`Хүчинтэй хугацаа: ${time(order.expires_at)}`));submit('Төлбөрийн төлөв шалгах',`/guest/hotels/${enc(order.tenant_id)}/restaurant-orders/${enc(id)}/reconcile-payment`);}
+      if(order.state?.refund_request==='NONE'&&(order.alerts.acceptance_reception||order.alerts.eta_refund_available))submit('Цуцлалт, бүтэн буцаалт хүсэх',`/guest/hotels/${enc(order.tenant_id)}/restaurant-orders/${enc(id)}/request-refund`);
+    }catch(e){if(seq===generation)say(e.message,true);}
+  }
+
+  let onlineAfter='',customerAfter='',customerPhone='',portalQuery=null,geo=null;
+  const localDate=v=>new Date(v+'+08:00').toISOString();
+  async function imageValue(file){if(!(file instanceof File)||file.size>290000||!['image/png','image/jpeg'].includes(file.type))throw new Error('PNG эсвэл JPEG зураг сонгоно уу. Хэмжээ 290 KB-аас бага байна.');return await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Зургийг уншиж чадсангүй. Дахин сонгоно уу.'));reader.readAsDataURL(file);});}
+  const photoField=()=>field('photo','Нийтлэх зураг · PNG/JPEG, 290 KB хүртэл','file',{accept:'image/png,image/jpeg'});
+  function photos(parent,values,title){const row=node('div',undefined,'booking-photos');for(const value of values||[]){const img=node('img');img.src=value;img.alt=title;img.width=320;img.height=180;img.loading='lazy';img.addEventListener('error',()=>{img.alt='Зургийг ачаалж чадсангүй · '+title;});row.append(img);}parent.append(row);}
+  function bookingSummary(parent,b){parent.append(node('p',`${time(b.quote.planned_checkin_at)} → ${time(b.quote.planned_checkout_at)} · ${money(b.quote.amount_mnt)}`));parent.append(node('p',`Захиалга: ${labels[b.booking_state]||b.booking_state} · Буцаасан: ${money(b.refunded_mnt)} · Буцаах үлдэгдэл: ${money(b.refund_remaining_mnt)}`));}
+  async function onlineTools(parent,seq){
+    const items=await api(path(`booking-holds?after=${enc(onlineAfter)}`));if(seq!==generation)return;
+    parent.append(node('p','Баталгаажсан захиалгын төлбөр, төлөвлөсөн хугацаа өөрчлөгдөхгүй. Өрөөг check-in үед онооно.'));
+    if(!items.length)parent.append(node('p','Энэ хэсэгт онлайн захиалга алга.'));
+    for(const b of items){const r=record(parent,b.booking_id,labels[b.booking_state]||b.booking_state);bookingSummary(r,b);
+      if(b.booking_state==='CONFIRMED'){
+        if(role('RECEPTION'))actions(r).append(btn('Захиалгаар зочин бүртгэх',()=>guard(()=>checkin(r,b))));
+        const outcomes=[['NO_SHOW','Ирээгүй гэж бүртгэх'],...(manager()?[['CANCELLED_HOTEL','Буудлын шалтгаанаар цуцлах']]:[])];
+        form(r,'Захиалгын эцсийн төлөв',[select('outcome','Үйлдэл',outcomes),reason()],'Сонгосон төлөвийг батлах',v=>api(path(`booking-holds/${enc(b.booking_id)}/terminal`),v));
+        if(manager())command(r,'Нэмэлт төлбөргүй өндөр ангиллын өрөө зөвшөөрөх',[select('room_id','Өрөө',choices(rooms,'room_id',r=>`${r.number} · ${r.category_name}`)),reason()],path(`booking-holds/${enc(b.booking_id)}/upgrade`));
+      }
+    }
+    const a=actions(parent);a.append(btn('Эхний хэсэг',()=>guard(()=>{onlineAfter='';navigate('online');})),btn('Дараагийн 50',()=>guard(()=>{onlineAfter=items.at(-1)?.booking_id||'';navigate('online');})));a.lastChild.disabled=items.length<50;
+    if(manager()&&!overview.completion_only){
+      const settings=await api(path('booking-settings'));if(seq!==generation)return;
+      const available=categories.filter(c=>settings.categories.some(item=>item.category_id===c.category_id));
+      const current=id=>settings.categories.find(c=>c.category_id===id);
+      if(available.length){
+        const rank=form(parent,'Ангиллын түвшин тохируулах',[select('category_id','Ангилал',choices(available,'category_id','name')),field('rank','Түвшин · өндөр тоо нь өндөр ангилал','number',{min:0,value:current(available[0].category_id).rank??0})],'Түвшин хадгалах',v=>{const {category_id,...body}=v;return api(path(`room-categories/${enc(category_id)}/booking-rank`),{...body,expected_revision:current(category_id).rank_revision},'PUT');},savedWorkflow('online','Ангиллын түвшин хадгалагдлаа.'));
+        rank.elements.category_id.addEventListener('change',()=>{rank.elements.rank.value=current(rank.elements.category_id.value).rank??0;});
+      }else parent.append(node('p','Нийтлэх ангилал алга. Удирдлага хэсэгт өрөөний ангилал үүсгэнэ үү.'));
+      profileForm(parent,settings.profile);
+      if(available.length){
+        const publication=form(parent,'Ангиллыг нийтлэх',[select('category_id','Ангилал',choices(available,'category_id','name')),photoField(),field('published','Ангиллыг нийтэд харуулах','checkbox',{optional:true,value:current(available[0].category_id).published===true})],'Нийтлэх төлөв хадгалах',async v=>api(path(`room-categories/${enc(v.category_id)}/publication`),{photos:[await imageValue(v.photo)],published:v.published,expected_revision:current(v.category_id).publication_revision,idempotency_key:v.idempotency_key},'PUT'),savedWorkflow('online','Ангиллын нийтлэх төлөв хадгалагдлаа.'));
+        publication.elements.category_id.addEventListener('change',()=>{publication.elements.published.checked=current(publication.elements.category_id.value).published===true;publication.elements.photo.value='';});
+        publication.querySelector('h2').after(node('p','Сонгосон ангиллын зургийг шинээр сонгоно уу. Хадгалахад өмнөх зургийг солино.'));
+      }
+    }
+  }
+  function profileForm(parent,profile=null){
+    const existingPhotos=profile?.photos||[];
+    const f=form(parent,'Буудлын нийтийн мэдээлэл',[field('name','Буудлын нэр'),field('address','Хаяг'),field('phone','Нийтийн утас','tel'),field('description','Тайлбар','textarea'),field('latitude','Өргөрөг','number',{decimal:true,min:-90,max:90}),field('longitude','Уртраг','number',{decimal:true,min:-180,max:180}),{...photoField(),optional:existingPhotos.length>0},field('published','Нийтэд харуулах','checkbox',{optional:true}),field('accepting','Онлайн захиалга авах','checkbox',{optional:true})],'Профайл хадгалах',async v=>{const {photo,...body}=v;return api(path('booking-profile'),{...body,photos:photo?[await imageValue(photo)]:existingPhotos,expected_revision:profile?.revision??0},'PUT');},savedWorkflow('online','Буудлын нийтийн мэдээлэл хадгалагдлаа.'));
+    if(profile)for(const [key,value] of Object.entries(profile)){const input=f.elements[key];if(input){if(input.type==='checkbox')input.checked=value;else input.value=value;}}
+    if(existingPhotos.length){f.querySelector('h2').after(node('p','Шинэ зураг сонгоогүй бол одоогийн зургууд хэвээр хадгалагдана. Шинэ зураг сонговол тэдгээрийг солино.'));photos(f,existingPhotos,profile.name);}
+  }
+  function portalTitle(title){document.title=title+' — PRsystem';$('#page-title').textContent=title;$('#page-title').focus();const current={'Рестораны захиалгууд':'Захиалгууд','Рестораны меню':'Меню удирдах','Рестораны мэдэгдлүүд':'Рестораны мэдэгдлүүд'}[title];for(const item of $('#navigation').children){if(item.textContent===current)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');}}
+  function portalHome(message=''){
+    document.querySelector('header span').textContent=portalMode==='contact'?'Холбоо барих утас':portalMode==='operation'?'Үйл ажиллагааны хяналт':portalMode==='booker'?'Буудлын онлайн захиалга':'Платформын санхүү';document.querySelector('header .brand').href=location.pathname;
+    generation++;dirty=false;$('#login').replaceChildren();$('#app').hidden=false;$('#navigation').replaceChildren();$('#content').replaceChildren();$('#mode').hidden=false;$('#page-title').textContent=portalMode==='contact'?'Холбоо барих утас':portalMode==='operation'?'Үйл ажиллагааны хяналт':portalMode==='booker'?'Буудал захиалах':'Захиалгын санхүү';document.title=$('#page-title').textContent+' — PRsystem';
+    $('#logout').hidden=!token;$('#refresh').onclick=()=>guard(()=>portalMode==='contact'?contactTools():portalMode==='operation'?operationTools():portalMode==='finance'?financeTools():searchForm());
+    $('#logout').onclick=()=>guard(async()=>{try{await api(portalMode==='contact'?'/auth/logout':portalMode==='booker'?'/booker/auth/logout':'/platform/auth/logout',{});}catch{}token='';tenant='';customerPhone='';portalHome();});
+    const navigation=$('#navigation');navigation.append(btn('Нүүр',()=>guard(()=>portalHome())));
+    if(portalMode==='booker'){
+      if(token)navigation.append(btn('Миний захиалга',()=>guard(()=>{customerAfter='';myBookings();})));
+      else navigation.append(btn('Нэвтрэх',()=>guard(()=>bookerLogin())),btn('Бүртгүүлэх / нууц үг сэргээх',()=>guard(()=>bookerRegister())));
+      searchForm();
+    }else if(portalMode==='contact'){if(!token)contactLogin();else contactTools();}else if(portalMode==='operation'){if(!token)operationLogin();else operationTools();}else if(!token)financeLogin();else financeTools();
+    if(message)say(message,true);
+  }
+  function bookerLogin(){portalTitle('Зочны нэвтрэх');generation++;content().replaceChildren();form(content(),'Утсаар нэвтрэх',[field('phone','Утас','tel',{autocomplete:'username'}),field('password','Нууц үг','password',{autocomplete:'current-password'})],'Нэвтрэх',v=>api('/booker/auth/login',{phone:v.phone,password:v.password}),{login:true,success:async r=>{token=r.access_token;customerPhone=r.phone||'';portalHome();}});}
+  function bookerRegister(){portalTitle('Утас баталгаажуулах');generation++;content().replaceChildren();form(content(),'Утас баталгаажуулах',[field('phone','Утас','tel',{autocomplete:'tel'}),select('purpose','Үйлдэл',[['REGISTER','Шинээр бүртгүүлэх'],['RESET','Нууц үг сэргээх']])],'Код хүсэх',v=>api('/booker/auth/challenge',{phone:v.phone,purpose:v.purpose,device:deviceId}),{login:true,success:async(r,f)=>{f.remove();form(content(),'6 оронтой код · 5 минут хүчинтэй',[field('code','Баталгаажуулах код','text',{max:6,autocomplete:'one-time-code'}),field('password','Шинэ нууц үг · 12–128 тэмдэгт','password',{autocomplete:'new-password'})],'Утас ба нууц үг батлах',v=>api('/booker/auth/complete',{challenge_id:r.challenge_id,code:v.code,password:v.password}),{login:true,success:async()=>{bookerLogin();say('Баталгаажлаа. Шинэ нууц үгээрээ нэвтэрнэ үү.');}});}});}
+  const deviceId=crypto.randomUUID();
+  function searchForm(){portalTitle('Буудал хайх');$('#refresh').onclick=()=>guard(()=>searchForm());generation++;content().replaceChildren();say('Огноо, байршлаа сонгоно уу.');
+    const f=form(content(),'Буудал хайх',[field('arrival','Ирэх өдөр, цаг (Улаанбаатар)','datetime-local'),field('departure','Гарах өдөр','date'),field('query','Хот, дүүрэг эсвэл буудлын нэр','text',{optional:true})],'Буудал хайх',async v=>{
+      const start=new Date(v.arrival+'+08:00'),end=new Date(v.departure+'T00:00:00+08:00'),day=new Date(v.arrival.slice(0,10)+'T00:00:00+08:00');const nights=(end-day)/86400000;
+      if(!Number.isInteger(nights)||nights<1)throw new Error('Гарах өдрийг ирэх өдрөөс хойш сонгоно уу.');
+      portalQuery={planned_checkin_at:start.toISOString(),nights,query:v.query||'',...(geo||{})};return await searchHotels('',false);
+    },{success:async()=>{}});
+    const clear=btn('Байршлын хайлт арилгах',()=>{f.elements.query.value='';f.elements.query.focus();geo=null;portalQuery=null;document.getElementById('hotel-results')?.replaceChildren();say('Хайлт арилсан. Огноогоо шалгаад дахин хайна уу.');});actions(f).append(clear);clear.hidden=!f.elements.query.value;f.elements.query.addEventListener('input',()=>{clear.hidden=!f.elements.query.value;});
+    content().append(node('p','Одоогийн байршлыг зөвхөн буудал хүртэлх зайг тооцоход ашиглана. Зөвшөөрөхгүй бол хаягаар хайж болно.'));
+    actions(content()).append(btn('Миний одоогийн байршлыг ашиглах',()=>{const seq=generation;if(!navigator.geolocation){say('Байршил дэмжихгүй байна. Хаягаар хайна уу.',true);return;}navigator.geolocation.getCurrentPosition(p=>{if(seq!==generation)return;geo={latitude:p.coords.latitude,longitude:p.coords.longitude};say('Байршил сонгогдлоо. Огноогоо оруулаад хайна уу.');},()=>{if(seq===generation)say('Байршлыг авч чадсангүй. Хаягаар хайна уу.',true);},{timeout:10000,maximumAge:0});}));
+    const result=node('section');result.id='hotel-results';result.setAttribute('aria-live','polite');content().append(result);
+  }
+  async function searchHotels(after='',append=false){const seq=generation;const result=await api('/public/booking-hotels?'+new URLSearchParams({...portalQuery,after}));if(seq!==generation)return {};
+    const target=$('#hotel-results');if(!append)target.replaceChildren();if(!result.items.length)target.append(node('p','Тохирох буудал олдсонгүй. Байршил эсвэл огноогоо өөрчилнө үү.'));
+    for(const h of result.items){const r=record(target,h.name,`${h.address} · ${h.distance_km===undefined?'':h.distance_km+' км · '}${h.accepting?'Захиалга авч байна':'Онлайн захиалга авахгүй'}`);photos(r,h.photos,h.name);r.append(node('p',h.description),node('p',h.review_count?`${h.rating} · ${h.review_count} үнэлгээ`:'Нийтлэгдсэн үнэлгээ алга.'));const call=node('a','Залгах · '+h.phone);call.href='tel:'+h.phone;r.append(call);r.append(node('p',`Байршил: ${h.latitude}, ${h.longitude}`));
+      for(const c of h.categories){const cat=record(r,c.name,`${money(c.quote.amount_mnt)} нийт · ${c.available} боломжит өрөө`);photos(cat,c.photos,c.name);if(c.available>0)actions(cat).append(btn(token?'Захиалах':'Нэвтэрч захиалах',()=>guard(()=>token?reviewBooking(cat,h,c):bookerLogin())));}
+    }
+    target.querySelector('[data-more]')?.remove();if(result.next_after){const more=btn('Дараагийн буудлууд',async()=>{more.disabled=true;try{await searchHotels(result.next_after,true);}catch(e){say(e.message,true);more.disabled=false;}});more.dataset.more='true';target.append(more);}return {};
+  }
+  function reviewBooking(parent,h,c){if(customerPhone)parent.append(node('p','Холбоо барих утас: '+customerPhone));parent.append(node('p',`Захиалга: ${h.name} · ${c.name} · ${time(c.quote.planned_checkin_at)} → ${time(c.quote.planned_checkout_at)} · ${money(c.quote.amount_mnt)}. Ирэхээс 24 ба түүнээс олон цагийн өмнө цуцалбал бүрэн буцаана; түүнээс хойш эхний шөнийн төлбөр суутгана. Тусдаа барьцаагүй.`));
+    form(parent,'Захиалгаа хянаж үүсгэх',[select('provider','Төлөх суваг',[['QPAY','QPay'],['KHAAN','Хаан банк']]),field('accepted','Огноо, нийт дүн, цуцлалтын нөхцөлийг шалгасан','checkbox')],'Захиалга үүсгэх',v=>api(`/booker/hotels/${enc(h.tenant_id)}/bookings`,{category_id:c.category_id,planned_checkin_at:c.quote.planned_checkin_at,nights:c.quote.nights,provider:v.provider,idempotency_key:v.idempotency_key}),{success:async()=>{await myBookings();}});
+  }
+  async function myBookings(){portalTitle('Миний захиалга');$('#refresh').onclick=()=>guard(()=>myBookings());const seq=++generation;content().replaceChildren();say('Захиалга ачаалж байна…');try{const items=await api('/booker/bookings?after='+enc(customerAfter));if(seq!==generation)return;say('Өөрийн захиалгууд.');if(!items.length)content().append(node('p','Энэ хэсэгт захиалга алга.'));for(const b of items){const r=record(content(),b.booking_id,b.unavailable?'Мэдээлэл түр хаалттай':labels[b.booking_state]||b.booking_state);if(b.unavailable){r.append(node('p','Энэ буудлын мэдээлэл одоогоор харах боломжгүй. Буудалтай холбогдоно уу.'));continue;}bookingSummary(r,b);const url=s=>`/guest/booking-holds/${enc(b.tenant_id)}/${enc(b.booking_id)}${s}`;
+      const refresh={success:async()=>myBookings()};
+      form(r,'Төлбөрийн төлөв тулгах',[],'Тулгах',()=>api(url('/reconcile'),{},'POST',b.access_token),refresh);
+      if(b.booking_state==='HOLDING')form(r,'Төлөх суваг солих',[select('provider','Шинэ суваг',[['QPAY','QPay'],['KHAAN','Хаан банк']])],'Суваг солих',v=>api(url('/attempts'),v,'POST',b.access_token),refresh);
+      for(const a of b.attempts)r.append(node('p',`${labels[a.provider]} · ${labels[a.state]||a.state} · ${a.invoice_id?'Нэхэмжлэл үүссэн':'Нэхэмжлэл үүсээгүй'}`));
+      if(['HOLDING','CONFIRMED'].includes(b.booking_state))form(r,'Цуцлалтын дүнг хянах',[],'Буцаах дүн харах',()=>api(url('/cancellation-preview'),undefined,'GET',b.access_token),{success:async(quote,f)=>{f.remove();r.append(node('p',`Цуцалбал буцаах: ${money(quote.refund_due)} · Суутгах: ${money(quote.retained_mnt)}. Хугацааны зааг өнгөрвөл дахин хянана.`));form(r,'Энэ захиалгыг цуцлах',[field('accepted','Цуцлалтын нөхцөл, буцаах дүнг хянасан','checkbox')],'Захиалгыг цуцлах',v=>api(url('/cancel'),{idempotency_key:v.idempotency_key,expected_refund_mnt:quote.refund_due},'POST',b.access_token),refresh);}});
+      if(b.refund_remaining_mnt>0)form(r,'Буцаалтын төлөв тулгах',[],'Буцаалт тулгах',()=>api(url('/refunds/reconcile'),{},'POST',b.access_token),refresh);
+    }const more=btn('Дараагийн 25',()=>guard(()=>{customerAfter=items.at(-1)?.booking_id||'';myBookings();}));more.disabled=items.length<25;actions(content()).append(btn('Эхний хэсэг',()=>guard(()=>{customerAfter='';myBookings();})),more);}catch(e){if(seq===generation)say(e.message,true);}}
+  function financeLogin(){form(content(),'Платформын санхүүгийн эрхээр нэвтрэх',[field('tenant_id','Буудлын код'),field('email','Имэйл','email',{autocomplete:'username'}),field('password','Нууц үг','password',{autocomplete:'current-password'}),field('code','MFA код','text',{max:6,autocomplete:'one-time-code'})],'Нэвтрэх',v=>{tenant=v.tenant_id;return api('/platform/auth/login',{email:v.email,password:v.password,code:v.code});},{login:true,success:async r=>{token=r.access_token;portalHome();}});}
+  async function financeTools(bookingAfter='',batchAfter=''){if(!token)return financeLogin();const seq=++generation;content().replaceChildren();say('Санхүүгийн мэдээлэл ачаалж байна…');const fp=s=>`/platform/hotels/${enc(tenant)}/${s}`;
+    form(content(),'MFA эрх шинэчлэх',[field('code','Шинэ MFA код','text',{max:6,autocomplete:'one-time-code'})],'Эрх баталгаажуулах',v=>api('/platform/auth/step-up',{code:v.code}),{login:true,success:async()=>financeTools()});
+    const settings=node('details');settings.append(node('summary','Гэрээ, нийтлэл, хүлээн авагчийн тохиргоо'));content().append(settings);
+    form(settings,'Шимтгэлийн гэрээ',[field('contract_id','Гэрээний дугаар'),field('rate_bps','Шимтгэл · 100 bps = 1%','number',{min:0}),field('valid_from','Эхлэх цаг (Улаанбаатар)','datetime-local'),field('valid_until','Дуусах цаг (Улаанбаатар)','datetime-local'),field('expected_revision','Одоогийн хувилбар · анх 0','number',{min:0,value:0})],'Гэрээ хадгалах',v=>api(fp('booking-contract'),{...v,valid_from:localDate(v.valid_from),valid_until:localDate(v.valid_until)},'PUT'));
+    form(settings,'Буудлын нийтлэх эрх',[field('allowed','Нийтлэхийг зөвшөөрөх','checkbox',{optional:true}),field('expected_revision','Одоогийн хувилбар · анх 0','number',{min:0,value:0})],'Нийтлэх эрх хадгалах',v=>api(fp('booking-publication'),v,'PUT'));
+    form(settings,'Банкны баталгаатай хүлээн авагч',[field('reference','Банкны баталгааны дугаар'),field('expected_revision','Одоогийн хувилбар · анх 0','number',{min:0,value:0})],'Хүлээн авагч хадгалах',v=>api(fp('booking-beneficiary'),v,'PUT'));
+    try{const data=await api(fp('booking-finance')+'?'+new URLSearchParams({booking_after:bookingAfter,batch_after:batchAfter}));if(seq!==generation)return;say('Энэ хэсгийн захиалга, шилжүүлгийн багцууд.');for(const b of data.bookings){const r=record(content(),b.booking_id,labels[b.state]||b.state);if(b.net_mnt!==undefined)r.append(node('p',`Буудалд: ${money(b.net_mnt)} · Шимтгэл: ${money(b.commission_mnt)}`));if(b.batch_after)r.append(node('p',`Шилжүүлэгт орох хугацаа: ${time(b.batch_after)}`));if(b.reason)r.append(node('p','Төлбөр, буцаалт эсвэл банкны тулгалт дуусаагүй.'));form(r,'Буудалд шилжүүлэх дүн тооцох',[],'Тооцож хадгалах',()=>api(fp(`booking-holds/${enc(b.booking_id)}/settlement`),{}),{success:async()=>financeTools()});}
+      form(content(),'Болсон хугацааны шилжүүлгийг багцлах',[],'Багц үүсгэх',v=>api(fp('booking-payouts'),v),{success:async()=>financeTools()});
+      for(const b of data.batches){const r=record(content(),b.batch_id,`${money(b.amount_mnt)} · ${labels[b.state]||b.state} · Хүлээн авагчийн баталгаа: ${b.beneficiary||'—'}`);if(['BATCHED','FAILED'].includes(b.state))form(r,'Банкны шилжүүлэг илгээх',[field('accepted','Хүлээн авагч ба дүнг шалгасан','checkbox')],'Шилжүүлэг илгээх',v=>api(fp(`booking-payouts/${enc(b.batch_id)}/execute`),{idempotency_key:v.idempotency_key}),{success:async()=>financeTools()});if(b.attempt_id&&b.state==='PENDING')form(r,'Шилжүүлгийн төлөв тулгах',[],'Тулгах',()=>api(fp(`booking-payouts/${enc(b.batch_id)}/attempts/${enc(b.attempt_id)}/reconcile`),{}),{success:async()=>financeTools()});if(!['VOIDED','SUCCEEDED'].includes(b.state))form(r,'Төлөгдөөгүй багцыг цуцлах',[reason()],'Багцыг цуцлах',v=>api(fp(`booking-payouts/${enc(b.batch_id)}/void`),v),{success:async()=>financeTools()});}
+    const pages=actions(content());pages.append(btn('Эхний хэсэг',()=>guard(()=>financeTools())));if(data.next_booking_after)pages.append(btn('Дараагийн захиалгууд',()=>guard(()=>financeTools(data.next_booking_after,batchAfter))));if(data.next_batch_after)pages.append(btn('Дараагийн багцууд',()=>guard(()=>financeTools(bookingAfter,data.next_batch_after))));
+    }catch(e){if(seq===generation)say(e.message,true);}
+  }
+
+  let operationFilters={},operationPermissions=[];
+  const operationLabels={DONE:'Дууссан',RECONCILE:'Тулгалт шаардлагатай',ACTIVE:'Идэвхтэй',EXPIRING:'7 хоногт дуусах',GRACE:'48 цагийн сунгалт',EXPIRED:'Хугацаа дууссан',SUSPENDED:'Түдгэлзсэн',SENT:'Илгээсэн',DELIVERED:'Хүрсэн',FAILED:'Амжилтгүй',UNKNOWN:'Тулгалт шаардлагатай',QUEUED:'Дараалалд',SENDING:'Илгээж буй',CANCELLED:'Цуцалсан'};
+  const operationCan=p=>operationPermissions.includes(p);
+  function operationLogin(){portalTitle('Үйл ажиллагааны хяналтад нэвтрэх');form(content(),'Платформын эрхээр нэвтрэх',[field('email','Имэйл','email',{autocomplete:'username'}),field('password','Нууц үг','password',{autocomplete:'current-password'}),field('code','MFA код','text',{max:6,autocomplete:'one-time-code'})],'Нэвтрэх',v=>api('/platform/auth/login',{email:v.email,password:v.password,code:v.code}),{login:true,success:async r=>{token=r.access_token;portalHome();}});}
+  async function operationTools(after=''){
+    if(!token)return operationLogin();const seq=++generation,parent=content();parent.replaceChildren();parent.setAttribute('aria-busy','true');portalTitle('Үйл ажиллагааны хяналт');
+    try{
+      const params=new URLSearchParams(Object.entries(operationFilters).filter(([,v])=>v!==''&&v!==null&&v!==undefined));if(after)params.set('after',JSON.stringify(after));
+      const data=await api('/platform/operation?'+params);if(seq!==generation)return;operationPermissions=data.permissions;$('#mode').hidden=data.mode!=='MOCK_ONLY';
+      parent.append(node('p',`${time(data.as_of)} · Улаанбаатар · Нийт ${data.total} буудал · Идэвхжүүлэлт хүлээсэн ${data.not_activated}`));
+      const metrics=node('div',undefined,'operation-metrics');parent.append(metrics);
+      table(metrics,'Үйлчилгээний эрхийн төлөв',['Төлөв','Буудал'],Object.entries(data.statuses).map(([k,v])=>[operationLabels[k],v]));
+      table(metrics,'Одоогоор хэрэгжсэн багц',['Багц','Буудал'],Object.entries(data.packages).map(([k,v])=>[money(k),v]));
+      table(metrics,'Энэ сарын SMS',['Төлөв','Хүлээн авагч'],Object.entries(data.sms_month).map(([k,v])=>[operationLabels[k]||k,v]));
+      const f=form(parent,'Буудал шүүх',[field('query','Буудлын нэр','text',{optional:true,max:100,clearable:true,value:operationFilters.query||''}),select('status','Үйлчилгээний эрхийн төлөв',[['','Бүгд'],...Object.entries(operationLabels).filter(([k])=>['ACTIVE','EXPIRING','GRACE','EXPIRED','SUSPENDED'].includes(k))],true),select('package_mnt','Багц',[['','Бүгд'],...[20000,25000,30000].map(p=>[String(p),money(p)])],true),field('expires_within_days','Дуусах хүртэлх хоног','number',{min:0,max:365,optional:true})],'Шүүх',v=>{operationFilters={query:v.query||'',status:v.status||'',package_mnt:v.package_mnt?Number(v.package_mnt):null,expires_within_days:v.expires_within_days??null};return operationTools();},{variant:'filter-form',dismissible:false,clear:()=>{operationFilters={...operationFilters,query:''};operationTools().then(()=>content().querySelector('[name=query]')?.focus());}});
+      for(const [k,v] of Object.entries(operationFilters))if(f.elements[k])f.elements[k].value=v??'';
+      const accessTools=node('details',undefined,'access-tools');accessTools.append(node('summary','MFA эрх шинэчлэх'));parent.append(accessTools);
+      form(accessTools,'MFA эрх шинэчлэх',[field('code','Шинэ MFA код','text',{max:6,autocomplete:'one-time-code'})],'Эрх баталгаажуулах',v=>api('/platform/auth/step-up',{code:v.code}),{login:true});
+      const toolbar=actions(parent);if(operationCan('SUBSCRIPTION_REMINDER_SEND')&&data.sms_available)toolbar.append(btn('Шүүсэн буудлуудад сануулах',()=>guard(()=>operationSmsComposer(operationSmsFilters()))));
+      toolbar.append(btn('SMS түүх',()=>guard(()=>operationSmsHistory())),btn('Төлбөр ба идэвхжүүлэлт',()=>guard(()=>operationBilling())));
+      table(parent,'Үйлчилгээний эрхийн бүртгэл',['Буудал','Төрөл / хаяг','Утас / имэйл','Багц','Сар','Эхэлсэн','Дуусах','Хоног','Төлөв','Үйлдэл'],data.items.map(i=>[i.name,`${i.owner_kind==='COMPANY'?'Байгууллага':'Хувь хүн'} · ${i.address}`,`${i.phone} · ${i.email}`,money(i.package_mnt),i.months,time(i.starts_at),time(i.expires_at),i.days_left,operationLabels[i.status],'']));
+      const tables=parent.querySelectorAll('table');tables[tables.length-1].parentElement.classList.add('operation-subscriptions');Array.from(tables[tables.length-1].tBodies[0].rows).forEach((r,index)=>r.lastChild.append(btn('Дэлгэрэнгүй',()=>guard(()=>operationHotel(data.items[index])))));
+      const pages=actions(parent);pages.append(btn('Эхний хэсэг',()=>guard(()=>operationTools())),btn('Дараагийн хэсэг',()=>guard(()=>operationTools(data.next_after))));pages.firstChild.disabled=!after;pages.lastChild.disabled=!data.next_after;
+      say('Үйлчилгээний эрхийн мэдээлэл шинэчлэгдлээ.');
+    }catch(e){if(seq===generation){say(e.message,true);parent.append(btn('Дахин ачаалах',()=>operationTools(after)));}}finally{if(seq===generation)parent.setAttribute('aria-busy','false');}
+  }
+  function operationSmsFilters(){const f={...operationFilters};delete f.status;return {...f,statuses:operationFilters.status?[operationFilters.status]:[]};}
+  function operationHotel(hotel){generation++;content().replaceChildren();portalTitle(hotel.name);content().append(node('p',`${hotel.email} · ${hotel.phone} · ${operationLabels[hotel.status]}`));
+    if(operationCan('SUBSCRIPTION_PASSWORD_RESET_INITIATE'))form(content(),'Primary Admin нууц үг сэргээх',[field('reviewed','Бүртгэлтэй үндсэн имэйл рүү холбоос илгээхийг баталж байна','checkbox')],'Сэргээх холбоос хүсэх',v=>api(`/platform/operation/hotels/${enc(hotel.tenant_id)}/password-reset`,v));
+    if(operationCan('SUBSCRIPTION_REMINDER_SEND'))actions(content()).append(btn('Сануулах SMS',()=>guard(()=>operationSmsComposer({tenant_ids:[hotel.tenant_id]}))));
+    if(operationCan('SUBSCRIPTION_SUSPEND'))form(content(),hotel.suspended?'Үйлчилгээний эрх сэргээх':'Үйлчилгээний эрх түдгэлзүүлэх',[reason(),field('reference','Хяналтын кейсийн дугаар')],hotel.suspended?'Сэргээх':'Түдгэлзүүлэх',v=>api(`/platform/hotels/${enc(hotel.tenant_id)}/security/${hotel.suspended?'resume':'suspend'}`,v),{success:()=>operationTools()});
+    actions(content()).append(btn('Утас солих дэмжлэг',()=>guard(()=>operationContactSupport(hotel))),btn('Жагсаалт руу',()=>guard(()=>operationTools())));
+  }
+  function operationSmsComposer(filters){generation++;content().replaceChildren();portalTitle('Үйлчилгээний хугацаа сануулах');const panel=node('div');content().append(node('p','Бүртгэлтэй үндсэн утаснуудад үйлчилгээний сануулга илгээнэ. Илгээхээс өмнө хүлээн авагч, текст, сегмент болон зардлыг хянана уу.'));
+    const f=form(content(),'SMS бэлтгэх',[field('message','Мессеж · 1–300 тэмдэгт','textarea',{max:300})],'Урьдчилан харах',v=>api('/platform/operation/sms/preview',{message:v.message,filters,idempotency_key:v.idempotency_key}),{success:data=>{
+      panel.replaceChildren();table(panel,'Илгээх мэдээлэл',['Үзүүлэлт','Утга'],[['Сонгосон буудал',data.selected_hotels],['Давхардал хассан',data.deduplicated],['Буруу утас хассан',data.excluded_invalid_phone],['Хүлээн авагч',data.quote.recipient_count],['Нийт сегмент',data.quote.total_segments],['Тооцоолсон зардал',money(data.quote.estimated_cost_mnt)]]);
+      if(data.quote.mode==='MOCK_ONLY')panel.append(node('p','Туршилтын SMS, туршилтын үнэ. Бодит мессеж илгээхгүй.','notice'));
+      panel.append(node('p',data.message),node('p',`Хүчинтэй хугацаа: ${time(data.expires_at)}`));table(panel,'Хүлээн авагч',['Утас','Буудал'],data.recipients.map(r=>[r.phone,r.hotel_count]));
+      if(data.quote.recipient_count)form(panel,'Илгээхийг батлах',[field('reviewed','Хүлээн авагч, текст ба зардлыг шалгасан','checkbox')],'SMS дараалалд оруулах',v=>api(`/platform/operation/sms/${enc(data.draft_id)}/send`,v),{success:()=>operationSmsHistory()});
+    }});content().append(panel);f.addEventListener('input',()=>panel.replaceChildren(node('p','Текст өөрчлөгдсөн. Урьдчилан харахыг дахин дарна уу.')));actions(content()).append(btn('Жагсаалт руу',()=>guard(()=>operationTools())));
+  }
+  async function operationSmsHistory(after=''){const seq=++generation,parent=content();parent.replaceChildren();parent.setAttribute('aria-busy','true');portalTitle('SMS түүх');
+    try{const data=await api('/platform/operation/sms?after='+enc(after));if(seq!==generation)return;
+      if(!data.items.length)parent.append(node('p','SMS бүртгэл алга.'));for(const job of data.items){const r=record(parent,time(job.created_at),job.message);table(r,'Хүргэлтийн төлөв',['Утас','Төлөв','Оролдлого'],job.recipients.map(i=>[i.phone,operationLabels[i.state],i.attempts]));
+        if(operationCan('SUBSCRIPTION_REMINDER_SEND'))for(const recipient of job.recipients){const action=recipient.state==='QUEUED'?'cancel':recipient.state==='FAILED'&&recipient.attempts<3?'retry':null;if(action)form(r,`${recipient.phone} · ${action==='retry'?'Дахин оролдох':'Илгээгээгүй SMS цуцлах'}`,[],action==='retry'?'Дахин дараалалд оруулах':'SMS цуцлах',v=>api(`/platform/operation/sms/recipients/${enc(recipient.recipient_id)}/${action}`,{...v,expected_revision:recipient.revision}),{success:()=>operationSmsHistory(after)});}
+      }const a=actions(parent);a.append(btn('Эхний SMS',()=>guard(()=>operationSmsHistory())),btn('Дараагийн SMS',()=>guard(()=>operationSmsHistory(data.next_after))),btn('Хяналтын самбар',()=>guard(()=>operationTools())));a.children[1].disabled=!data.next_after;
+    }catch(e){if(seq===generation){say(e.message,true);parent.append(btn('SMS түүхийг дахин ачаалах',()=>operationSmsHistory(after)));}}finally{if(seq===generation)parent.setAttribute('aria-busy','false');}
+  }
+  async function operationBilling(after=''){const seq=++generation,parent=content();parent.replaceChildren();parent.setAttribute('aria-busy','true');portalTitle('Төлбөр ба идэвхжүүлэлт');
+    try{const data=await api('/platform/operation/billing?after='+enc(after));if(seq!==generation)return;
+      if(!data.items.length)parent.append(node('p','Subscription төлбөрийн бүртгэл алга.'));for(const item of data.items){const r=record(parent,item.name,`${item.source_kind==='RENEWAL'?'Сунгалт':'Анхны төлбөр'} · ${money(item.amount_mnt)} · ${item.paid?'Төлсөн':labels[item.state]||item.state}`);
+        if(operationCan('SUBSCRIPTION_PAYMENT_RECONCILE'))form(r,'Provider төлөв тулгах',[reason()],'Тулгалт дараалалд оруулах',v=>api('/platform/operation/billing/reconcile',{...v,source_kind:item.source_kind,source_id:item.source_id}),{success:()=>operationBilling(after)});
+        if(item.paid&&data.ebarimt_available&&operationCan('SUBSCRIPTION_EBARIMT_RETRY'))form(r,'eBarimt баримтын ажил',[reason()],'Баримтын ажил дараалалд оруулах',v=>api('/platform/operation/billing/ebarimt',{...v,source_kind:item.source_kind,source_id:item.source_id}),{success:()=>operationBilling(after)});
+      }
+      if(operationCan('ONBOARDING_PROVISION_RETRY'))for(const item of data.failed_provisioning){const r=record(parent,item.name,'Төлбөртэй, идэвхжүүлэлт амжилтгүй');form(r,'Ижил бүртгэлийг дахин идэвхжүүлэх',[reason(),field('reference','Хяналтын кейсийн дугаар')],'Идэвхжүүлэлт дахин оролдох',v=>api(`/platform/onboarding/${enc(item.application_id)}/retry`,v),{success:()=>operationBilling(after)});}
+      table(parent,'Сүүлийн ажлууд',['Ажил','Төлөв'],data.jobs.map(i=>[i.kind==='EBARIMT'?'eBarimt':'Төлбөрийн тулгалт',operationLabels[i.state]||labels[i.state]||i.state]));
+      const a=actions(parent);a.append(btn('Эхний төлбөрүүд',()=>guard(()=>operationBilling())),btn('Дараагийн төлбөрүүд',()=>guard(()=>operationBilling(data.next_after))),btn('Хяналтын самбар',()=>guard(()=>operationTools())));a.children[1].disabled=!data.next_after;
+    }catch(e){if(seq===generation){say(e.message,true);parent.append(btn('Төлбөрийг дахин ачаалах',()=>operationBilling(after)));}}finally{if(seq===generation)parent.setAttribute('aria-busy','false');}
+  }
+
+  function contactLogin(){portalTitle('Subscription холбоо барих утас');form(content(),'Primary Admin эрхээр нэвтрэх',[field('tenant_id','Буудлын код'),field('email','Имэйл','email',{autocomplete:'username'}),field('password','Нууц үг','password',{autocomplete:'current-password'})],'Нэвтрэх',v=>{tenant=v.tenant_id;return api('/auth/login',{tenant_id:v.tenant_id,email:v.email,password:v.password});},{login:true,success:async r=>{token=r.access_token;portalHome();}});}
+  async function contactTools(){if(!token)return contactLogin();const seq=++generation,parent=content();parent.replaceChildren();parent.setAttribute('aria-busy','true');portalTitle('Холбоо барих утас');
+    try{const data=await api(path('subscription/contact'));if(seq!==generation)return;parent.append(node('p',`Одоогийн утас: ${data.phone}`));
+      if(!data.available){parent.append(node('p','Утас баталгаажуулах үйлчилгээ холбогдоогүй.'));return;}
+      form(parent,data.pending?'Өөр дугаараар шинэ хүсэлт эхлүүлэх':'Утас солих хүсэлт',[field('new_phone','Шинэ утас','tel',{max:16}),field('password','Нууц үгээр дахин батлах','password',{autocomplete:'current-password'})],'Утас солих хүсэлт үүсгэх',v=>api(path('subscription/contact/changes'),v),{login:true,success:()=>contactTools()});
+      if(data.pending){const q=data.pending,url=path(`subscription/contact/changes/${enc(q.request_id)}`);parent.append(node('p',`Хуучин: ${q.old_phone} · Шинэ: ${q.new_phone}`),node('p','Дэмжлэгийн хүсэлтийн дугаар: '+q.request_id));
+        for(const side of ['OLD','NEW']){if(side==='OLD'&&q.exception_approved){parent.append(node('p','Хуучин дугаарын онцгой зөвшөөрөл бүртгэгдсэн.'));continue;}const label=side==='OLD'?'Хуучин дугаар':'Шинэ дугаар',proof=q.proofs.find(p=>p.side===side);const r=record(parent,label,proof?.verified?'Код баталгаажсан':'6 оронтой код · 5 минут хүчинтэй · Дахин илгээх зай 60 секунд');
+          form(r,label+' руу код хүсэх',[],'Код илгээх',v=>api(url+`/${side}/challenge`,v),{success:()=>contactTools()});
+          if(proof&&!proof.verified)form(r,label+' баталгаажуулах',[field('code',label+'ын код','text',{max:6,autocomplete:'one-time-code'})],'Код батлах',v=>api(url+`/${side}/verify`,{code:v.code}),{login:true,success:()=>contactTools()});
+        }
+        form(parent,'Холбоо барих утсыг солих',[field('reviewed','Хуучин ба шинэ дугаарын баталгааг бүрдүүлсэн','checkbox')],'Утасны өөрчлөлтийг батлах',v=>api(url+'/complete',v),{success:()=>contactTools()});
+        parent.append(node('p','Хуучин дугаарт хандах боломжгүй бол дэмжлэгт хүсэлтийн дугаараа өгнө үү. Шинэ дугаарын кодыг заавал өөрөө батална.'));
+      }
+    }catch(e){if(seq===generation){say(e.message,true);parent.append(btn('Утасны мэдээллийг дахин ачаалах',()=>contactTools()));}}finally{if(seq===generation)parent.setAttribute('aria-busy','false');}
+  }
+  async function operationContactSupport(hotel){const seq=++generation,parent=content();parent.replaceChildren();portalTitle(hotel.name+' · Холбоо барих утас');parent.setAttribute('aria-busy','true');
+    try{const data=await api(`/platform/operation/hotels/${enc(hotel.tenant_id)}/contact-support`);if(seq!==generation)return;if(!data.pending)parent.append(node('p','Нээлттэй утас солих хүсэлт алга.'));else{
+      const q=data.pending;parent.append(node('p',`Хуучин: ${q.old_phone} · Шинэ: ${q.new_phone}`));
+      if(operationCan('SUBSCRIPTION_CONTACT_CHANGE_APPROVE'))form(parent,'Хуучин дугаарт хандах боломжгүй хүсэлт',[reason(),field('reference','Өмчлөгчийг шалгасан кейсийн баримт')],'Хуучин дугаарын онцгой зөвшөөрөл батлах',v=>api(`/platform/operation/hotels/${enc(hotel.tenant_id)}/contact-changes/${enc(q.request_id)}/exception`,v));
+      else parent.append(node('p','Утасны өөрчлөлтийг Primary Admin баталгаажуулна. Онцгой тохиолдлыг тусгай эрхтэй Platform ажилтанд шилжүүлнэ.'));
+    }actions(parent).append(btn('Буудлын дэлгэрэнгүй',()=>guard(()=>operationHotel(hotel))));
+    }catch(e){if(seq===generation){say(e.message,true);parent.append(btn('Дахин ачаалах',()=>operationContactSupport(hotel)));}}finally{if(seq===generation)parent.setAttribute('aria-busy','false');}
+  }
+
+  for(const id of ['logout','refresh','keep','leave'])document.getElementById(id).disabled=false;
+  if(portalMode)portalHome();else if(location.pathname==='/guest/entry')guestEntry();else showLogin();
+})();

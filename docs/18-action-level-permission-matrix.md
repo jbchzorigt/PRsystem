@@ -11,7 +11,7 @@ Role нь зөвхөн ямар tab харахыг бус, тухайн хэрэ
 ```text
 Hotel staff action зөвшөөрөгдөх
 = Account идэвхтэй + active hotel membership
-+ Subscription хүчинтэй эсвэл 48 цагийн grace period-д
++ Subscription хүчинтэй, 48 цагийн grace-д эсвэл LIFE-DEC-008 continuation allowlist-д
 + Package тухайн feature-ийг агуулсан
 + Hotel role тухайн action-ийг зөвшөөрсөн
 + Resource тухайн хэрэглэгчийн hotel/restaurant/unit scope-д хамаарсан
@@ -254,8 +254,8 @@ Platform Super Admin гэдэг нэр нь бүх business data-г автома
 ## 7. Subscription ба account state gate
 
 - Subscription `Идэвхтэй`, `Удахгүй дуусна` эсвэл 48 цагийн `Grace period` төлөвтэй үед package/role action хэвийн ажиллана.
-- Grace дуусаж `Дууссан` болсон hotel-д operational permission matrix бүхэлдээ deny болно.
-- Hard lock үед Hotel Admin-д `Subscription сунгах/төлөх`, `Тусламж`, `Гарах`; бусад staff-д expired notice, тусламж, гарах л үлдэнэ.
+- Grace дууссан hotel-д шинэ ажиллагаа deny; LIFE-DEC-008 болон [27-р баримт](./27-approved-risk-controls.md)-ын root-linked completion allowlist existing role/package/scope дотор үйлчилнэ.
+- Hard lock үед subscription/help/logout болон батлагдсан өмнөх obligation-ийг дуусгах хязгаарлагдмал detail/action нээлттэй. Энэ нь security suspension, permission эсвэл tenant gate-ийг алгасахгүй.
 - Account түдгэлзсэн/идэвхгүй бол subscription хүчинтэй байсан ч action зөвшөөрөхгүй.
 - User/role/package/subscription төлөв client cache-аар бус backend-ийн authoritative state-аар шалгагдана.
 
@@ -401,7 +401,7 @@ Platform Super Admin гэдэг нэр нь бүх business data-г автома
 - Police Officer бүх hotel check-in list болон check-in export-д хандахгүй.
 - Police Admin бүх hotel check-in list харах боловч bulk export хийхгүй; Officer mutation-ийг автоматаар өвлөхгүй. Found/False Match correction, manual identity, case lifecycle болон Wanted export нь canonical explicit permission/separation-of-duties шалгалттай байна.
 - UI disabled байсан ч шууд API request эрхгүй action гүйцэтгэхгүй.
-- Grace дууссан hotel-ийн operational action deny болно.
+- Grace дууссан hotel-д шинэ operational action deny; өмнөх eligible root-ийн completion LIFE-DEC-008 allowlist-аар зөвшөөрөгдөнө.
 - Role/permission өөрчлөлт болон хамгаалагдсан action аудиттай байна.
 
 ## 10. Батлагдсан шийдвэр

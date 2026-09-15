@@ -1,0 +1,14 @@
+{
+  "source_revision": "REPLACE_WITH_VERIFIED_BUILD_COMMIT",
+  "runtime_mode": "production",
+  "police_tracking_enabled": false,
+  "gates": {
+    "postgres": {"artifact": "evidence/postgres.json", "sha256": "PENDING"},
+    "browser": {"artifact": "evidence/browser.json", "sha256": "PENDING"},
+    "security": {"artifact": "evidence/security.json", "sha256": "PENDING"},
+    "restore": {"artifact": "evidence/restore.json", "sha256": "PENDING"},
+    "load": {"artifact": "evidence/load.json", "sha256": "PENDING"},
+    "retention": {"artifact": "evidence/retention.json", "sha256": "PENDING"},
+    "providers": {"artifact": "evidence/providers.json", "sha256": "PENDING"}
+  }
+}
