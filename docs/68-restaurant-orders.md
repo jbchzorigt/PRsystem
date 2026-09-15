@@ -1,5 +1,7 @@
 # Restaurant ordering implementation and acceptance
 
+2026-09-15: өргөтгөсөн Restaurant implementation нь [934-test acceptance](73-remaining-modules-acceptance.md)-д багтан баталгаажсан. Доорх өмнөх CI төлөв нь түүхэн тэмдэглэл болно.
+
 ## Current boundary
 
 The implementation follows the independent state axes in docs/08. It adds a

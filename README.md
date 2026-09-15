@@ -3,9 +3,9 @@
 Hotel operations, online booking, subscription, Minibar, Restaurant болон Operation систем.
 
 Reception, booking, Minibar historical billing-ийн өмнөх milestone-ууд CI-аар
-баталгаажсан. Шинэ candidate: Restaurant-ийн өргөтгөсөн урсгал, partial
+баталгаажсан. **934 skip-free тестээр баталгаажсан mock implementation:** Restaurant-ийн өргөтгөсөн урсгал, partial
 Minibar rollback, Operation, subscription contact, release шалгах хэрэгслүүд.
-[Candidate review ба CI төлөв](docs/72-remaining-work-review.md),
+[Exact source ба acceptance](docs/73-remaining-modules-acceptance.md),
 [явц](docs/31-development-progress.md), [mock ажиллуулах](docs/37-development-mocks.md).
 
 Шинэ дэлгэцүүд: `/restaurant`, `/operation`, `/subscription/contact`.

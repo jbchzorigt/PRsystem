@@ -1,13 +1,14 @@
 # Хөгжүүлэлтийн явц
 
-**Шинэчилсэн:** 2026-09-14. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
+**Шинэчилсэн:** 2026-09-15. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
-## 2026-09-15 — шинэ candidate
+## 2026-09-15 — Stage 5 mock implementation accepted
 
 Restaurant, partial Minibar rollback, Operation/contact болон release tools
-локалд бэлэн. Хэрэглэгч public Draft PR #1 нийтлэл ба PostgreSQL/restore CI-г
-үргэлжлүүлэхийг зөвшөөрсөн. [Багц, snapshot сэргээсэн тайлбар ба баталгаажуулалт](72-remaining-work-review.md).
-Доорх milestone тоонууд түүхэн үр дүн; шинэ source-ийн CI acceptance тусдаа.
+нийтлэгдэж, **934/934 тест skip-гүй**, 23 Chromium suite, 159 API-model
+хүсэлтээр баталгаажсан. Encrypted restore ба SMS stale-attempt race тест давсан.
+[Exact source, CI, shard тоолол ба release зааг](73-remaining-modules-acceptance.md).
+Доорх milestone тоонууд түүхэн үр дүн.
 
 ## Одоогийн Reception acceptance
 
@@ -28,7 +29,7 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Historical billing baseline 838/838 PostgreSQL; expanded Restaurant, partial rollback, Operation/contact candidate бэлэн. Шинэ CI хүлээгдэж буй; [review](72-remaining-work-review.md) |
+| 5 | Minibar, Restaurant, Operation | **Mock implementation accepted: 934/934 skip-free tests**, 23 browser suites, 159 API commands. Restaurant, partial rollback, Operation/contact; [acceptance](73-remaining-modules-acceptance.md) |
 | 6 | Production readiness; Police tracking excluded | Restore/load/retention inventory ба release evidence tools бэлэн; бодит acceptance gate үлдсэн. Centralized cross-hotel guest tracking/wanted matching хэрэгжүүлэхгүй |
 
 Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Тухайн үеийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.

@@ -1,5 +1,12 @@
 # Үлдсэн ажлын candidate review — 2026-09-15
 
+## Эцсийн үр дүн
+
+Нийтлэгдсэн source `e2011fa3a9c8b956dd82620ec8b9b8f546e76c1d`:
+**934 тест skip-гүй**, 23 browser suite, 159 API command, encrypted restore
+амжилттай. [Эцсийн acceptance ба CI](73-remaining-modules-acceptance.md).
+Доорх snapshot recovery/нийтлэл/CI мэдээлэл нь ажлын түүх болно.
+
 ## Нийтлэх багц
 
 | Багц | Үр дүн |

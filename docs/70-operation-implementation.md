@@ -51,8 +51,8 @@ new-phone OTP заавал үлдэнэ. Өөрчлөлт old email + old phone 
   cancellation, canonical reset, receipt enqueue, 320px table overflow.
 - Contact Chromium: 6 API request, primary login, reauthentication, two proofs,
   final confirmation, 320px layout. Хүсэлтүүд бодит API model-уудтай таарсан.
-- 19 PostgreSQL acceptance тест нэмсэн; локалд PostgreSQL байхгүй тул
-  **гүйцэтгээгүй**. RLS/trigger/locking/migration acceptance нь GitHub CI gate.
+- Operation/contact-ийн 20 PostgreSQL acceptance тест, үүнд хоцорсон SMS
+  attempt-ийн reply-г тусгаарлах шинэ тест давсан. [934 skip-free CI](73-remaining-modules-acceptance.md).
 - Live provider acceptance, audited offline ownership evidence, approved
   retention matrix болон pilot measurements нь release gate хэвээр.
 

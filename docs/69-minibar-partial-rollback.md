@@ -23,21 +23,12 @@ room blocker хамгаалалттай. APPLIED хүсэлтийг цуцлах
 
 ## Баталгаажуулалт
 
-- Chromium partial/rollback suite: 3 үйлдэл, lost-response retry-тай 5 API model хүсэлт.
-- Өмнөх reconciliation Chromium suite амжилттай.
-- 10 partial rollback + 1 batch cancellation PostgreSQL acceptance test нэмсэн; локал PostgreSQL байхгүй тул
-  эдгээр нь одоогоор **гүйцэтгээгүй**, skip нь pass нотолгоо биш.
-- SQL parser ба Python/JavaScript syntax шалгалт амжилттай. Энэ нь RLS,
-  deferred trigger, locking болон migration execution-ийг батлахгүй.
-
-Энэ candidate болон өргөтгөсөн Restaurant багцыг public GitHub-д нийтлэх
-автомат approval review хориглосон. Remote CI хүлээгдэж буй; production
-эсвэл бүрэн accepted гэж тэмдэглээгүй.
+Chromium partial/rollback suite: 3 үйлдэл, lost-response retry-тай 5 API model
+хүсэлт. 10 partial rollback acceptance тест болон batch cancellation-ийн шинэ
+тохиолдол PostgreSQL-д давсан. [Нийт 934 skip-free тестийн acceptance](73-remaining-modules-acceptance.md).
+Migration 074 бодит PostgreSQL-д хэрэгжиж, RLS/trigger/locking guard-ууд шалгагдсан.
 
 Batch-ийн үлдсэн ажлыг цуцлахад хэсэгчилсэн хүүхэд хүсэлт ROLLBACK_REQUIRED,
 хөдөлгөөнгүй нь CANCELLED болно. Давтан цуцлалт нээлттэй буцаалтын ажлыг
 алга болгохгүй. Partial movement-ийн дараа анхны хуучирсан тооллогод шинэ
 variance decision нэмж болохгүй; буцаалт болон шалтгаантай stock review хийнэ.
-
-2026-09-15 шинэчлэлт: public candidate нийтлэл ба PostgreSQL/restore CI-г
-хэрэглэгч зөвшөөрсөн; [одоогийн review](72-remaining-work-review.md).

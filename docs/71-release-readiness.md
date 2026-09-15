@@ -1,8 +1,9 @@
 # Release readiness — хэрэгсэл бэлэн, production approval хүлээгдэж буй
 
-Нийтлэлт болон production release нь тусдаа gate. Автомат approval review
-өргөтгөсөн шинэ кодыг public GitHub руу оруулахыг хориглосон тул локал
-implementation-ийг production-ready гэж тэмдэглээгүй.
+Нийтлэлт болон production release нь тусдаа gate. Candidate public Draft PR #1-д
+нийтлэгдэж, [934-test CI/restore acceptance](73-remaining-modules-acceptance.md)
+давсан. Бодит provider/security/load/retention acceptance бүрэн биш тул
+production-ready гэж тэмдэглээгүй.
 
 ## Бэлтгэсэн хэрэгслүүд
 
@@ -20,7 +21,7 @@ implementation-ийг production-ready гэж тэмдэглээгүй.
 - `tests/test_restore_drill.py`: synthetic encrypted fixture restore,
   identity-key decryption, restricted non-superuser role ба tenant RLS-ийг
   тусад нь шалгана. CI дахь PostgreSQL 17 container-ийн client-ийг хэрэглэнэ.
-  Локал PostgreSQL байхгүй тул энэ drill одоогоор ажиллаагүй.
+  CI дахь disposable fixture restore, role/RLS болон identity-key proof давсан.
 - `scripts/load_drill.py`: зөвхөн explicit local pilot-ийн authenticated GET
   dashboard; bounded samples/concurrency, errors, median/p95. P95 budget-ийг
   заавал оруулна; production SLA-г зохиогоогүй. Хэрэглэгчийн load bearer нь
@@ -35,9 +36,10 @@ implementation-ийг production-ready гэж тэмдэглээгүй.
 
 ## Production-д шаардлагатай бодит нотолгоо
 
-1. Exact candidate-ийн skip-гүй PostgreSQL CI, бүх browser/API/accessibility
-   шалгалт. Өмнөх 30 минутын regression timeout-ийг давтахгүйн тулд PostgreSQL
-   job cap 60 минут болсон; шинэ үр дүнг хүлээж байна.
+1. Application/test/CI source `e2011fa` нь 934 тестийг дөрвөн isolated PostgreSQL
+   job-д skip-гүй давсан; browser/API/design/token gate мөн давсан. Job бүрийн
+   cap 30 минут; бүх module яг нэг shard-д багтана. Release source өөрчлөгдвөл
+   тохирох exact-source acceptance дахин шаардлагатай.
 2. Pilot dataset/concurrency, p95/error budget, outage/retry exercises,
    RPO/RTO болон uptime target-ийн баталгаа. Тоон target байхгүй үед drill
    үр дүнг SLA acceptance гэж тооцохгүй.
