@@ -244,6 +244,8 @@ class RestaurantOrderTests(GuestFinanceCase):
         data=self.flow.profile(self.owner_token,self.tenant,self.restaurant)
         data['expected_revision']=data.pop('revision')
         data.update(reason='Closed for maintenance',closed_dates=[self.clock.date().isoformat()])
+        with self.assertRaisesRegex(DomainError,'INVALID_REQUEST'):
+            self.flow.profile(self.owner_token,self.tenant,self.restaurant,{**data,'reason':'   '},'blank-profile')
         result=self.flow.profile(self.owner_token,self.tenant,self.restaurant,data,'profile')
         self.assertEqual(result['revision'],1)
         self.assertFalse(self.flow.menu(self.guest_token,self.restaurant)['ordering_available'])

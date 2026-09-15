@@ -185,7 +185,9 @@ class RestaurantOrders:
             command=dict(action='RESTAURANT_PROFILE',restaurant=restaurant,data=data)
             replay=self.receipt(conn,tenant,key,'staff:'+actor,command)
             if replay is not None:return replay
-            reason=self.identities._text(data['reason'],1000)
+            reason=data['reason']
+            if not isinstance(reason,str) or not reason.strip() or len(reason)>1000:raise DomainError('INVALID_REQUEST')
+            reason=reason.strip()
             try:closures=[date.fromisoformat(v) for v in data['closed_dates']]
             except (ValueError,TypeError):raise DomainError('INVALID_RESTAURANT_CLOSURES') from None
             opening_window(data['weekly_hours'],closures,self.now(conn))
