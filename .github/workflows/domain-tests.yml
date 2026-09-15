@@ -51,6 +51,9 @@ jobs:
           PRSYSTEM_PG_CONTAINER_ID: ${{ job.services.postgres.id }}
           PRSYSTEM_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: python -m scripts.run_postgres_shard --index ${{ matrix.shard }} --count 4
+      - name: Smoke-test disposable UI review launcher
+        if: matrix.shard == 0
+        run: python -m scripts.ui_review --check
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 10

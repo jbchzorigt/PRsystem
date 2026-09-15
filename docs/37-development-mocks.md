@@ -17,9 +17,15 @@ State нь `.dev/providers.sqlite3`-д хадгалагдаж process restart-и
 OTP/link агуулдаг энэ **зөвхөн тестийн** mailbox-ийг HTTP endpoint-оор нийтлэхгүй.
 Бодит хэрэглэгчийн мэдээлэл, production DB-г энэ горимд ашиглахгүй.
 
+## UI/UX туршилтыг хурдан эхлүүлэх
+
+Гараар role/өгөгдөл бэлтгэхгүйгээр гурван ажилтны өдөр тутмын урсгалыг
+турших бол `python -m scripts.ui_review` хэрэглэнэ. Энэ нь тусдаа PostgreSQL
+container, шинэ бааз, хийсвэр ажилтнууд үүсгэнэ. [Асаах заавар](76-ui-review-session.md).
+
 ## API ажиллуулах
 
-Backend dependencies-ийг README-ийн дагуу суулгаж, 001–017 migration-тай тусдаа
+Backend dependencies-ийг README-ийн дагуу суулгаж, repository-д байгаа бүх migration-тай тусдаа
 development PostgreSQL DB болон restricted app/worker role-ууд бэлтгэсэн байна.
 Database нэр `prsystem_dev*` эсвэл `prsystem_test_*` prefix-тэй байх ёстой.
 Migration owner credential нь API/worker credential биш.

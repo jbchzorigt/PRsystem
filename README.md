@@ -30,6 +30,24 @@ Online booking-ийн хоногийн quote, гэрээний commission, cance
 [Implementation ба үлдсэн integration](docs/45-online-booking-policy.md).
 [Database hold ба төлбөрийн mock integration](docs/46-booking-holds.md) нэмэгдсэн. Нийтийн production booking API хараахан нээгдээгүй.
 
+## UI/UX-ийг өөрөө турших
+
+Бодит API/PostgreSQL дээр хийсвэр өгөгдөлтэй гурван ажилтнаар турших локал орчин:
+
+```bash
+python -m pip install -e ".[api,test]" tzdata
+python -m scripts.ui_review
+```
+
+Python 3.12+ болон ажиллаж байгаа Docker шаардлагатай. Terminal дээр нэвтрэх
+хаяг, буудлын код, ажилтнуудын email болон түр нууц үг гарна. `Ctrl+C` дарахад
+тухайн туршилтын бааз/container устна. [Алхамчилсан заавар, хэрэглэгчийн
+даалгавар, ажиглалтын хүснэгт](docs/76-ui-review-session.md).
+
+Өмнөх UI/UX багц [935 backend тест, 25 browser багц, 171 API шалгалтаар
+баталгаажсан](https://github.com/jbchzorigt/PRsystem/actions/runs/35034740904).
+Бодит хэрэглэгчийн acceptance-ийг тусад нь бүртгэнэ.
+
 ## Шалгах
 
 Python 3.12+ шаардлагатай. Domain тестүүд external package/database шаардахгүй. Linux/macOS:
