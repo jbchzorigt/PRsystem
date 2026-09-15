@@ -42,7 +42,7 @@ class OperationCase(StaffApiCase):
         self.oc=TestClient(create_app(self.app_dsn,self.settings,runtime_mode='test',platform_secret_resolver=lambda ref:self.key,sms_gateway=self.sms,ebarimt_gateway=self.ebarimt),client=(uuid4().hex,12345));self.addCleanup(self.oc.close)
         auth=StaffAuth(self.app_dsn,self.settings);self.service=OperationDashboard(auth,PlatformService(auth,lambda ref:self.key),sms=self.sms,ebarimt=self.ebarimt)
         with psycopg.connect(self.owner_dsn) as conn:
-            conn.execute("INSERT INTO prsystem.platform_account(id,email,password_hash,permissions,mfa_key_ref) VALUES(%s,%s,%s,ARRAY['OPERATION_READ','SUBSCRIPTION_REMINDER_SEND','SUBSCRIPTION_PASSWORD_RESET_INITIATE','SUBSCRIPTION_EBARIMT_RETRY','SUBSCRIPTION_PAYMENT_RECONCILE'],%s)",(self.pid,self.pid+'@example.test',self.password_hash,self.pid))
+            conn.execute("INSERT INTO prsystem.platform_account(id,email,password_hash,permissions,mfa_key_ref) VALUES(%s,%s,%s,ARRAY['OPERATION_READ','SUBSCRIPTION_REMINDER_SEND','SUBSCRIPTION_PASSWORD_RESET_INITIATE','SUBSCRIPTION_EBARIMT_RETRY','SUBSCRIPTION_PAYMENT_RECONCILE'],%s)",(self.pid,self.pid+'@example.com',self.password_hash,self.pid))
             for tenant in [self.tenant,self.other]:
                 app,owner,attempt=[uuid4().hex for _ in range(3)]
                 conn.execute("INSERT INTO prsystem.onboarding_application(id,access_hash,payload,email,owner_identifier,owner_kind,package_mnt,months,state,tenant_id) VALUES(%s,%s,%s,%s,%s,'INDIVIDUAL',30000,1,'PROVISIONED',%s)",(app,uuid4().hex,Jsonb(dict(hotel_name='Operation '+tenant,address='Улаанбаатар')),self.email,uuid4().hex,tenant))
@@ -52,7 +52,7 @@ class OperationCase(StaffApiCase):
                 conn.execute("INSERT INTO prsystem.onboarding_payment VALUES('QPAY','mock',%s,%s,30000,clock_timestamp(),clock_timestamp())",(uuid4().hex,attempt))
                 conn.execute('UPDATE prsystem.onboarding_application SET paid_attempt_id=%s WHERE id=%s',(attempt,app))
                 if tenant==self.tenant:self.attempt=attempt
-        r=self.oc.post('/platform/auth/login',json=dict(email=self.pid+'@example.test',password=self.password,code=totp(self.key,int(datetime.now(timezone.utc).timestamp())//30)))
+        r=self.oc.post('/platform/auth/login',json=dict(email=self.pid+'@example.com',password=self.password,code=totp(self.key,int(datetime.now(timezone.utc).timestamp())//30)))
         self.assertEqual(r.status_code,200,r.text);self.ot=r.json()['access_token']
 
     def command(self,path,data=None,key=None,token=None):
