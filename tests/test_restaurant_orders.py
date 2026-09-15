@@ -36,6 +36,13 @@ class RestaurantOrderTests(GuestFinanceCase):
                 'GRANT INSERT ON prsystem.restaurant_menu_item,prsystem.restaurant_command_receipt,prsystem.restaurant_order_record TO {}',
                 'GRANT UPDATE(revision) ON prsystem.restaurant TO {}',
                 'GRANT UPDATE(revision) ON prsystem.restaurant_membership TO {}',
+                'GRANT UPDATE(name,category,description,address,latitude,longitude,phone,weekly_hours) ON prsystem.restaurant TO {}',
+                'GRANT INSERT,DELETE ON prsystem.restaurant_schedule_exception TO {}',
+                'GRANT INSERT ON prsystem.restaurant_configuration_event TO {}',
+                'GRANT UPDATE(image_data) ON prsystem.restaurant_menu_item TO {}',
+                'GRANT SELECT ON prsystem.restaurant_notification,prsystem.restaurant_worker_cursor TO {}',
+                'GRANT INSERT ON prsystem.restaurant_worker_cursor TO {}',
+                'GRANT UPDATE(checked_at) ON prsystem.restaurant_worker_cursor TO {}',
                 'GRANT UPDATE(active,revision) ON prsystem.hotel_restaurant TO {}',
                 'GRANT UPDATE(category,name,description,price_mnt,active,available,revision) ON prsystem.restaurant_menu_item TO {}',
             ):
@@ -215,3 +222,73 @@ class RestaurantOrderTests(GuestFinanceCase):
         response = self.client.post(path,headers=self.headers(self.guest_token),json=dict(quantities={'soup':2},idempotency_key='api'))
         self.assertEqual(response.status_code,201,response.text)
         self.assertEqual(response.json()['amount_mnt'],8000)
+
+    def test_menu_and_owned_order_discovery_are_scoped_and_paginated(self):
+        self.assertEqual(self.flow.guest_restaurants(self.guest_token),[dict(restaurant_id=self.restaurant,name='Restaurant',active=True)])
+        self.assertEqual(self.flow.guest_orders(self.guest_token)['orders'],[])
+        order=self.create_order()
+        self.assertEqual(self.flow.guest_orders(self.guest_token)['orders'][0]['order_id'],order['order_id'])
+        self.assertEqual(self.flow.guest_orders(self.guest_token,order['order_id'])['orders'],[])
+        own=self.flow.own_menu(self.restaurant_token,self.restaurant)
+        self.assertEqual(own['items'][0]['item_id'],'soup')
+        with self.assertRaises(DomainError):
+            self.flow.own_menu(self.guest_token,self.restaurant)
+
+    def test_guest_logout_revokes_server_session_and_order_access(self):
+        order=self.create_order()
+        self.assertEqual(self.flow.guest_logout(self.guest_token)['status'],'SIGNED_OUT')
+        with self.assertRaisesRegex(DomainError,'INVALID_GUEST_ACCESS'):
+            self.flow.guest_detail(self.guest_token,order['order_id'])
+
+    def test_manager_profile_special_closure_and_immutable_audit(self):
+        data=self.flow.profile(self.owner_token,self.tenant,self.restaurant)
+        data['expected_revision']=data.pop('revision')
+        data.update(reason='Closed for maintenance',closed_dates=[self.clock.date().isoformat()])
+        result=self.flow.profile(self.owner_token,self.tenant,self.restaurant,data,'profile')
+        self.assertEqual(result['revision'],1)
+        self.assertFalse(self.flow.menu(self.guest_token,self.restaurant)['ordering_available'])
+        with self.assertRaisesRegex(DomainError,'RESTAURANT_CLOSED'):
+            self.flow.create(self.guest_token,self.restaurant,{'soup':1},'closed')
+        self.assertEqual(self.flow.profile(self.owner_token,self.tenant,self.restaurant,data,'profile'),result)
+        with self.assertRaises(DomainError):
+            self.flow.profile(self.restaurant_token,self.tenant,self.restaurant,data,'denied')
+        with self.assertRaises(psycopg.Error),psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('DELETE FROM prsystem.restaurant_configuration_event WHERE restaurant_id=%s',(self.restaurant,))
+
+    def test_menu_image_reencoding_revision_and_clear(self):
+        from test_image_assets import MenuImageTests
+        result=self.flow.image(self.restaurant_token,self.restaurant,'soup',MenuImageTests().image(),1,'image')
+        self.assertEqual(result['revision'],2)
+        self.assertTrue(self.flow.menu(self.guest_token,self.restaurant)['items'][0]['image_data'].startswith('data:image/jpeg;base64,'))
+        with self.assertRaisesRegex(DomainError,'REVISION_CONFLICT'):
+            self.flow.image(self.restaurant_token,self.restaurant,'soup',None,1,'stale')
+        self.flow.image(self.restaurant_token,self.restaurant,'soup',None,2,'clear')
+        self.assertIsNone(self.flow.own_menu(self.restaurant_token,self.restaurant)['items'][0]['image_data'])
+
+    def test_worker_recovers_orphan_invoice_and_deduplicates_notices(self):
+        created=self.flow.create(self.guest_token,self.restaurant,{'soup':3},'orphan')
+        with patch.object(RestaurantOrders,'save',side_effect=RuntimeError('crash')):
+            with self.assertRaises(RuntimeError):self.flow.invoice(self.guest_token,created['order_id'])
+        self.gateway.set_status(created['order_id'],'SUCCEEDED')
+        self.assertEqual(self.flow.tick()[0]['status'],'CHECKED')
+        self.clock+=timedelta(minutes=10)
+        self.flow.tick();self.flow.tick()
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM prsystem.restaurant_notification WHERE tenant_id=%s AND code='ORDER_PAID'",(self.tenant,)).fetchone()[0],1)
+            self.assertEqual(conn.execute("SELECT count(*) FROM prsystem.restaurant_notification WHERE tenant_id=%s AND code='ACCEPTANCE_LATE' AND audience='RECEPTION'",(self.tenant,)).fetchone()[0],1)
+        notices=self.flow.notifications(self.worker_token,tenant=self.tenant)
+        self.assertIn('ACCEPTANCE_LATE',[n['code'] for n in notices['items']])
+
+    def test_worker_does_not_create_invoice_and_round_robin_checks(self):
+        first=self.flow.create(self.guest_token,self.restaurant,{'soup':1},'unrequested')
+        second=self.flow.create(self.guest_token,self.restaurant,{'soup':2},'second')
+        one=self.flow.tick(1);two=self.flow.tick(1)
+        self.assertNotEqual(one[0]['order_id'],two[0]['order_id'])
+        with self.gateway.store.connect() as conn:self.assertEqual(conn.execute('SELECT count(*) FROM mock_invoice').fetchone()[0],0)
+
+    def test_reception_can_request_but_cannot_send_refund(self):
+        paid=self.paid_order();self.clock+=timedelta(minutes=10)
+        result=self.flow.command(self.worker_token,self.tenant,paid['order_id'],'REQUEST_REFUND',paid['revision'],'reception-refund',hotel_staff=True)
+        self.assertEqual(result['state']['refund_policy'],'MANDATORY')
+        with self.assertRaisesRegex(DomainError,'FORBIDDEN'):
+            self.flow.command(self.worker_token,self.tenant,paid['order_id'],'BEGIN_REFUND',result['revision'],'forbidden-refund',hotel_staff=True)

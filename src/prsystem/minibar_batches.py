@@ -153,18 +153,14 @@ class MinibarBatches(MinibarRollout):
                          (tenant,[i['room_id'] for i in before['items']])).fetchall()
             before=self.data(conn,tenant,batch)
             if before['revision']!=revision:raise DomainError('REVISION_CONFLICT')
-            cancelled=[]
+            cancelled=[];rollback_required=[]
             for item in before['items']:
-                if item['state'] in TERMINAL|{'SKIPPED'}:continue
-                # Migration 046's deferred proof disallows committed partial transfers.
-                if conn.execute('SELECT 1 FROM prsystem.minibar_transfer WHERE tenant_id=%s AND request_id=%s',
-                                (tenant,item['request_id'])).fetchone():
-                    raise DomainError('RECONCILIATION_NOT_READY')
-                self._cancel_on_connection(conn,bearer,tenant,item['request_id'],item['revision'],reason,
+                if item['state'] in TERMINAL|{'SKIPPED','ROLLBACK_REQUIRED'}:continue
+                child=self._cancel_on_connection(conn,bearer,tenant,item['request_id'],item['revision'],reason,
                     'batch-cancel:'+secrets.token_hex(24))
-                cancelled.append(item['request_id'])
+                (rollback_required if child['state']=='ROLLBACK_REQUIRED' else cancelled).append(item['request_id'])
             result=self.data(conn,tenant,batch)
             self.event(conn,tenant,actor,'MINIBAR_ROLLOUT_BATCH_CANCELLED',batch,
-                       dict(before=before,after=result,cancelled=cancelled,reason=reason,actor_roles=roles,package_mnt=package))
+                       dict(before=before,after=result,cancelled=cancelled,rollback_required=rollback_required,reason=reason,actor_roles=roles,package_mnt=package))
             self._save_receipt(conn,tenant,key,actor,command,result)
             return result

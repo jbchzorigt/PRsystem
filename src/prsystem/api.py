@@ -201,6 +201,20 @@ class MinibarApplyCommand(MinibarTemplateCommand):
     physical_transfers_confirmed: Literal[True]
 
 
+class MinibarPartialCommand(MinibarApplyCommand):
+    product_id: str = Field(min_length=1,max_length=128)
+    quantity: int = Field(ge=1,le=1000000)
+    expected_stock_revision: int = Field(ge=1,le=2**63-1)
+
+
+class MinibarRollbackTransfer(MinibarPartialCommand):
+    actual_count: int = Field(ge=0,le=1000000)
+
+
+class MinibarRollbackComplete(MinibarApplyCommand):
+    observed_counts: dict[str, Annotated[int,Field(ge=0,le=1000000)]] = Field(min_length=1,max_length=1000)
+
+
 class MinibarCountResolution(MinibarTemplateCommand):
     expected_stock_revision: int = Field(ge=1,le=2**63-1)
     expected_physical_quantity: int = Field(ge=0,le=1000000)
@@ -887,13 +901,13 @@ class BookingBeneficiary(BaseModel):
     expected_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1,max_length=128)
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None, restaurant_gateways=None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None, restaurant_gateways=None,sms_gateway=None,ebarimt_gateway=None,contact_notice_gateway=None) -> FastAPI:
     if runtime_mode not in {'production','development','test'}:
         raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if type(mock_stay_finance) is not bool:
         raise ValueError('mock_stay_finance must be boolean')
-    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, *(payment_gateways or {}).values(), *(restaurant_gateways or {}).values()])
+    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, sms_gateway, ebarimt_gateway, contact_notice_gateway, *(payment_gateways or {}).values(), *(restaurant_gateways or {}).values()])
     if mocked:
         from prsystem.mock_providers import require_development_database
         require_development_database(service.dsn, runtime_mode)
@@ -953,6 +967,14 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         if platform is None:
             raise DomainError("PLATFORM_UNAVAILABLE")
         return platform
+
+    from prsystem.operation_dashboard import OperationDashboard
+    from prsystem.operation_api import install as install_operation_routes
+    install_operation_routes(app,OperationDashboard(service,platform,sms=sms_gateway,onboarding=onboarding,renewals=renewals,ebarimt=ebarimt_gateway),token)
+
+    from prsystem.subscription_contact import SubscriptionContact
+    from prsystem.subscription_contact_api import install as install_contact_routes
+    install_contact_routes(app,SubscriptionContact(service,platform,phone_gateway,contact_notice_gateway),token,peer)
 
     def links():
         if lifecycle is None:
@@ -1089,6 +1111,21 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/count')
     def minibar_reconciliation_count(tenant_id: str,task_id: str,body: MinibarCountCommand,secret: Annotated[str,Depends(token)]):
         return reconciliation.count(secret,tenant_id,task_id,body.assignment_version,body.action_id,body.actual_count,body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/transfer')
+    def minibar_partial_transfer(tenant_id: str,task_id: str,body: MinibarPartialCommand,secret: Annotated[str,Depends(token)]):
+        from prsystem.minibar_partial import MinibarPartial
+        return MinibarPartial(service).transfer(secret,tenant_id,task_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/rollback-transfer')
+    def minibar_rollback_transfer(tenant_id: str,task_id: str,body: MinibarRollbackTransfer,secret: Annotated[str,Depends(token)]):
+        from prsystem.minibar_partial import MinibarPartial
+        return MinibarPartial(service).transfer(secret,tenant_id,task_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key,rollback=True)
+
+    @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/complete-rollback')
+    def minibar_complete_rollback(tenant_id: str,task_id: str,body: MinibarRollbackComplete,secret: Annotated[str,Depends(token)]):
+        from prsystem.minibar_partial import MinibarPartial
+        return MinibarPartial(service).complete(secret,tenant_id,task_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/minibar/reconciliation/tasks/{task_id}/apply')
     def minibar_reconciliation_apply(tenant_id: str,task_id: str,body: MinibarApplyCommand,secret: Annotated[str,Depends(token)]):
@@ -1661,7 +1698,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
             "X-Frame-Options": "DENY",
         })
 
+    @app.get("/subscription/contact", include_in_schema=False)
+    @app.get("/operation", include_in_schema=False)
     @app.get("/booking", include_in_schema=False)
+    @app.get("/restaurant", include_in_schema=False)
     @app.get("/platform/booking", include_in_schema=False)
     @app.get("/reception", include_in_schema=False)
     def reception_page():

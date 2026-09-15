@@ -225,3 +225,22 @@ class MinibarBatchTests(MinibarConfigurationCase):
         q=self.assert_status(self.api(self.batch_path()+'?limit=1&after='+p['next_after'],method='get'),200)
         self.assertEqual({p['items'][0]['batch_id'],q['items'][0]['batch_id']},{first['batch_id'],second['batch_id']})
         self.assertIsNone(q['next_after'])
+
+    def test_batch_cancel_delegates_partial_child_to_rollback(self):
+        with psycopg.connect(self.owner_dsn) as conn:
+            revision=conn.execute('SELECT revision FROM prsystem.minibar_template WHERE tenant_id=%s AND id=%s',(self.tenant,self.template)).fetchone()[0]
+        draft=self.assert_status(self.api(f'minibar/templates/{self.template}/versions',dict(expected_revision=revision,source_version_id=self.target)),201)
+        self.target=draft['version']['version_id'];path=f'minibar/templates/{self.template}/versions/{self.target}'
+        self.assert_status(self.api(path,dict(expected_revision=draft['revision'],items=[dict(product_id=self.product,target_quantity=4)]),method='put'),200)
+        self.assert_status(self.api(path+'/publish',dict(expected_revision=draft['revision']+1)),200)
+        batch=self.assert_status(self.confirm(),201);child=next(i for i in batch['items'] if i['room_id']==self.room)
+        task=self.assert_status(self.api(f'minibar/configuration-requests/{child["request_id"]}/prepare',dict(expected_revision=child['revision'],assignee_id=self.worker)),201)
+        def current():return next(i for i in self.api('minibar/reconciliation/tasks',token=self.worker_token,method='get').json()['items'] if i['task_id']==task['task_id'])
+        for line in current()['plan']['lines']:
+            self.assert_status(self.api(f'minibar/reconciliation/tasks/{task["task_id"]}/count',dict(assignment_version=0,action_id=line['action_id'],actual_count=line['baseline_quantity']),self.worker_token),200)
+        data=current();line=data['plan']['lines'][0]
+        self.assert_status(self.api(f'minibar/reconciliation/tasks/{task["task_id"]}/transfer',dict(assignment_version=0,expected_revision=data['request']['revision'],expected_stock_revision=line['stock_revision'],product_id=self.product,quantity=1,physical_transfers_confirmed=True),self.worker_token),200)
+        result=self.assert_status(self.batch_cancel(self.batch_read(batch).json()),200)
+        self.assertEqual((result['counts']['ROLLBACK_REQUIRED'],result['counts']['CANCELLED']),(1,1))
+        self.assertEqual(current()['request']['state'],'ROLLBACK_REQUIRED')
+        self.assertEqual(self.assert_status(self.batch_cancel(result),200)['counts']['ROLLBACK_REQUIRED'],1)

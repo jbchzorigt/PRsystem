@@ -110,6 +110,10 @@ class RestaurantPolicyTests(unittest.TestCase):
         self.assertEqual((paid.order, paid.refund_request), ('CANCELLED', 'APPROVED'))
         self.assertEqual(self.paid(eligible=False).refund_policy, 'MANDATORY')
 
+    def test_new_closure_after_invoice_requires_refund(self):
+        paid=self.paid(within_hours=False)
+        self.assertEqual((paid.order,paid.refund_reason),('CANCELLED','PAID_AFTER_INVOICE_EXPIRY'))
+
     def test_paid_order_survives_expiry_and_inactivation(self):
         paid = self.paid()
         self.assertEqual(paid.expire(NOW + timedelta(hours=3), inactive=True), paid)

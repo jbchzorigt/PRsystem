@@ -5,7 +5,7 @@ HTTP clients can request reconciliation but cannot supply provider results.
 """
 import secrets
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 
 from psycopg.types.json import Jsonb
 
@@ -119,12 +119,95 @@ class RestaurantOrders:
             link = self.lock_link(conn, tenant, restaurant)
             venue, closures = self.venue(conn, restaurant)
             now = self.now(conn)
-            rows = conn.execute('''SELECT id,category,name,description,price_mnt,available,revision
+            rows = conn.execute('''SELECT id,category,name,description,price_mnt,available,revision,image_data
                 FROM prsystem.restaurant_menu_item WHERE restaurant_id=%s AND active ORDER BY category,name,id LIMIT 501''', (restaurant,)).fetchall()
             return dict(restaurant_id=restaurant, name=venue[0],
                         ordering_available=link[0] and not self.paused(conn, tenant, restaurant, now) and opening_window(venue[2], closures, now) is not None,
-                        items=[dict(zip(('item_id','category','name','description','price_mnt','available','revision'), r)) for r in rows[:500]],
+                        items=[dict(zip(('item_id','category','name','description','price_mnt','available','revision','image_data'), r)) for r in rows[:500]],
                         truncated=len(rows)>500)
+
+    def guest_restaurants(self, bearer):
+        with transaction(self.auth.dsn) as conn:
+            tenant, _, _, _ = self.guest(conn, bearer)
+            rows = conn.execute('''SELECT r.id,r.name,h.active FROM prsystem.hotel_restaurant h
+                JOIN prsystem.restaurant r ON r.id=h.restaurant_id WHERE h.tenant_id=%s ORDER BY r.name,r.id LIMIT 100''', (tenant,)).fetchall()
+            return [dict(restaurant_id=r[0],name=r[1],active=r[2]) for r in rows]
+
+    def guest_orders(self, bearer, after=''):
+        with transaction(self.auth.dsn) as conn:
+            tenant, _, stay, _ = self.guest(conn, bearer)
+            rows = conn.execute('''SELECT id FROM prsystem.restaurant_order_record WHERE tenant_id=%s AND stay_id=%s
+                AND id>%s ORDER BY id LIMIT 51''', (tenant,stay,after)).fetchall()
+            return dict(orders=[self.view(conn,self.record(conn,tenant,r[0])) for r in rows[:50]],next_after=rows[49][0] if len(rows)>50 else None)
+
+    def own_menu(self, bearer, restaurant, after=''):
+        with transaction(self.auth.dsn) as conn:
+            self.restaurant_actor(conn,bearer,restaurant)
+            rows=conn.execute('''SELECT id,category,name,description,price_mnt,active,available,revision,image_data
+                FROM prsystem.restaurant_menu_item WHERE restaurant_id=%s AND id>%s ORDER BY id LIMIT 51''',(restaurant,after)).fetchall()
+            return dict(items=[dict(zip(('item_id','category','name','description','price_mnt','active','available','revision','image_data'),r)) for r in rows[:50]],
+                        next_after=rows[49][0] if len(rows)>50 else None)
+
+    def image(self,bearer,restaurant,item_id,image,revision,key):
+        from prsystem.image_assets import menu_image
+        canonical=menu_image(image) if image is not None else None
+        command=dict(action='MENU_IMAGE',item_id=item_id,image_hash=digest(canonical) if canonical else None,revision=revision)
+        with transaction(self.auth.dsn) as conn:
+            actor=self.restaurant_actor(conn,bearer,restaurant)
+            replay=self.receipt(conn,restaurant,key,actor,command)
+            if replay is not None:return replay
+            row=conn.execute('SELECT revision FROM prsystem.restaurant_menu_item WHERE restaurant_id=%s AND id=%s FOR UPDATE',(restaurant,item_id)).fetchone()
+            if row is None:raise DomainError('WORK_SOURCE_NOT_FOUND')
+            if row[0]!=revision:raise DomainError('REVISION_CONFLICT')
+            conn.execute('UPDATE prsystem.restaurant_menu_item SET image_data=%s,revision=revision+1 WHERE restaurant_id=%s AND id=%s',(canonical,restaurant,item_id))
+            result=dict(item_id=item_id,revision=revision+1)
+            self.save_receipt(conn,restaurant,key,actor,command,result);return result
+
+    def hotel_restaurants(self,bearer,tenant):
+        with transaction(self.auth.dsn) as conn:
+            actor=self.identities._owner(conn,bearer,tenant)
+            rows=conn.execute('''SELECT r.id,r.name,h.active,h.revision,r.revision FROM prsystem.restaurant r
+                JOIN prsystem.hotel_restaurant h ON h.restaurant_id=r.id WHERE h.tenant_id=%s AND r.created_by=%s ORDER BY r.name,r.id LIMIT 100''',(tenant,actor)).fetchall()
+            return [dict(zip(('restaurant_id','name','active','link_revision','revision'),r)) for r in rows]
+
+    @staticmethod
+    def profile_data(conn,restaurant):
+        row=conn.execute('SELECT name,category,description,address,latitude,longitude,phone,weekly_hours,revision FROM prsystem.restaurant WHERE id=%s',(restaurant,)).fetchone()
+        if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
+        result=dict(zip(('name','category','description','address','latitude','longitude','phone','weekly_hours','revision'),row))
+        result['closed_dates']=[r[0].isoformat() for r in conn.execute('SELECT closed_date FROM prsystem.restaurant_schedule_exception WHERE restaurant_id=%s ORDER BY closed_date',(restaurant,)).fetchall()]
+        return result
+
+    def profile(self,bearer,tenant,restaurant,data=None,key=None):
+        with transaction(self.auth.dsn) as conn:
+            actor=self.identities._owner(conn,bearer,tenant,restaurant)
+            if data is None:return self.profile_data(conn,restaurant)
+            command=dict(action='RESTAURANT_PROFILE',restaurant=restaurant,data=data)
+            replay=self.receipt(conn,tenant,key,'staff:'+actor,command)
+            if replay is not None:return replay
+            reason=self.identities._text(data['reason'],1000)
+            try:closures=[date.fromisoformat(v) for v in data['closed_dates']]
+            except (ValueError,TypeError):raise DomainError('INVALID_RESTAURANT_CLOSURES') from None
+            opening_window(data['weekly_hours'],closures,self.now(conn))
+            conn.execute('SELECT id FROM prsystem.restaurant WHERE id=%s FOR UPDATE',(restaurant,)).fetchone()
+            before=self.profile_data(conn,restaurant)
+            if before['revision']!=data['expected_revision']:raise DomainError('REVISION_CONFLICT')
+            conn.execute('''UPDATE prsystem.restaurant SET name=%s,category=%s,description=%s,address=%s,latitude=%s,longitude=%s,
+                phone=%s,weekly_hours=%s,revision=revision+1 WHERE id=%s''',(data['name'],data['category'],data['description'],data['address'],data['latitude'],data['longitude'],data['phone'],Jsonb(data['weekly_hours']),restaurant))
+            conn.execute('DELETE FROM prsystem.restaurant_schedule_exception WHERE restaurant_id=%s',(restaurant,))
+            for closed in sorted(set(closures)):
+                conn.execute('INSERT INTO prsystem.restaurant_schedule_exception VALUES(%s,%s)',(restaurant,closed))
+            after=self.profile_data(conn,restaurant)
+            conn.execute('INSERT INTO prsystem.restaurant_configuration_event(restaurant_id,revision,actor_id,reason,before_snapshot,after_snapshot) VALUES(%s,%s,%s,%s,%s,%s)',
+                (restaurant,after['revision'],actor,reason,Jsonb(before),Jsonb(after)))
+            result=dict(restaurant_id=restaurant,revision=after['revision'])
+            self.save_receipt(conn,tenant,key,'staff:'+actor,command,result);return result
+
+    def guest_logout(self, bearer):
+        with transaction(self.auth.dsn) as conn:
+            self.guest(conn,bearer)
+            conn.execute('UPDATE prsystem.guest_session SET revoked_at=clock_timestamp() WHERE token_hash=%s',(digest(bearer),))
+            return dict(status='SIGNED_OUT')
 
     def menu_item(self, bearer, restaurant, item_id, data, revision, key):
         identifier(item_id)
@@ -275,11 +358,15 @@ class RestaurantOrders:
             return dict(orders=[self.view(conn, self.record(conn, tenant, order)) for tenant, order in rows[:limit]],
                         next_after=rows[limit-1][1] if len(rows)>limit else None)
 
-    def command(self, bearer, tenant, order_id, action, revision, key, data=None, *, restaurant=None):
+    def command(self, bearer, tenant, order_id, action, revision, key, data=None, *, restaurant=None, hotel_staff=False):
         data = data or {}
         command = dict(action=action, order_id=order_id, revision=revision, data=data)
         with transaction(self.auth.dsn) as conn:
-            if restaurant is None:
+            if hotel_staff:
+                principal=self.hotel_actor(conn,bearer,tenant)
+                actor='staff:'+principal['account_id'];stay=None
+                if action!='REQUEST_REFUND' or 'RECEPTION' not in principal['roles']:raise DomainError('FORBIDDEN')
+            elif restaurant is None:
                 actual_tenant, _, stay, actor = self.guest(conn, bearer)
                 if actual_tenant != tenant or action not in {'REQUEST_REFUND', 'RECONCILE_PAYMENT'}:
                     raise DomainError('FORBIDDEN')
@@ -306,17 +393,7 @@ class RestaurantOrders:
                 raise DomainError('RESTAURANT_INVOICE_REQUIRED')
             state, now = decode(row['state']), self.now(conn)
             if action == 'RECONCILE_PAYMENT':
-                gateway = self.gateway(ref[0], row['merchant_id'])
-                evidence = gateway.payment(order_id, row['invoice_id'])
-                if evidence['status'] == 'SUCCEEDED':
-                    items = conn.execute('SELECT id,active,available FROM prsystem.restaurant_menu_item WHERE restaurant_id=%s FOR SHARE', (ref[0],)).fetchall()
-                    eligible_items = {item[0] for item in items if item[1] and item[2]}
-                    active_stay = conn.execute("SELECT state='ACTIVE' FROM prsystem.stay WHERE tenant_id=%s AND id=%s", (tenant,ref[1])).fetchone()[0]
-                    eligible = link[0] and active_stay and all(item['item_id'] in eligible_items for item in row['items'])
-                    state = state.capture(now, merchant_id=evidence['merchant_id'], invoice_id=evidence['invoice_id'],
-                                          amount_mnt=evidence['amount'], currency=evidence['currency'], payment_id=evidence['payment_id'], eligible=eligible)
-                elif now >= state.expires_at:
-                    state = state.expire(now)
+                state=self.payment_state(conn,row,state,link,now)
             elif action == 'REQUEST_REFUND':
                 if restaurant is not None:
                     raise DomainError('FORBIDDEN')
@@ -334,23 +411,134 @@ class RestaurantOrders:
                 attempt = state.refund_attempt_id or 'restaurant-refund:' + order_id
                 state = state.begin_refund(now, attempt)
             elif action == 'RECONCILE_REFUND':
-                if state.refund not in {'PENDING','FAILED','REFUNDED'}:
-                    raise DomainError('RESTAURANT_TRANSITION_CONFLICT')
-                gateway = self.gateway(ref[0], row['merchant_id'])
-                gateway.create_refund(state.refund_attempt_id, state.payment_id, state.amount_mnt)
-                evidence = gateway.refund(state.refund_attempt_id)
-                if evidence['original'] != state.payment_id:
-                    raise DomainError('RESTAURANT_REFUND_MISMATCH')
-                if evidence['status'] in {'SUCCEEDED','FINAL_FAILED','NOT_PROCESSED','VOIDED'}:
-                    state = state.refund_result(now, attempt_id=state.refund_attempt_id, merchant_id=evidence['merchant_id'],
-                        invoice_id=state.invoice_id, amount_mnt=evidence['amount'], currency=evidence['currency'],
-                        succeeded=evidence['status']=='SUCCEEDED', provider_id=evidence['reference'])
+                state=self.refund_state(row,state,now)
             else:
                 raise DomainError('INVALID_REQUEST')
             updated = self.save(conn, row, state, actor, action)
+            self.emit(conn,updated,now)
             result = dict(order_id=order_id, revision=updated['revision'], state=updated['state'])
             self.save_receipt(conn, restaurant or tenant, key, actor, command, result)
             return result
+
+    def payment_state(self,conn,row,state,link,now,evidence=None):
+        evidence=evidence or self.gateway(row['restaurant_id'],row['merchant_id']).payment(row['order_id'],row['invoice_id'])
+        if evidence['status']=='SUCCEEDED':
+            items=conn.execute('SELECT id,active,available FROM prsystem.restaurant_menu_item WHERE restaurant_id=%s FOR SHARE',(row['restaurant_id'],)).fetchall()
+            eligible_items={item[0] for item in items if item[1] and item[2]}
+            active_stay=conn.execute("SELECT state='ACTIVE' FROM prsystem.stay WHERE tenant_id=%s AND id=%s",(row['tenant_id'],row['stay_id'])).fetchone()[0]
+            active_account=conn.execute("""SELECT 1 FROM prsystem.restaurant_membership m JOIN prsystem.staff_account a ON a.id=m.account_id
+                WHERE m.restaurant_id=%s AND m.status='ACTIVE' AND a.status='ACTIVE' AND a.verified_at IS NOT NULL LIMIT 1""",(row['restaurant_id'],)).fetchone()
+            eligible=bool(link[0] and active_stay and active_account and all(item['item_id'] in eligible_items for item in row['items']))
+            venue,closures=self.venue(conn,row['restaurant_id'])
+            return state.capture(now,merchant_id=evidence['merchant_id'],invoice_id=evidence['invoice_id'],amount_mnt=evidence['amount'],
+                currency=evidence['currency'],payment_id=evidence['payment_id'],eligible=eligible,within_hours=opening_window(venue[2],closures,now) is not None)
+        return state.expire(now) if now>=state.expires_at else state
+
+    def refund_state(self,row,state,now):
+        if state.refund not in {'PENDING','FAILED','REFUNDED'}:raise DomainError('RESTAURANT_TRANSITION_CONFLICT')
+        gateway=self.gateway(row['restaurant_id'],row['merchant_id'])
+        gateway.create_refund(state.refund_attempt_id,state.payment_id,state.amount_mnt)
+        evidence=gateway.refund(state.refund_attempt_id)
+        if evidence['original']!=state.payment_id:raise DomainError('RESTAURANT_REFUND_MISMATCH')
+        if evidence['status'] in {'SUCCEEDED','FINAL_FAILED','NOT_PROCESSED','VOIDED'}:
+            return state.refund_result(now,attempt_id=state.refund_attempt_id,merchant_id=evidence['merchant_id'],invoice_id=state.invoice_id,
+                amount_mnt=evidence['amount'],currency=evidence['currency'],succeeded=evidence['status']=='SUCCEEDED',provider_id=evidence['reference'])
+        return state
+
+    @staticmethod
+    def emit(conn,row,now,extra=None):
+        if row['state'] is None:return
+        state=decode(row['state']);alerts=state.alerts(now);events=[]
+        if state.payment=='PAID':events.append(('ORDER_PAID','RESTAURANT'))
+        if state.refund_request!='NONE':events.append(('REFUND_REQUESTED','RESTAURANT'))
+        mapping={'acceptance_warning':('ACCEPTANCE_WARNING',('GUEST','RESTAURANT')),
+            'acceptance_reception':('ACCEPTANCE_LATE',('GUEST','RECEPTION')),
+            'eta_warning':('ETA_WARNING',('GUEST','RESTAURANT')),'eta_refund_available':('ETA_LATE',('GUEST','RECEPTION')),
+            'refund_reminder':('REFUND_REMINDER',('RESTAURANT',)),
+            'refund_escalation':('REFUND_ESCALATED',('RECEPTION','MANAGER_PLUS')),
+            'link_paused':('LINK_PAUSED',('RESTAURANT','RECEPTION','MANAGER_PLUS'))}
+        for flag,(code,audiences) in mapping.items():
+            if alerts[flag]:events.extend((code,audience) for audience in audiences)
+        if state.refund=='FAILED':events.extend(('REFUND_FAILED',a) for a in ('RESTAURANT','MANAGER_PLUS'))
+        if state.refund=='REFUNDED':events.extend(('REFUND_RESOLVED',a) for a in ('GUEST','RESTAURANT','RECEPTION','MANAGER_PLUS'))
+        if extra:events.append((extra,'RESTAURANT'))
+        for code,audience in events:
+            conn.execute('''INSERT INTO prsystem.restaurant_notification(tenant_id,restaurant_id,order_id,code,audience,recorded_at)
+                VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(row['tenant_id'],row['restaurant_id'],row['order_id'],code,audience,now))
+
+    def hotel_actor(self,conn,bearer,tenant):
+        principal,_=self.auth._authenticate(conn,bearer,tenant)
+        access=conn.execute('SELECT package_mnt,security_suspended FROM prsystem.hotel_access WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()
+        if access!=(30000,False) or not set(principal['roles'])&{'RECEPTION','MANAGER_PLUS'}:raise DomainError('FORBIDDEN')
+        self.scope(conn,tenant=tenant);return principal
+
+    def notifications(self,bearer,*,restaurant=None,tenant=None,after=''):
+        with transaction(self.auth.dsn) as conn:
+            if restaurant:
+                self.restaurant_actor(conn,bearer,restaurant);audiences=['RESTAURANT'];scope=restaurant
+            else:
+                principal=self.hotel_actor(conn,bearer,tenant);audiences=list(set(principal['roles'])&{'RECEPTION','MANAGER_PLUS'});scope=tenant
+            column='restaurant_id' if restaurant else 'tenant_id'
+            # Column comes only from the realm branch, never user input.
+            rows=conn.execute('''SELECT n.order_id,n.code,n.recorded_at,o.room_number_snapshot,o.restaurant_name_snapshot,o.tenant_id,
+                n.order_id||':'||n.code||':'||n.audience AS notification_id
+                FROM prsystem.restaurant_notification n JOIN prsystem.restaurant_order_record o ON(o.tenant_id,o.id)=(n.tenant_id,n.order_id)
+                WHERE n.'''+column+'''=%s AND n.audience=ANY(%s) AND n.order_id||':'||n.code||':'||n.audience>%s
+                ORDER BY notification_id LIMIT 101''',(scope,audiences,after)).fetchall()
+            return dict(items=[dict(zip(('order_id','code','recorded_at','room_number','restaurant_name','tenant_id','notification_id'),r)) for r in rows[:100]],
+                        next_after=rows[99][6] if len(rows)>100 else None)
+
+    def hotel_orders(self,bearer,tenant,after=''):
+        with transaction(self.auth.dsn) as conn:
+            self.hotel_actor(conn,bearer,tenant)
+            rows=conn.execute("SELECT id FROM prsystem.restaurant_order_record WHERE tenant_id=%s AND id>%s AND state->>'payment'='PAID' ORDER BY id LIMIT 51",(tenant,after)).fetchall()
+            return dict(orders=[self.view(conn,self.record(conn,tenant,r[0])) for r in rows[:50]],next_after=rows[49][0] if len(rows)>50 else None)
+
+    def tick(self,limit=25):
+        """Trusted, bounded provider worker; no new invoices or refund decisions.
+
+        A provider lookup can recover an already-created invoice after a crash.
+        Sending a refund requires the restaurant's persisted BEGIN_REFUND first.
+        """
+        if type(limit) is not int or not 1<=limit<=100:raise DomainError('INVALID_REQUEST')
+        outcomes=[];candidates=[]
+        for restaurant in sorted(self.gateways):
+            with transaction(self.auth.dsn) as conn:
+                self.scope(conn,restaurant=restaurant)
+                rows=conn.execute('''SELECT o.tenant_id,o.id,o.stay_id,c.checked_at,o.created_at FROM prsystem.restaurant_order_record o
+                    LEFT JOIN prsystem.restaurant_worker_cursor c ON(c.tenant_id,c.order_id)=(o.tenant_id,o.id) WHERE o.restaurant_id=%s
+                    AND (o.state IS NULL OR o.state->>'payment'<>'PAID' OR o.state->>'fulfillment' NOT IN ('CANCELLED','DELIVERED_TO_ROOM','HANDED_TO_RECEPTION','PICKED_UP_BY_GUEST')
+                         OR o.state->>'refund_request' IN ('OPEN','APPROVED')) ORDER BY c.checked_at NULLS FIRST,o.created_at,o.id LIMIT %s''',(restaurant,limit)).fetchall()
+            candidates.extend((*row,restaurant) for row in rows)
+        candidates.sort(key=lambda r:(r[3] is not None,r[3] or r[4],r[4],r[1]))
+        for tenant,order_id,stay,checked,created,restaurant in candidates[:limit]:
+            try:
+                with transaction(self.auth.dsn) as conn:
+                    self.scope(conn,tenant=tenant,restaurant=restaurant)
+                    room=conn.execute('SELECT room_id FROM prsystem.stay WHERE tenant_id=%s AND id=%s',(tenant,stay)).fetchone()[0]
+                    conn.execute('SELECT id FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,room)).fetchone()
+                    conn.execute('SELECT id FROM prsystem.stay WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,stay)).fetchone()
+                    link=self.lock_link(conn,tenant,restaurant);row=self.record(conn,tenant,order_id);now=self.now(conn)
+                    gateway=self.gateway(restaurant,row['merchant_id']);evidence=None
+                    if row['state'] is None:
+                        evidence=gateway.payment(order_id,None)
+                        if (evidence['merchant_id'],evidence['amount'],evidence['currency'])!=(row['merchant_id'],row['amount_mnt'],'MNT'):
+                            raise DomainError('RESTAURANT_PAYMENT_MISMATCH')
+                        state=Order(evidence['invoice_id'],row['merchant_id'],row['amount_mnt'],row['created_at'],row['expires_at'])
+                        row=self.save(conn,row,state,'provider:QPAY','INVOICE_RECOVERED')
+                    state=decode(row['state'])
+                    if state.payment!='PAID':state=self.payment_state(conn,row,state,link,now,evidence)
+                    if state.refund in {'PENDING','FAILED'}:state=self.refund_state(row,state,now)
+                    updated=self.save(conn,row,state,'provider:QPAY','PROVIDER_RECONCILED')
+                    self.emit(conn,updated,now)
+                    outcomes.append(dict(order_id=order_id,status='CHECKED'))
+            except (DomainError,TimeoutError,OSError) as exc:
+                outcomes.append(dict(order_id=order_id,status='RETRY_REQUIRED',code=str(exc) if isinstance(exc,DomainError) else 'PROVIDER_UNAVAILABLE'))
+            with transaction(self.auth.dsn) as conn:
+                self.scope(conn,tenant=tenant,restaurant=restaurant)
+                conn.execute('''INSERT INTO prsystem.restaurant_worker_cursor VALUES(%s,%s,%s,clock_timestamp())
+                    ON CONFLICT(tenant_id,order_id) DO UPDATE SET checked_at=EXCLUDED.checked_at''',(tenant,order_id,restaurant))
+        return outcomes
 
     @staticmethod
     def checkout_orders(conn, tenant, stay):
@@ -365,6 +553,7 @@ class RestaurantOrders:
         row = RestaurantOrders.record(conn, tenant, choice['order_id'])
         mode = 'RECEPTION' if choice['choice']=='RECEPTION_PICKUP' else choice['choice']
         state = decode(row['state']).checkout_handoff(RestaurantOrders.now(conn), mode, True)
-        RestaurantOrders.save(conn, row, state, 'staff:'+actor, 'CHECKOUT_HANDOFF')
+        updated=RestaurantOrders.save(conn, row, state, 'staff:'+actor, 'CHECKOUT_HANDOFF')
+        RestaurantOrders.emit(conn,updated,RestaurantOrders.now(conn),'GUEST_CHECKED_OUT')
         conn.execute('''INSERT INTO prsystem.restaurant_order_handoff(tenant_id,order_id,stay_id,actor_id,choice,guest_informed)
             VALUES(%s,%s,%s,%s,%s,true)''', (tenant, choice['order_id'], stay, actor, choice['choice']))

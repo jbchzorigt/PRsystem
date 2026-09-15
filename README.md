@@ -1,18 +1,17 @@
 # PRsystem
 
-Hotel operations, online booking, subscription, restaurant болон тусгаарлагдсан Police portal-ийн систем.
+Hotel operations, online booking, subscription, Minibar, Restaurant болон Operation систем.
 
-Одоогийн milestone: **v0.12.0 · 3/6-р шат — Reception-ийн 6/6 багц дууссан**. Өрөө/тариф, анхны ээлж,
-funded check-in, booking adapter, guest QR/session, санхүүгийн ledger/correction/refund,
-checkout/cleaning/lifecycle, handover болон `/reception` дэлгэц холбогдсон.
-[Зургаан багцын acceptance ба тестийн дүн](docs/43-reception-stage3-acceptance.md),
+Reception, booking, Minibar historical billing-ийн өмнөх milestone-ууд CI-аар
+баталгаажсан. Шинэ candidate: Restaurant-ийн өргөтгөсөн урсгал, partial
+Minibar rollback, Operation, subscription contact, release шалгах хэрэгслүүд.
+[Candidate review ба CI төлөв](docs/72-remaining-work-review.md),
 [явц](docs/31-development-progress.md), [mock ажиллуулах](docs/37-development-mocks.md).
 
+Шинэ дэлгэцүүд: `/restaurant`, `/operation`, `/subscription/contact`.
 Бодит гадаад үйлчилгээ хэрэглэгчийн шийдвэрээр **development mock** хэвээр.
-Booking marketplace, full Minibar/Restaurant module болон Police/production readiness
-нь дараагийн 4–6-р шат. Mock нотолгоо production санхүүгийн бүртгэл болохгүй.
-Production cash check-in нь configured deposit, physical receipt болон identity vault
-шаардана. Бодит provider acceptance/deployment нь тусдаа release gate.
+Production provider/security/restore/load/retention acceptance тусдаа gate.
+Centralized cross-hotel Police guest tracking/wanted matching энэ scope-д орохгүй.
 
 - [Шаардлагын baseline ба P1/EXT](docs/00-mvp-open-decisions.md)
 - [Зөвшөөрсөн засвар, action/command contract](docs/27-approved-risk-controls.md)

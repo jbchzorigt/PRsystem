@@ -42,7 +42,80 @@ class Decision(Command):
     reason: Literal['PREPARATION_STARTED','FOOD_READY','OUT_FOR_DELIVERY','HANDED_OVER'] | None = None
 
 
+class ImageCommand(Command):
+    image: str | None = Field(default=None,max_length=400000)
+
+
+class Hours(BaseModel):
+    model_config=ConfigDict(extra='forbid',strict=True)
+    day: int=Field(ge=0,le=6)
+    closed: bool
+    opens: str | None=Field(default=None,pattern=r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
+    closes: str | None=Field(default=None,pattern=r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
+
+
+class Profile(Command):
+    name: str=Field(min_length=1,max_length=200)
+    category: str=Field(min_length=1,max_length=100)
+    description: str=Field(max_length=2000)
+    address: str=Field(min_length=1,max_length=500)
+    latitude: float=Field(ge=-90,le=90,allow_inf_nan=False)
+    longitude: float=Field(ge=-180,le=180,allow_inf_nan=False)
+    phone: str=Field(pattern=r'^\+?[0-9][0-9 -]{5,19}$')
+    weekly_hours: list[Hours]=Field(min_length=7,max_length=7)
+    closed_dates: list[str]=Field(default_factory=list,max_length=366)
+    reason: str=Field(min_length=1,max_length=1000)
+
+
 def install(app, service, token):
+    @app.get('/restaurants/{restaurant_id}/notifications')
+    def restaurant_notifications(restaurant_id: str,secret: Annotated[str,Depends(token)],after: str=''):
+        return service.notifications(secret,restaurant=restaurant_id,after=after)
+
+    @app.get('/hotels/{tenant_id}/restaurant-notifications')
+    def hotel_notifications(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=''):
+        return service.notifications(secret,tenant=tenant_id,after=after)
+
+    @app.get('/hotels/{tenant_id}/restaurant-orders')
+    def hotel_orders(tenant_id: str,secret: Annotated[str,Depends(token)],after: str=''):
+        return service.hotel_orders(secret,tenant_id,after)
+
+    @app.post('/hotels/{tenant_id}/restaurant-orders/{order_id}/request-refund')
+    def hotel_refund_request(tenant_id: str,order_id: str,body: Command,secret: Annotated[str,Depends(token)]):
+        return service.command(secret,tenant_id,order_id,'REQUEST_REFUND',body.expected_revision,body.idempotency_key,hotel_staff=True)
+
+    @app.get('/hotels/{tenant_id}/restaurant-settings')
+    def hotel_restaurants(tenant_id: str,secret: Annotated[str,Depends(token)]):
+        return service.hotel_restaurants(secret,tenant_id)
+
+    @app.get('/hotels/{tenant_id}/restaurants/{restaurant_id}/settings')
+    def profile(tenant_id: str,restaurant_id: str,secret: Annotated[str,Depends(token)]):
+        return service.profile(secret,tenant_id,restaurant_id)
+
+    @app.put('/hotels/{tenant_id}/restaurants/{restaurant_id}/settings')
+    def profile_update(tenant_id: str,restaurant_id: str,body: Profile,secret: Annotated[str,Depends(token)]):
+        return service.profile(secret,tenant_id,restaurant_id,body.model_dump(exclude={'idempotency_key'}),body.idempotency_key)
+
+    @app.put('/restaurants/{restaurant_id}/menu/{item_id}/image')
+    def image(restaurant_id: str,item_id: str,body: ImageCommand,secret: Annotated[str,Depends(token)]):
+        return service.image(secret,restaurant_id,item_id,body.image,body.expected_revision,body.idempotency_key)
+
+    @app.get('/guest/restaurants')
+    def restaurants(secret: Annotated[str,Depends(token)]):
+        return service.guest_restaurants(secret)
+
+    @app.get('/guest/restaurant-orders')
+    def guest_orders(secret: Annotated[str,Depends(token)],after: str=''):
+        return service.guest_orders(secret,after)
+
+    @app.post('/guest/logout')
+    def guest_logout(secret: Annotated[str,Depends(token)]):
+        return service.guest_logout(secret)
+
+    @app.get('/restaurants/{restaurant_id}/menu')
+    def own_menu(restaurant_id: str,secret: Annotated[str,Depends(token)],after: str=''):
+        return service.own_menu(secret,restaurant_id,after)
+
     @app.put('/restaurants/{restaurant_id}/menu/{item_id}')
     def menu_item(restaurant_id: str, item_id: str, body: MenuItem, secret: Annotated[str, Depends(token)]):
         return service.menu_item(secret, restaurant_id, item_id,

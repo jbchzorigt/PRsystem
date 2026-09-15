@@ -174,3 +174,31 @@ feedback, conflict and unknown-outcome behavior as version archive. No new token
 Manager stock adjustments reuse the warehouse operational rows, location select,
 reason/acknowledgement form and bounded history. Preview distinguishes physical
 quantity and billable availability; no new visual token or form owner is added.
+
+
+## Restaurant ordering extension
+
+The restaurant staff console at `/restaurant` and guest ordering after room-code
+redemption reuse the existing Reception form, table, focus and discard-dialog
+owners. Guest cards describe menu availability and actual order state; staff
+commands follow fulfillment and refund permissions. The four-column order-items
+table retains a readable minimum width inside the shared keyboard-accessible
+horizontal scroll region. Restaurant prices, alerts and payment states are
+server facts. No new color, typography or spacing token is introduced.
+
+## Minibar partial work and rollback
+
+The existing assigned Cleaner task continues through compensating rollback.
+Show the pinned original baseline and present each bounded physical movement
+with its own confirmation. Final rollback requires typed counts for every
+product; keep room readiness separate from cleaning completion. Manager
+cancellation retains an open blocker until all physical restoration is proven.
+
+## Platform Operation and subscription contact
+
+Operation and Primary Admin contact pages reuse the existing console, shared
+forms, field errors, tables, confirmations and in-memory sessions. The desktop
+KPI group uses three natural-height columns, stacking below 900px. Subscription
+comparison tables own horizontal scrolling with an 80rem minimum width so
+amounts, times and actions remain readable. Long forms keep document scrolling.
+No new color, type or spacing token system is introduced.

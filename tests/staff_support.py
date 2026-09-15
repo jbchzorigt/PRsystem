@@ -25,6 +25,7 @@ class StaffApiCase(PostgresCase):
         cls.password_hash = PasswordHasher().hash(cls.password)
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                "GRANT UPDATE(last_seen_at) ON prsystem.platform_session TO {}",
                 "REVOKE INSERT ON prsystem.cash_transfer, prsystem.cash_event, prsystem.cash_receipt, prsystem.cash_outbox FROM {}",
                 "REVOKE UPDATE (revision) ON prsystem.cash_book FROM {}",
                 "REVOKE UPDATE (posted, reserved) ON prsystem.cash_drawer FROM {}",

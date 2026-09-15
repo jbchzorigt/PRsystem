@@ -41,19 +41,21 @@ class PlatformService:
             if not self.auth._verify(self.auth.passwords,row[1],password): raise DomainError('INVALID_CREDENTIALS')
             now=self._mfa(conn,row[0],row[3],row[4],code)
             token=secrets.token_urlsafe(32)
-            conn.execute('INSERT INTO prsystem.platform_session (token_hash,account_id,revision,mfa_at,expires_at) VALUES (%s,%s,%s,%s,%s)',(digest(token),row[0],row[5],now,now+timedelta(hours=1)))
+            conn.execute('INSERT INTO prsystem.platform_session (token_hash,account_id,revision,mfa_at,expires_at) VALUES (%s,%s,%s,%s,%s)',(digest(token),row[0],row[5],now,now+timedelta(hours=8)))
             self._event(conn,row[0],'LOGIN')
-            return dict(access_token=token,token_type='bearer',expires_in=3600)
+            return dict(access_token=token,token_type='bearer',expires_in=28800)
 
     def authenticate(self,conn,token,permission=None,recent=True):
         session=conn.execute('SELECT account_id FROM prsystem.platform_session WHERE token_hash=%s',(digest(token),)).fetchone()
         if not session: raise DomainError('UNAUTHENTICATED')
         account=conn.execute('SELECT active,permissions,revision,mfa_key_ref,last_totp_counter FROM prsystem.platform_account WHERE id=%s FOR UPDATE',(session[0],)).fetchone()
-        row=conn.execute('SELECT revision,mfa_at,expires_at,revoked_at FROM prsystem.platform_session WHERE token_hash=%s FOR UPDATE',(digest(token),)).fetchone()
+        row=conn.execute('SELECT revision,mfa_at,expires_at,revoked_at,last_seen_at,created_at FROM prsystem.platform_session WHERE token_hash=%s FOR UPDATE',(digest(token),)).fetchone()
         now=conn.execute('SELECT clock_timestamp()').fetchone()[0]
-        if not account[0] or row[3] is not None or row[0]!=account[2] or now>=row[2]: raise DomainError('UNAUTHENTICATED')
+        if not account[0] or row[3] is not None or row[0]!=account[2] or now>=row[2] or now>=row[4]+timedelta(minutes=30) or now>=row[5]+timedelta(hours=8): raise DomainError('UNAUTHENTICATED')
         if permission and permission not in account[1]: raise DomainError('FORBIDDEN')
         if recent and (row[1]>now or now>=row[1]+timedelta(minutes=5)): raise DomainError('MFA_REQUIRED')
+        conn.execute('UPDATE prsystem.platform_session SET last_seen_at=%s WHERE token_hash=%s',(now,digest(token)))
+        conn.execute("SELECT set_config('prsystem.platform_id',%s,true)",(session[0],))
         return session[0],account
 
     def logout(self,token):

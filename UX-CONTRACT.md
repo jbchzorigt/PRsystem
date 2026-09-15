@@ -351,3 +351,57 @@ receipt/refund/approval/reconciliation forms. It does not expose active-stay
 checkout, guest codes, physical counts or receipt replacement commands.
 Server authority, finance locks, source receipt and shift rules remain final.
 Verification: tests/browser/minibar-billing.cjs; backend test_minibar_billing.py.
+
+
+## Restaurant guest and staff variants
+
+- `/restaurant` authenticates the separate restaurant realm. Menu and order
+  commands reuse the canonical form owner, inline errors, dirty guard, pending
+  lock and stable retry key. Each update submits the displayed revision.
+- Guest QR redemption opens linked menus and the active stay's own orders. The
+  cart supplies item IDs/counts; the server pins prices before invoice creation.
+  Phone contact appears only in owned order detail.
+- Order, fulfillment, payment and refund states are shown independently. Timers
+  show server-derived warnings; they do not cancel or transfer funds.
+- HTTP 401 clears credentials and private content, invalidates pending reads and
+  returns to the appropriate entry flow. Guest logout also revokes the server
+  session. Neither flow uses local/session storage.
+- Evidence: tests/browser/restaurant.cjs covers guest cart/invoice, staff accept
+  after uncertain response, fulfillment, menu editing, dirty guard, 320px layout
+  and expiry. PostgreSQL tests separately establish authorization and money
+  isolation; browser fixtures are not database acceptance.
+
+### Partial minibar inventory
+
+Use the shared form retry key, assignment version and request revision for each
+physical movement. A lost response retries the same intent. During rollback,
+remove normal apply/count commands and show only restoration movements and
+final observed counts. Count differences point to the existing reasoned Manager
+adjustment flow. Never infer physical completion from a cancel click.
+
+### Operation and subscription contact
+
+Sources: docs/14-operation-dashboard.md, docs/17-subscription-lifecycle.md,
+docs/70-operation-implementation.md and strict server permission contracts.
+
+- `/operation` uses the separate Platform session; `/subscription/contact`
+  uses a current Primary Hotel Admin staff session and password reauthentication.
+  No authority is inferred from a role label or a client-supplied tenant list.
+- Operation lists use explicit-submit filtering and bounded server keyset pages.
+  Filters and cursor remain in memory as sensitive, non-shareable support state,
+  matching the existing authenticated console. The shared form's clearable search
+  field refreshes results and returns focus to the new query input.
+- All mutations reuse the shared current-intent idempotency key. Editing an SMS
+  message removes the previous confirmation, and server confirmation recomputes
+  canonical recipients and the quote. Unknown deliveries are lookup-only.
+- SMS recipient history uses masked phones. Reset commands contain no email,
+  token or password; the server pins the Primary Admin's canonical email.
+- Contact changes retain separate OLD/NEW proof states and expiry, show the
+  support request reference, and keep the new-phone proof after an offline old
+  phone exception. The original email and phone receive durable notifications.
+- Platform contact support is read-only unless the explicit exception permission
+  is present. The exception form requires reason and the reviewed case reference.
+- The shared numeric field enforces declared min/max bounds before submission;
+  the server remains authoritative for inventory and money.
+- Evidence: tests/browser/operation.cjs, tests/browser/subscription-contact.cjs,
+  tests/browser/minibar-partial.cjs and their real API model validation.

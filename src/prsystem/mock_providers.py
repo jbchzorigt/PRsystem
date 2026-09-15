@@ -186,3 +186,79 @@ def require_development_database(dsn, environment):
     database = conninfo_to_dict(dsn).get('dbname', '')
     if environment not in {'development', 'test'} or not database.startswith(('prsystem_dev', 'prsystem_test_')):
         raise ValueError('Use an explicit prsystem_dev* or prsystem_test_* database for mocks')
+
+
+class MockSMSGateway:
+    """Durable one-way simulation. No external address or network transport."""
+    is_mock=True
+
+    def __init__(self,store,segment_price_mnt=0):
+        self.store,self.price=store,segment_price_mnt
+        with store.connect() as conn:
+            conn.execute('''CREATE TABLE IF NOT EXISTS mock_sms (
+                recipient TEXT NOT NULL,attempt INTEGER NOT NULL,phone TEXT NOT NULL,message TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'SENT',PRIMARY KEY(recipient,attempt))''')
+
+    def quote(self,text,recipients):
+        from prsystem.operation_policy import mock_quote
+        return mock_quote(text,recipients,self.price)
+
+    def send(self,recipient,phone,text,attempt):
+        with self.store.connect() as conn:
+            conn.execute('INSERT OR IGNORE INTO mock_sms(recipient,attempt,phone,message) VALUES(?,?,?,?)',(recipient,attempt,phone,text))
+            row=conn.execute('SELECT phone,message FROM mock_sms WHERE recipient=? AND attempt=?',(recipient,attempt)).fetchone()
+            if tuple(row)!=(phone,text):raise DomainError('IDEMPOTENCY_CONFLICT')
+        return self.lookup(recipient,attempt)
+
+    def lookup(self,recipient,attempt):
+        with self.store.connect() as conn:
+            row=conn.execute('SELECT * FROM mock_sms WHERE recipient=? AND attempt=?',(recipient,attempt)).fetchone()
+        if not row:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+        return dict(recipient_id=recipient,attempt=attempt,phone=row['phone'],message=row['message'],state=row['state'],provider_id=f'MOCK-SMS:{recipient}:{attempt}')
+
+    def set_status(self,recipient,attempt,state):
+        if state not in {'SENT','DELIVERED','FAILED','UNKNOWN'}:raise ValueError('Invalid mock SMS state')
+        with self.store.connect() as conn:
+            if conn.execute('UPDATE mock_sms SET state=? WHERE recipient=? AND attempt=?',(state,recipient,attempt)).rowcount!=1:raise ValueError('Mock SMS not found')
+
+
+class MockEbarimtGateway:
+    """Local test artifact only, never a valid fiscal receipt or real email."""
+    is_mock=True
+
+    def __init__(self,store):
+        self.store=store
+        with store.connect() as conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS mock_ebarimt(job TEXT PRIMARY KEY,snapshot TEXT NOT NULL)')
+
+    def issue(self,job,snapshot):
+        import json
+        payload=json.dumps(snapshot,sort_keys=True,ensure_ascii=False)
+        with self.store.connect() as conn:
+            conn.execute('INSERT OR IGNORE INTO mock_ebarimt VALUES(?,?)',(job,payload))
+            if conn.execute('SELECT snapshot FROM mock_ebarimt WHERE job=?',(job,)).fetchone()[0]!=payload:raise DomainError('IDEMPOTENCY_CONFLICT')
+        return dict(job_id=job,receipt_id='MOCK-NOT-FISCAL:'+job,amount_mnt=snapshot['amount_mnt'],currency='MNT',email=snapshot['email'],mode='MOCK_ONLY')
+
+    def lookup(self,job):
+        import json
+        with self.store.connect() as conn:
+            row=conn.execute('SELECT snapshot FROM mock_ebarimt WHERE job=?',(job,)).fetchone()
+        if not row:raise DomainError('PROVIDER_EVIDENCE_INVALID')
+        snapshot=json.loads(row[0])
+        return dict(job_id=job,receipt_id='MOCK-NOT-FISCAL:'+job,amount_mnt=snapshot['amount_mnt'],currency='MNT',email=snapshot['email'],mode='MOCK_ONLY')
+
+
+class MockContactNoticeGateway:
+    is_mock=True
+
+    def __init__(self,store):
+        self.store=store
+        with store.connect() as conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS mock_contact_notice(id TEXT PRIMARY KEY,channel TEXT NOT NULL,recipient TEXT NOT NULL)')
+
+    def send(self,identity,channel,recipient):
+        if channel not in {'EMAIL','SMS'}:raise ValueError('Invalid notice channel')
+        with self.store.connect() as conn:
+            conn.execute('INSERT OR IGNORE INTO mock_contact_notice VALUES(?,?,?)',(identity,channel,recipient))
+            if tuple(conn.execute('SELECT channel,recipient FROM mock_contact_notice WHERE id=?',(identity,)).fetchone())!=(channel,recipient):raise DomainError('IDEMPOTENCY_CONFLICT')
+        return dict(notice_id=identity,channel=channel,recipient=recipient,provider_id='MOCK-CONTACT:'+identity,mode='MOCK_ONLY')

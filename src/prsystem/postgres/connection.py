@@ -8,8 +8,11 @@ from prsystem.common import DomainError
 
 
 @contextmanager
-def transaction(dsn):
+def transaction(dsn, *, isolation=None):
     with closing(psycopg.connect(dsn, connect_timeout=5)) as conn, conn:
+        if isolation is not None:
+            if isolation != "repeatable read":raise ValueError("Unsupported transaction isolation")
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         conn.execute("SET LOCAL lock_timeout = '5s'")
         conn.execute("SET LOCAL statement_timeout = '15s'")
         unsafe = conn.execute("""SELECT r.rolsuper OR r.rolbypassrls OR EXISTS (

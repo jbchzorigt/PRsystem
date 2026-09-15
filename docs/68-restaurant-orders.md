@@ -8,12 +8,13 @@ creation, server-provider reconciliation, fulfillment, refund decisions and
 provider-confirmed refunds. No restaurant amount enters hotel cash, guest
 charges, deposit allocations or hotel settlement.
 
-This is **not full Restaurant acceptance**. Remaining work includes the product
-screens, validated menu image uploads, schedule editing and special closure UI,
-notification delivery/acknowledgement, Reception refund initiation, and a provider
-worker for unattended invoice/payment reconciliation. Live QPay credentials and
-merchant approval remain external gates. The API fails closed when a restaurant
-has no trusted deployment-supplied gateway.
+The application/mock path now includes guest and restaurant staff screens,
+Manager Plus registration/profile/schedules/link activation, validated menu
+images, Reception refund requests, in-app notification history and a bounded
+provider reconciliation worker. Acceptance of this expanded source is pending.
+Live QPay credentials, merchant approval, exact provider protocol/QR response and
+production worker scheduling remain external gates. The API fails closed when a
+restaurant has no trusted deployment-supplied gateway.
 
 ## Persistence and concurrency
 
@@ -61,12 +62,47 @@ UPDATE only `(category,name,description,price_mnt,active,available,revision)` on
 menu items, `(invoice_id,state,revision)` on order records and `(active,revision)`
 on hotel_restaurant. Retain SELECT/row-lock grants on the restaurant, room and
 stay records. Do not grant event/receipt/handoff UPDATE or DELETE, order snapshot
-UPDATE, table ownership, or RLS bypass. Schedule exception mutation has no
-application endpoint yet.
+UPDATE, table ownership, or RLS bypass. Schedule exception changes require the Manager Plus owner, revision and reason;
+INSERT/DELETE on that projection is paired with an immutable configuration event.
+Grant INSERT on configuration events, UPDATE on the edited profile columns and
+menu `image_data`, SELECT/INSERT on notifications, and SELECT/INSERT plus
+`checked_at` UPDATE on worker cursors. Do not grant history UPDATE/DELETE.
 
 ## Verification
 
-Local: 24 restaurant policy tests pass. The complete local discovery finds 873
-tests: 130 pass and 743 PostgreSQL-dependent tests skip. Eleven new PostgreSQL
-tests are included in a dedicated CI step and full discovery. PostgreSQL
-acceptance is pending; local skips are not evidence of database correctness.
+The first source `7192269` failed before business tests because its restricted
+fixture lacked restaurant membership row-lock permission. Source `9cc88a6` fixed
+only that fixture grant; all 11 dedicated PostgreSQL tests passed in
+[CI 34823856657](https://github.com/jbchzorigt/PRsystem/actions/runs/34823856657).
+The initial full backend regression was still running when the expanded UI,
+catalog and worker source was prepared; it is not acceptance of the newer source.
+
+Expanded local discovery: 884 tests, 134 pass and 750 PostgreSQL-dependent skips.
+25 restaurant policy tests and 3 image-decoding tests pass. Eighteen dedicated
+PostgreSQL tests cover the expanded source. Twenty browser suites passed, with
+Restaurant's focused suite subsequently extended to 12 API commands covering
+image add/remove, notification history, Manager Plus schedules and link disable.
+Local skips and browser fixtures are not PostgreSQL acceptance.
+
+## Development provider operation
+
+`PRSYSTEM_DEV_RESTAURANTS` is a JSON array of configured restaurant IDs. Each gets
+an isolated SQLite mock provider store and distinct `MOCK_ONLY_RESTAURANT_<id>`
+merchant. Restart the development app after adding a restaurant to this trusted
+configuration. Existing normal hotel payment gateway configuration is unchanged.
+
+- `python -m prsystem.development restaurant-payment RESTAURANT_ID ORDER_ID SUCCEEDED`
+  simulates a provider capture; it does not move money.
+- `python -m prsystem.development restaurant-tick --limit 25` reconciles already
+  requested invoices/refunds and persists due in-app notices.
+- `python -m prsystem.development restaurant-refund RESTAURANT_ID REFUND_ATTEMPT_ID SUCCEEDED`
+  simulates a provider refund result; a following tick records it.
+
+The worker never creates an unrequested invoice or approves/initiates a refund.
+It can recover an invoice that the provider already created before a database
+failure. Cursor ordering gives unprocessed and least-recently-checked orders
+priority across all configured restaurants. Duplicate notices are constrained by
+order/code/audience; the thirty-minute order gate derives from current refund
+state even when the worker is delayed. Guest checkout notices commit with the
+handoff and checkout transaction. Notifications are in-app; no SMS/email sender
+is invoked by this Restaurant module.

@@ -152,21 +152,21 @@ class Order:
             raise DomainError('INVOICE_NOT_EXPIRED')
         return replace(self, order='CANCELLED', fulfillment='CANCELLED', payment='EXPIRED')
 
-    def capture(self, now, *, merchant_id, invoice_id, amount_mnt, currency, payment_id, eligible):
+    def capture(self, now, *, merchant_id, invoice_id, amount_mnt, currency, payment_id, eligible, within_hours=True):
         """Apply a server-verified capture, never a browser or raw webhook flag."""
         self._now(now)
         identifier(payment_id)
         money(amount_mnt, positive=True)
         if (merchant_id, invoice_id, amount_mnt, currency) != (self.merchant_id, self.invoice_id, self.amount_mnt, 'MNT'):
             raise DomainError('RESTAURANT_PAYMENT_MISMATCH')
-        if type(eligible) is not bool:
+        if type(eligible) is not bool or type(within_hours) is not bool:
             raise DomainError('INVALID_REQUEST')
         if self.payment == 'PAID':
             if payment_id != self.payment_id:
                 raise DomainError('RESTAURANT_DUPLICATE_CAPTURE')
             return self
         captured = replace(self, payment='PAID', payment_id=payment_id, confirmed_at=now)
-        if now >= self.expires_at:
+        if now >= self.expires_at or not within_hours:
             return captured._mandatory(now, 'PAID_AFTER_INVOICE_EXPIRY')
         if not eligible or self.order == 'CANCELLED':
             return captured._mandatory(now, 'RESTAURANT_OR_ITEM_INACTIVE_AT_PAYMENT')

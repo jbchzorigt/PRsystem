@@ -2,6 +2,13 @@
 
 **Шинэчилсэн:** 2026-09-14. **Branch:** `feat/approved-risk-controls`. **Review:** [Draft PR #1](https://github.com/jbchzorigt/PRsystem/pull/1).
 
+## 2026-09-15 — шинэ candidate
+
+Restaurant, partial Minibar rollback, Operation/contact болон release tools
+локалд бэлэн. Хэрэглэгч public Draft PR #1 нийтлэл ба PostgreSQL/restore CI-г
+үргэлжлүүлэхийг зөвшөөрсөн. [Багц, snapshot сэргээсэн тайлбар ба баталгаажуулалт](72-remaining-work-review.md).
+Доорх milestone тоонууд түүхэн үр дүн; шинэ source-ийн CI acceptance тусдаа.
+
 ## Одоогийн Reception acceptance
 
 **3/6-р шат: Reception-ийн 6/6 implementation багц mock boundary-тай баталгаажсан.**
@@ -21,8 +28,8 @@ Booking/Minibar/Restaurant producer болон гадаад үйлчилгээн
 | 2 | Нэвтрэлт, ажилтны эрх ба lifecycle | Суурь код ба development mock бэлэн: auth/session, invitation/reset API бэлэн. Role/suspension/reactivation, Restaurant identity, takeover/continuation execution, onboarding/renewal, Platform MFA болон link UI нэмэгдсэн; provider ба canonical operational source integration үлдсэн |
 | **3** | **Reception: өрөө, ээлж, deposit, check-in/out, cleaning, handover** | **6/6 implementation багц баталгаажсан**, 414 тест; [mock boundary ба acceptance](43-reception-stage3-acceptance.md) |
 | 4 | Online booking, payment/refund/payout | [Booking, lifecycle, customer portal, settlement/payout](47-booking-completion-candidate.md)-ийн mock implementation нийтлэгдэж, **506/506 PostgreSQL тест**, browser/API/design/token CI-аар баталгаажсан. Бодит provider/worker болон дараагийн шатны интеграцын зааг docs/47-д бий |
-| 5 | Minibar, Restaurant, Operation | Агуулах, template, configuration/reconciliation, archive, rollout/batch, guest report, refill, Manager exception, canonical online capacity, product/template lifecycle, [нөөцийн хөдөлгөөн](61-minibar-stock-adjustments.md), [атомик орлуулалт](62-minibar-atomic-adjustment-corrections.md), [буцаасан төлбөргүй тайлан](63-minibar-returned-report-adjustments.md) болон [active stay-ийн төлсөн тайлангийн залруулга/refund](64-minibar-paid-corrections.md) дээр [тооллогын зөрүүний шийдвэр](65-minibar-count-variance.md), [нэг удаагийн SHORT нээлт](66-minibar-shortage-opening.md), [хаасан байрлалтын төлбөрийн залруулга](67-minibar-historical-billing.md) нэмэгдэж баталгаажсан: **838/838 тест skip-гүй**, 19 Chromium suite, 129 API хүсэлт. Partial physical rollback, Restaurant/Operation үлдсэн |
-| 6 | Police ба production readiness | Эхлээгүй; EXT, security/restore/load/retention gate-тай |
+| 5 | Minibar, Restaurant, Operation | Historical billing baseline 838/838 PostgreSQL; expanded Restaurant, partial rollback, Operation/contact candidate бэлэн. Шинэ CI хүлээгдэж буй; [review](72-remaining-work-review.md) |
+| 6 | Production readiness; Police tracking excluded | Restore/load/retention inventory ба release evidence tools бэлэн; бодит acceptance gate үлдсэн. Centralized cross-hotel guest tracking/wanted matching хэрэгжүүлэхгүй |
 
 Өмнөх 683-тестийн milestone: нөхөлтийн хоёр урсгал ба Manager-ийн онцгой тайлангийн сервер/UI implementation нийтлэгдэж, [бүтэн CI](https://github.com/jbchzorigt/PRsystem/actions/runs/34442659855) дээр **683/683 PostgreSQL тест skip-гүй** (761.607 секунд), 13 Chromium suite, 84 API хүсэлт, design/token шалгалтаар баталгаажсан. Source `bf7c2387caf32d0ca2a05ea0ca4fa60ab89431c7`. Тэр үргэлжлэлээр 40 backend тест нэмэгдсэн. Тухайн үеийн 714-тестийн баталгаажуулалтыг доор тэмдэглэв.
 
@@ -543,3 +550,18 @@ immutable audit, checkout handoff-ийн код [68-р баримт](68-restaura
 partial minibar rollback, Operation болон production evidence үлдсэн. Зочдыг бүх
 буудлаар төвлөрүүлэн хайж мөрдөх Police функцийг энэ ажлын хүрээнд хэрэгжүүлэхгүй.
 Provider mock зааг хэвээр; production deployment хийгээгүй.
+
+
+## Restaurant expanded application/mock path — acceptance pending
+
+Зочны меню, сагс, нэхэмжлэл, өөрийн захиалга; Restaurant realm-ийн меню, зураг,
+accept/fulfillment/refund; Manager Plus-ийн бүртгэл, цагийн хуваарь, нэмэлт амралт,
+холбоос; Reception refund request; provider worker ба immutable мэдэгдэл нэмэв.
+Migration 072/073, 25 policy + 3 image + 18 PostgreSQL тест орсон. Local 884
+тестээс 134 pass, 750 skip. 20 browser suite давсан; нэмэлт Restaurant UI
+шалгалт 12 API command-оор зураг, schedule, link disable-ийг хамарсан.
+
+Өмнөх `9cc88a6` source-ийн 11 PostgreSQL тест давсан нь шинэ багцын acceptance
+биш. Шинэ source-ийн CI pending. [68-р баримт](68-restaurant-orders.md)-д mock
+worker команд, runtime grant болон live provider зааг бий. Partial minibar
+rollback, Operation, production readiness үлдсэн; 5/6-р шат дуусаагүй.

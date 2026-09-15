@@ -1,4 +1,4 @@
-"""Assigned counts and full-plan atomic transfers/apply; no partial stock posts.
+"""Assigned counts, bounded physical transfers and compensating rollback.
 
 Variance requires a current Manager decision; its adjustment posts atomically
 with completion. A reviewed shortage may open exactly one next stay.
@@ -22,14 +22,15 @@ class MinibarReconciliation(MinibarConfiguration):
             conn.execute("UPDATE prsystem.cleaning_task SET state='DONE' WHERE tenant_id=%s AND id=%s",(tenant,task))
             conn.execute("UPDATE prsystem.staff_open_work SET state='CLOSED' WHERE tenant_id=%s AND source_id=%s AND kind='CLEANING_TASK'",(tenant,task))
 
-    def lock_request(self,conn,tenant,request,revision=None):
+    def lock_request(self,conn,tenant,request,revision=None,*,rollback=False):
         before=self.request_data(conn,tenant,request)
         self._catalog_lock(conn,tenant)
         room=conn.execute('SELECT minibar_mode,status FROM prsystem.room WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,before['room_id'])).fetchone()
         conn.execute('SELECT id FROM prsystem.minibar_configuration_request WHERE tenant_id=%s AND id=%s FOR UPDATE',(tenant,request)).fetchone()
         data=self.request_data(conn,tenant,request)
         if revision is not None and data['revision']!=revision:raise DomainError('REVISION_CONFLICT')
-        if data['state'] in {'CANCELLED','APPLIED'}:raise DomainError('CONFIGURATION_TERMINAL')
+        if data['state'] in {'CANCELLED','APPLIED','ROLLED_BACK'}:raise DomainError('CONFIGURATION_TERMINAL')
+        if (data['state']=='ROLLBACK_REQUIRED') != rollback:raise DomainError('ROLLBACK_REQUIRED' if data['state']=='ROLLBACK_REQUIRED' else 'WORK_NOT_OPEN')
         if room[0]=='MOCK_ON':raise DomainError('MOCK_INVENTORY_NOT_SUPPORTED')
         if room[1]=='INACTIVE':raise DomainError('ROOM_NOT_READY')
         return data
@@ -110,9 +111,12 @@ class MinibarReconciliation(MinibarConfiguration):
     def plan(self,conn,tenant,data):
         execution=self.execution(conn,tenant,data['request_id'])
         if not execution:return None
+        if data['state'] in {'ROLLBACK_REQUIRED','ROLLED_BACK'}:
+            from prsystem.minibar_partial import MinibarPartial
+            return MinibarPartial(self.auth).rollback_plan(conn,tenant,data)
         source,baseline=execution
         current_scope=conn.execute('SELECT prsystem.minibar_configuration_baseline(%s,%s)',(tenant,data['request_id'])).fetchone()[0]
-        scope_changed=data['state'] not in {'APPLIED','CANCELLED'} and bool({i['product_id'] for i in current_scope}-{i['product_id'] for i in baseline})
+        scope_changed=data['state'] not in {'APPLIED','CANCELLED','ROLLED_BACK'} and bool({i['product_id'] for i in current_scope}-{i['product_id'] for i in baseline})
         targets={i['product_id']:i['target_quantity'] for i in data['target_snapshot']['items']}
         lines=[]
         for item in baseline:
@@ -122,14 +126,15 @@ class MinibarReconciliation(MinibarConfiguration):
             count=conn.execute('''SELECT a.id,p.actual_count,p.id FROM prsystem.cleaning_action a LEFT JOIN prsystem.cleaning_posting p
                 ON(p.tenant_id,p.source_id,p.action_id)=(a.tenant_id,a.source_id,a.id) WHERE a.tenant_id=%s AND a.source_id=%s AND a.product_id=%s''',(tenant,source,product)).fetchone()
             decision=self.count_resolution(conn,tenant,data['request_id'],product)
-            valid=decision and decision['ready'];posted=decision and decision['posted']
-            natural=count[1] is not None and count[1]==item['quantity']==current
-            matched=bool(natural or valid or posted)
+            posted=bool(decision and decision['posted']);valid=bool(decision and decision['ready'] and not posted)
+            moved=conn.execute("SELECT coalesce(sum(CASE WHEN direction='REFILL' THEN quantity ELSE -quantity END),0) FROM prsystem.minibar_transfer WHERE tenant_id=%s AND request_id=%s AND product_id=%s",(tenant,data['request_id'],product)).fetchone()[0]
+            natural=count[1] is not None and count[1]==item['quantity'] and count[1]+moved==current
+            matched=bool(natural or valid or (posted and count[1] is not None and count[1]+moved==current))
             planned=count[1] if valid else current
             target=targets.get(product,0);delta=target-planned
             lines.append(dict(item,baseline_quantity=item['quantity'],current_quantity=current,target_quantity=target,warehouse_quantity=warehouse,
                 action_id=count[0],actual_count=count[1],posting_id=count[2],stock_revision=stock[0],zero_stock=stock[1]==0,
-                count_matches=matched,resolution={k:v for k,v in decision.items() if k not in {'unit_cost_mnt'}} if decision else None,
+                planned_quantity=planned,count_matches=matched,resolution={k:v for k,v in decision.items() if k not in {'unit_cost_mnt'}} if decision else None,
                 direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta),shortage=max(0,delta-warehouse)))
         from prsystem.minibar_shortages import MinibarShortages
         approval=MinibarShortages.latest(conn,tenant,data['request_id'])
@@ -137,9 +142,10 @@ class MinibarReconciliation(MinibarConfiguration):
         if approved:
             goals={i['product_id']:i['approved_quantity'] for i in approval['plan']['lines']}
             for line in lines:
-                goal=goals[line['product_id']];delta=goal-line['actual_count']
+                goal=goals[line['product_id']];delta=goal-line['planned_quantity']
                 line.update(approved_quantity=goal,direction='REFILL' if delta>0 else 'RETURN' if delta<0 else None,quantity=abs(delta))
-        return dict(source_id=source,lines=lines,scope_changed=scope_changed,shortage_approval=approval,
+        partial=bool(conn.execute("SELECT 1 FROM prsystem.minibar_transfer WHERE tenant_id=%s AND request_id=%s AND phase='PARTIAL' LIMIT 1",(tenant,data['request_id'])).fetchone())
+        return dict(source_id=source,lines=lines,partial_movements=partial,scope_changed=scope_changed,shortage_approval=approval,
             shortage_approved=approved,shortage_preview=MinibarShortages.preview(conn,tenant,data['request_id']),
             counts_complete=not scope_changed and all(i['actual_count'] is not None for i in lines),
             counts_match=not scope_changed and all(i['count_matches'] for i in lines),shortage=any(i['shortage'] for i in lines))
@@ -166,6 +172,7 @@ class MinibarReconciliation(MinibarConfiguration):
             self.safe(conn,tenant,req,execution[0]);self.target(conn,tenant,req)
             plan=self.plan(conn,tenant,req)
             if not plan['counts_complete']:raise DomainError('COUNT_REQUIRED')
+            if plan.get('partial_movements'):raise DomainError('COUNT_AFTER_MOVEMENT_REVIEW')
             line=next((i for i in plan['lines'] if i['product_id']==product),None)
             if not line:raise DomainError('WORK_SOURCE_NOT_FOUND')
             if (line['stock_revision']!=data['expected_stock_revision'] or line['current_quantity']!=data['expected_physical_quantity']):raise DomainError('REVISION_CONFLICT')
@@ -206,7 +213,7 @@ class MinibarReconciliation(MinibarConfiguration):
         changes=MinibarAdjustments(self.auth);results=[]
         for line in plan['lines']:
             decision=self.count_resolution(conn,tenant,data['request_id'],line['product_id'])
-            if not decision or not decision['ready']:continue
+            if not decision or not decision['ready'] or decision['posted']:continue
             if decision['actor_id'] not in locked_actors:raise DomainError('REVISION_CONFLICT')
             before=changes.context(conn,tenant,line['product_id'],data['room_id'])
             if before['stay_id'] is not None:raise DomainError('RECONCILIATION_NOT_READY')

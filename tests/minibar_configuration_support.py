@@ -21,6 +21,7 @@ class MinibarConfigurationCase(GuestFinanceCase):
         super().setUpClass()
         with psycopg.connect(cls.owner_dsn) as conn:
             for grant in (
+                'GRANT SELECT,INSERT ON prsystem.minibar_execution_step,prsystem.minibar_rollback_request TO {}',
                 'GRANT SELECT ON prsystem.minibar_count_resolution,prsystem.minibar_count_resolution_posting TO {}',
                 'GRANT SELECT ON prsystem.minibar_refill_request,prsystem.minibar_refill_result,prsystem.minibar_transfer,prsystem.minibar_reconciliation,prsystem.minibar_configuration_application TO {}',
                 'GRANT SELECT,INSERT ON prsystem.minibar_product,prsystem.minibar_receipt,prsystem.minibar_template,prsystem.minibar_template_version,prsystem.minibar_template_item,prsystem.minibar_configuration_request TO {}',

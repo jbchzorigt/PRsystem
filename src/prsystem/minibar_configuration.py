@@ -1,4 +1,4 @@
-"""Exact pinned configuration requests and pre-movement cancellation.
+"""Exact pinned configuration requests and evidence-preserving cancellation.
 
 The reconciliation adapter owns counts and full-plan atomic transfers/apply.
 Cancellation is available only before application; history remains immutable.
@@ -107,10 +107,18 @@ class MinibarConfiguration(MinibarTemplates):
         before = self.request_data(conn,tenant,request)
         if before['revision']!=revision:
             raise DomainError('REVISION_CONFLICT')
-        if before['state'] in {'CANCELLED','APPLIED'}:
+        if before['state'] in {'CANCELLED','APPLIED','ROLLED_BACK','ROLLBACK_REQUIRED'}:
             raise DomainError('CONFIGURATION_TERMINAL')
-        # This adapter commits every transfer together with APPLIED.
-        # Pending requests therefore have no committed stock movements.
+        if conn.execute('SELECT 1 FROM prsystem.minibar_transfer WHERE tenant_id=%s AND request_id=%s LIMIT 1',(tenant,request)).fetchone():
+            conn.execute("""INSERT INTO prsystem.minibar_rollback_request(tenant_id,request_id,actor_id,reason,baseline,movement_ids)
+                VALUES(%s,%s,%s,%s,'[]','[]')""",(tenant,request,actor,reason))
+            conn.execute("""UPDATE prsystem.minibar_configuration_request SET state='ROLLBACK_REQUIRED',revision=revision+1,
+                cancelled_by=%s,cancel_reason=%s,cancelled_at=clock_timestamp() WHERE tenant_id=%s AND id=%s""",(actor,reason,tenant,request))
+            conn.execute('UPDATE prsystem.room SET revision=revision+1 WHERE tenant_id=%s AND id=%s',(tenant,before['room_id']))
+            result=self.request_data(conn,tenant,request)
+            self.event(conn,tenant,actor,'MINIBAR_ROLLBACK_REQUESTED',request,dict(before=before,after=result,actor_roles=roles,package_mnt=package))
+            self._save_receipt(conn,tenant,key,actor,command,result)
+            return result
         from prsystem.minibar_reconciliation import MinibarReconciliation
         MinibarReconciliation.close_tasks(conn,tenant,request)
         conn.execute("""UPDATE prsystem.minibar_configuration_request SET state='CANCELLED',revision=revision+1,

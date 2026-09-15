@@ -28,6 +28,8 @@
 .operations dt { color: var(--muted); }
 .operations .table-wrap { overflow: auto; max-width: 100%; }
 .operations table { border-collapse: collapse; width: 100%; }
+.operations .restaurant-items table { min-width: 32rem; }
+.operations .restaurant-items td:not(:first-child) { white-space: nowrap; }
 .operations th, .operations td { border-bottom: 1px solid var(--line); padding: .75rem; text-align: left; }
 .operations thead { position: sticky; top: 0; background: var(--surface); }
 .operations .result { min-height: 3.2rem; overflow-wrap: anywhere; }
@@ -46,3 +48,10 @@
 .operations summary:hover { background: var(--paper); }
 .operations summary:active { background: var(--surface); }
 .operations summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+/* Subscription comparisons own horizontal overflow; forms keep document scroll. */
+.operations .operation-subscriptions table { min-width: 80rem; }
+.operations .operation-subscriptions td:nth-child(n+4) { white-space: nowrap; }
+.operations .operation-subscriptions button { overflow-wrap: normal; white-space: nowrap; }
+.operations .operation-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1rem; align-items: start; }
+@media(max-width:900px) { .operations .operation-metrics { grid-template-columns: 1fr; } }
