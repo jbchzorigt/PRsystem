@@ -48,5 +48,10 @@ button:disabled { opacity: .65; cursor: not-allowed; }
 .footnote { margin-bottom: 0; border-top: 1px solid var(--line); padding-top: 1rem; }
 [hidden] { display: none !important; }
 @media (max-width: 600px) { header, footer { padding: 1rem; } header { align-items: flex-start; } main { margin: 2rem 1rem; } section { padding: 1.25rem; } }
-@media (forced-colors: active) { :root, * { scrollbar-color: auto; } .rail { background: CanvasText; } }
+@media (forced-colors: active) {
+  :root, * { scrollbar-color: auto; }
+  .rail { background: CanvasText; }
+  button.primary, button.secondary { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
+  button:disabled { color: GrayText; border-color: GrayText; opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }

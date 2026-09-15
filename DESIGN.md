@@ -202,3 +202,25 @@ KPI group uses three natural-height columns, stacking below 900px. Subscription
 comparison tables own horizontal scrolling with an 80rem minimum width so
 amounts, times and actions remain readable. Long forms keep document scrolling.
 No new color, type or spacing token system is introduced.
+
+## UI completion pass — September 2026
+
+The petrol key-sleeve rail and existing generated color/type tokens remain the
+visual identity. Hotel staff get a left navigation column at desktop widths;
+short portal/restaurant menus remain above their content. At 900px and below,
+menus become one horizontally scrollable row with explicit Mongolian guidance.
+Natural page scrolling remains the owner for all forms and long detail views.
+The skip link appears on keyboard focus; phone headers keep brand/logout on one
+row and the product description below them.
+
+Tables use bordered surfaces, a quieter caption background and tabular numerals.
+The shared table owner shows scroll guidance only when columns actually overflow;
+guidance and empty-state text sit outside the scroller. No data column is removed.
+Operation filters use two columns on desktop and one on phones; the MFA renewal
+form is a native disclosure so routine subscription comparisons stay prominent.
+
+Check-in fieldsets separate guest identity, guardians, stay, deposit and optional
+arrival corrections. Native checkbox labels provide a full touch target. Long
+textareas have an explicit expand/collapse control. Focus moves into explicitly
+opened forms and returns to the originating control when closed. No animation,
+network font, new palette, icon library or framework was introduced.

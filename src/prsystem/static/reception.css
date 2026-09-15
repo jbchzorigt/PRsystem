@@ -1,12 +1,25 @@
 .operations main { max-width: 72rem; margin: 2rem auto; overflow: visible; }
 .console { min-width: 0; padding: 2rem; }
+#app { display: block; }
+#app:has(#navigation > a) { display: grid; grid-template-columns: 12rem minmax(0,1fr); column-gap: 2rem; align-items: start; }
+#app > .toolbar, #app > #status, #app > #content { grid-column: 2; min-width: 0; }
+#app > #navigation:has(> a) { grid-column: 1; grid-row: 1 / 4; display: flex; flex-direction: column; align-items: stretch; gap: .375rem; border-bottom: 0; border-inline-end: 1px solid var(--line); padding: 0 1rem 1rem 0; }
+#navigation:empty { display: none; }
+#app:has(#navigation:empty) { grid-template-columns: minmax(0,1fr); }
+#app:has(#navigation:empty) > .toolbar, #app:has(#navigation:empty) > #status, #app:has(#navigation:empty) > #content { grid-column: 1; }
+#navigation a, #navigation button { text-align: start; text-decoration: none; }
+#navigation a:hover { background: var(--paper); }
+#navigation a:active { background: var(--line); }
+#navigation a[aria-current=page]:hover { background: var(--primary-hover); }
 .operations a { color: var(--primary); text-underline-offset: .2em; }
-.skip { display: block; padding: .5rem 1rem; }
+.skip { position: absolute; inset-inline-start: -100rem; padding: .5rem 1rem; }
+.skip:focus { position: static; display: block; }
+.navigation-help { display: none; }
 .operations nav, .toolbar, .actions { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
 .operations nav { border-bottom: 1px solid var(--line); padding-bottom: 1rem; }
 .operations nav a { padding: .75rem; border-radius: var(--radius); font-weight: 600; }
 .operations nav a[aria-current=page] { background: var(--primary); color: var(--surface); }
-.toolbar { justify-content: space-between; margin: 1rem 0; }
+.toolbar { justify-content: space-between; margin: 0 0 1rem; }
 .toolbar h1 { margin: .5rem 0; }
 #status { min-height: 3.2rem; }
 .operations form { max-width: 38rem; margin: 1rem 0; padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius); }
@@ -15,18 +28,38 @@
 .operations textarea { resize: none; min-height: 6rem; }
 .operations input[type=checkbox] { width: 1.2rem; height: 1.2rem; accent-color: var(--primary); }
 .operations .field { margin: .75rem 0; }
+.operations .check-field { display: grid; grid-template-columns: 1.5rem minmax(0,1fr); gap: 0 .5rem; align-items: start; }
+.operations .check-field input { margin: .6rem 0; }
+.operations .check-field label { padding: .35rem 0; cursor: pointer; min-height: 2.75rem; }
+.operations .check-field .error { grid-column: 2; }
+.operations .field > button { margin-top: .5rem; }
+.operations form h2 { margin-top: 0; font-size: 1.25rem; line-height: 1.4; }
+.operations form fieldset { min-width: 0; margin: 1.5rem 0; border-top: 1px solid var(--line); }
+.operations form legend { padding: .5rem .5rem .5rem 0; color: var(--primary); }
+.operations .filter-form { max-width: none; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 1rem; }
+.operations .filter-form > h2, .operations .filter-form > .result, .operations .filter-form > .actions { grid-column: 1 / -1; }
+.operations .filter-form .field { margin: .25rem 0; }
+.operations .access-tools { margin: 1rem 0; }
+.operations form :disabled { cursor: wait; }
+.operations form [aria-busy=true] { border-style: dashed; }
+.operations textarea { height: auto; }
+.operations input, .operations select, .operations textarea, .operations form h2 { scroll-margin-block: 1.5rem; }
 .operations .error { min-height: 1.6rem; font-size: .875rem; }
 .operations .primary { width: auto; }
 .operations button { max-width: 100%; overflow-wrap: anywhere; }
 .operations .notice { border-inline-start: .25rem solid var(--focus); padding: .75rem 1rem; background: var(--paper); }
-.operations .record { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.operations .record { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
 .operations .record h3 { margin: .25rem 0; }
 .operations .record p { margin: .5rem 0; }
 .operations .muted { color: var(--muted); }
 .operations dl { display: grid; grid-template-columns: minmax(8rem,1fr) minmax(0,2fr); gap: .5rem 1rem; }
 .operations dd { margin: 0; overflow-wrap: anywhere; }
 .operations dt { color: var(--muted); }
-.operations .table-wrap { overflow: auto; max-width: 100%; }
+.operations .table-wrap { overflow: auto; max-width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); }
+.operations caption { text-align: start; font-weight: 600; padding: .75rem; background: var(--paper); }
+.operations td { vertical-align: top; font-variant-numeric: tabular-nums; }
+.operations .table-hint { color: var(--muted); font-size: .875rem; margin: .5rem .75rem; }
+.operations .empty-state { padding: 1.25rem; border-inline-start: .25rem solid var(--line); background: var(--paper); }
 .operations table { border-collapse: collapse; width: 100%; }
 .operations .restaurant-items table { min-width: 32rem; }
 .operations .restaurant-items td:not(:first-child) { white-space: nowrap; }
@@ -55,3 +88,21 @@
 .operations .operation-subscriptions button { overflow-wrap: normal; white-space: nowrap; }
 .operations .operation-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1rem; align-items: start; }
 @media(max-width:900px) { .operations .operation-metrics { grid-template-columns: 1fr; } }
+@media(max-width:900px) {
+  #app, #app:has(#navigation > a) { display: block; }
+  .navigation-help { display: block; color: var(--muted); font-size: .875rem; margin: .75rem 0 .25rem; }
+  #app:has(#navigation:empty) .navigation-help { display: none; }
+  #app > #navigation, #app > #navigation:has(> a) { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); padding: .25rem .25rem .75rem; margin-bottom: 1.25rem; }
+  #navigation a, #navigation button { flex: 0 0 auto; white-space: nowrap; }
+  .operations .toolbar { align-items: flex-start; }
+}
+@media(max-width:600px) {
+  .operations .filter-form { display: block; }
+  .operations header { align-items: center; }
+  .operations header span { order: 3; flex-basis: 100%; font-size: .875rem; }
+  .operations header #logout { margin-inline-start: auto; }
+}
+
+.operations .table-panel { min-width: 0; margin: 1rem 0; }
+.operations .operation-metrics .table-panel { margin: 0; }
+#navigation button[aria-current=page] { background: var(--primary); color: var(--surface); }

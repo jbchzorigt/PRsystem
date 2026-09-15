@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install browser test runner
-        run: npm install --no-save --package-lock=false playwright@1.62.1
+        run: npm install --no-save --package-lock=false playwright@1.62.1 @axe-core/playwright@4.13.0
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Verify shared staff forms
@@ -106,6 +106,8 @@ jobs:
         run: node tests/browser/minibar-shortages.cjs
       - name: Verify historical minibar billing UI
         run: node tests/browser/minibar-billing.cjs
+      - name: Verify shared UX and accessibility
+        run: node tests/browser/ui-quality.cjs
       - name: Validate browser payloads against API models
         run: |
           python -m pip install '.[api]'
@@ -135,7 +137,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: reception-browser-evidence
-          path: artifacts/*.png
+          path: |
+            artifacts/*.png
+            artifacts/ui-accessibility.json
           retention-days: 7
       - name: Check design tokens
         run: python scripts/export_ui_tokens.py --check

@@ -405,3 +405,27 @@ docs/70-operation-implementation.md and strict server permission contracts.
   the server remains authoritative for inventory and money.
 - Evidence: tests/browser/operation.cjs, tests/browser/subscription-contact.cjs,
   tests/browser/minibar-partial.cjs and their real API model validation.
+
+## Shared UI completion pass
+
+Business sources remain docs/18 (permissions), docs/39–42 (stay/finance),
+docs/68 (restaurant) and docs/70 (Operation). This pass changes presentation and
+input handling; server commands, provider boundaries and financial invariants
+remain authoritative.
+
+| Capability | Canonical owner | Observable behavior | Evidence |
+| --- | --- | --- | --- |
+| Form | reception.js `form` | Named form region; optional labeled fieldsets; checkbox correction copy; integer/decimal/bounds guidance; IME submit suppression; all controls locked during an in-flight submission, restored to their prior disabled state afterward | ui-quality.cjs and all workflow suites |
+| Form focus | `form` origin / focus option | Explicitly opened form focuses its heading; check-in continuation focuses the new form; close restores a connected trigger or the page heading | ui-quality.cjs |
+| Unsaved work | `dirtyForms` + `guard` | Saving one form preserves another form's dirty warning; closing a form checks that form's edits; navigation checks all remaining edits; no persistent draft storage | ui-quality.cjs |
+| Long text | shared textarea branch | Native rows expand from 4 to 10, keyboard button exposes expanded state and target; internal text scrolling remains available | ui-quality.cjs |
+| Table | `table` + `tableObserver` | Real caption/header/region; only overflowing tables show linked scroll guidance; guidance/empty state remains outside scrolling columns; removed observations are released | ui-quality.cjs |
+| Navigation | shared shell + `navigate` / `portalTitle` | Desktop hotel sidebar; horizontal narrow menu; localized entry title after logout; restaurant current destination; read failures offer explicit reload | ui-quality.cjs and reception.cjs |
+| Filter | shared `form`, `filter-form` variant | Operation's owning filter cannot be dismissed; two-column desktop form; clear query preserves other filters and returns input focus; state remains in memory | ui-quality.cjs |
+
+Native select and date popup ownership is unchanged: the OS/browser owns popup
+locale/geometry. This pass verifies native select keyboard open/Escape behavior,
+not authored calendar translation. `premium-ui.json` now runs a dedicated axe
+accessibility suite in addition to workflow tests. Automated WCAG-tagged scans
+are bounded evidence, not a complete WCAG certification or real-user usability
+acceptance. See docs/74 for results and the remaining human validation boundary.
