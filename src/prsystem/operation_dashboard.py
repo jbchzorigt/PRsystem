@@ -235,8 +235,10 @@ class OperationDashboard:
         except (TimeoutError,OSError,DomainError):
             state='UNKNOWN';result={};error='PROVIDER_UNCERTAIN'
         with transaction(self.auth.dsn) as conn:
-            current=conn.execute('SELECT state FROM prsystem.operation_sms_delivery WHERE recipient_id=%s FOR UPDATE',(rid,)).fetchone()[0]
-            if current in {'DELIVERED','FAILED','CANCELLED'}:return dict(recipient_id=rid,state=current)
+            current,current_attempt=conn.execute('SELECT state,attempts FROM prsystem.operation_sms_delivery WHERE recipient_id=%s FOR UPDATE',(rid,)).fetchone()
+            # An old send/lookup response may arrive after a failed attempt was
+            # manually retried. It cannot settle or annotate the newer attempt.
+            if current_attempt!=row[3]+int(sending) or current in {'DELIVERED','FAILED','CANCELLED'}:return dict(recipient_id=rid,state=current)
             if current=='SENT' and state=='UNKNOWN':state='SENT'
             self._delivery(conn,rid,state,provider_id=result.get('provider_id'),error=error)
         return dict(recipient_id=rid,state=state)

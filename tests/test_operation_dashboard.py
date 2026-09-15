@@ -99,3 +99,21 @@ class OperationDashboardTests(OperationCase):
         from concurrent.futures import ThreadPoolExecutor
         def read(_):return self.oc.get('/platform/operation',headers=self.headers(self.ot)).status_code
         with ThreadPoolExecutor(max_workers=4) as pool:self.assertEqual(list(pool.map(read,range(8))),[200]*8)
+
+    def test_late_provider_reply_cannot_settle_a_newer_sms_attempt(self):
+        from prsystem.postgres.connection import transaction
+        _,rid=self.queued();original=self.sms.send
+        def late(*args):
+            response=original(*args)
+            # While the original response is delayed, reconciliation confirms
+            # failure and an authorized retry claims a new delivery attempt.
+            with transaction(self.app_dsn) as conn:
+                conn.execute('SELECT state FROM prsystem.operation_sms_delivery WHERE recipient_id=%s FOR UPDATE',(rid,))
+                self.service._delivery(conn,rid,'FAILED')
+                self.service._delivery(conn,rid,'QUEUED')
+                self.service._delivery(conn,rid,'SENDING',attempt=True)
+            return response
+        self.sms.send=late
+        self.assertEqual(self.service._sms_one(rid)['state'],'SENDING')
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT state,attempts,provider_id FROM prsystem.operation_sms_delivery WHERE recipient_id=%s',(rid,)).fetchone(),('SENDING',2,None))
