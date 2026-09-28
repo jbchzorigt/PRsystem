@@ -2,8 +2,9 @@
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from tempfile import TemporaryDirectory
-from threading import Barrier
+from threading import Barrier, Event
 from time import sleep
+from unittest.mock import patch
 
 from postgres_support import ADMIN_DSN
 from walkin_support import WalkInCase
@@ -105,6 +106,34 @@ class XypLookupTests(WalkInCase):
         self.assertNotIn('reason', self.assert_status(self.lookup('АБ85020311', key='miss'), 201))
         down = self.assert_status(self.lookup(MockXypGateway.OUTAGE, key='down'), 201)
         self.assertEqual((down['status'], down['reason']), ('UNAVAILABLE', 'PROVIDER_ERROR'))
+
+    def test_slow_adapter_times_out_and_its_late_answer_is_discarded(self):
+        citizen, release = self.xyp.citizen, Event()
+        def stuck(number):
+            release.wait(5); return citizen(number)
+        self.xyp.citizen = stuck
+        with patch('prsystem.xyp_lookups.TIMEOUT_SECONDS', 0.2):
+            result = self.assert_status(self.lookup(), 201)
+        release.set()
+        self.assertEqual((result['status'], result['reason'], 'citizen' in result), ('UNAVAILABLE', 'TIMEOUT', False))
+        for _ in range(50):  # the abandoned adapter call finishes in the background
+            if self.xyp.calls:
+                break
+            sleep(0.05)
+        self.assertEqual(self.xyp.calls, 1)
+        with psycopg.connect(self.owner_dsn) as conn:
+            rows = conn.execute('SELECT status,reason,envelope FROM prsystem.xyp_lookup WHERE tenant_id=%s', (self.tenant,)).fetchall()
+        self.assertEqual(rows, [('UNAVAILABLE', 'TIMEOUT', None)])
+
+    def test_crashing_adapter_records_only_the_error_type(self):
+        def crash(number):
+            raise RuntimeError(f'register rejected {number}')
+        self.xyp.citizen = crash
+        self.assertEqual(self.assert_status(self.lookup(), 201)['reason'], 'PROVIDER_ERROR')
+        with psycopg.connect(self.owner_dsn) as conn:
+            details = conn.execute("SELECT details FROM prsystem.operational_event WHERE tenant_id=%s AND kind='XYP_LOOKUP'", (self.tenant,)).fetchone()[0]
+        self.assertEqual(details, dict(status='UNAVAILABLE', reason='PROVIDER_ERROR', error='RuntimeError'))
+        self.assertNotIn('АБ90010211', str(details))
 
     def test_unconfigured_production_adapter_reports_unavailable(self):
         with TestClient(create_app(self.app_dsn, self.settings, identity_vault=self.vault), client=(self.peer, 12345)) as client:

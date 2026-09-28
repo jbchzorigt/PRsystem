@@ -4,6 +4,7 @@ The adapter is called outside database transactions. Receipts keep only the
 lookup id; citizen data lives in the encrypted xyp_lookup envelope.
 """
 import secrets
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as AdapterTimeout
 from datetime import timedelta
 
 from psycopg.types.json import Jsonb
@@ -13,11 +14,13 @@ from prsystem.common import DomainError
 from prsystem.guest_identity import registration_number
 from prsystem.postgres.connection import transaction
 from prsystem.stays import StayService
-from prsystem.xyp import XypNotFound, XypUnavailable, citizen_evidence
+from prsystem.xyp import TIMEOUT_SECONDS, XypNotFound, XypUnavailable, citizen_evidence
 
 LOOKUP_LIMIT = 20
 LOOKUP_WINDOW = timedelta(minutes=10)
 LOOKUP_TTL = timedelta(minutes=15)
+# Bounded: a hanging adapter holds at most these threads; queued calls still time out.
+ADAPTER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix='xyp')
 
 
 class XypLookups(StayService):
@@ -26,16 +29,21 @@ class XypLookups(StayService):
         self.gateway = gateway
 
     def ask(self, number):
+        """Return (status, reason, citizen, error_type); error_type names an unexpected adapter crash."""
         if self.gateway is None:
-            return 'UNAVAILABLE', 'NOT_CONFIGURED', None
+            return 'UNAVAILABLE', 'NOT_CONFIGURED', None, None
+        call = ADAPTER_POOL.submit(self.gateway.citizen, number)
         try:
-            return 'FOUND', None, citizen_evidence(number, self.gateway.citizen(number))
+            return 'FOUND', None, citizen_evidence(number, call.result(timeout=TIMEOUT_SECONDS)), None
+        except AdapterTimeout:
+            call.cancel()  # still queued: never runs; already running: its answer is discarded
+            return 'UNAVAILABLE', 'TIMEOUT', None, None
         except XypNotFound:
-            return 'NOT_FOUND', None, None
+            return 'NOT_FOUND', None, None, None
         except XypUnavailable as exc:
-            return 'UNAVAILABLE', exc.reason, None
-        except Exception:  # A crashing adapter must not block manual fallback.
-            return 'UNAVAILABLE', 'PROVIDER_ERROR', None
+            return 'UNAVAILABLE', exc.reason, None, None
+        except Exception as exc:  # A crashing adapter must not block manual fallback.
+            return 'UNAVAILABLE', 'PROVIDER_ERROR', None, type(exc).__name__  # the type only: messages may hold a РД
 
     def view(self, conn, tenant, lookup):
         scope(conn, tenant)
@@ -79,7 +87,7 @@ class XypLookups(StayService):
             if self.gateway is not None:  # NOT_CONFIGURED lookups never reach ХУР
                 self.limit(conn, tenant, actor)
             consent_at = conn.execute('SELECT clock_timestamp()').fetchone()[0]
-        status, reason, citizen = self.ask(number)  # never inside a database transaction
+        status, reason, citizen, error = self.ask(number)  # never inside a database transaction
         with transaction(self.auth.dsn) as conn:
             actor, number, token, command, replay = self.begin(conn, bearer, tenant, document_number, consent, key)
             if replay is not None:  # a concurrent retry with the same key committed first
@@ -92,6 +100,6 @@ class XypLookups(StayService):
             envelope = Jsonb(self.vault.seal(citizen, tenant, lookup, 'xyp-lookup')) if citizen else None
             conn.execute('''INSERT INTO prsystem.xyp_lookup(tenant_id,id,actor_id,lookup_token,status,reason,envelope,consent_at,created_at,expires_at)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', (tenant, lookup, actor, token, status, reason, envelope, consent_at, now, now + LOOKUP_TTL))
-            self.event(conn, tenant, actor, 'XYP_LOOKUP', lookup, dict(status=status, reason=reason))
+            self.event(conn, tenant, actor, 'XYP_LOOKUP', lookup, dict(status=status, reason=reason, **({'error': error} if error else {})))
             self._save_receipt(conn, tenant, key, actor, command, dict(lookup_id=lookup))
             return self.view(conn, tenant, lookup)
