@@ -772,3 +772,23 @@ class BookingHoldTests(GuestFinanceCase):
         with ThreadPoolExecutor(2) as pool:responses=list(pool.map(reconcile,range(2)))
         self.assertEqual([r.status_code for r in responses],[200,200]);self.assertEqual(responses[0].json(),responses[1].json())
         with psycopg.connect(self.owner_dsn) as conn:self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.booking_paid_source WHERE tenant_id=%s',(self.tenant,)).fetchone()[0],1)
+
+    def pass_no_show_cutoff(self):
+        from psycopg.types.json import Jsonb
+        with psycopg.connect(self.owner_dsn) as conn:
+            snapshot=conn.execute('SELECT snapshot FROM prsystem.booking_hold WHERE tenant_id=%s',(self.tenant,)).fetchone()[0]
+            snapshot['no_show_cutoff']=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+            conn.execute('ALTER TABLE prsystem.booking_hold DISABLE TRIGGER preserve_booking_hold')
+            conn.execute('UPDATE prsystem.booking_hold SET snapshot=%s WHERE tenant_id=%s',(Jsonb(snapshot),self.tenant))
+            conn.execute('ALTER TABLE prsystem.booking_hold ENABLE TRIGGER preserve_booking_hold')
+
+    def test_manager_plus_alone_cannot_confirm_no_show(self):
+        # REQ-18-03.03 / RBAC-DEC-016: Manager Plus alone does not inherit Manager no-show.
+        hold=self.begin();self.pay();self.call(hold,'/reconcile');self.pass_no_show_cutoff()
+        _,plus=self.add_staff(['MANAGER_PLUS'])
+        self.assert_status(self.terminal(hold,'NO_SHOW',plus,key='plus-no-show'),403)
+        # Manager Plus keeps CANCELLED_HOTEL authority: it reaches the time rule, not 403.
+        self.assertEqual(self.terminal(hold,'CANCELLED_HOTEL',plus,key='plus-cancel').json()['code'],'ACTUAL_TIME_OUT_OF_RANGE')
+        _,plus_reception=self.add_staff(['MANAGER_PLUS','RECEPTION'])
+        result=self.assert_status(self.terminal(hold,'NO_SHOW',plus_reception,key='plus-reception'),200)
+        self.assertEqual(result['booking_state'],'NO_SHOW')

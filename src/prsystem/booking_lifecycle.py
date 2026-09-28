@@ -12,7 +12,9 @@ class BookingLifecycle(BookingRefunds):
         self.mock()
         principal,_=self.auth._authenticate(conn,token,tenant)
         hotel=conn.execute('SELECT package_mnt,security_suspended FROM prsystem.hotel_access WHERE tenant_id=%s FOR SHARE',(tenant,)).fetchone()
-        allowed=self._manager(principal['roles'],hotel[0]) or (not manager and 'RECEPTION' in principal['roles'])
+        # RBAC-DEC-016: NO_SHOW is Reception/Manager only; Manager Plus alone keeps
+        # CANCELLED_HOTEL/upgrade authority but does not inherit no-show.
+        allowed=self._manager(principal['roles'],hotel[0]) if manager else bool({'RECEPTION','MANAGER'}&set(principal['roles']))
         if not allowed or hotel[1]:raise DomainError('FORBIDDEN')
         scope(conn,tenant)
         envelope=conn.execute('SELECT token_envelope FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s',(tenant,hold)).fetchone()
