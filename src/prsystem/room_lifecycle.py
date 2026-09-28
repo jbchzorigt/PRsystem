@@ -4,16 +4,19 @@ from psycopg.types.json import Jsonb
 from prsystem.rooms import RoomService
 from prsystem.common import DomainError
 from prsystem.postgres.connection import transaction
+from prsystem.booking_inventory import scope
 
 
 class RoomLifecycle(RoomService):
     @staticmethod
     def sweep(conn,tenant):
+        scope(conn,tenant)  # category_blockers reads tenant-RLS booking_hold rows.
         if conn.execute("SELECT 1 FROM prsystem.room WHERE tenant_id=%s AND status='RETIRING' UNION ALL SELECT 1 FROM prsystem.room_category WHERE tenant_id=%s AND status='RETIRING' LIMIT 1",(tenant,tenant)).fetchone():
             conn.execute('SELECT prsystem.complete_room_retirement(%s)',(tenant,))
 
     @staticmethod
     def blockers(conn,tenant,kind,entity):
+        scope(conn,tenant)
         function='room_blockers' if kind=='room' else 'category_blockers'
         return conn.execute('SELECT prsystem.'+function+'(%s,%s)',(tenant,entity)).fetchone()[0]
 

@@ -799,3 +799,33 @@ class BookingHoldTests(GuestFinanceCase):
         with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
         self.assertEqual([h['tenant_id'] for h in self.assert_status(self.public_search(),200)['items']],[self.tenant])
         self.assertEqual(self.assert_status(self.customer_hold(),201)['booking_state'],'HOLDING')
+
+    def deactivate(self,kind,entity,key):
+        table,path=('room','rooms') if kind=='room' else ('room_category','room-categories')
+        with psycopg.connect(self.owner_dsn) as conn:
+            revision=conn.execute(sql.SQL('SELECT revision FROM prsystem.{} WHERE tenant_id=%s AND id=%s').format(sql.Identifier(table)),(self.tenant,entity)).fetchone()[0]
+        return self.assert_status(self.client.post(f'/hotels/{self.tenant}/{path}/{entity}/lifecycle',headers=self.headers(self.manager_token),
+            json=dict(action='DEACTIVATE',expected_revision=revision,reason='Planned room retirement',idempotency_key=key)),200)
+
+    def category_status(self):
+        with psycopg.connect(self.owner_dsn) as conn:
+            return conn.execute('SELECT status FROM prsystem.room_category WHERE tenant_id=%s AND id=%s',(self.tenant,self.category)).fetchone()[0]
+
+    def test_confirmed_category_booking_blocks_category_retirement(self):
+        # REQ-26-05.00 / RML-DEC-003: category stays RETIRING until its online booking resolves.
+        hold=self.begin();self.pay();self.assertEqual(self.call(hold,'/reconcile').json()['booking_state'],'CONFIRMED')
+        retiring=self.deactivate('category',self.category,'category-off')
+        self.assertEqual(retiring['status'],'RETIRING');self.assertIn('BOOKING',retiring['blockers'])
+        self.deactivate('room',self.room,'room-off')
+        self.assertEqual(self.category_status(),'RETIRING')
+        self.assert_status(self.cancel(hold),200)
+        self.assertEqual(self.category_status(),'INACTIVE')
+
+    def test_expired_unpaid_hold_releases_category_retirement(self):
+        hold=self.begin()
+        self.assertIn('BOOKING',self.deactivate('category',self.category,'category-off')['blockers'])
+        self.deactivate('room',self.room,'room-off')
+        self.assertEqual(self.category_status(),'RETIRING')
+        self.age(hold)
+        self.assertEqual(self.assert_status(self.call(hold,'/reconcile'),200)['booking_state'],'EXPIRED')
+        self.assertEqual(self.category_status(),'INACTIVE')

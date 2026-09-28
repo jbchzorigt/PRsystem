@@ -266,6 +266,8 @@ class BookingHolds(GuestPayments):
                 conn.execute("UPDATE prsystem.booking_hold SET booking_state='EXPIRED',hold_state='EXPIRED' WHERE tenant_id=%s AND id=%s",(tenant,hold))
                 conn.execute("UPDATE prsystem.booking_hold_attempt SET state='EXPIRED' WHERE tenant_id=%s AND hold_id=%s AND state='ACTIVE'",(tenant,hold))
                 self.event_row(conn,tenant,hold,'HOLD_EXPIRED',{})
+            from prsystem.room_lifecycle import RoomLifecycle
+            RoomLifecycle.sweep(conn,tenant)  # A released hold may finish category retirement.
             return self.statement(conn,tenant,hold)
 
     def expire_due(self,bearer,tenant,limit=25):
@@ -336,4 +338,6 @@ class BookingHolds(GuestPayments):
         result=dict(booking_id=hold,booking_state=outcome,hold_state='CANCELLED',retained_mnt=retained,refund_due=due,commission_mnt=commission,hotel_payable_mnt=payable,recorded_at=now.isoformat(),mode='MOCK_ONLY')
         conn.execute('INSERT INTO prsystem.booking_hold_cancellation VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',(tenant,hold,row[4],outcome,captured,retained,due,commission,payable,Jsonb(contract),now))
         self.event_row(conn,tenant,hold,'BOOKING_'+outcome,result)
+        from prsystem.room_lifecycle import RoomLifecycle
+        RoomLifecycle.sweep(conn,tenant)  # Cancellation/no-show may finish category retirement.
         return result
