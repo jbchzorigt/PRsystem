@@ -69,6 +69,8 @@ jobs:
         run: node tests/browser/restaurant.cjs
       - name: Verify Reception operations
         run: node tests/browser/reception.cjs
+      - name: Verify Reception ХУР lookup outcomes
+        run: node tests/browser/reception-xyp.cjs
       - name: Verify booking portal and finance
         run: node tests/browser/booking.cjs
       - name: Verify minibar warehouse
@@ -118,6 +120,7 @@ jobs:
           python -m pip install '.[api]'
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/daily-workflow-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/reception-requests.json
+          PYTHONPATH=src python tests/browser/validate_requests.py artifacts/reception-xyp-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/restaurant-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/booking-requests.json
           PYTHONPATH=src python tests/browser/validate_requests.py artifacts/minibar-requests.json
