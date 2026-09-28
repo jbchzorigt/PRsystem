@@ -38,6 +38,9 @@ def create_app():
     import hashlib
     import hmac
     from prsystem.guest_identity import IdentityVault
+    from prsystem.mock_providers import MockXypGateway
+    xyp = MockXypGateway(store)
+    xyp.add_citizen('АБ90010211', 'Туршилт', 'Зочин', '1990-01-02')
     key = base64.b64decode(os.environ['PRSYSTEM_LINK_KEY'], altchars=b'-_', validate=True)
     if len(key) < 32:
         raise ValueError('Development key must have at least 32 bytes')
@@ -46,7 +49,7 @@ def create_app():
     return staff_app(dsn, runtime_mode='development', identity_vault=vault, mock_stay_finance=True, phone_gateway=MockPhoneGateway(store),
                      payment_gateways={name: MockPaymentGateway(store, name) for name in ('QPAY', 'KHAAN')}, bank_gateway=MockBankGateway(store),
                      platform_secret_resolver=lambda ref: base64.b64decode(os.environ.get('PRSYSTEM_DEV_MFA_'+ref,''),validate=True),
-                     restaurant_gateways=restaurant_gateways(store),sms_gateway=MockSMSGateway(store),ebarimt_gateway=MockEbarimtGateway(store),contact_notice_gateway=MockContactNoticeGateway(store))
+                     restaurant_gateways=restaurant_gateways(store),sms_gateway=MockSMSGateway(store),ebarimt_gateway=MockEbarimtGateway(store),contact_notice_gateway=MockContactNoticeGateway(store),xyp_gateway=xyp)
 
 
 def tick(store, dsn, key, limit=25):

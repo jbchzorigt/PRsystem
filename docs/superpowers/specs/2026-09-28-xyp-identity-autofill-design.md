@@ -123,18 +123,14 @@ CREATE TABLE prsystem.xyp_lookup (
  CHECK ((status='UNAVAILABLE') = (reason IS NOT NULL))
 );
 CREATE INDEX xyp_lookup_actor_recent ON prsystem.xyp_lookup (tenant_id,actor_id,created_at);
-CREATE TABLE prsystem.xyp_lookup_receipt (
- tenant_id text NOT NULL, actor_id text NOT NULL, key text NOT NULL,
- command jsonb NOT NULL, lookup_id text NOT NULL,
- PRIMARY KEY (tenant_id,actor_id,key),
- FOREIGN KEY (tenant_id,lookup_id) REFERENCES prsystem.xyp_lookup(tenant_id,id)
-);
 -- stay_id-г зөвхөн NULL → утга руу нэг удаа; бусад багана өөрчлөгдөхгүй; DELETE хориотой.
--- ENABLE + FORCE ROW LEVEL SECURITY, tenant_scope policy (034-ийн загвараар) хоёр хүснэгтэд.
+-- ENABLE + FORCE ROW LEVEL SECURITY, tenant_scope policy (034-ийн загвараар).
 ALTER TABLE prsystem.stay_guest_identity DROP CONSTRAINT stay_guest_identity_provenance_check;
-ALTER TABLE prsystem.stay_guest_identity ADD CONSTRAINT stay_guest_identity_provenance
-  CHECK (provenance IN ('MANUAL','XYP_VERIFIED'));
+ALTER TABLE prsystem.stay_guest_identity ADD CONSTRAINT stay_guest_identity_provenance_check
+  CHECK (provenance='MANUAL' OR (provenance='XYP_VERIFIED' AND identity_type='MN_REG_NO'));
 ```
+
+Idempotency: одоогийн staff_command_receipt; receipt-д зөвхөн {lookup_id}.
 
 `stay_guest_identity_provenance_check` нь `018`-ийн inline CHECK-ийн PostgreSQL-ийн үүсгэсэн нэр (migrate хийсэн DB-ийн `pg_constraint`-оос баталгаажуулсан). Хуучин migration засахгүй.
 
@@ -171,7 +167,7 @@ ALTER TABLE prsystem.stay_guest_identity ADD CONSTRAINT stay_guest_identity_prov
 
 **Domain unit:** `xyp.py`-ийн хариу шалгалт (дутуу талбар, буруу огноо, DOB/РД зөрүү).
 
-**Одоогийн тестүүд:** `tests/walkin_support.py` `WalkInCase.checkin` нь `MN_REG_NO` зочинд эхлээд mock ХУР-аас хайлт хийж `xyp_lookup_id` дамжуулна (seed-д `АБ90010211`). Тестийн бие өөрчлөгдөхгүй.
+**Одоогийн тестүүд:** WalkInCase.checkin/with_xyp нь хайлт хийж xyp_lookup_id дамжуулна; адаптергүй тестийн app-д UNAVAILABLE тул гараар бүртгэх замаар ажиллана; FOUND замыг test_xyp_lookup шалгана.
 
 **Browser:** `tests/browser/reception.cjs` — хайлтын route mock: олдсон үед нэрийн оролтын талбар байхгүй, засах боломжгүй жагсаалт харагдана, check-in payload-д `xyp_lookup_id` байж нэр байхгүй; ажиллаагүй үед "Дахин оролдох"/"Гараар бүртгэх". MN_REG_NO check-in хийдэг бусад suite-д хайлтын route нэмнэ. `validate_requests.py` шинэ endpoint-ийг шалгана.
 

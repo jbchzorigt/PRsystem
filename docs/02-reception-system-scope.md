@@ -28,7 +28,7 @@ Reception (RC) system нь зочид буудлын ресепшний өдөр
 
 - Reception үндсэн зочны identity type-ийг `MN_REG_NO`, `FOREIGN_PASSPORT`, `OTHER_GOV_ID`, `NO_DOCUMENT`-оос сонгоно.
 - Бүх төрөлд овог/фамилийн нэр, өөрийн нэр, төрсөн огноо, nationality болон identity source заавал байна. Нас тусдаа editable талбар биш; check-in өдрийн огноо болон баталгаажсан төрсөн огнооноос сервер тооцно.
-- `MN_REG_NO` үед normalized, structurally valid Монгол регистр шаардана. ХУР/XYP-ээс мэдээлэл олдвол автоматаар бөглөж `XYP_VERIFIED`, service unavailable/not-found үед Reception гараар оруулж `MANUAL` provenance хадгална.
+- `MN_REG_NO` үед normalized, structurally valid Монгол регистр шаардана. ХУР/XYP-ээс мэдээлэл олдвол автоматаар бөглөж `XYP_VERIFIED`, service unavailable/not-found үед Reception гараар оруулж `MANUAL` provenance хадгална. Урсгал, зөвшөөрөл, хязгаар: RC-DEC-046.
 - `FOREIGN_PASSPORT` үед issuing country, passport number, expiry date; `OTHER_GOV_ID` үед document type, issuing country/authority, document number заавал байна.
 - `NO_DOCUMENT` үед mandatory reason, note авч `LOW_ASSURANCE` гэж тэмдэглэнэ; document verified мэт харагдуулахгүй.
 - Буудал 18 нас хүрээгүй хүнд үйлчлэхгүй: үндсэн зочин check-in өдөр (Улаанбаатарын цагаар) 18 нас хүрээгүй бол сервер бүртгэлийг `GUEST_UNDER_18` кодоор татгалзана. Асран хамгаалагчийн бүртгэл байхгүй (`RC-DEC-045`). Хүүхэдтэй гэр бүлд насанд хүрсэн хүн үндсэн зочноор бүртгэгдэнэ.
@@ -585,6 +585,11 @@ RC системийн үндсэн хэсэг дөрвөн табтай байн
 
 - **Төлөв:** Батлагдсан (2026-09-28, захиалагчийн шийдвэр)
 - **Шийдвэр:** Зочид буудлын журмаар насанд хүрээгүй хүнд үйлчлэхгүй. Бүх буудалд ижил, тохиргоогүй дүрэм: үндсэн зочин check-in өдөр 18 нас хүрсэн байх ёстой; эс бөгөөс walk-in болон online booking check-in-ийг сервер `GUEST_UNDER_18`-аар татгалзана. `RC-DEC-044`-ийн 18-аас доош үндсэн зочны guardian metadata хэсгийг орлоно; API/UI-д guardian талбар байхгүй. Өмнө бүртгэгдсэн түүхэн guardian өгөгдлийг өөрчлөхгүй.
+
+### RC-DEC-046 — ХУР-аас үндсэн зочны мэдээлэл татах
+
+- **Төлөв:** Батлагдсан (2026-09-28, захиалагчийн шийдвэр)
+- **Шийдвэр:** `MN_REG_NO`-д Reception РД оруулж, зочны зөвшөөрлийг тэмдэглээд ХУР-аас овог, нэр, төрсөн огноог татна. Сервер үр дүнг шифрлэж 15 минут хүчинтэй, нэг удаагийн хайлтын дугаартай хадгална; check-in зөвхөн тэр дугаараар `XYP_VERIFIED` identity үүсгэнэ, browser нэр өөрчлөх боломжгүй. ХУР олдоогүй/ажиллаагүй үед л тухайн РД-ээр гараар бүртгэнэ (`MANUAL` + шалтгаан, RC-DEC-007). Хязгаар: ажилтан тутамд 10 минутад 20 хайлт. Бодит ХУР адаптер EXT-01-ийн дараа; одоо development/test mock. Design: `docs/superpowers/specs/2026-09-28-xyp-identity-autofill-design.md`.
 
 ## 8. Хаагдсан canonical scope
 

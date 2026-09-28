@@ -57,9 +57,10 @@ class UIReviewDatabaseTests(unittest.TestCase):
             # Walk-in -> deposit allocation -> collection -> checkout -> Cleaner claim.
             lookup = fixture.assert_status(client.post(root+'guest-identity/xyp-lookups', headers=reception,
                 json=dict(document_number='АБ90010211', consent=True, idempotency_key=uuid4().hex)), 201)
+            self.assertEqual((lookup['status'], lookup['citizen']['family_name']), ('FOUND', 'Туршилт'))
             stay = fixture.assert_status(client.post(root+'stays/check-in', headers=reception, json=dict(
                 room_id=fixture.room, kind='NIGHTLY', duration_units=1,
-                guest=dict(identity_type='MN_REG_NO',xyp_lookup_id=lookup['lookup_id'],family_name='Туршилт',given_name='Зочин',date_of_birth='1990-01-02',nationality='MN',document_number='АБ90010211'),
+                guest=dict(identity_type='MN_REG_NO',xyp_lookup_id=lookup['lookup_id']),
                 deposit=dict(channel='CASH',amount_mnt=60000,received=True),idempotency_key=uuid4().hex)), 201)
             stay_url = root+'stays/'+stay['stay_id']+'/'
             fixture.assert_status(client.post(stay_url+'deposit-allocations',headers=reception,json=dict(

@@ -113,6 +113,7 @@ def main(argv=None):
                 print(role + ': ' + email)
             print('Түр нууц үг (зөвхөн энэ туршилт): ' + session.password)
             print('101: зочин бүртгэхэд бэлэн. 201: цэвэрлэгчид оноосон ажил.')
+            print('ХУР (mock): АБ90010211 → олдоно · АБ85020311 → олдохгүй · ЖЖ80010100 → ХУР ажиллахгүй')
             print('Заавар: docs/76-ui-review-session.md')
             print('Ctrl+C: зогсоож, зөвхөн энэ туршилтын бааз/container-ийг устгана. Дараагийн асаалт шинэ өгөгдөлтэй.', flush=True)
             uvicorn.run(session.app, host='127.0.0.1', port=args.port, proxy_headers=False, access_log=False)

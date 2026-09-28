@@ -52,6 +52,8 @@ def review_session(dsn):
     from prsystem.api import create_app
     from prsystem.guest_identity import IdentityVault
     from guest_finance_support import GuestFinanceCase
+    from tempfile import TemporaryDirectory
+    from prsystem.mock_providers import MockStore, MockXypGateway
     from minibar_configuration_support import MinibarConfigurationCase
     from test_booking_holds import BookingHoldTests
 
@@ -83,8 +85,11 @@ def review_session(dsn):
             for actor, role in ((fixture.worker, 'Ресепшн'), (fixture.manager, 'Менежер'), (cleaner, 'Цэвэрлэгч')):
                 conn.execute('UPDATE prsystem.staff_account SET email=%s WHERE id=%s', (accounts[role], actor))
         vault = IdentityVault({'review': secrets.token_bytes(32)}, 'review', secrets.token_bytes(32))
+        providers = TemporaryDirectory(); fixture.addCleanup(providers.cleanup)
+        xyp = MockXypGateway(MockStore(providers.name + '/xyp.sqlite3', environment='development'))
+        xyp.add_citizen('АБ90010211', 'Туршилт', 'Зочин', '1990-01-02')  # АБ85020311 not found; ЖЖ80010100 outage
         app = create_app(fixture.app_dsn, fixture.settings, token_key=secrets.token_bytes(32), identity_vault=vault,
-                         runtime_mode='development', mock_stay_finance=True)
+                         runtime_mode='development', mock_stay_finance=True, xyp_gateway=xyp)
         from starlette.middleware.trustedhost import TrustedHostMiddleware
         from starlette.responses import PlainTextResponse
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'])
