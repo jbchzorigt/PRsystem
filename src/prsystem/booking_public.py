@@ -81,11 +81,12 @@ class BookingPublic:
             if (old[0] if old else 0)!=revision:raise DomainError('REVISION_CONFLICT')
             conn.execute('INSERT INTO prsystem.booking_publication VALUES(%s,%s,%s,%s) ON CONFLICT(tenant_id) DO UPDATE SET allowed=EXCLUDED.allowed,revision=EXCLUDED.revision,actor_id=EXCLUDED.actor_id',(tenant,allowed,revision+1,actor))
             result=dict(allowed=allowed,revision=revision+1);self.booking.platform._event(conn,actor,'BOOKING_PUBLICATION',tenant,result);self.booking.platform.save(conn,key,actor,command,result);return result
+    # LIFE-DEC-004: a hotel stays public/bookable through the 48h subscription grace.
     def listing(self,conn,tenant):
         scope(conn,tenant)
         row=conn.execute('''SELECT l.name,l.address,l.phone,l.description,l.latitude,l.longitude,l.photos,l.accepting FROM prsystem.booking_listing l
             JOIN prsystem.booking_publication p ON p.tenant_id=l.tenant_id JOIN prsystem.hotel_access h ON h.tenant_id=l.tenant_id
-            WHERE l.tenant_id=%s AND l.published AND p.allowed AND NOT h.security_suspended AND h.expires_at>clock_timestamp() FOR SHARE OF l,p,h''',(tenant,)).fetchone()
+            WHERE l.tenant_id=%s AND l.published AND p.allowed AND NOT h.security_suspended AND h.expires_at+interval '48 hours'>clock_timestamp() FOR SHARE OF l,p,h''',(tenant,)).fetchone()
         if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
         return dict(tenant_id=tenant,**dict(zip(('name','address','phone','description','latitude','longitude','photos','accepting'),row)),rating=None,review_count=0,mode='MOCK_ONLY')
     def detail(self,conn,tenant,arrival,nights):
@@ -107,7 +108,7 @@ class BookingPublic:
     def search(self,arrival,nights,query,after,limit,latitude=None,longitude=None):
         self.booking.mock();arrival=self.booking.instant(arrival)
         with transaction(self.auth.dsn) as conn:
-            ids=conn.execute('''SELECT l.tenant_id FROM prsystem.booking_listing l JOIN prsystem.booking_publication p ON p.tenant_id=l.tenant_id JOIN prsystem.hotel_access h ON h.tenant_id=l.tenant_id WHERE l.published AND p.allowed AND NOT h.security_suspended AND h.expires_at>clock_timestamp() AND l.tenant_id>%s AND (strpos(lower(l.name||' '||l.address),lower(%s))>0) ORDER BY l.tenant_id LIMIT %s''',(after,query,limit)).fetchall()
+            ids=conn.execute('''SELECT l.tenant_id FROM prsystem.booking_listing l JOIN prsystem.booking_publication p ON p.tenant_id=l.tenant_id JOIN prsystem.hotel_access h ON h.tenant_id=l.tenant_id WHERE l.published AND p.allowed AND NOT h.security_suspended AND h.expires_at+interval '48 hours'>clock_timestamp() AND l.tenant_id>%s AND (strpos(lower(l.name||' '||l.address),lower(%s))>0) ORDER BY l.tenant_id LIMIT %s''',(after,query,limit)).fetchall()
             result=[]
             for (tenant,) in ids:
                 try:hotel=self.detail(conn,tenant,arrival,nights)

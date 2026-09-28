@@ -728,7 +728,7 @@ class BookingHoldTests(GuestFinanceCase):
         with psycopg.connect(self.owner_dsn) as conn:conn.execute('UPDATE prsystem.booking_publication SET allowed=false WHERE tenant_id=%s',(self.tenant,))
         self.assertEqual(self.public_search().json()['items'],[]);self.assertEqual(self.customer_hold().status_code,404)
         with psycopg.connect(self.owner_dsn) as conn:
-            conn.execute('UPDATE prsystem.booking_publication SET allowed=true WHERE tenant_id=%s',(self.tenant,));conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
+            conn.execute('UPDATE prsystem.booking_publication SET allowed=true WHERE tenant_id=%s',(self.tenant,));conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '48 hours 1 minute' WHERE tenant_id=%s",(self.tenant,))
         self.assertEqual(self.public_search().json()['items'],[]);self.assertEqual(self.customer_hold().status_code,404)
     def test_another_customer_cannot_list_owned_booking(self):
         self.booker_setup();self.customer_hold();other_phone=f'+976{next(self.booker_phones)}';self.register_booker(other_phone)
@@ -792,3 +792,10 @@ class BookingHoldTests(GuestFinanceCase):
         _,plus_reception=self.add_staff(['MANAGER_PLUS','RECEPTION'])
         result=self.assert_status(self.terminal(hold,'NO_SHOW',plus_reception,key='plus-reception'),200)
         self.assertEqual(result['booking_state'],'NO_SHOW')
+
+    def test_hotel_in_subscription_grace_stays_public_and_bookable(self):
+        # REQ-17-06.03 / LIFE-DEC-004: expires_at alone does not hide the hotel.
+        self.booker_setup()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
+        self.assertEqual([h['tenant_id'] for h in self.assert_status(self.public_search(),200)['items']],[self.tenant])
+        self.assertEqual(self.assert_status(self.customer_hold(),201)['booking_state'],'HOLDING')
