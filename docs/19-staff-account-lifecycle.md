@@ -183,7 +183,7 @@ Hotel Admin queue-г харах/удирдах болон replacement сонго
 | Restaurant membership suspension/termination | Зөвхөн тухайн restaurant scope хаагдана |
 | Role нэмэх/хасах | Тухайн scope-ийн session хаагдаж дахин login шаардана |
 | Хэрэглэгч `Бүх төхөөрөмжөөс гарах` | Account-ийн бүх session хаагдана |
-| Subscription 48 цагийн grace дуусах | Hotel-ийн бүх operational action deny; renewal/help/logout дүрэм үйлчилнэ |
+| Subscription 48 цагийн grace дуусах | Шинэ operational action deny; LIFE-DEC-008-ын existing-obligation completion болон renewal/help/logout үлдэнэ; security suspension exception авахгүй |
 | Subscription renewal | Account/membership идэвхтэй бол permission дахин тооцогдоно; хаагдсан session автоматаар сэрэхгүй |
 
 Logout болон session revoke-ийг зөвхөн frontend local storage цэвэрлэх байдлаар хийхгүй; server талын session/token state-ийг хүчингүй болгоно.

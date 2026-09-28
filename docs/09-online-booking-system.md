@@ -330,7 +330,7 @@ Payment gateway-ийн шимтгэлийг платформын contract commis
 
 ### 9.5 Батлагдсан settlement дүрэм
 
-- Completed stay болон refund дууссан cancellation/no-show-ийн retained payable `PAY-DEC-009`-ын дагуу `D+1 12:00 Asia/Ulaanbaatar` batch-д орно.
+- Completed stay болон refund шаардлагагүй/шаардлагатай refund бүр дууссан cancellation/no-show-ийн retained payable `PAY-DEC-009`-ын дагуу `D+1 12:00 Asia/Ulaanbaatar` batch-д орно.
 - Commission base нь бодитоор retained хийсэн VAT-inclusive room charge; `ROUND_HALF_UP`, basis-point болон first-night fee-ийн дүрмийг `PAY-DEC-008` тодорхойлно.
 - 24 цагаас дотогших cancellation/no-show, hotel-local cutoff болон inventory release-ийг `PAY-DEC-007` тодорхойлно.
 - Provider/refund/reconciliation non-terminal бол payout `HELD`; payout дараах refund/chargeback immutable negative adjustment байна.

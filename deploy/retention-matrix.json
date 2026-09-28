@@ -1,0 +1,15 @@
+{
+  "status": "REVIEW_REQUIRED",
+  "approved_policy_reference": null,
+  "guest_pii_product_default_days": 365,
+  "guest_export_ttl_seconds": 3600,
+  "classes": {
+    "guest_identity_and_encrypted_copies": {"policy_days": 365, "legal_basis_approved": false, "storage_and_backup_expiry_verified": false},
+    "financial_ledger_and_receipts": {"policy_days": null, "legal_basis_approved": false},
+    "audit_and_security_events": {"policy_days": null, "legal_basis_approved": false},
+    "restaurant_orders_and_notifications": {"policy_days": null, "legal_basis_approved": false},
+    "sms_body_and_delivery_history": {"policy_days": null, "legal_basis_approved": false},
+    "account_and_contact_history": {"policy_days": null, "legal_basis_approved": false}
+  },
+  "execution": "DRY_RUN_ONLY_UNTIL_APPROVED_POLICY_AND_HOLD_HANDLING"
+}
