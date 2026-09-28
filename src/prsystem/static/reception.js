@@ -24,6 +24,8 @@
   }
   const field=(name,label,type='text',extra={})=>({name,label,type,...extra});
   const amount=(name='amount_mnt',label='Дүн (₮)',value)=>field(name,label,'number',{min:1,value});
+  // STAY-DEC-014: Reception enters hours in 0.5 steps; the API stores half-hour units.
+  const stayUnits=(kind,value)=>{const units=kind==='HOURLY'?value*2:value;if(!Number.isSafeInteger(units)||units<1)throw new Error(kind==='HOURLY'?'Цагийг 0.5 алхмаар оруулна уу, жишээ нь 1.5.':'Хоногийн тоог бүхэл тоогоор оруулна уу.');return units;};
   const reason=()=>field('reason','Шалтгаан','textarea',{max:1000});
   const option=(value,label)=>[value,label];
   const channels=()=>['CASH','MANUAL_POS','QPAY','KHAAN'].map(v=>option(v,labels[v]));
@@ -534,7 +536,7 @@
       if(r.identity_type==='OTHER_GOV_ID')fields.push(field('document_type','Баримтын төрөл'),field('issuing_authority','Олгосон байгууллага'));
       if(r.identity_type==='NO_DOCUMENT')fields.push(field('no_document_reason','Баримтгүй шалтгаан','textarea'),field('note','Нэмэлт тайлбар','textarea'));
       fields.push(field('guardian_name','Асран хамгаалагчийн нэр','text',{optional:true}),field('guardian_phone','Асран хамгаалагчийн утас','tel',{optional:true}),field('guardian_relationship','Хамаарал','text',{optional:true}));
-      if(!booking)fields.push(select('room_id','Өрөө',choices(room?[room]:rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id','number')),select('kind','Хугацааны төрөл',[['HOURLY','Цагаар'],['NIGHTLY','Хоногоор']]),amount('duration_units','Цаг / хоногийн тоо',1),select('deposit_channel','Барьцаа авах суваг',[["CASH","Бэлэн"],["FUNDING","Баталгаажсан POS / банкны барьцаа"]]),amount('deposit_amount','Бэлнээр авсан барьцаа (₮)'),field('received','Бэлэн барьцааг биечлэн авсан','checkbox',{optional:true}),select('funding_id','Өмнө баталгаажсан барьцаа',[['','Сонгоогүй'],...choices(overview.funding?.filter(f=>f.state==='CONFIRMED')||[],'funding_id',f=>`${rooms.find(r=>r.room_id===f.room_id)?.number||'Өрөө'} · ${labels[f.channel]} · ${money(f.amount_mnt)}`)],true));
+      if(!booking)fields.push(select('room_id','Өрөө',choices(room?[room]:rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id','number')),select('kind','Хугацааны төрөл',[['HOURLY','Цагаар'],['NIGHTLY','Хоногоор']]),field('duration','Хугацаа: цагаар бол цаг (0.5 алхам), хоногоор бол хоног','number',{min:0.5,value:1,decimal:true}),select('deposit_channel','Барьцаа авах суваг',[["CASH","Бэлэн"],["FUNDING","Баталгаажсан POS / банкны барьцаа"]]),amount('deposit_amount','Бэлнээр авсан барьцаа (₮)'),field('received','Бэлэн барьцааг биечлэн авсан','checkbox',{optional:true}),select('funding_id','Өмнө баталгаажсан барьцаа',[['','Сонгоогүй'],...choices(overview.funding?.filter(f=>f.state==='CONFIRMED')||[],'funding_id',f=>`${rooms.find(r=>r.room_id===f.room_id)?.number||'Өрөө'} · ${labels[f.channel]} · ${money(f.amount_mnt)}`)],true));
       const depositField=fields.find(f=>f.name==='deposit_amount');if(depositField)depositField.optional=true;
       if(booking?.category_id)fields.push(select('room_id','Оноох өрөө',choices(rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id',r=>`${r.number} · ${r.category_name}`)));
       fields.push(field('actual_checkin_at','Өмнө ирсэн цаг (Улаанбаатар)','datetime-local',{optional:true}),field('backdate_reason','Өмнө ирсэн цагийн шалтгаан','textarea',{optional:true}));
@@ -543,7 +545,7 @@
         const guest={identity_type:r.identity_type};for(const key of ['family_name','given_name','date_of_birth','nationality','document_number','issuing_country','expiry_date','document_type','issuing_authority','no_document_reason','note'])if(v[key])guest[key]=v[key];
         if(v.guardian_name||v.guardian_phone||v.guardian_relationship)guest.guardian={name:v.guardian_name||'',phone:v.guardian_phone||'',relationship:v.guardian_relationship||''};
         const body={guest,idempotency_key:v.idempotency_key};if(v.actual_checkin_at)body.actual_checkin_at=new Date(v.actual_checkin_at+'+08:00').toISOString();if(v.backdate_reason)body.backdate_reason=v.backdate_reason;
-        if(!booking){Object.assign(body,{room_id:v.room_id,kind:v.kind,duration_units:v.duration_units});if(v.deposit_channel==='CASH')body.deposit={channel:'CASH',amount_mnt:v.deposit_amount||0,received:v.received};else body.funding_id=v.funding_id||'';}
+        if(!booking){Object.assign(body,{room_id:v.room_id,kind:v.kind,duration_units:stayUnits(v.kind,v.duration)});if(v.deposit_channel==='CASH')body.deposit={channel:'CASH',amount_mnt:v.deposit_amount||0,received:v.received};else body.funding_id=v.funding_id||'';}
         if(booking?.category_id)body.room_id=v.room_id;
         return api(booking?path(`${booking.category_id?'booking-holds':'bookings'}/${enc(booking.booking_id)}/check-in`):path('stays/check-in'),body);
       },{focus:true,success:async(result,f,status)=>{showResult(status,result);f.querySelector('button[type=submit]').hidden=true;await reloadOverview();status.append(btn('Байрлалтыг нээх',()=>openStay({stay_id:result.stay_id,room_id:result.room_id},start)));}});
