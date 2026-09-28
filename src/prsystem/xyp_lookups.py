@@ -39,9 +39,11 @@ class XypLookups(StayService):
 
     def view(self, conn, tenant, lookup):
         scope(conn, tenant)
-        status, envelope, expires = conn.execute('SELECT status,envelope,expires_at FROM prsystem.xyp_lookup WHERE tenant_id=%s AND id=%s',
-                                                 (tenant, lookup)).fetchone()
+        status, reason, envelope, expires = conn.execute('SELECT status,reason,envelope,expires_at FROM prsystem.xyp_lookup WHERE tenant_id=%s AND id=%s',
+                                                         (tenant, lookup)).fetchone()
         result = dict(lookup_id=lookup, status=status, expires_at=expires.isoformat())
+        if reason is not None:  # UNAVAILABLE only (DB CHECK); a category, never registry data
+            result['reason'] = reason
         if envelope:
             citizen = self.vault.open(envelope, tenant, lookup, 'xyp-lookup')
             result['citizen'] = dict(family_name=citizen['family_name'], given_name=citizen['given_name'],
@@ -61,7 +63,8 @@ class XypLookups(StayService):
     def limit(conn, tenant, actor):
         """Serialized per actor: begin() holds the actor's staff_account row lock."""
         scope(conn, tenant)
-        recent = conn.execute('SELECT count(*) FROM prsystem.xyp_lookup WHERE tenant_id=%s AND actor_id=%s AND created_at>clock_timestamp()-%s',
+        recent = conn.execute('''SELECT count(*) FROM prsystem.xyp_lookup WHERE tenant_id=%s AND actor_id=%s
+            AND created_at>clock_timestamp()-%s AND reason IS DISTINCT FROM 'NOT_CONFIGURED' ''',
                               (tenant, actor, LOOKUP_WINDOW)).fetchone()[0]
         if recent >= LOOKUP_LIMIT:
             raise DomainError('XYP_LOOKUP_LIMIT')
@@ -73,14 +76,17 @@ class XypLookups(StayService):
             actor, number, token, command, replay = self.begin(conn, bearer, tenant, document_number, consent, key)
             if replay is not None:
                 return self.view(conn, tenant, replay['lookup_id'])
-            self.limit(conn, tenant, actor)
+            if self.gateway is not None:  # NOT_CONFIGURED lookups never reach ХУР
+                self.limit(conn, tenant, actor)
             consent_at = conn.execute('SELECT clock_timestamp()').fetchone()[0]
         status, reason, citizen = self.ask(number)  # never inside a database transaction
         with transaction(self.auth.dsn) as conn:
             actor, number, token, command, replay = self.begin(conn, bearer, tenant, document_number, consent, key)
             if replay is not None:  # a concurrent retry with the same key committed first
                 return self.view(conn, tenant, replay['lookup_id'])
-            self.limit(conn, tenant, actor)  # again: concurrent requests all passed the first count
+            scope(conn, tenant)  # the INSERT needs it even when limit() is skipped
+            if self.gateway is not None:  # again: concurrent requests all passed the first count
+                self.limit(conn, tenant, actor)
             lookup = secrets.token_hex(16)
             now = conn.execute('SELECT clock_timestamp()').fetchone()[0]
             envelope = Jsonb(self.vault.seal(citizen, tenant, lookup, 'xyp-lookup')) if citizen else None

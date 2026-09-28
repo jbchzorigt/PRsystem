@@ -91,6 +91,21 @@ class XypLookupTests(WalkInCase):
             stored = conn.execute('SELECT count(*) FROM prsystem.xyp_lookup WHERE tenant_id=%s', (self.tenant,)).fetchone()[0]
         self.assertEqual(stored, 20)
 
+    def test_unconfigured_lookups_report_reason_and_skip_the_limit(self):
+        with TestClient(create_app(self.app_dsn, self.settings, identity_vault=self.vault), client=(self.peer, 12345)) as client:
+            def unconfigured(key):
+                return client.post(f'/hotels/{self.tenant}/guest-identity/xyp-lookups', headers=self.headers(self.worker_token),
+                                   json=dict(document_number='АБ90010211', consent=True, idempotency_key=key))
+            first = self.assert_status(unconfigured('unconfigured-0'), 201)
+            self.assertEqual((first['status'], first['reason']), ('UNAVAILABLE', 'NOT_CONFIGURED'))
+            self.assertEqual(self.assert_status(unconfigured('unconfigured-0'), 201), first)
+            for index in range(1, 25):
+                self.assertEqual(self.assert_status(unconfigured(f'unconfigured-{index}'), 201)['reason'], 'NOT_CONFIGURED')
+        self.assertNotIn('reason', self.assert_status(self.lookup(), 201))
+        self.assertNotIn('reason', self.assert_status(self.lookup('АБ85020311', key='miss'), 201))
+        down = self.assert_status(self.lookup(MockXypGateway.OUTAGE, key='down'), 201)
+        self.assertEqual((down['status'], down['reason']), ('UNAVAILABLE', 'PROVIDER_ERROR'))
+
     def test_unconfigured_production_adapter_reports_unavailable(self):
         with TestClient(create_app(self.app_dsn, self.settings, identity_vault=self.vault), client=(self.peer, 12345)) as client:
             response = client.post(f'/hotels/{self.tenant}/guest-identity/xyp-lookups', headers=self.headers(self.worker_token),
