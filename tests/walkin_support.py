@@ -28,6 +28,8 @@ class WalkInCase(ReceptionCase):
                 'GRANT SELECT,INSERT ON prsystem.stay,prsystem.stay_guest_identity,prsystem.stay_guest_code,prsystem.room_cleaning_request TO {}',
                 'GRANT INSERT ON prsystem.identity_match_outbox,prsystem.cleaning_source,prsystem.cleaning_action TO {}',
                 'GRANT SELECT ON prsystem.room_reservation TO {}',
+                'GRANT SELECT,INSERT ON prsystem.xyp_lookup TO {}',
+                'GRANT UPDATE (stay_id) ON prsystem.xyp_lookup TO {}',
                 'GRANT UPDATE (cleaning_state,revision) ON prsystem.room TO {}',
                 'GRANT UPDATE (state) ON prsystem.room_cleaning_request,prsystem.reception_shift TO {}',
             ):conn.execute(sql.SQL(statement).format(sql.Identifier(cls.role)))

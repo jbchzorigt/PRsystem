@@ -50,6 +50,7 @@ from prsystem.stay_amendments import StayAmendments
 from prsystem.room_lifecycle import RoomLifecycle
 from prsystem.handover import HandoverService
 from prsystem.reception_booking import ReceptionBooking
+from prsystem.xyp_lookups import XypLookups
 from prsystem.checkin_funding import CheckinFunding
 from prsystem.booking_settlement import BookingSettlement
 from prsystem.routed_refunds import RoutedRefunds
@@ -528,6 +529,13 @@ class CashRefundRelease(InvitationChange):
         return self
 
 
+class XypLookupInput(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    document_number: str = Field(min_length=1,max_length=200)
+    consent: bool
+    idempotency_key: str = Field(min_length=1,max_length=128)
+
+
 class WalkInCheckIn(BaseModel):
     model_config = ConfigDict(extra='forbid',strict=True)
     room_id: str = Field(min_length=1,max_length=128)
@@ -893,13 +901,13 @@ class BookingBeneficiary(BaseModel):
     expected_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1,max_length=128)
 
-def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None, restaurant_gateways=None,sms_gateway=None,ebarimt_gateway=None,contact_notice_gateway=None) -> FastAPI:
+def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, token_key: bytes | None = None, platform_secret_resolver=None, phone_gateway=None, payment_gateways=None, runtime_mode='production', identity_vault=None, mock_stay_finance=False, bank_gateway=None, restaurant_gateways=None,sms_gateway=None,ebarimt_gateway=None,contact_notice_gateway=None,xyp_gateway=None) -> FastAPI:
     if runtime_mode not in {'production','development','test'}:
         raise ValueError('Unknown runtime mode')
     service = StaffAuth(dsn or os.environ["PRSYSTEM_APP_DSN"], settings or AuthSettings())
     if type(mock_stay_finance) is not bool:
         raise ValueError('mock_stay_finance must be boolean')
-    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, sms_gateway, ebarimt_gateway, contact_notice_gateway, *(payment_gateways or {}).values(), *(restaurant_gateways or {}).values()])
+    mocked = runtime_mode != 'production' or mock_stay_finance or any(getattr(port, 'is_mock', False) for port in [phone_gateway, bank_gateway, sms_gateway, ebarimt_gateway, contact_notice_gateway, xyp_gateway, *(payment_gateways or {}).values(), *(restaurant_gateways or {}).values()])
     if mocked:
         from prsystem.mock_providers import require_development_database
         require_development_database(service.dsn, runtime_mode)
@@ -921,6 +929,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     room_lifecycle = RoomLifecycle(service)
     readiness = ReadinessService(service,runtime_mode)
     stays = ReceptionBooking(service, identity_vault if identity_vault is not None else vault_from_environment(), mock_finance=mock_stay_finance, runtime_mode=runtime_mode)
+    xyp_lookups = XypLookups(service, stays.vault, xyp_gateway)
     guest_finance = GuestFinance(service, stays.vault, runtime_mode)
     checkout = CheckoutService(service, stays.vault, runtime_mode)
     guest_access = GuestAccess(service, stays.vault, runtime_mode)
@@ -996,6 +1005,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors.update({code:422 for code in ('INVALID_GUEST_IDENTITY','GUEST_UNDER_18','ACTUAL_TIME_OUT_OF_RANGE','INVALID_STAY_DURATION','STAY_ALREADY_ENDED','TIMEZONE_REQUIRED')})
         stay_errors['IDENTITY_VAULT_UNAVAILABLE'] = 503
         stay_errors['STAY_FINANCE_UNAVAILABLE'] = 503
+        stay_errors.update({'XYP_CONSENT_REQUIRED':422,'XYP_LOOKUP_LIMIT':429})
         stay_errors.update({code:409 for code in ('DEPOSIT_REQUIREMENT_NOT_MET','FINANCIAL_SOURCE_NOT_READY','FINANCIAL_AGGREGATE_FROZEN','DEPOSIT_BALANCE_CONFLICT','INSUFFICIENT_DEPOSIT','CHARGE_OVERPAYMENT','INVALID_FINANCIAL_SOURCE','ORIGINAL_CASH_DRAWER_REQUIRED','REFUND_TERMINAL','CASH_SOURCE_CONFLICT','INSUFFICIENT_CASH')})
         stay_errors.update({code:409 for code in ('CORRECTION_SOURCE_IN_USE','CORRECTION_HAS_NO_CHANGE','CORRECTION_PENDING','CORRECTION_TERMINAL','CORRECTION_SOURCE_CHANGED')})
         stay_errors.update({'INVALID_TRANSACTION_TIME':422,'PAYMENT_REFERENCE_USED':409,'GUEST_PROVIDER_UNAVAILABLE':503})
@@ -1636,6 +1646,10 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     @app.post('/hotels/{tenant_id}/stays/{stay_id}/cash-refunds/{refund_id}/release')
     def release_guest_cash_refund(tenant_id: str,stay_id: str,refund_id: str,body: CashRefundRelease,secret: Annotated[str,Depends(token)]):
         return guest_finance.finish_refund(secret,tenant_id,stay_id,refund_id,body.expected_revision,body.idempotency_key,body.reason,release=True)
+
+    @app.post('/hotels/{tenant_id}/guest-identity/xyp-lookups',status_code=201)
+    def xyp_lookup(tenant_id: str,body: XypLookupInput,secret: Annotated[str,Depends(token)]):
+        return xyp_lookups.lookup(secret,tenant_id,body.document_number,body.consent,body.idempotency_key)
 
     @app.post('/hotels/{tenant_id}/stays/check-in',status_code=201)
     def walk_in_check_in(tenant_id: str,body: WalkInCheckIn,secret: Annotated[str,Depends(token)]):
