@@ -1,5 +1,6 @@
 """Local, durable provider simulation. No sockets, SMS or money movement."""
 
+import errno
 import os
 import secrets
 import sqlite3
@@ -20,7 +21,10 @@ class MockStore:
             raise ValueError('Mock providers require development or test mode')
         self.path, self.clock = Path(path), clock
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        nofollow = getattr(os, 'O_NOFOLLOW', 0)  # Windows has no O_NOFOLLOW: refuse a symlink explicitly
+        if not nofollow and self.path.is_symlink():
+            raise OSError(errno.ELOOP, 'Mock store path must not be a symlink', str(self.path))
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | nofollow, 0o600)
         os.close(fd)
         with self.connect() as conn:
             conn.executescript('''

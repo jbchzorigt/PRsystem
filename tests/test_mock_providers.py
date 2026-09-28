@@ -1,11 +1,21 @@
+import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from prsystem.common import DomainError
 from prsystem.mock_providers import MockStore, MockPhoneGateway, MockPaymentGateway, MockMailTransport
+
+
+class WithoutNofollow:
+    """os as on Windows: there is no O_NOFOLLOW."""
+    def __getattr__(self, name):
+        if name == 'O_NOFOLLOW':
+            raise AttributeError(name)
+        return getattr(os, name)
 
 
 class MockProviderTests(unittest.TestCase):
@@ -18,6 +28,19 @@ class MockProviderTests(unittest.TestCase):
     def test_production_mode_is_rejected(self):
         with self.assertRaises(ValueError): MockStore(self.path, environment='production')
         with self.assertRaises(ValueError): MockMailTransport(self.store, 'https://example.com')
+
+    def test_store_opens_where_the_os_has_no_o_nofollow(self):
+        # The UI review launcher failed on Windows with AttributeError here.
+        with patch('prsystem.mock_providers.os', WithoutNofollow()):
+            store = MockStore(Path(self.tmp.name) / 'windows.sqlite3', environment='test')
+        self.assertTrue(store.path.is_file())
+
+    def test_symlinked_store_path_is_refused_with_or_without_o_nofollow(self):
+        target = Path(self.tmp.name) / 'elsewhere.sqlite3'; target.touch()
+        link = Path(self.tmp.name) / 'link.sqlite3'; link.symlink_to(target)
+        with self.assertRaises(OSError): MockStore(link, environment='test')
+        with patch('prsystem.mock_providers.os', WithoutNofollow()), self.assertRaises(OSError):
+            MockStore(link, environment='test')
 
     def test_pending_invoice_survives_restart_and_never_auto_pays(self):
         gateway = MockPaymentGateway(self.store, 'QPAY')
