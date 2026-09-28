@@ -157,7 +157,7 @@ B-04, B-06 дээр одоогийн тестүүд шаардлагатай з�
 
 | # | Commit | Засвар | Тест |
 | --- | --- | --- | --- |
-| B-07 | `90271e8` | `080`: гурван guard-ийг `clock_timestamp() < expires_at + 48h` болгосон (`subscription_gate` болон `070`-тай ижил хил) | `test_manager_adjusts_stock_during_subscription_grace`, `test_manager_resolves_and_applies_variance_during_subscription_grace`, `test_database_variance_authority_ends_exactly_at_the_grace_lock`, `test_cleaner_moves_partial_stock_during_subscription_grace` |
+| B-07 | `90271e8` | `080`: гурван guard-ийг `clock_timestamp() < expires_at + 48h` болгосон (`subscription_gate` болон `070`-тай ижил хил) | `test_manager_adjusts_stock_during_subscription_grace`, `test_manager_resolves_and_applies_variance_during_subscription_grace`, `test_database_variance_authority_ends_exactly_at_the_grace_lock`, `test_cleaner_moves_partial_stock_during_subscription_grace`; `test_expired_hotel_never_admits_short_opening`-ийн assert-ийг LIFE-DEC-003-ын дагуу засав (өмнө `expires_at`-д хаагдахыг шалгадаг байсан; одоо grace-д permit хүчинтэй, `expires_at + 48h`-д хаагдана) |
 
 Анхны олдвор:
 

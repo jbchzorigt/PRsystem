@@ -165,9 +165,11 @@ class MinibarShortageTests(MinibarConfigurationCase):
 
     def test_expired_hotel_never_admits_short_opening(self):
         self.permitted()
+        # LIFE-DEC-003 / B-07: the permit stays usable in the 48-hour grace and dies at the lock.
         with psycopg.connect(self.owner_dsn) as conn:
-            conn.execute("UPDATE prsystem.hotel_access SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=%s",(self.tenant,))
-            self.assertFalse(conn.execute('SELECT prsystem.minibar_shortage_permit_ready(%s,id) FROM prsystem.minibar_shortage_permit WHERE tenant_id=%s',(self.tenant,self.tenant)).fetchone()[0])
+            for offset,ready in (('1 second',True),('48 hours',False)):
+                conn.execute('UPDATE prsystem.hotel_access SET expires_at=clock_timestamp()-%s::interval WHERE tenant_id=%s',(offset,self.tenant))
+                self.assertEqual(conn.execute('SELECT prsystem.minibar_shortage_permit_ready(%s,id) FROM prsystem.minibar_shortage_permit WHERE tenant_id=%s',(self.tenant,self.tenant)).fetchone()[0],ready,offset)
 
     def test_room_inventory_roundtrip_invalidates_permit_even_at_same_quantity(self):
         self.permitted();self.assert_status(self.api(f'minibar/products/{self.product}/adjustments',dict(kind='COUNT_PLUS',quantity=1,room_id=self.room,expected_stay_id=None,expected_revision=2,expected_physical_quantity=1,reason='Нэмэлт тоо')),201)
