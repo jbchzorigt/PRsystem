@@ -540,15 +540,17 @@
       {focus:true,closed,success:async(result,f)=>{f.remove();done(result);}});
   }
   function xypLookup(start,booking,room,value=''){xypForm(start,'ХУР-аас зочны мэдээлэл татах',value,result=>xypResult(start,booking,room,result));}
+  function xypReason(r){return r.status==='NOT_FOUND'?null:xypReasons[r.reason]?r.reason:'PROVIDER_ERROR';}  // an older server sends no reason
+  function xypMessage(r){const reason=xypReason(r);return reason?xypReasons[reason]:'ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.';}
   function xypResult(start,booking,room,result){
     const box=node('div');start.append(box);const again=value=>guard(()=>{box.remove();xypLookup(start,booking,room,value);});
+    const restart=next=>{box.remove();xypResult(start,booking,room,next);};
     if(result.status==='FOUND'){const notice=node('p',verified(result.citizen),'notice');notice.tabIndex=-1;box.append(notice);actions(box).append(btn('Өөр РД оруулах',()=>again('')));
-      guestForm(box,booking,room,'MN_REG_NO',result,{notice,restart:next=>{box.remove();xypResult(start,booking,room,next);}});return;}
-    const reason=result.status==='NOT_FOUND'?null:xypReasons[result.reason]?result.reason:'PROVIDER_ERROR';  // an older server sends no reason
-    const notice=node('p',reason?xypReasons[reason]:'ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.','notice');notice.tabIndex=-1;box.append(notice);
+      guestForm(box,booking,room,'MN_REG_NO',result,{notice,restart});return;}
+    const reason=xypReason(result),notice=node('p',xypMessage(result),'notice');notice.tabIndex=-1;box.append(notice);
     const a=actions(box);if(reason==='TIMEOUT'||reason==='PROVIDER_ERROR')a.append(btn('Дахин оролдох',()=>again(result.document_number)));
-    if(reason==='NOT_CONFIGURED'){a.append(btn('Өөр РД оруулах',()=>again('')));guestForm(box,booking,room,'MN_REG_NO',result);return;}  // the form takes focus
-    const manual=btn('Гараар бүртгэх',()=>{manual.remove();guestForm(box,booking,room,'MN_REG_NO',result);});a.append(manual,btn('Өөр РД оруулах',()=>again('')));
+    if(reason==='NOT_CONFIGURED'){a.append(btn('Өөр РД оруулах',()=>again('')));guestForm(box,booking,room,'MN_REG_NO',result,{notice,restart});return;}  // the form takes focus
+    const manual=btn('Гараар бүртгэх',()=>{manual.remove();guestForm(box,booking,room,'MN_REG_NO',result,{notice,restart});});a.append(manual,btn('Өөр РД оруулах',()=>again('')));
     notice.focus();  // the lookup form and its focused button are gone
   }
   function guestForm(start,booking,room,type,lookup,xyp={}){
@@ -572,14 +574,15 @@
       return api(booking?path(`${booking.category_id?'booking-holds':'bookings'}/${enc(booking.booking_id)}/check-in`):path('stays/check-in'),body);
     },{focus:true,success:async(result,f,status)=>{showResult(status,result);f.querySelector('button[type=submit]').hidden=true;await reloadOverview();status.append(btn('Байрлалтыг нээх',()=>openStay({stay_id:result.stay_id,room_id:result.room_id},start)));},
       // Spec §5.2: only an expired lookup is pulled again; USED means a stay already exists.
-      failure:(e,f,status)=>{if(found&&e.code==='XYP_LOOKUP_EXPIRED')status.replaceChildren(node('p',e.message),btn('ХУР-аас дахин татах',()=>repull(f,status)));}});
+      failure:(e,f,status)=>{if(current&&e.code==='XYP_LOOKUP_EXPIRED')status.replaceChildren(node('p',e.message),btn('ХУР-аас дахин татах',()=>repull(f,status)));}});
     let pulling=null;  // holder of the open re-pull form: one consent form per guest at a time
     function repull(f,status){const open=pulling?.querySelector('form');if(open){open.querySelector('h2').focus();return;}
       pulling=node('div');f.before(pulling);
       // An EXPIRED answer committed nothing, so the form may keep its idempotency key with the new lookup.
       xypForm(pulling,'ХУР-аас дахин татах',current.document_number,next=>{pulling.remove();pulling=null;
-        if(next.status!=='FOUND'){dirtyForms.delete(f);dirty=hasDirtyForms();xyp.restart(next);return;}
-        status.replaceChildren();current=next;xyp.notice.textContent=verified(next.citizen);xyp.notice.focus();},
+        // Same kind of answer: keep what Reception typed. FOUND after a failure (or the reverse) changes the form, so restart.
+        if((next.status==='FOUND')!==found){dirtyForms.delete(f);dirty=hasDirtyForms();xyp.restart(next);return;}
+        status.replaceChildren();current=next;xyp.notice.textContent=found?verified(next.citizen):xypMessage(next);xyp.notice.focus();},
         ()=>{pulling.remove();pulling=null;status.querySelector('button')?.focus();});}  // closed: the message and the button stay
   }
   async function openStay(s,parent){if(!s)return;const seq=generation;const panel=node('div');parent.append(panel);panel.append(node('p','Байрлалт ачаалж байна…'));

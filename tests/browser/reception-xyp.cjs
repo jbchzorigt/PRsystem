@@ -76,6 +76,17 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   await page.getByText('ХУР-тай холбогдож чадсангүй.',{exact:true}).waitFor();assert.equal(await focused(),'ХУР-тай холбогдож чадсангүй.');
   assert.equal(await page.getByLabel('Бэлнээр авсан барьцаа (₮)',{exact:false}).count(),0);assert.equal(await count('Дахин оролдох'),1);
 
+  // Manual path (no adapter today): an expired lookup is pulled again and keeps what Reception typed.
+  await open();await pull('ББ90010211');await page.getByLabel('Овог',{exact:true}).waitFor();
+  await page.getByLabel('Овог',{exact:true}).fill('Бат');await page.getByLabel('Нэр',{exact:true}).fill('Болд');await page.getByLabel('Төрсөн огноо',{exact:true}).fill('1990-01-02');await deposit();
+  const stale=`lookup-${lookups}`;reject='XYP_LOOKUP_EXPIRED';await submit();await page.getByRole('button',{name:'ХУР-аас дахин татах',exact:true}).click();
+  assert.equal(await page.getByLabel('Регистрийн дугаар',{exact:true}).inputValue(),'ББ90010211');
+  await consent().check();await page.getByRole('button',{name:'ХУР-аас татах',exact:true}).click();await page.getByLabel('Регистрийн дугаар',{exact:true}).waitFor({state:'detached'});
+  assert.equal(await focused(),'ХУР холбогдоогүй байна. Гараар бүртгэнэ үү.');
+  assert.equal(await page.getByLabel('Овог',{exact:true}).inputValue(),'Бат');assert.equal(await page.getByLabel('Бэлнээр авсан барьцаа (₮)',{exact:false}).inputValue(),'60000');
+  await submit();await page.getByRole('button',{name:'Байрлалтыг нээх',exact:true}).waitFor();assert.notEqual(stale,`lookup-${lookups}`);
+  assert.deepEqual(checkins().at(-1).body.guest,{identity_type:'MN_REG_NO',xyp_lookup_id:`lookup-${lookups}`,document_number:'ББ90010211',family_name:'Бат',given_name:'Болд',date_of_birth:'1990-01-02',nationality:'MN'});
+
   // USED: the lookup already produced a stay; never offer a re-pull that could register the guest twice.
   await open();await pull('АБ90010211');await page.getByText(verified,{exact:true}).waitFor();await deposit();
   reject='XYP_LOOKUP_USED';await submit();await page.getByText('Энэ хайлтаар аль хэдийн бүртгэсэн. Идэвхтэй байрлалтуудаа шалгана уу.',{exact:true}).waitFor();
