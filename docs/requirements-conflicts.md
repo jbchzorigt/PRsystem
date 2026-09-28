@@ -153,7 +153,13 @@ B-04, B-06 дээр одоогийн тестүүд шаардлагатай з�
 | B-05 | `6064652` | Restaurant захиалга `expires_at + 48h` | `test_guest_orders_during_grace_and_locks_at_grace_end` |
 | B-06 | `b0febe5` | `guest_view`: guest/public/booker хариунаас гэрээний нөхцөл, commission split хасна | `test_guest_and_public_booking_responses_hide_contract_terms` |
 
-**Нээлттэй (Batch 1-ийн review-д олдсон):**
+**Batch 1-ийн review-д олдсон (2026-09-28 хаагдсан):**
+
+| # | Commit | Засвар | Тест |
+| --- | --- | --- | --- |
+| B-07 | `90271e8` | `080`: гурван guard-ийг `clock_timestamp() < expires_at + 48h` болгосон (`subscription_gate` болон `070`-тай ижил хил) | `test_manager_adjusts_stock_during_subscription_grace`, `test_manager_resolves_and_applies_variance_during_subscription_grace`, `test_database_variance_authority_ends_exactly_at_the_grace_lock`, `test_cleaner_moves_partial_stock_during_subscription_grace` |
+
+Анхны олдвор:
 
 | # | Шаардлага | Код | Нотолгоо |
 | --- | --- | --- | --- |
