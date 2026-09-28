@@ -46,7 +46,7 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   const start=page.getByRole('button',{name:'Шууд ирсэн зочин бүртгэх',exact:true});await start.click();
   assert.equal(await page.evaluate(()=>document.activeElement.textContent),'Бүртгэлийн төрөл');
   await page.getByRole('button',{name:'Маягтыг хаах',exact:true}).click();assert.equal(await start.evaluate(e=>e===document.activeElement),true);
-  await start.click();const select=page.getByLabel('Баримтын төрөл');await select.focus();await page.keyboard.press('Alt+ArrowDown');await page.keyboard.press('Escape');assert.equal(await select.evaluate(e=>e===document.activeElement),true);
+  await start.click();const select=page.getByLabel('Баримтын төрөл');await select.focus();await page.keyboard.press('Alt+ArrowDown');await page.keyboard.press('Escape');assert.equal(await select.evaluate(e=>e===document.activeElement),true);await select.selectOption('FOREIGN_PASSPORT');
   await page.getByRole('button',{name:'Зочны мэдээлэл оруулах',exact:true}).click();await ready();
   assert.equal(await page.evaluate(()=>document.activeElement.textContent),'Шууд ирсэн зочин бүртгэх');
   assert.equal(await page.getByRole('group',{name:'Зочны мэдээлэл',exact:true}).count(),1);
