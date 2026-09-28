@@ -540,9 +540,10 @@
   function xypResult(start,booking,room,result){
     const box=node('div');start.append(box);const again=value=>guard(()=>{box.remove();xypLookup(start,booking,room,value);});
     if(result.status==='FOUND'){const c=result.citizen;box.append(node('p',`ХУР-аар баталгаажсан: ${c.family_name} ${c.given_name} · ${c.date_of_birth} · MN`,'notice'));actions(box).append(btn('Өөр РД оруулах',()=>again('')));guestForm(box,booking,room,'MN_REG_NO',result);return;}
-    box.append(node('p',result.status==='NOT_FOUND'?'ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.':'ХУР-тай холбогдож чадсангүй.','notice'));
+    const notice=node('p',result.status==='NOT_FOUND'?'ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.':'ХУР-тай холбогдож чадсангүй.','notice');notice.tabIndex=-1;box.append(notice);
     const a=actions(box);if(result.status==='UNAVAILABLE')a.append(btn('Дахин оролдох',()=>again(result.document_number)));
     const manual=btn('Гараар бүртгэх',()=>{manual.remove();guestForm(box,booking,room,'MN_REG_NO',result);});a.append(manual,btn('Өөр РД оруулах',()=>again('')));
+    notice.focus();  // the lookup form and its focused button are gone
   }
   function guestForm(start,booking,room,type,lookup){
     const found=lookup?.status==='FOUND',fields=found?[]:[field('family_name','Овог'),field('given_name','Нэр'),field('date_of_birth','Төрсөн огноо','date'),field('nationality','Иргэншил','text',lookup?{value:'MN'}:{})];

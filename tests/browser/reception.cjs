@@ -36,11 +36,11 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   await page.getByRole('button',{name:'Шууд ирсэн зочин бүртгэх',exact:true}).click();await page.getByRole('button',{name:'Зочны мэдээлэл оруулах',exact:true}).click();
   // RC-DEC-046: ХУР fills Mongolian РД identities; manual entry only after a failed lookup.
   const pull=async number=>{await page.getByLabel('Регистрийн дугаар',{exact:true}).fill(number);await page.getByLabel('Зочин ХУР-аас мэдээлэл авахыг зөвшөөрсөн',{exact:false}).check();await page.getByRole('button',{name:'ХУР-аас татах',exact:true}).click();};
-  await pull('АБ85020311');await page.getByText('ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.',{exact:true}).waitFor();await page.getByRole('button',{name:'Гараар бүртгэх',exact:true}).click();
+  await pull('АБ85020311');await page.getByText('ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>document.activeElement.textContent),'ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.');await page.getByRole('button',{name:'Гараар бүртгэх',exact:true}).click();
   assert.equal(await page.getByLabel('Баримтын дугаар',{exact:true}).count(),0);assert.equal(await page.getByLabel('Иргэншил',{exact:true}).inputValue(),'MN');
   await page.getByLabel('Овог',{exact:true}).fill('Бат');await page.getByRole('link',{name:'Өрөөнүүд',exact:true}).click();await page.locator('#discard').waitFor({state:'visible'});assert.equal(await page.evaluate(()=>document.activeElement.id),'keep');await page.keyboard.press('Escape');assert.equal(await page.getByLabel('Овог',{exact:true}).inputValue(),'Бат');
   await page.getByRole('button',{name:'Өөр РД оруулах',exact:true}).click();await page.locator('#discard').waitFor({state:'visible'});await page.locator('#leave').click();
-  await pull('АБ90010111');await page.getByText('ХУР-тай холбогдож чадсангүй.',{exact:true}).waitFor();await page.getByRole('button',{name:'Дахин оролдох',exact:true}).click();
+  await pull('АБ90010111');await page.getByText('ХУР-тай холбогдож чадсангүй.',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>document.activeElement.textContent),'ХУР-тай холбогдож чадсангүй.');await page.getByRole('button',{name:'Дахин оролдох',exact:true}).click();
   assert.equal(await page.getByLabel('Регистрийн дугаар',{exact:true}).inputValue(),'АБ90010111');await pull('АБ90010111');
   await page.getByText('ХУР-аар баталгаажсан: Бат Болд · 1990-01-01 · MN',{exact:true}).waitFor();assert.equal(await page.getByLabel('Овог',{exact:true}).count(),0);
   assert.equal(new Set(lookups.map(l=>l.idempotency_key)).size,3);

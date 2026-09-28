@@ -3,6 +3,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from tempfile import TemporaryDirectory
 from threading import Barrier
+from time import sleep
 
 from postgres_support import ADMIN_DSN
 from walkin_support import WalkInCase
@@ -71,6 +72,24 @@ class XypLookupTests(WalkInCase):
         over = self.lookup(key='over')
         self.assertEqual((over.status_code, over.json()['code']), (429, 'XYP_LOOKUP_LIMIT'))
         self.assertEqual(self.xyp.calls, 20)
+
+    def test_limit_holds_for_concurrent_lookups(self):
+        for index in range(19):
+            self.assert_status(self.lookup(key=f'seq-{index}'), 201)
+        citizen = self.xyp.citizen
+        def slow(number):
+            sleep(0.5); return citizen(number)
+        self.xyp.citizen = slow  # every request passes the first count before any row is stored
+        barrier = Barrier(6)
+        def attempt(index):
+            barrier.wait(); return self.lookup(key=f'burst-{index}')
+        with ThreadPoolExecutor(6) as pool:
+            responses = list(pool.map(attempt, range(6)))
+        self.assertEqual(sorted(r.status_code for r in responses), [201] + [429] * 5)
+        self.assertEqual({r.json()['code'] for r in responses if r.status_code == 429}, {'XYP_LOOKUP_LIMIT'})
+        with psycopg.connect(self.owner_dsn) as conn:
+            stored = conn.execute('SELECT count(*) FROM prsystem.xyp_lookup WHERE tenant_id=%s', (self.tenant,)).fetchone()[0]
+        self.assertEqual(stored, 20)
 
     def test_unconfigured_production_adapter_reports_unavailable(self):
         with TestClient(create_app(self.app_dsn, self.settings, identity_vault=self.vault), client=(self.peer, 12345)) as client:

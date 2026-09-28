@@ -57,6 +57,15 @@ class XypLookups(StayService):
         command = dict(action='XYP_LOOKUP', fingerprint=self.vault.fingerprint('xyp-lookup-command', [tenant, token]))
         return actor, number, token, command, self._receipt(conn, tenant, key, actor, command)
 
+    @staticmethod
+    def limit(conn, tenant, actor):
+        """Serialized per actor: begin() holds the actor's staff_account row lock."""
+        scope(conn, tenant)
+        recent = conn.execute('SELECT count(*) FROM prsystem.xyp_lookup WHERE tenant_id=%s AND actor_id=%s AND created_at>clock_timestamp()-%s',
+                              (tenant, actor, LOOKUP_WINDOW)).fetchone()[0]
+        if recent >= LOOKUP_LIMIT:
+            raise DomainError('XYP_LOOKUP_LIMIT')
+
     def lookup(self, bearer, tenant, document_number, consent, key):
         if self.vault is None:
             raise DomainError('IDENTITY_VAULT_UNAVAILABLE')
@@ -64,18 +73,14 @@ class XypLookups(StayService):
             actor, number, token, command, replay = self.begin(conn, bearer, tenant, document_number, consent, key)
             if replay is not None:
                 return self.view(conn, tenant, replay['lookup_id'])
-            scope(conn, tenant)
-            recent = conn.execute('SELECT count(*) FROM prsystem.xyp_lookup WHERE tenant_id=%s AND actor_id=%s AND created_at>clock_timestamp()-%s',
-                                  (tenant, actor, LOOKUP_WINDOW)).fetchone()[0]
-            if recent >= LOOKUP_LIMIT:
-                raise DomainError('XYP_LOOKUP_LIMIT')
+            self.limit(conn, tenant, actor)
             consent_at = conn.execute('SELECT clock_timestamp()').fetchone()[0]
         status, reason, citizen = self.ask(number)  # never inside a database transaction
         with transaction(self.auth.dsn) as conn:
             actor, number, token, command, replay = self.begin(conn, bearer, tenant, document_number, consent, key)
             if replay is not None:  # a concurrent retry with the same key committed first
                 return self.view(conn, tenant, replay['lookup_id'])
-            scope(conn, tenant)
+            self.limit(conn, tenant, actor)  # again: concurrent requests all passed the first count
             lookup = secrets.token_hex(16)
             now = conn.execute('SELECT clock_timestamp()').fetchone()[0]
             envelope = Jsonb(self.vault.seal(citizen, tenant, lookup, 'xyp-lookup')) if citizen else None
