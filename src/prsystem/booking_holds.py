@@ -24,6 +24,20 @@ def snapshot(value):
     return json.loads(json.dumps(asdict(value), default=lambda obj: obj.isoformat()))
 
 
+# REQ-09-11.00: platform contract terms and the commission split stay server-side.
+CONTRACT_TERMS = frozenset({'contract_id', 'contract_version', 'commission_rate_bps', 'rate_bps',
+                            'commission_mnt', 'hotel_payable_mnt', 'confirmation'})
+
+
+def guest_view(value):
+    """Guest/public projection: drop contract terms at any depth."""
+    if isinstance(value, dict):
+        return {k: guest_view(v) for k, v in value.items() if k not in CONTRACT_TERMS}
+    if isinstance(value, list):
+        return [guest_view(v) for v in value]
+    return value
+
+
 class BookingHolds(GuestPayments):
     def mock(self):
         if self.runtime_mode == 'production':
@@ -169,7 +183,7 @@ class BookingHolds(GuestPayments):
     def read(self,tenant,hold,secret):
         with transaction(self.auth.dsn) as conn:
             self.guest(conn,tenant,hold,secret)
-            return self.statement(conn,tenant,hold)
+            return guest_view(self.statement(conn,tenant,hold))
 
     @staticmethod
     def replay(conn,tenant,hold,key,command):
@@ -268,7 +282,7 @@ class BookingHolds(GuestPayments):
                 self.event_row(conn,tenant,hold,'HOLD_EXPIRED',{})
             from prsystem.room_lifecycle import RoomLifecycle
             RoomLifecycle.sweep(conn,tenant)  # A released hold may finish category retirement.
-            return self.statement(conn,tenant,hold)
+            return guest_view(self.statement(conn,tenant,hold))
 
     def expire_due(self,bearer,tenant,limit=25):
         self.mock()
@@ -308,11 +322,11 @@ class BookingHolds(GuestPayments):
             row=self.guest(conn,tenant,hold,secret)
             command=dict(action='CANCEL_BOOKING_GUEST',**({'expected_refund':expected_refund} if expected_refund is not None else {}))
             replay=self.replay(conn,tenant,hold,key,command)
-            if replay is not None:return replay
+            if replay is not None:return guest_view(replay)
             result=self.cancel_in_transaction(conn,tenant,hold,row,'CANCELLED_GUEST')
             if expected_refund is not None and expected_refund!=result['refund_due']:raise DomainError('REVISION_CONFLICT')
             conn.execute('INSERT INTO prsystem.booking_hold_command VALUES(%s,%s,%s,%s,%s)',(tenant,hold,key,Jsonb(command),Jsonb(result)))
-            return result
+            return guest_view(result)
 
     def cancel_in_transaction(self,conn,tenant,hold,row,outcome):
         from prsystem.booking_policy import OnlineQuote, cancel_confirmed

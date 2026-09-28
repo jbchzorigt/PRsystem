@@ -17,6 +17,16 @@ if ADMIN_DSN:
     from prsystem.mock_providers import MockStore, MockPaymentGateway
 
 
+# REQ-09-11.00: platform contract terms and the commission split stay server-side.
+CONTRACT_TERMS={'contract_id','contract_version','commission_rate_bps','rate_bps','commission_mnt','hotel_payable_mnt','confirmation'}
+
+
+def exposed_terms(value):
+    if isinstance(value,dict):return {k for k in value if k in CONTRACT_TERMS}.union(*map(exposed_terms,value.values()))
+    if isinstance(value,list):return set().union(*map(exposed_terms,value))
+    return set()
+
+
 @unittest.skipUnless(ADMIN_DSN,'PRSYSTEM_TEST_ADMIN_DSN is not set')
 class BookingHoldTests(GuestFinanceCase):
     @classmethod
@@ -189,9 +199,10 @@ class BookingHoldTests(GuestFinanceCase):
 
     def test_confirmation_snapshots_current_contract_without_repricing_hold(self):
         hold=self.begin();self.assert_status(self.contract(rate=1000,revision=1,key='update'),200);self.pay()
-        result=self.assert_status(self.call(hold,'/reconcile'),200)
-        self.assertEqual(result['confirmation']['rate_bps'],1000)
-        self.assertEqual((result['quote']['amount_mnt'],result['quote']['commission_rate_bps']),(160000,375))
+        self.assert_status(self.call(hold,'/reconcile'),200)
+        staff=self.staff_booking(hold)  # REQ-09-11.00: contract terms are staff-side only.
+        self.assertEqual(staff['confirmation']['rate_bps'],1000)
+        self.assertEqual((staff['quote']['amount_mnt'],staff['quote']['commission_rate_bps']),(160000,375))
 
     def test_mismatched_provider_evidence_does_not_release_hold(self):
         hold=self.begin();self.age(hold)
@@ -334,10 +345,15 @@ class BookingHoldTests(GuestFinanceCase):
     def cancel(self,hold,key='cancel'):
         return self.call(hold,'/cancel',dict(idempotency_key=key))
 
+    def staff_booking(self,hold):
+        inbox=self.assert_status(self.client.get(f'/hotels/{self.tenant}/booking-holds',headers=self.headers(self.manager_token)),200)
+        return next(b for b in inbox if b['booking_id']==hold['booking_id'])
+
     def test_guest_free_cancellation_releases_capacity_and_preserves_capture(self):
         hold=self.begin();self.pay();self.call(hold,'/reconcile')
         result=self.assert_status(self.cancel(hold),200)
-        self.assertEqual((result['refund_due'],result['retained_mnt'],result['commission_mnt']),(160000,0,0))
+        self.assertEqual((result['refund_due'],result['retained_mnt']),(160000,0))
+        self.assertEqual(self.staff_booking(hold)['cancellation']['commission_mnt'],0)
         self.assertEqual(result,self.assert_status(self.cancel(hold),200))
         self.assertEqual(self.call(hold).json()['booking_state'],'CANCELLED_GUEST')
         self.assertEqual(self.call(hold,'/reconcile').json()['refund_required_mnt'],160000)
@@ -351,8 +367,9 @@ class BookingHoldTests(GuestFinanceCase):
         self.pay();self.call(hold,'/reconcile')
         self.assert_status(self.contract(rate=2000,revision=2,key='later-contract'),200)
         result=self.assert_status(self.cancel(hold),200)
-        self.assertEqual((result['retained_mnt'],result['refund_due'],result['commission_mnt'],result['hotel_payable_mnt']),(80000,80000,8000,72000))
-        self.assertEqual(self.call(hold).json()['cancellation']['commission_mnt'],8000)
+        self.assertEqual((result['retained_mnt'],result['refund_due']),(80000,80000))
+        staff=self.staff_booking(hold)['cancellation']
+        self.assertEqual((staff['commission_mnt'],staff['hotel_payable_mnt']),(8000,72000))
 
     def test_cancellation_and_checkin_serialize_to_one_terminal_outcome(self):
         hold=self.arriving_hold();barrier=Barrier(2)
@@ -829,3 +846,20 @@ class BookingHoldTests(GuestFinanceCase):
         self.age(hold)
         self.assertEqual(self.assert_status(self.call(hold,'/reconcile'),200)['booking_state'],'EXPIRED')
         self.assertEqual(self.category_status(),'INACTIVE')
+
+    def test_guest_and_public_booking_responses_hide_contract_terms(self):
+        # REQ-09-11.00: guest/public/booker APIs never carry contract rate, id, version or commission split.
+        self.booker_setup()
+        self.assertEqual(exposed_terms(self.assert_status(self.public_search(),200)),set())
+        hold=self.assert_status(self.customer_hold(),201)
+        self.assertEqual(exposed_terms(hold),set())
+        self.attempt=self.assert_status(self.call(hold,'/reconcile'),200)['attempts'][0]['attempt_id'];self.pay()
+        confirmed=self.assert_status(self.call(hold,'/reconcile'),200)
+        self.assertEqual(confirmed['booking_state'],'CONFIRMED');self.assertEqual(exposed_terms(confirmed),set())
+        self.assertEqual(exposed_terms(self.assert_status(self.call(hold),200)),set())
+        self.assertEqual(exposed_terms(self.assert_status(self.client.get('/booker/bookings',headers=self.headers(self.booker_token)),200)),set())
+        cancelled=self.assert_status(self.cancel(hold,'hide-terms'),200)
+        self.assertEqual(exposed_terms(cancelled),set())
+        self.assertEqual(self.assert_status(self.cancel(hold,'hide-terms'),200),cancelled)
+        self.assertEqual(exposed_terms(self.assert_status(self.call(hold),200)),set())
+        self.assertEqual(self.staff_booking(hold)['quote']['commission_rate_bps'],375)

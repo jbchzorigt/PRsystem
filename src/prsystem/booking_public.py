@@ -6,7 +6,7 @@ from prsystem.common import DomainError,identifier
 from prsystem.postgres.connection import transaction
 from prsystem.booking_inventory import scope,claims,room_intervals
 from prsystem.booking_policy import InventoryInterval,unassigned_capacity,quote_nights
-from prsystem.booking_holds import snapshot
+from prsystem.booking_holds import snapshot,guest_view
 
 
 class BookingPublic:
@@ -103,7 +103,7 @@ class BookingPublic:
         for cat,name,price,rev,default,hrev,checkout,buffer,photos in rows:
             quote=quote_nights(tenant_id=tenant,category_id=cat,now=now,arrival=arrival,nights=nights,category_price=price,category_version=rev,hotel_price=default,hotel_version=hrev,checkout_time=checkout,cleaning_buffer_minutes=buffer,contract=contract)
             capacity=unassigned_capacity(InventoryInterval(arrival,quote.planned_checkout_at,buffer),eligible_room_intervals=room_intervals(conn,tenant,cat),category_reservations=[InventoryInterval(*r[1:]) for r in claims(conn,tenant,cat)])
-            result.append(dict(category_id=cat,name=name,photos=photos,quote=snapshot(quote),available=capacity if hotel['accepting'] else 0))
+            result.append(dict(category_id=cat,name=name,photos=photos,quote=guest_view(snapshot(quote)),available=capacity if hotel['accepting'] else 0))
         return dict(hotel,categories=result)
     def search(self,arrival,nights,query,after,limit,latitude=None,longitude=None):
         self.booking.mock();arrival=self.booking.instant(arrival)
@@ -132,13 +132,13 @@ class BookingPublic:
             if not hotel['accepting']:raise DomainError('BOOKING_CAPACITY_UNAVAILABLE')
             if not conn.execute('SELECT 1 FROM prsystem.booking_category_listing WHERE tenant_id=%s AND category_id=%s AND published',(tenant,category)).fetchone():raise DomainError('BOOKING_CAPACITY_UNAVAILABLE')
             result=self.booking.create_locked(conn,tenant,category,arrival,nights,provider,booker=actor)
-            conn.execute('INSERT INTO prsystem.booker_receipt VALUES(%s,%s,%s,%s,%s)',(actor,key,tenant,Jsonb(command),result['booking_id']));return dict(result,tenant_id=tenant)
+            conn.execute('INSERT INTO prsystem.booker_receipt VALUES(%s,%s,%s,%s,%s)',(actor,key,tenant,Jsonb(command),result['booking_id']));return guest_view(dict(result,tenant_id=tenant))
     def owned(self,conn,actor,tenant,hold):
         scope(conn,tenant)
         row=conn.execute('SELECT token_envelope FROM prsystem.booking_hold WHERE tenant_id=%s AND id=%s AND booker_id=%s',(tenant,hold,actor)).fetchone()
         if not row:raise DomainError('WORK_SOURCE_NOT_FOUND')
         secret=self.booking.vault.open(row[0],tenant,hold,'mock-booker');self.booking.guest(conn,tenant,hold,secret)
-        return dict(self.booking.statement(conn,tenant,hold),tenant_id=tenant,access_token=secret)
+        return guest_view(dict(self.booking.statement(conn,tenant,hold),tenant_id=tenant,access_token=secret))
     def mine(self,token,after='',limit=25):
         with transaction(self.auth.dsn) as conn:
             actor=self.bookers.authenticate(conn,token)
