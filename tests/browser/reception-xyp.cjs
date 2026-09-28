@@ -52,11 +52,19 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   // Spec §5.2: an expired FOUND lookup is pulled again without losing what Reception typed.
   await open();await pull('АБ90010211');await page.getByText(verified,{exact:true}).waitFor();const first=`lookup-${lookups}`;await deposit();
   reject='XYP_LOOKUP_EXPIRED';await submit();await page.getByText('ХУР-ын хайлтын хугацаа дууссан. Дахин татна уу.',{exact:true}).waitFor();
-  await page.getByRole('button',{name:'ХУР-аас дахин татах',exact:true}).click();
-  assert.equal(await count('ХУР-аас дахин татах'),0);assert.equal(await page.getByRole('heading',{name:'ХУР-аас дахин татах',exact:true}).count(),1);
+  // One re-pull form however it is asked for; closing it keeps the message, the button and the focus.
+  const expired='ХУР-ын хайлтын хугацаа дууссан. Дахин татна уу.',repullButton=()=>page.getByRole('button',{name:'ХУР-аас дахин татах',exact:true}),repullForm=()=>page.locator('form').filter({has:page.getByRole('heading',{name:'ХУР-аас дахин татах',exact:true})});
+  const active=()=>page.evaluate(()=>`${document.activeElement.tagName} ${document.activeElement.textContent}`);
+  await repullButton().dblclick();await page.getByLabel('Регистрийн дугаар',{exact:true}).waitFor();assert.equal(await repullForm().count(),1);
+  const sent=checkins().length;reject='XYP_LOOKUP_EXPIRED';await submit();for(let i=0;i<100&&checkins().length===sent;i++)await page.waitForTimeout(50);await page.getByText(expired,{exact:true}).waitFor();
+  await repullButton().click();assert.equal(await repullForm().count(),1);assert.equal(await active(),'H2 ХУР-аас дахин татах');
+  await repullForm().getByRole('button',{name:'Маягтыг хаах',exact:true}).click();await page.getByLabel('Регистрийн дугаар',{exact:true}).waitFor({state:'detached'});
+  assert.equal(await page.getByText(expired,{exact:true}).count(),1);assert.equal(await active(),'BUTTON ХУР-аас дахин татах');
+  await repullButton().click();await page.getByLabel('Регистрийн дугаар',{exact:true}).waitFor();
   assert.equal(await page.getByLabel('Регистрийн дугаар',{exact:true}).inputValue(),'АБ90010211');assert.equal(await consent().isChecked(),false);
   await consent().check();await page.getByRole('button',{name:'ХУР-аас татах',exact:true}).click();await page.getByLabel('Регистрийн дугаар',{exact:true}).waitFor({state:'detached'});
   assert.equal(await focused(),verified);assert.equal(await page.getByLabel('Бэлнээр авсан барьцаа (₮)',{exact:false}).inputValue(),'60000');
+  assert.equal(await page.getByText(expired,{exact:true}).count(),0);assert.equal(await repullButton().count(),0);
   await submit();await page.getByRole('button',{name:'Байрлалтыг нээх',exact:true}).waitFor();
   assert.equal(checkins().at(-2).body.guest.xyp_lookup_id,first);assert.notEqual(first,`lookup-${lookups}`);
   assert.deepEqual(checkins().at(-1).body.guest,{identity_type:'MN_REG_NO',xyp_lookup_id:`lookup-${lookups}`});assert.equal(checkins().at(-1).body.deposit.amount_mnt,60000);

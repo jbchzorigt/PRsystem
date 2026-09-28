@@ -52,7 +52,7 @@
       wrap.append(error);fieldParent.append(wrap);controls.set(spec.name,{input,error,spec});
       input.addEventListener('input',()=>{if(!opts.login){dirty=true;dirtyForms.add(f);}error.textContent='';input.removeAttribute('aria-invalid');});
     }
-    const status=node('div','', 'result');status.setAttribute('role','status');status.setAttribute('aria-live','polite');const send=node('button',submit,'primary');send.type='submit';const actions=node('div',undefined,'actions');actions.append(send);if(!opts.login&&opts.dismissible!==false)actions.append(btn('Маягтыг хаах',()=>guard(()=>{f.remove();dirtyForms.delete(f);dirty=hasDirtyForms();if(origin?.isConnected)origin.focus();else $('#page-title').focus();},f)));
+    const status=node('div','', 'result');status.setAttribute('role','status');status.setAttribute('aria-live','polite');const send=node('button',submit,'primary');send.type='submit';const actions=node('div',undefined,'actions');actions.append(send);if(!opts.login&&opts.dismissible!==false)actions.append(btn('Маягтыг хаах',()=>guard(()=>{f.remove();dirtyForms.delete(f);dirty=hasDirtyForms();if(opts.closed)opts.closed();else if(origin?.isConnected)origin.focus();else $('#page-title').focus();},f)));
     f.append(status,actions);parent.append(f);
     // Move into an explicitly opened form, never steal focus during a page render.
     if(opts.focus||(origin?.matches('button')&&!origin.closest('form')))queueMicrotask(()=>{if(f.isConnected&&(opts.focus||document.activeElement===origin)&&f.getClientRects().length)heading.focus();});
@@ -534,10 +534,10 @@
   // RC-DEC-046: ХУР fills Mongolian РД identities; manual entry only after a failed lookup.
   const xypReasons={NOT_CONFIGURED:'ХУР холбогдоогүй байна. Гараар бүртгэнэ үү.',TIMEOUT:'ХУР хугацаандаа хариулсангүй.',PROVIDER_ERROR:'ХУР-тай холбогдож чадсангүй.',INVALID_EVIDENCE:'ХУР-ын мэдээлэл РД-тэй таарахгүй байна.'};
   function verified(c){return `ХУР-аар баталгаажсан: ${c.family_name} ${c.given_name} · ${c.date_of_birth} · MN`;}
-  function xypForm(parent,title,value,done){
+  function xypForm(parent,title,value,done,closed){
     return form(parent,title,[field('document_number','Регистрийн дугаар','text',{value}),field('consent','Зочин ХУР-аас мэдээлэл авахыг зөвшөөрсөн','checkbox')],'ХУР-аас татах',
       async v=>({...await api(path('guest-identity/xyp-lookups'),{document_number:v.document_number,consent:v.consent===true,idempotency_key:v.idempotency_key}),document_number:v.document_number}),
-      {focus:true,success:async(result,f)=>{f.remove();done(result);}});
+      {focus:true,closed,success:async(result,f)=>{f.remove();done(result);}});
   }
   function xypLookup(start,booking,room,value=''){xypForm(start,'ХУР-аас зочны мэдээлэл татах',value,result=>xypResult(start,booking,room,result));}
   function xypResult(start,booking,room,result){
@@ -573,11 +573,14 @@
     },{focus:true,success:async(result,f,status)=>{showResult(status,result);f.querySelector('button[type=submit]').hidden=true;await reloadOverview();status.append(btn('Байрлалтыг нээх',()=>openStay({stay_id:result.stay_id,room_id:result.room_id},start)));},
       // Spec §5.2: only an expired lookup is pulled again; USED means a stay already exists.
       failure:(e,f,status)=>{if(found&&e.code==='XYP_LOOKUP_EXPIRED')status.replaceChildren(node('p',e.message),btn('ХУР-аас дахин татах',()=>repull(f,status)));}});
-    function repull(f,status){status.replaceChildren();const holder=node('div');f.before(holder);
+    let pulling=null;  // holder of the open re-pull form: one consent form per guest at a time
+    function repull(f,status){const open=pulling?.querySelector('form');if(open){open.querySelector('h2').focus();return;}
+      pulling=node('div');f.before(pulling);
       // An EXPIRED answer committed nothing, so the form may keep its idempotency key with the new lookup.
-      xypForm(holder,'ХУР-аас дахин татах',current.document_number,next=>{holder.remove();
+      xypForm(pulling,'ХУР-аас дахин татах',current.document_number,next=>{pulling.remove();pulling=null;
         if(next.status!=='FOUND'){dirtyForms.delete(f);dirty=hasDirtyForms();xyp.restart(next);return;}
-        current=next;xyp.notice.textContent=verified(next.citizen);xyp.notice.focus();});}
+        status.replaceChildren();current=next;xyp.notice.textContent=verified(next.citizen);xyp.notice.focus();},
+        ()=>{pulling.remove();pulling=null;status.querySelector('button')?.focus();});}  // closed: the message and the button stay
   }
   async function openStay(s,parent){if(!s)return;const seq=generation;const panel=node('div');parent.append(panel);panel.append(node('p','Байрлалт ачаалж байна…'));
     try{const [finance,preview,guest]=await Promise.all([api(stayPath(s.stay_id,'finance')),api(stayPath(s.stay_id,'checkout/preview')),api(stayPath(s.stay_id,'guest'))]);if(seq!==generation)return;
