@@ -131,7 +131,7 @@
     if(next==='online'){await onlineTools(parent,seq);return;}
     if(next==='guests'){
       parent.append(node('p','Шууд ирсэн эсвэл онлайн захиалгатай зочныг бүртгэж, өрөө болон байрлах хугацааг баталгаажуулна.'));
-      if(role('RECEPTION')&&!overview.completion_only){actions(parent).append(btn('Шууд ирсэн зочин бүртгэх',()=>guard(()=>checkin(parent))),btn('POS / банкны барьцаа бэлтгэх',()=>guard(()=>fundingForm(parent))));
+      if(role('RECEPTION')&&!overview.completion_only){const slot=node('div');actions(parent).append(btn('Шууд ирсэн зочин бүртгэх',()=>guard(()=>checkin(slot))),btn('POS / банкны барьцаа бэлтгэх',()=>guard(()=>fundingForm(slot))));parent.append(slot);  // forms open right under their buttons
         for(const f of overview.funding||[]){const r=record(parent,'Бүртгэлийн барьцаа',`${labels[f.channel]} · ${money(f.amount_mnt)} · ${labels[f.state]}`);if(f.state==='PENDING'){form(r,'Барьцааны банкны төлөв тулгах',[],'Тулгах',()=>api(path(`check-in-funding/${enc(f.funding_id)}/reconcile`),{}));command(r,'Төлөгдөөгүй барьцааны нэхэмжлэлийг цуцлах',[reason()],path(`check-in-funding/${enc(f.funding_id)}/cancel`));}if(f.state==='CONFIRMED')command(r,'Ашиглаагүй барьцааг буцаах хүсэлт',[reason()],path(`check-in-funding/${enc(f.funding_id)}/return`));if(f.state==='REFUNDING')command(r,'Барьцааны буцаалтыг тулгах',f.channel==='MANUAL_POS'?[field('reference','POS буцаалтын баримтын дугаар'),field('confirmation','Буцаасан баталгаа')]:[],path(`check-in-funding/${enc(f.funding_id)}/return/complete`));}
       }
       if(!stays.length)parent.append(node('p','Одоогоор идэвхтэй байрлалт алга.'));
@@ -553,6 +553,8 @@
     const manual=btn('Гараар бүртгэх',()=>{manual.remove();guestForm(box,booking,room,'MN_REG_NO',result,{notice,restart});});a.append(manual,btn('Өөр РД оруулах',()=>again('')));
     notice.focus();  // the lookup form and its focused button are gone
   }
+  // Check-in needs a clean room without an active stay; listing others only ends in ROOM_NOT_READY.
+  function readyRooms(){return rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change&&r.cleaning_state==='CLEAN'&&!stays.some(s=>s.room_id===r.room_id));}
   function guestForm(start,booking,room,type,lookup,xyp={}){
     let current=lookup;const found=lookup?.status==='FOUND',fields=found?[]:[field('family_name','Овог'),field('given_name','Нэр'),field('date_of_birth','Төрсөн огноо','date'),field('nationality','Иргэншил','text',lookup?{value:'MN'}:{})];
     if(!lookup&&type!=='NO_DOCUMENT')fields.push(field('document_number','Баримтын дугаар'));
@@ -560,9 +562,10 @@
     if(type==='FOREIGN_PASSPORT')fields.push(field('expiry_date','Баримтын дуусах огноо','date'));
     if(type==='OTHER_GOV_ID')fields.push(field('document_type','Баримтын төрөл'),field('issuing_authority','Олгосон байгууллага'));
     if(type==='NO_DOCUMENT')fields.push(field('no_document_reason','Баримтгүй шалтгаан','textarea'),field('note','Нэмэлт тайлбар','textarea'));
-    if(!booking)fields.push(select('room_id','Өрөө',choices(room?[room]:rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id','number')),select('kind','Хугацааны төрөл',[['HOURLY','Цагаар'],['NIGHTLY','Хоногоор']]),field('duration','Хугацаа: цагаар бол цаг (0.5 алхам), хоногоор бол хоног','number',{min:0.5,value:1,decimal:true}),select('deposit_channel','Барьцаа авах суваг',[["CASH","Бэлэн"],["FUNDING","Баталгаажсан POS / банкны барьцаа"]]),amount('deposit_amount','Бэлнээр авсан барьцаа (₮)'),field('received','Бэлэн барьцааг биечлэн авсан','checkbox',{optional:true}),select('funding_id','Өмнө баталгаажсан барьцаа',[['','Сонгоогүй'],...choices(overview.funding?.filter(f=>f.state==='CONFIRMED')||[],'funding_id',f=>`${rooms.find(r=>r.room_id===f.room_id)?.number||'Өрөө'} · ${labels[f.channel]} · ${money(f.amount_mnt)}`)],true));
+    if(!booking)fields.push(select('room_id','Өрөө',choices(room?[room]:readyRooms(),'room_id','number')),select('kind','Хугацааны төрөл',[['HOURLY','Цагаар'],['NIGHTLY','Хоногоор']]),field('duration','Хугацаа: цагаар бол цаг (0.5 алхам), хоногоор бол хоног','number',{min:0.5,value:1,decimal:true}),select('deposit_channel','Барьцаа авах суваг',[["CASH","Бэлэн"],["FUNDING","Баталгаажсан POS / банкны барьцаа"]]),amount('deposit_amount','Бэлнээр авсан барьцаа (₮)'),field('received','Бэлэн барьцааг биечлэн авсан','checkbox',{optional:true}),select('funding_id','Өмнө баталгаажсан барьцаа',[['','Сонгоогүй'],...choices(overview.funding?.filter(f=>f.state==='CONFIRMED')||[],'funding_id',f=>`${rooms.find(r=>r.room_id===f.room_id)?.number||'Өрөө'} · ${labels[f.channel]} · ${money(f.amount_mnt)}`)],true));
     const depositField=fields.find(f=>f.name==='deposit_amount');if(depositField)depositField.optional=true;
-    if(booking?.category_id)fields.push(select('room_id','Оноох өрөө',choices(rooms.filter(r=>r.status==='ACTIVE'&&!r.pending_minibar_change),'room_id',r=>`${r.number} · ${r.category_name}`)));
+    if(booking?.category_id)fields.push(select('room_id','Оноох өрөө',choices(readyRooms(),'room_id',r=>`${r.number} · ${r.category_name}`)));
+    if(!room&&(!booking||booking.category_id)&&!readyRooms().length)start.append(node('p','Одоогоор зочин бүртгэхэд бэлэн (цэвэр, сул) өрөө алга. "Өрөөнүүд" цэснээс цэвэрлэгээний төлөвийг шалгана уу.','notice'));
     fields.push(field('actual_checkin_at','Өмнө ирсэн цаг (Улаанбаатар)','datetime-local',{optional:true}),field('backdate_reason','Өмнө ирсэн цагийн шалтгаан','textarea',{optional:true}));
     const sections={family_name:'Зочны мэдээлэл',room_id:'Өрөө ба байрлах хугацаа',deposit_channel:'Барьцааны мэдээлэл',actual_checkin_at:'Ирсэн цагийн нэмэлт мэдээлэл'};for(const spec of fields)if(sections[spec.name])spec.section=sections[spec.name];
     form(start,booking?'Онлайн захиалгаар зочин бүртгэх':'Шууд ирсэн зочин бүртгэх',fields,'Зочны бүртгэл баталгаажуулах',async v=>{
