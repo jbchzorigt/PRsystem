@@ -19,6 +19,7 @@ class ReceptionBookingTests(GuestFinanceCase):
 
     def arrive(self,booking,**extra):
         body=dict(guest=dict(identity_type='MN_REG_NO',family_name='Бат',given_name='Болд',date_of_birth='1990-01-02',nationality='MN',document_number='АБ90010211'),idempotency_key='arrive');body.update(extra)
+        body['guest']=self.with_xyp(body['guest'],key=str(body.get('idempotency_key')))
         return self.client.post(f'/hotels/{self.tenant}/bookings/{booking}/check-in',headers=self.headers(self.worker_token),json=body)
 
     def test_mock_booking_paid_exemption_snapshot_checkout_without_cash(self):

@@ -70,7 +70,18 @@ class WalkInCase(ReceptionCase):
         task=self.request_cleaning();self.assert_status(self.start_cleaning(task),200);self.assert_status(self.post_cleaning(task),200)
         return task
 
+    def with_xyp(self,guest,token=None,tenant=None,key='checkin'):
+        """RC-DEC-046: MN_REG_NO check-in needs a ХУР lookup. Apps without an adapter answer
+        UNAVAILABLE, so the same manual guest data stays valid. The key is derived from the
+        check-in key, so retries replay the same lookup instead of creating a new one."""
+        if not isinstance(guest,dict) or guest.get('identity_type')!='MN_REG_NO' or 'xyp_lookup_id' in guest or not isinstance(guest.get('document_number'),str):
+            return guest
+        response=self.client.post(f'/hotels/{tenant or self.tenant}/guest-identity/xyp-lookups',headers=self.headers(token or self.worker_token),
+            json=dict(document_number=guest['document_number'],consent=True,idempotency_key=f'xyp-{key}'[:128]))
+        return dict(guest,xyp_lookup_id=response.json()['lookup_id']) if response.status_code==201 else guest
+
     def checkin(self,token=None,tenant=None,**extra):
         body=dict(room_id=self.room,kind='HOURLY',duration_units=3,guest=dict(identity_type='MN_REG_NO',family_name='Бат',given_name='Болд',date_of_birth='1990-01-02',nationality='MN',document_number='АБ90010211'),idempotency_key='checkin')
         body.update(extra)
+        body['guest']=self.with_xyp(body['guest'],token,tenant,str(body.get('idempotency_key')))
         return self.client.post(f'/hotels/{tenant or self.tenant}/stays/check-in',headers=self.headers(token or self.worker_token),json=body)

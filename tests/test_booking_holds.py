@@ -265,6 +265,7 @@ class BookingHoldTests(GuestFinanceCase):
     def apply_hold(self,hold,key='apply',token=None,**extra):
         body=dict(room_id=self.room,guest=dict(identity_type='MN_REG_NO',family_name='Бат',given_name='Болд',date_of_birth='1990-01-02',nationality='MN',document_number='АБ90010211'),idempotency_key=key)
         body.update(extra)
+        body['guest']=self.with_xyp(body['guest'],token,None,str(body.get('idempotency_key')))
         return self.client.post(f'/hotels/{self.tenant}/booking-holds/{hold["booking_id"]}/check-in',headers=self.headers(token or self.worker_token),json=body)
 
     def test_paid_hold_applies_snapshot_and_checks_out_without_cash(self):

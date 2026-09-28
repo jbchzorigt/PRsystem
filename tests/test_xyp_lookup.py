@@ -88,3 +88,99 @@ class XypLookupTests(WalkInCase):
             self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.xyp_lookup').fetchone()[0], 1)
         with psycopg.connect(self.owner_dsn) as conn, self.assertRaises(psycopg.errors.CheckViolation):
             conn.execute("UPDATE prsystem.xyp_lookup SET status='NOT_FOUND' WHERE id=%s", (lookup,))
+
+    MANUAL = dict(family_name='Бат', given_name='Болд', date_of_birth='1985-02-03', nationality='MN', document_number='АБ85020311')
+
+    def guest(self, lookup, **manual):
+        return dict(identity_type='MN_REG_NO', xyp_lookup_id=lookup, **manual)
+
+    def identity(self, stay):
+        with psycopg.connect(self.owner_dsn) as conn:
+            provenance, envelope = conn.execute('SELECT provenance,envelope FROM prsystem.stay_guest_identity WHERE tenant_id=%s AND stay_id=%s',
+                                                (self.tenant, stay)).fetchone()
+        return provenance, self.vault.open(envelope, self.tenant, stay)
+
+    def second_room(self):
+        room = self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms', headers=self.headers(self.manager_token),
+            json=dict(number='102', floor='1', category_id=self.category, idempotency_key='room-102')), 201)['room_id']
+        task = self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms/{room}/cleaning-requests', headers=self.headers(self.manager_token),
+            json=dict(assignee_id=self.worker, expected_revision=1, idempotency_key='cleaning-102')), 201)
+        self.assert_status(self.client.post(f'/hotels/{self.tenant}/cleaning/tasks/{task["task_id"]}/start', headers=self.headers(self.worker_token),
+            json=dict(expected_revision=task['assignment_version'], idempotency_key='start-102')), 200)
+        self.assert_status(self.client.post(f'/hotels/{self.tenant}/cleaning/tasks/{task["task_id"]}/post', headers=self.headers(self.worker_token),
+            json=dict(expected_revision=task['assignment_version'], action_id=task['action_id'], quantity=1, idempotency_key='clean-102')), 200)
+        return room
+
+    def test_found_lookup_checks_in_as_xyp_verified_and_locks_fields(self):
+        self.ready()
+        lookup = self.assert_status(self.lookup(), 201)['lookup_id']
+        self.assertEqual(self.checkin(guest=self.guest(lookup, family_name='Өөр'), idempotency_key='edited').json()['code'], 'XYP_VERIFIED_FIELDS_LOCKED')
+        stay = self.assert_status(self.checkin(guest=self.guest(lookup)), 201)['stay_id']
+        provenance, identity = self.identity(stay)
+        self.assertEqual((provenance, identity['family_name'], identity['given_name'], identity['date_of_birth'], identity['nationality'], identity['document_number']),
+                         ('XYP_VERIFIED', 'Туршилт', 'Зочин', '1990-01-02', 'MN', 'АБ90010211'))
+
+    def test_manual_entry_only_for_the_failed_normalized_rd(self):
+        self.ready()
+        miss = self.assert_status(self.lookup(' аб85020311 ', key='miss'), 201)['lookup_id']
+        other = dict(self.MANUAL, document_number='АБ90010211', date_of_birth='1990-01-02')
+        self.assertEqual(self.checkin(guest=self.guest(miss, **other), idempotency_key='other').json()['code'], 'XYP_LOOKUP_MISMATCH')
+        stay = self.assert_status(self.checkin(guest=self.guest(miss, **self.MANUAL)), 201)['stay_id']
+        provenance, identity = self.identity(stay)
+        self.assertEqual((provenance, identity['xyp_fallback']), ('MANUAL', dict(status='NOT_FOUND', reason=None)))
+
+    def test_unavailable_lookup_allows_manual_entry_with_reason(self):
+        self.ready(); self.xyp.set_available(False)
+        down = self.assert_status(self.lookup('АБ85020311', key='down'), 201)['lookup_id']
+        stay = self.assert_status(self.checkin(guest=self.guest(down, **self.MANUAL)), 201)['stay_id']
+        self.assertEqual(self.identity(stay)[1]['xyp_fallback'], dict(status='UNAVAILABLE', reason='PROVIDER_ERROR'))
+
+    def test_lookup_is_required_known_unexpired_and_mn_only(self):
+        self.ready()
+        # Posted directly: the WalkInCase.checkin helper would add a lookup on its own.
+        none = self.client.post(f'/hotels/{self.tenant}/stays/check-in', headers=self.headers(self.worker_token), json=dict(
+            room_id=self.room, kind='HOURLY', duration_units=3, guest=dict(self.MANUAL, identity_type='MN_REG_NO'), idempotency_key='none'))
+        self.assertEqual(none.json()['code'], 'XYP_LOOKUP_REQUIRED')
+        missing = self.checkin(guest=self.guest('0' * 32), idempotency_key='missing')
+        self.assertEqual((missing.status_code, missing.json()['code']), (404, 'XYP_LOOKUP_NOT_FOUND'))
+        lookup = self.assert_status(self.lookup(), 201)['lookup_id']
+        passport = dict(identity_type='FOREIGN_PASSPORT', family_name='Test', given_name='Guest', date_of_birth='2000-09-08', nationality='US',
+                        document_number='P123', issuing_country='US', expiry_date='2030-01-01', xyp_lookup_id=lookup)
+        self.assertEqual(self.checkin(guest=passport, idempotency_key='passport').json()['code'], 'INVALID_GUEST_IDENTITY')
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('ALTER TABLE prsystem.xyp_lookup DISABLE TRIGGER xyp_lookup_guard')
+            conn.execute("UPDATE prsystem.xyp_lookup SET created_at=created_at-interval '16 minutes',consent_at=consent_at-interval '16 minutes',expires_at=expires_at-interval '16 minutes' WHERE id=%s", (lookup,))
+            conn.execute('ALTER TABLE prsystem.xyp_lookup ENABLE TRIGGER xyp_lookup_guard')
+        late = self.checkin(guest=self.guest(lookup), idempotency_key='late')
+        self.assertEqual((late.status_code, late.json()['code']), (409, 'XYP_LOOKUP_EXPIRED'))
+
+    def test_lookup_is_single_use_and_replay_returns_the_first_result(self):
+        self.ready(); room = self.second_room()
+        lookup = self.assert_status(self.lookup(), 201)['lookup_id']
+        first = self.assert_status(self.checkin(guest=self.guest(lookup)), 201)
+        self.assertEqual(self.assert_status(self.checkin(guest=self.guest(lookup)), 201), first)
+        used = self.checkin(room_id=room, guest=self.guest(lookup), idempotency_key='second')
+        self.assertEqual((used.status_code, used.json()['code']), (409, 'XYP_LOOKUP_USED'))
+
+    def test_concurrent_checkins_with_one_lookup_have_one_winner(self):
+        self.ready(); room = self.second_room()
+        lookup = self.assert_status(self.lookup(), 201)['lookup_id']
+        barrier = Barrier(2)
+        def attempt(args):
+            room_id, key = args; barrier.wait()
+            return self.checkin(room_id=room_id, guest=self.guest(lookup), idempotency_key=key)
+        with ThreadPoolExecutor(2) as pool:
+            responses = list(pool.map(attempt, [(self.room, 'a'), (room, 'b')]))
+        self.assertEqual(sorted(r.status_code for r in responses), [201, 409])
+        self.assertEqual(next(r for r in responses if r.status_code == 409).json()['code'], 'XYP_LOOKUP_USED')
+
+    def test_failed_checkin_leaves_the_lookup_usable(self):
+        lookup = self.assert_status(self.lookup(), 201)['lookup_id']
+        self.assertEqual(self.checkin(guest=self.guest(lookup), idempotency_key='dirty').json()['code'], 'ROOM_NOT_READY')
+        self.ready()
+        self.assert_status(self.checkin(guest=self.guest(lookup)), 201)
+
+    def test_xyp_birth_date_applies_the_adult_rule(self):
+        self.ready(); self.xyp.add_citizen('АБ15210211', 'Бага', 'Хүүхэд', '2015-01-02')
+        lookup = self.assert_status(self.lookup('АБ15210211'), 201)['lookup_id']
+        self.assertEqual(self.checkin(guest=self.guest(lookup)).json()['code'], 'GUEST_UNDER_18')

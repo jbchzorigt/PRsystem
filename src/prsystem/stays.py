@@ -44,6 +44,15 @@ class StayService(RoomService):
             raise DomainError('OPEN_SHIFT_REQUIRED')
         return row
 
+    def _guest_identity(self, conn, tenant, guest, on_date):
+        """RC-DEC-046: a Mongolian РД identity resolves through its server-held ХУР lookup."""
+        if guest.get('identity_type') == 'MN_REG_NO':
+            from prsystem.xyp import bind
+            return bind(conn, self.vault, tenant, guest, on_date)
+        if guest.get('xyp_lookup_id') is not None:
+            raise DomainError('INVALID_GUEST_IDENTITY')
+        return (*validate_identity(guest, on_date), None)
+
     @staticmethod
     def _readiness(conn, tenant, room, category, actual, recorded):
         proof = conn.execute('''SELECT sequence,cleaning_state,room_status,category_status,category_id
@@ -93,6 +102,9 @@ class StayService(RoomService):
         funding_id=data.get('funding_id')
         if funding_id is None:data={k:v for k,v in data.items() if k!='funding_id'}
         if funding_id and cash_deposit is not None:raise DomainError('INVALID_REQUEST')
+        # Keep legacy command fingerprints stable when the new optional lookup is absent.
+        if data['guest'].get('xyp_lookup_id') is None:
+            data=dict(data,guest={k:v for k,v in data['guest'].items() if k!='xyp_lookup_id'})
         booking_id=data.get('booking_id')
         hold_id=data.get('booking_hold_id')
         hold_attempt=None
@@ -203,7 +215,7 @@ class StayService(RoomService):
                 end, amount = stay_terms(data['kind'], data['duration_units'], actual, recorded, price['unit_price'], row[20])
             proof = self._readiness(conn, tenant, row[0], row[3], actual, recorded)
             self._available(conn, tenant, row[0], actual, end, buffer,excluding_reservation=None if hold_id else booking_id,excluding_hold=hold_id)
-            identity, exact = validate_identity(data['guest'], actual.astimezone(HOTEL_ZONE).date())
+            identity, exact, xyp_lookup = self._guest_identity(conn, tenant, data['guest'], actual.astimezone(HOTEL_ZONE).date())
             stay = secrets.token_hex(16)
             snapshot = dict(room_id=row[0], room_number=row[1], room_revision=row[7], category_id=row[3], category_name=row[4],
                             category_revision=row[12], hotel_settings_revision=row[15], price=price, checkout_time=booking[6].get('checkout_time',str(row[20])) if booking else str(row[20]),
@@ -221,7 +233,9 @@ class StayService(RoomService):
                  Jsonb(reason) if reason else None,'ONLINE' if booking else 'WALK_IN', amount, deposit_amount, buffer, Jsonb(snapshot), proof))
             lookup = self.vault.fingerprint('guest-exact-identity', list(exact)) if exact else None
             conn.execute('''INSERT INTO prsystem.stay_guest_identity (tenant_id,stay_id,identity_type,provenance,envelope,lookup_token)
-                VALUES (%s,%s,%s,'MANUAL',%s,%s)''', (tenant, stay, identity['identity_type'], Jsonb(self.vault.seal(identity, tenant, stay)), lookup))
+                VALUES (%s,%s,%s,%s,%s,%s)''', (tenant, stay, identity['identity_type'], identity['provenance'], Jsonb(self.vault.seal(identity, tenant, stay)), lookup))
+            if xyp_lookup:
+                conn.execute('UPDATE prsystem.xyp_lookup SET stay_id=%s WHERE tenant_id=%s AND id=%s', (stay, tenant, xyp_lookup))
             if identity['identity_type'] == 'MN_REG_NO':
                 conn.execute('INSERT INTO prsystem.identity_match_outbox VALUES (%s,%s,1,%s,%s)', (tenant, stay, recorded, lookup))
             package = conn.execute('SELECT package_mnt FROM prsystem.hotel_access WHERE tenant_id=%s', (tenant,)).fetchone()[0]

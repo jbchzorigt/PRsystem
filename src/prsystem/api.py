@@ -439,10 +439,11 @@ class TariffChange(BaseModel):
 class PrimaryGuestInput(BaseModel):
     model_config = ConfigDict(extra='forbid',strict=True)
     identity_type: Literal['MN_REG_NO','FOREIGN_PASSPORT','OTHER_GOV_ID','NO_DOCUMENT']
-    family_name: str = Field(min_length=1,max_length=200)
-    given_name: str = Field(min_length=1,max_length=200)
-    date_of_birth: str = Field(min_length=10,max_length=10)
-    nationality: str = Field(min_length=1,max_length=200)
+    # RC-DEC-046: an ХУР-verified РД guest sends only xyp_lookup_id; the domain enforces per-type fields.
+    family_name: str | None = Field(default=None,min_length=1,max_length=200)
+    given_name: str | None = Field(default=None,min_length=1,max_length=200)
+    date_of_birth: str | None = Field(default=None,min_length=10,max_length=10)
+    nationality: str | None = Field(default=None,min_length=1,max_length=200)
     document_number: str | None = Field(default=None,min_length=1,max_length=200)
     issuing_country: str | None = Field(default=None,min_length=2,max_length=2)
     expiry_date: str | None = Field(default=None,min_length=10,max_length=10)
@@ -450,6 +451,7 @@ class PrimaryGuestInput(BaseModel):
     issuing_authority: str | None = Field(default=None,min_length=1,max_length=200)
     no_document_reason: str | None = Field(default=None,min_length=1,max_length=1000)
     note: str | None = Field(default=None,min_length=1,max_length=2000)
+    xyp_lookup_id: str | None = Field(default=None,min_length=1,max_length=128)
 
 
 class CashConfirmation(BaseModel):
@@ -1006,6 +1008,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
         stay_errors['IDENTITY_VAULT_UNAVAILABLE'] = 503
         stay_errors['STAY_FINANCE_UNAVAILABLE'] = 503
         stay_errors.update({'XYP_CONSENT_REQUIRED':422,'XYP_LOOKUP_LIMIT':429})
+        stay_errors.update({'XYP_LOOKUP_REQUIRED':422,'XYP_VERIFIED_FIELDS_LOCKED':422,'XYP_LOOKUP_MISMATCH':422,'XYP_LOOKUP_NOT_FOUND':404,'XYP_LOOKUP_USED':409,'XYP_LOOKUP_EXPIRED':409})
         stay_errors.update({code:409 for code in ('DEPOSIT_REQUIREMENT_NOT_MET','FINANCIAL_SOURCE_NOT_READY','FINANCIAL_AGGREGATE_FROZEN','DEPOSIT_BALANCE_CONFLICT','INSUFFICIENT_DEPOSIT','CHARGE_OVERPAYMENT','INVALID_FINANCIAL_SOURCE','ORIGINAL_CASH_DRAWER_REQUIRED','REFUND_TERMINAL','CASH_SOURCE_CONFLICT','INSUFFICIENT_CASH')})
         stay_errors.update({code:409 for code in ('CORRECTION_SOURCE_IN_USE','CORRECTION_HAS_NO_CHANGE','CORRECTION_PENDING','CORRECTION_TERMINAL','CORRECTION_SOURCE_CHANGED')})
         stay_errors.update({'INVALID_TRANSACTION_TIME':422,'PAYMENT_REFERENCE_USED':409,'GUEST_PROVIDER_UNAVAILABLE':503})
