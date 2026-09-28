@@ -17,8 +17,9 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
    const url=new URL(route.request().url()),tail=url.pathname.replace('/hotels/test-hotel/',''),body=route.request().postDataJSON();requests.push({tail,body,method:route.request().method()});
    let data={};
    if(tail==='operations')data=overview();
-   else if(tail==='rooms')data=[room];else if(tail==='room-categories')data=[{category_id:'category-1',name:'Стандарт',status:'ACTIVE',revision:1}];
-   else if(['stays/active','bookings','handovers','cleaning/checkouts'].includes(tail))data=[];
+   else if(tail==='rooms')data=[{...room,room_id:'room-2',number:'201',cleaning_state:'DIRTY'},room,{...room,room_id:'room-3',number:'301'}];else if(tail==='room-categories')data=[{category_id:'category-1',name:'Стандарт',status:'ACTIVE',revision:1}];
+   else if(tail==='stays/active')data=[{stay_id:'stay-9',room_id:'room-3',kind:'NIGHTLY',actual_checkin_at:'2026-09-07T01:00:00Z',planned_checkout_at:'2026-09-08T04:00:00Z',amount_mnt:80000}];
+   else if(['bookings','handovers','cleaning/checkouts'].includes(tail))data=[];
    else if(tail==='guest-identity/xyp-lookups'){assert.equal(body.consent,true);lookups+=1;data={lookup_id:`lookup-${lookups}`,expires_at:'2026-09-07T01:15:00Z',...(outcomes[body.document_number]||{status:'FOUND',citizen:{family_name:'Бат',given_name:'Болд',date_of_birth:'1990-01-02',nationality:'MN'}})};}
    else if(tail==='stays/check-in'){if(reject){const code=reject;reject=null;await route.fulfill({status:409,json:{code}});return;}data={stay_id:'stay-1',room_id:'room-1',guest_access_code:'123456'};}
    await route.fulfill({json:data});
@@ -36,6 +37,8 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
 
   // Spec §5.1: one message per outcome; retry only where asking again can help.
   await open();
+  // The walk-in form opens right under its button, not below the online-booking section.
+  assert.equal(await page.evaluate(()=>{const h=[...document.querySelectorAll('h2')].find(x=>x.textContent==='Баталгаажсан онлайн захиалга'),f=document.querySelector('form');return !!(h&&f&&(f.compareDocumentPosition(h)&Node.DOCUMENT_POSITION_FOLLOWING));}),true);
   for(const [number,message,retry] of [['АБ85020311','ХУР-д энэ РД-ээр мэдээлэл олдсонгүй.',0],['ВВ90010211','ХУР хугацаандаа хариулсангүй.',1],['ГГ90010211','ХУР-тай холбогдож чадсангүй.',1],['ДД90010211','ХУР-ын мэдээлэл РД-тэй таарахгүй байна.',0],['ЕЕ90010211','ХУР-тай холбогдож чадсангүй.',1]]){
    await pull(number);await page.getByText(message,{exact:true}).waitFor();
    assert.equal(await focused(),message,number);assert.equal(await count('Дахин оролдох'),retry,number);assert.equal(await count('Гараар бүртгэх'),1,number);
@@ -45,6 +48,8 @@ const root=path.resolve(__dirname,'../../src/prsystem/static');
   // NOT_CONFIGURED opens the manual form at once; the manual payload carries the failed lookup and its РД.
   await pull('ББ90010211');await page.getByText('ХУР холбогдоогүй байна. Гараар бүртгэнэ үү.',{exact:true}).waitFor();await page.getByLabel('Овог',{exact:true}).waitFor();
   assert.equal(await focused(),'Шууд ирсэн зочин бүртгэх');assert.equal(await count('Дахин оролдох'),0);assert.equal(await count('Гараар бүртгэх'),0);
+  // Only a clean, unoccupied room can take a walk-in: 201 is dirty, 301 has an active stay.
+  assert.deepEqual(await page.getByLabel('Өрөө',{exact:true}).locator('option').allTextContents(),['101']);
   await page.getByLabel('Овог',{exact:true}).fill('Бат');await page.getByLabel('Нэр',{exact:true}).fill('Болд');await page.getByLabel('Төрсөн огноо',{exact:true}).fill('1990-01-02');await deposit();
   await submit();await page.getByRole('button',{name:'Байрлалтыг нээх',exact:true}).waitFor();
   assert.deepEqual(checkins().at(-1).body.guest,{identity_type:'MN_REG_NO',xyp_lookup_id:`lookup-${lookups}`,document_number:'ББ90010211',family_name:'Бат',given_name:'Болд',date_of_birth:'1990-01-02',nationality:'MN'});
