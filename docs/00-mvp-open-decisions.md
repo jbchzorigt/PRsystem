@@ -80,7 +80,7 @@
 
 | ID | Хамаарал | Баталгаажуулах зүйл |
 | --- | --- | --- |
-| EXT-01 | ХУР/XYP | Ашиглах service, field list, consent/хууль зүйн үндэслэл, contract, VPN/certificate/IP, outage ба manual fallback-ийн албан нөхцөл |
+| EXT-01 | ХУР/XYP | Ашиглах service, field list, consent/хууль зүйн үндэслэл, contract, VPN/certificate/IP, outage ба manual fallback-ийн албан нөхцөл. Адаптер 10 сек-д хариулах эсвэл TIMEOUT; ХУР дуудахаас өмнө ажилтны хязгаарын slot захиалах (одоо зэрэг хүсэлтэд ХУР илүү дуудагдаж болно, RC-DEC-046) |
 | EXT-02 | e-Mongolia | Authentication flow, авах хамгийн бага талбар, consent, provider subject, token lifecycle, account linking ба sandbox/production access |
 | EXT-03 | QPay | Merchant owner, invoice/payment/refund API, callback verification, partial/full refund, timeout/status query, төвлөрүүлсэн settlement зөвшөөрөх эсэх |
 | EXT-04 | Khaan Bank | POS гарын бүртгэл болон online gateway-ийн гэрээ, callback/refund/reconciliation, reference талбар, sandbox/production credential |

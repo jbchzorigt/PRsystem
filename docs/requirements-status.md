@@ -50,7 +50,7 @@
 | Staff (19) | 15 | 6 | 0 | 6 | 2 | 29 | 56% |
 | Cleaner (04, 21) | 21 | 14 | 0 | 4 | 3 | 42 | 54% |
 | Restaurant (08) | 16 | 15 | 0 | 2 | 0 | 33 | 48% |
-| Reception (02, 03, 05, 06) | 61 | 77 | 1 | 15 | 11 | 165 | 40% |
+| Reception (02, 03, 05, 06) | 62 | 76 | 1 | 15 | 11 | 165 | 40% |
 | Subscription (15, 16, 17) | 23 | 25 | 5 | 6 | 5 | 64 | 39% |
 | RBAC (18) | 9 | 15 | 4 | 1 | 1 | 30 | 31% |
 | Booking (09, 11) | 17 | 18 | 6 | 13 | 6 | 60 | 31% |
@@ -61,7 +61,7 @@
 | Guest registry (12) | 0 | 10 | 9 | 1 | 3 | 23 | 0% |
 | Police (13) | 0 | 8 | 43 | 0 | 4 | 55 | 0% |
 | Finance report (23) | 0 | 16 | 22 | 0 | 2 | 40 | 0% |
-| **Нийт** | **307** | **292** | **117** | **63** | **54** | **833** | **39%** |
+| **Нийт** | **308** | **291** | **117** | **63** | **54** | **833** | **40%** |
 
 Дүгнэлт:
 
@@ -76,7 +76,7 @@
 | Эх файл | хэрэгжсэн | дутуу | хийгдээгүй | баталгаажаагүй | — | Нийт |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | [01](#01-project-charter) | 0 | 3 | 0 | 0 | 3 | 6 |
-| [02](#02-reception-system-scope) | 29 | 24 | 1 | 9 | 4 | 67 |
+| [02](#02-reception-system-scope) | 30 | 23 | 1 | 9 | 4 | 67 |
 | [03](#03-reception-shift-handover) | 8 | 18 | 0 | 2 | 2 | 30 |
 | [04](#04-cleaner-dashboard) | 11 | 7 | 0 | 0 | 2 | 20 |
 | [05](#05-room-stay-and-time-status) | 17 | 24 | 0 | 3 | 4 | 48 |
@@ -101,7 +101,7 @@
 | [24](#24-cash-drawer-ledger) | 7 | 17 | 9 | 2 | 1 | 36 |
 | [25](#25-minibar-selling-price-snapshot) | 21 | 5 | 0 | 1 | 2 | 29 |
 | [26](#26-room-minibar-lifecycle) | 64 | 16 | 0 | 1 | 2 | 83 |
-| **Нийт** | **307** | **292** | **117** | **63** | **54** | **833** |
+| **Нийт** | **308** | **291** | **117** | **63** | **54** | **833** |
 
 ## 4. Шаардлага → код → тест → төлөв
 
@@ -123,7 +123,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `REQ-02-01.00` | RC систем нь зочин бүртгэх, check-in/out, өрөөний төлөв, төлбөр тооцоо, ээлж хүлээлцэхийг нэг дор у… | — | — | **—** |  |
 | `REQ-02-02.00` | Нэр томьёо: зочин, системийн хэрэглэгч, RC, check-in/out, walk-in, онлайн захиалга, цагаар/хоногоор… | — | — | **—** |  |
-| `REQ-02-03.01` | Зочин бүртгэх: 4 identity type, DOB-оос нас, РД/ХУР, guardian, шифрлэлт, цаг/хоногийн үнэ, давхцал/… | `guest_identity.py:validate_identity`, `guest_identity.py:IdentityVault` +11 | `test_stay_policy.py::GuestIdentityPolicyTests.test_registration_normalizes_and_never_asserts_xyp`, `test_stay_policy.py::GuestIdentityPolicyTests.test_passport_other_id_and_no_document` +12 (ok 14); Batch 1: `tests/browser/reception.cjs` (ok) | **дутуу** | B-01 засагдсан (Batch 1); бусад дутуу хэвээр. Өмнөх олдвор: хэсэгчлэн; ХУР/XYP холболт ба mock огт байхгүй: provenance зөвхөн MANUAL (DB CHECK), XYP_VERIFIED/автоматаар бөглөх үгүй. Police… |
+| `REQ-02-03.01` | Зочин бүртгэх: 4 identity type, DOB-оос нас, РД/ХУР, guardian, шифрлэлт, цаг/хоногийн үнэ, давхцал/… | `guest_identity.py:validate_identity`, `guest_identity.py:IdentityVault` +11 | `test_stay_policy.py::GuestIdentityPolicyTests.test_registration_normalizes_and_never_asserts_xyp`, `test_stay_policy.py::GuestIdentityPolicyTests.test_passport_other_id_and_no_document` +12 (ok 14); Batch 1: `tests/browser/reception.cjs` (ok) | **дутуу** | B-01 засагдсан (Batch 1); бусад дутуу хэвээр. ХУР lookup (RC-DEC-046) mock адаптертай хэрэгжсэн, бодит адаптер EXT-01. Өмнөх олдвор: хэсэгчлэн; Police… |
 | `REQ-02-03.02` | Өрөөний төлөв: зочинтой эсэх, эх үүсвэр, reservation, цэвэрлэгээ, minibar статус, дуусах/үлдсэн цаг… | `rooms.py:RoomService.list_rooms`, `stays.py:StayService.list_active` +7 | `test_walkin_stays.py::WalkInStayTests.test_manager_can_only_mark_clean_in_20000_package`, `test_walkin_stays.py::WalkInStayTests.test_active_listing_has_no_guest_identifier_code_or_match_details` +6 (ok 8) | **дутуу** | хэсэгчлэн; Сервер талын readiness (actual checkout + snapshot buffer, CLEAN, minibar) болон цэвэрлэгээний эрх хэрэгжсэн. Өрөөний… |
 | `REQ-02-03.03` | Төлбөр: QPay/карт/бэлэн, POS ба gateway ялгах, нэг нэгдсэн тооцоо, snapshot үнэ, үлдэгдэл = хэрэглэ… | `guest_finance.py:GuestFinance.initial`, `guest_finance.py:GuestFinance.receive` +14 | `test_guest_finance.py::GuestFinanceTests.test_cash_checkin_posts_deposit_room_charge_and_cash_once`, `test_guest_finance.py::GuestFinanceTests.test_cash_topup_pays_charge_without_inflating_deposit_liability` +8 (ok 10) | **дутуу** | хэсэгчлэн; "Бусад баталгаажсан хэрэглээ"-ний charge producer байхгүй (guest_charge.kind зөвхөн ROOM/MINIBAR). Эцсийн баримт тусда… |
 | `REQ-02-03.04` | Барьцаа: эх үүсвэрээр автомат, walk-in 50–100 мянга, онлайн чөлөөлөгдөнө, QPay/карт/бэлэн, суутгал/… | `guest_finance.py:GuestFinance.configure`, `guest_finance.py:GuestFinance.setting` +16 | `test_deposit_policy.py::DepositPolicyTests.test_setting_range_and_explicit_unset`, `test_guest_finance.py::GuestFinanceTests.test_deposit_configuration_precedence_unset_and_permissions` +11 (ok 13) | **дутуу** | хэсэгчлэн; Reception check-in дэлгэц барьцааны дүнг автоматаар харуулахгүй (Reception гараар оруулж, сервер тохиргоотой тулгана;… |
@@ -147,7 +147,7 @@
 | `REQ-02-07.04` | RC-DEC-004: барьцааг QPay/карт/бэлнээр авч, буцааж эсвэл суутгана; суутгалд шалтгаан/нотолгоо/батла… | `checkin_funding.py:CheckinFunding.create`, `checkin_funding.py:CheckinFunding.reconcile` +5 | `test_checkin_funding.py::CheckinFundingTests.test_pos_deposit_checkin_posts_liability_without_cash`, `test_checkin_funding.py::CheckinFundingTests.test_mock_qpay_requires_server_confirmation_then_one_use` +4 (ok 6) | **баталгаажаагүй** | зөвхөн mock provider; EXT gate; QPay/Khaan барьцаа зөвхөн mock gateway-тэй. |
 | `REQ-02-07.05` | RC-DEC-005: онлайн захиалгын системийг платформын хэсэг болгон өөрсдөө хөгжүүлж, Reception дотоод б… | `booking_holds.py:BookingHolds.create`, `booking_holds.py:BookingHolds.reconcile` +5 | `test_booking_holds.py::BookingHoldTests.test_paid_hold_applies_snapshot_and_checks_out_without_cash`, `test_booking_holds.py::BookingHoldTests.test_production_disables_mock_hold_and_guest_capability` +2 (ok 4) | **дутуу** | хэсэгчлэн; Дотоод booking модуль (hold/quote/capture/cancellation) бий боловч Reception-ийн booking check-in production runtime-д… |
 | `REQ-02-07.06` | RC-DEC-006: картын төлбөрийг банкны POS-оор гараар бүртгэх ба системтэй холбогдсон гарцаар баталгаа… | `guest_payments.py:GuestPayments.pos`, `guest_payments.py:GuestPayments.intent` +4 | `test_guest_payments.py::GuestPaymentTests.test_pos_proof_is_immutable_and_does_not_change_cash_or_deposit`, `test_guest_payments.py::GuestPaymentTests.test_pos_reference_reuse_and_forged_success_are_rejected` +2 (ok 4) | **баталгаажаагүй** | зөвхөн mock provider; EXT gate; Системээр баталгаажсан карт (KHAAN) зөвхөн MockPaymentGateway; production-д GUEST_PROVIDER_UNAVAI… |
-| `REQ-02-07.07` | RC-DEC-007: ХУР ажиллахгүй/олдохгүй үед Reception овог, нэр, РД-г гараар бүртгэж, баталгаажуулалтын… | `guest_identity.py:validate_identity`, `postgres/migrations/018_walkin_stays.sql` | `test_stay_policy.py::GuestIdentityPolicyTests.test_registration_normalizes_and_never_asserts_xyp`, `test_walkin_stays.py::WalkInStayTests.test_server_rejects_client_authority_and_identifier_provenance` (ok 2) | **дутуу** | хэсэгчлэн; Гараар бүртгэх нь цорын ганц зам; ХУР/XYP холболт ба mock байхгүй. provenance баганад зөвхөн MANUAL зөвшөөрөгдөнө (CHE… |
+| `REQ-02-07.07` | RC-DEC-007: ХУР ажиллахгүй/олдохгүй үед Reception овог, нэр, РД-г гараар бүртгэж, баталгаажуулалтын… | `stays.py:StayService._xyp_identity`, `xyp_lookups.py:XypLookups.lookup` +2 | `test_xyp_lookup.py::XypLookupTests.test_manual_entry_only_for_the_failed_normalized_rd`, `test_xyp_lookup.py::XypLookupTests.test_unavailable_lookup_allows_manual_entry_with_reason`, `test_xyp_lookup.py::XypLookupTests.test_found_lookup_checks_in_as_xyp_verified_and_locks_fields` +2 (ok 5) | **хэрэгжсэн** | RC-DEC-046: гар бүртгэл зөвхөн NOT_FOUND/UNAVAILABLE хайлтын дараа тухайн РД-ээр; provenance `MANUAL`/`XYP_VERIFIED`, `xyp_fallback` шалтгаан хадгална. Бодит ХУР адаптер EXT-01 (mock адаптертай). |
 | `REQ-02-07.08` | RC-DEC-008: 25/30k-д цэвэрлэгээний төлөвийг зөвхөн Cleaner, 20k-д Manager өөрчилнө; Reception зөвхө… | `readiness.py:ReadinessService.manager_clean`, `readiness.py:ReadinessService.request` +4 | `test_walkin_stays.py::WalkInStayTests.test_manager_can_only_mark_clean_in_20000_package`, `test_walkin_stays.py::WalkInStayTests.test_cleaning_producer_enforces_start_assignment_and_full_completion` +3 (ok 5) | **хэрэгжсэн** |  |
 | `REQ-02-07.09` | RC-DEC-009: хүлээн авагчийн бодит тооллогоор шинэ ээлж, review зогсоохгүй, self-close terminal, хуу… | `handover.py:HandoverService.submit`, `handover.py:HandoverService.finish` +3 | `test_handover_lifecycle.py::HandoverLifecycleTests.test_handover_blind_counts_freezes_sales_and_opens_actual_before_review`, `test_handover_lifecycle.py::HandoverLifecycleTests.test_self_close_requires_admin_policy_and_multiple_roles` +3 (ok 5) | **хэрэгжсэн** |  |
 | `REQ-02-07.10` | RC-DEC-010: 25/30k Cleaner mobile dashboard; checkout эхлэхэд minibar шалгах ажил, Cleaner тайлан →… | `reception_dependencies.py:ReceptionDependencies.begin`, `reception_dependencies.py:ReceptionDependencies.final` +5 | `test_minibar_guest.py::MinibarGuestTests.test_checkout_requires_report_then_settlement_completes_production_stay`, `test_minibar_guest.py::MinibarGuestTests.test_cleaner_only_account_can_claim_count_and_view_queue` +2 (ok 4) | **хэрэгжсэн** |  |

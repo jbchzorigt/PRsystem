@@ -20,7 +20,7 @@ Reception багц 3/6-ийн **development mock орчин дахь walk-in ser
 
 ## Primary guest and privacy
 
-All four identity types are supported with mandatory names, DOB, nationality and server-owned `MANUAL` provenance. MN registration is normalized Cyrillic + eight ASCII digits with valid encoded birth date matching DOB; this is structural validation, **not XYP verification**. Passport requires issuing country, number, expiry date; other government ID requires type/country/authority/number. NO_DOCUMENT requires reason/note and is LOW_ASSURANCE. Under-18 primary guests require guardian name/phone/relationship; guardian is metadata, not another stay.
+All four identity types are supported with mandatory names, DOB, nationality and server-owned provenance: `XYP_VERIFIED` only from a server-held ХУР lookup, otherwise `MANUAL` (RC-DEC-046). MN registration is normalized Cyrillic + eight ASCII digits with valid encoded birth date matching DOB; this is structural validation, **not XYP verification**. Passport requires issuing country, number, expiry date; other government ID requires type/country/authority/number. NO_DOCUMENT requires reason/note and is LOW_ASSURANCE. Under-18 primary guests require guardian name/phone/relationship; guardian is metadata, not another stay.
 
 MN_REG_NO check-in requires a server-held ХУР lookup (RC-DEC-046, mock adapter until EXT-01); manual identity entry is accepted only after a NOT_FOUND/UNAVAILABLE lookup for the same РД. There is no client-controlled `XYP_VERIFIED`, fake match result or fuzzy matching. Full guest metadata and backdate reason are encrypted using versioned AES-256-GCM, random 96-bit nonce and tenant/stay/purpose-bound associated data. Identity lookup and command fingerprint use separate HMAC namespaces and a separate stable key. Identifier, names and raw guest code are absent from receipts/audit.
 
@@ -58,6 +58,9 @@ GRANT UPDATE (cleaning_state, revision) ON prsystem.room TO app_role;
 GRANT UPDATE (state) ON prsystem.room_cleaning_request TO app_role;
 -- Row-lock privilege (existing shift service already requires state UPDATE):
 GRANT UPDATE (state) ON prsystem.reception_shift TO app_role;
+-- RC-DEC-046 ХУР lookup (migration 079):
+GRANT SELECT, INSERT ON prsystem.xyp_lookup TO app_role;
+GRANT UPDATE (stay_id) ON prsystem.xyp_lookup TO app_role;
 ```
 
 Every existing Cleaner posting runtime also needs SELECT on `room_cleaning_request`; bridged room tasks need the room/history grants above. No UPDATE/DELETE on immutable identity, readiness or matching history; no stay mutation grants are added by this step.
