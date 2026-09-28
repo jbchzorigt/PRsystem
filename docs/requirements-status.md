@@ -29,7 +29,7 @@
 | Backend unittest | `scripts/run_postgres_shard.py`, 4 shard; Python 3.12; локал **PostgreSQL 16.13** (CI 17 ашигладаг) | **937 илэрсэн, 937 давсан, 0 унасан, 0 skip**. Shard: 213 / 239 / 245 / 240; 484–749 секунд |
 | Browser (Chromium) | `tests/browser/*.cjs`, 25 suite; Playwright 1.62.1; git-ээс экспортолсон тусдаа хуулбар дээр | **25 / 25 амжилттай** |
 | Browser request ↔ API model | `tests/browser/validate_requests.py`, 23 artifact | **23 / 23**, нийт **171** command таарсан |
-| Batch 1 (B-01…B-06) | `b0febe5`; `run_postgres_shard` 4 shard, Python 3.12, локал PostgreSQL 16.13; 25 browser suite; `validate_requests.py`; token check; design lint | **943 илэрсэн, 943 давсан, 0 унасан, 0 skip** (shard 213 / 239 / 251 / 240); browser **25 / 25** (`daily-workflows` нэг удаа ачааллын үед унасан; baseline `a208fa0` дээр ч ижил race давтагддаг, дахин ажиллуулахад давсан); **23 / 23** artifact; token check OK; design lint 0 алдаа |
+| Batch 1 (B-01…B-06) | `b0febe5` (+ review fix `0ba8884`); `run_postgres_shard` 4 shard, Python 3.12, локал PostgreSQL 16.13; 25 browser suite; `validate_requests.py`; token check; design lint | **943 → 944 илэрсэн, 944 давсан, 0 унасан, 0 skip** (`0ba8884` дээр shard 213 / 239 / 252 / 240); browser **25 / 25** (`daily-workflows` нэг удаа ачааллын үед унасан; baseline `a208fa0` дээр ч ижил race давтагддаг, дахин ажиллуулахад давсан); **23 / 23** artifact; token check OK; design lint 0 алдаа |
 
 Хязгаар:
 
@@ -51,7 +51,7 @@
 | Cleaner (04, 21) | 21 | 14 | 0 | 4 | 3 | 42 | 54% |
 | Restaurant (08) | 16 | 15 | 0 | 2 | 0 | 33 | 48% |
 | Reception (02, 03, 05, 06) | 61 | 77 | 1 | 15 | 11 | 165 | 40% |
-| Subscription (15, 16, 17) | 23 | 25 | 5 | 6 | 5 | 64 | 39% |
+| Subscription (15, 16, 17) | 22 | 26 | 5 | 6 | 5 | 64 | 37% |
 | RBAC (18) | 9 | 15 | 4 | 1 | 1 | 30 | 31% |
 | Booking (09, 11) | 17 | 18 | 6 | 13 | 6 | 60 | 31% |
 | Cash/Deposit (20, 24) | 17 | 25 | 9 | 12 | 2 | 65 | 27% |
@@ -61,7 +61,7 @@
 | Guest registry (12) | 0 | 10 | 9 | 1 | 3 | 23 | 0% |
 | Police (13) | 0 | 8 | 43 | 0 | 4 | 55 | 0% |
 | Finance report (23) | 0 | 16 | 22 | 0 | 2 | 40 | 0% |
-| **Нийт** | **307** | **292** | **117** | **63** | **54** | **833** | **39%** |
+| **Нийт** | **306** | **293** | **117** | **63** | **54** | **833** | **39%** |
 
 Дүгнэлт:
 
@@ -91,7 +91,7 @@
 | [14](#14-operation-dashboard) | 9 | 29 | 0 | 1 | 3 | 42 |
 | [15](#15-hotel-onboarding-account-activation) | 12 | 7 | 0 | 4 | 2 | 25 |
 | [16](#16-subscription-pricing-and-payment) | 6 | 8 | 0 | 2 | 1 | 17 |
-| [17](#17-subscription-lifecycle) | 5 | 10 | 5 | 0 | 2 | 22 |
+| [17](#17-subscription-lifecycle) | 4 | 11 | 5 | 0 | 2 | 22 |
 | [18](#18-action-level-permission-matrix) | 9 | 15 | 4 | 1 | 1 | 30 |
 | [19](#19-staff-account-lifecycle) | 15 | 6 | 0 | 6 | 2 | 29 |
 | [20](#20-deposit-and-payment-correction) | 10 | 8 | 0 | 10 | 1 | 29 |
@@ -101,7 +101,7 @@
 | [24](#24-cash-drawer-ledger) | 7 | 17 | 9 | 2 | 1 | 36 |
 | [25](#25-minibar-selling-price-snapshot) | 21 | 5 | 0 | 1 | 2 | 29 |
 | [26](#26-room-minibar-lifecycle) | 64 | 16 | 0 | 1 | 2 | 83 |
-| **Нийт** | **307** | **292** | **117** | **63** | **54** | **833** |
+| **Нийт** | **306** | **293** | **117** | **63** | **54** | **833** |
 
 ## 4. Шаардлага → код → тест → төлөв
 
@@ -690,7 +690,7 @@
 | `REQ-17-06.03` | Unpaid/suspended/grace дууссан hotel landing/search-ээс нуух; grace-д харагдсан хэвээр; detail URL-… | `booking_public.py:BookingPublic.listing`, `booking_public.py:BookingPublic.search` +2 | `test_booking_holds.py::BookingHoldTests.test_unpublished_and_expired_hotels_cannot_accept_new_customer_holds` (ok 1); Batch 1: `test_booking_holds.py::BookingHoldTests.test_hotel_in_subscription_grace_stays_public_and_bookable` (ok) | **дутуу** | B-04 засагдсан (Batch 1); бусад дутуу хэвээр. Өмнөх олдвор: хэсэгчлэн; Suspended ба unpublished нуугдана. Гэвч expires_at>now нөхцөлөөр grace-д ч нуугдана (spec-тэй зөрнө); detail URL 404 (… |
 | `REQ-17-07.01` | LIFE-DEC-001: Downgrade байхгүй; 20→25/30, 25→30 upgrade; төлбөрөөр target floor; entitlement servi… | `renewal.py:RenewalService.invoice`, `renewal.py:RenewalService.reconcile` +1 | `test_renewal.py::RenewalTests.test_active_higher_renewal_commits_floor_but_defers_entitlement` (ok 1) | **дутуу** | хэсэгчлэн; Downgrade хориг/floor биелсэн; intra-term upgrade байхгүй. |
 | `REQ-17-07.02` | LIFE-DEC-002: Upgrade одоо төлж дараагийн service month-оос; (шинэ−хуучин)×үлдсэн бүтэн сар; expire… | — | — | **хийгдээгүй** | Upgrade үнэ/хэрэгжих мөч кодгүй. |
-| `REQ-17-07.03` | LIFE-DEC-003: expires_at-д шууд lock хийхгүй; 48ц grace-д бүх эрх хэвийн; дараа нь шинэ ажиллагаа х… | `subscription.py:subscription_gate`, `restaurant_orders.py:RestaurantOrders.guest` +1 | `test_subscription.py::SubscriptionTests.test_grace_exclusive_boundary`, `test_walkin_stays.py::WalkInStayTests.test_permissions_shift_expiry_security_and_cross_tenant` +1 (ok 3); Batch 1: `test_restaurant_orders.py::RestaurantOrderTests.test_guest_orders_during_grace_and_locks_at_grace_end`, `test_booking_holds.py::BookingHoldTests.test_hotel_in_subscription_grace_stays_public_and_bookable` (ok) | **хэрэгжсэн** | B-05, B-04 засагдсан (Batch 1); өөр дутуу үлдээгүй. Өмнөх олдвор: хэсэгчлэн; Grace-д Restaurant зочны шинэ захиалга ба public listing хаагддаг. |
+| `REQ-17-07.03` | LIFE-DEC-003: expires_at-д шууд lock хийхгүй; 48ц grace-д бүх эрх хэвийн; дараа нь шинэ ажиллагаа х… | `subscription.py:subscription_gate`, `restaurant_orders.py:RestaurantOrders.guest` +1 | `test_subscription.py::SubscriptionTests.test_grace_exclusive_boundary`, `test_walkin_stays.py::WalkInStayTests.test_permissions_shift_expiry_security_and_cross_tenant` +1 (ok 3); Batch 1: `test_restaurant_orders.py::RestaurantOrderTests.test_guest_orders_during_grace_and_locks_at_grace_end`, `test_booking_holds.py::BookingHoldTests.test_hotel_in_subscription_grace_stays_public_and_bookable` (ok) | **дутуу** | B-05, B-04 засагдсан (Batch 1). Үлдсэн (B-07): minibar DB guard-ууд grace-д түгжинэ — `062:23` guard_minibar_adjustment, `066:45` minibar_variance_authorized, `074:313` guard_minibar_execution_step нь bare `expires_at>clock_timestamp()` ашиглана. Өмнөх олдвор: хэсэгчлэн; Grace-д Restaurant зочны шинэ захиалга ба public listing хаагддаг. |
 | `REQ-17-07.04` | LIFE-DEC-004: Grace-д landing/search/booking-д хэвээр; grace дуусахад нуух; renewal+шаардлага ханга… | `booking_public.py:BookingPublic.listing`, `booking_public.py:BookingPublic.search` +1 | `test_booking_holds.py::BookingHoldTests.test_unpublished_and_expired_hotels_cannot_accept_new_customer_holds` (ok 1); Batch 1: `test_booking_holds.py::BookingHoldTests.test_hotel_in_subscription_grace_stays_public_and_bookable` (ok) | **хэрэгжсэн** | B-04 засагдсан (Batch 1); өөр дутуу үлдээгүй. Өмнөх олдвор: хэсэгчлэн; Код grace эхлэхэд (expires_at) нууна; тест үүнийг баталгаажуулна — decision-той зөрнө. |
 | `REQ-17-07.05` | LIFE-DEC-005: Grace 48ц; дотор нь renewal анхны expiry-ээс; дараа нь төлбөрийн мөчөөс. | `billing.py:renewal_window`, `renewal.py:RenewalService.reconcile` | `test_billing_calendar.py::BillingCalendarTests.test_grace_boundary_is_exclusive`, `test_renewal.py::RenewalTests.test_locked_subscription_renewal_reopens_time_but_never_security` (ok 2) | **хэрэгжсэн** |  |
 | `REQ-17-07.06` | LIFE-DEC-006: Paid pending target floor; second upgrade incremental; нэг unpaid intent, billing rev… | `renewal.py:RenewalService.invoice`, `renewal.py:RenewalService.reconcile` +1 | `test_renewal.py::RenewalTests.test_invoice_replay_and_pending_invoice_prevent_duplicate_provider_calls`, `test_renewal.py::RenewalTests.test_stale_paid_invoice_is_reconciliation_not_free_time` +1 (ok 3) | **дутуу** | хэсэгчлэн; Renewal-ийн нэг unpaid intent, lock, stale→RECONCILE биелсэн; pending/second upgrade, billing_revision байхгүй. |

@@ -147,11 +147,17 @@ B-04, B-06 дээр одоогийн тестүүд шаардлагатай з�
 | # | Commit | Засвар | Тест |
 | --- | --- | --- | --- |
 | B-01 | `4ed8e91` | UI цагийг 0.5 алхмаар авч `duration_units = цаг × 2` илгээнэ | `tests/browser/reception.cjs` |
-| B-02 | `ea8c05f` | `078`: category_blockers-т амьд category hold; lifecycle tenant scope; hold terminal-д sweep | `test_confirmed_category_booking_blocks_category_retirement`, `test_expired_unpaid_hold_releases_category_retirement` |
+| B-02 | `ea8c05f` | `078`: category_blockers-т амьд category hold; lifecycle tenant scope; hold terminal-д sweep | `test_confirmed_category_booking_blocks_category_retirement`, `test_expired_unpaid_hold_releases_category_retirement`, `test_upgraded_checkin_finishes_category_retirement` |
 | B-03 | `f765135` | NO_SHOW зөвхөн RECEPTION/MANAGER | `test_manager_plus_alone_cannot_confirm_no_show` |
 | B-04 | `a4968d7` | Public listing/search `expires_at + 48h` | `test_hotel_in_subscription_grace_stays_public_and_bookable` |
 | B-05 | `6064652` | Restaurant захиалга `expires_at + 48h` | `test_guest_orders_during_grace_and_locks_at_grace_end` |
 | B-06 | `b0febe5` | `guest_view`: guest/public/booker хариунаас гэрээний нөхцөл, commission split хасна | `test_guest_and_public_booking_responses_hide_contract_terms` |
+
+**Нээлттэй (Batch 1-ийн review-д олдсон):**
+
+| # | Шаардлага | Код | Нотолгоо |
+| --- | --- | --- | --- |
+| B-07 | `docs/17:166–168`, LIFE-DEC-003: grace-д package-ийн бүх эрх хэвийн (REQ-17-07.03) | `062_minibar_returned_report_adjustments.sql:23` (`guard_minibar_adjustment`), `066_minibar_count_variance.sql:45` (`minibar_variance_authorized`), `074_minibar_partial_rollback.sql:313` (`guard_minibar_execution_step`) нь `h.expires_at>clock_timestamp()` шалгана; Python gate (`subscription_gate`) grace-д зөвшөөрдөг | Manager-ийн minibar adjustment, variance шийдвэр, Cleaner partial rollback grace-д DB түвшинд татгалзагдана (review probe: `minibar_variance_authorized` expires_at-аас 1 цагийн дараа False) |
 
 B-04 (`test_unpublished_and_expired_hotels_cannot_accept_new_customer_holds`) болон B-06 (`test_confirmation_snapshots_current_contract_without_repricing_hold`, `test_guest_free_cancellation_releases_capacity_and_preserves_capture`, `test_late_guest_cancellation_uses_confirmation_contract`) дээр шаардлагатай зөрж байсан assert-уудыг REQ-17-06.03 болон REQ-09-11.00-ийн дагуу өөрчилсөн: grace-ийн дараах нуултыг шалгана; гэрээний нөхцөлийг staff inbox-оос шалгана.
 
