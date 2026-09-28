@@ -863,3 +863,19 @@ class BookingHoldTests(GuestFinanceCase):
         self.assertEqual(self.assert_status(self.cancel(hold,'hide-terms'),200),cancelled)
         self.assertEqual(exposed_terms(self.assert_status(self.call(hold),200)),set())
         self.assertEqual(self.staff_booking(hold)['quote']['commission_rate_bps'],375)
+
+    def test_upgraded_checkin_finishes_category_retirement(self):
+        # REQ-26-05.00 / docs/26:99: moving the booking to another ACTIVE category resolves the blocker.
+        hold=self.arriving_hold();original=self.room
+        category=self.assert_status(self.client.post(f'/hotels/{self.tenant}/room-categories',headers=self.headers(self.manager_token),json=dict(name='Suite',cleaning_buffer_minutes=30,deposit=60000,idempotency_key='suite')),201)['category_id']
+        for cat,rank in ((self.category,1),(category,2)):
+            self.assert_status(self.client.put(f'/hotels/{self.tenant}/room-categories/{cat}/booking-rank',headers=self.headers(self.manager_token),json=dict(rank=rank,expected_revision=0,idempotency_key='rank-'+cat)),200)
+        room=self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms',headers=self.headers(self.manager_token),json=dict(number='201',floor='2',category_id=category,nightly_price=900000,idempotency_key='suite-room')),201)['room_id']
+        task=self.assert_status(self.client.post(f'/hotels/{self.tenant}/rooms/{room}/cleaning-requests',headers=self.headers(self.manager_token),json=dict(assignee_id=self.worker,expected_revision=1,idempotency_key='suite-clean')),201)
+        self.assert_status(self.client.post(f'/hotels/{self.tenant}/cleaning/tasks/{task["task_id"]}/start',headers=self.headers(self.worker_token),json=dict(expected_revision=task['assignment_version'],idempotency_key='suite-start')),200)
+        self.room=room;self.assert_status(self.post_cleaning(task,key='suite-post'),200);self.room=original
+        self.assertIn('BOOKING',self.deactivate('category',self.category,'category-off')['blockers'])
+        self.deactivate('room',original,'room-off')
+        self.assert_status(self.client.post(f'/hotels/{self.tenant}/booking-holds/{hold["booking_id"]}/upgrade',headers=self.headers(self.manager_token),json=dict(room_id=room,reason='Category retiring',idempotency_key='upgrade')),200)
+        self.room=room;self.assert_status(self.apply_hold(hold),201)
+        self.assertEqual(self.category_status(),'INACTIVE')

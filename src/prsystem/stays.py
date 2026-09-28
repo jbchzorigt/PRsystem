@@ -243,6 +243,8 @@ class StayService(RoomService):
                 if hold_id:
                     conn.execute('''INSERT INTO prsystem.booking_hold_application(tenant_id,hold_id,stay_id,attempt_id,amount_mnt)
                         VALUES(%s,%s,%s,%s,%s)''',(tenant,hold_id,stay,hold_attempt,amount))
+                    from prsystem.room_lifecycle import RoomLifecycle
+                    RoomLifecycle.sweep(conn,tenant)  # An upgraded check-in may resolve category retirement.
                 else:
                     conn.execute('INSERT INTO prsystem.booking_stay_application VALUES(%s,%s,%s,%s)',(tenant,booking_id,stay,amount))
                     conn.execute("UPDATE prsystem.room_reservation SET state='CONSUMED' WHERE tenant_id=%s AND id=%s",(tenant,booking_id))
