@@ -31,7 +31,7 @@ Reception (RC) system нь зочид буудлын ресепшний өдөр
 - `MN_REG_NO` үед normalized, structurally valid Монгол регистр шаардана. ХУР/XYP-ээс мэдээлэл олдвол автоматаар бөглөж `XYP_VERIFIED`, service unavailable/not-found үед Reception гараар оруулж `MANUAL` provenance хадгална.
 - `FOREIGN_PASSPORT` үед issuing country, passport number, expiry date; `OTHER_GOV_ID` үед document type, issuing country/authority, document number заавал байна.
 - `NO_DOCUMENT` үед mandatory reason, note авч `LOW_ASSURANCE` гэж тэмдэглэнэ; document verified мэт харагдуулахгүй.
-- Үндсэн зочин check-in өдөр 18 нас хүрээгүй бол guardian/responsible adult-ийн нэр, холбоо барих дугаар, relationship metadata заавал авна. Guardian нь тусдаа staying-guest/Excel мөр болохгүй.
+- Буудал 18 нас хүрээгүй хүнд үйлчлэхгүй: үндсэн зочин check-in өдөр (Улаанбаатарын цагаар) 18 нас хүрээгүй бол сервер бүртгэлийг `GUEST_UNDER_18` кодоор татгалзана. Асран хамгаалагчийн бүртгэл байхгүй (`RC-DEC-045`). Хүүхэдтэй гэр бүлд насанд хүрсэн хүн үндсэн зочноор бүртгэгдэнэ.
 - Зөвхөн structurally valid `MN_REG_NO` үндсэн зочны normalized регистр Police exact match-д орно. Passport/other ID/no-document дээр нэр, төрсөн огноо, хаягаар fuzzy match хийхгүй; `NOT_ELIGIBLE_EXACT_RD` гэж хадгална. Valid РД-тэй хүүхдийг matching-ээс хасахгүй.
 - Raw identifier-ийг encrypted хадгалж, exact lookup-д identity type/country namespace бүхий keyed token ашиглана. Identifier-ийг ердийн log/analytics-д бичихгүй.
 - Match үүссэн эсэх, эрэн сурвалжлах үндэслэл болон цагдаагийн мэдээллийг Reception, Manager, Hotel Admin, Cleaner, Restaurant эсвэл зочинд харуулахгүй. Зөвхөн эрх бүхий Police portal-д alert үүсгэнэ.
@@ -581,9 +581,14 @@ RC системийн үндсэн хэсэг дөрвөн табтай байн
 - **Төлөв:** Батлагдсан
 - **Шийдвэр:** Үндсэн зочин `MN_REG_NO`, `FOREIGN_PASSPORT`, `OTHER_GOV_ID`, `NO_DOCUMENT` identity type-ийн нэгтэй байна. Бүх төрөлд нэр, төрсөн огноо, nationality, provenance; төрөлд тохирох identifier эсвэл no-document reason хадгална. 18-аас доош үндсэн зочинд guardian metadata шаардлагатай боловч guardian тусдаа stay/Excel мөр болохгүй. Нас server-side DOB-оос тооцогдоно. Police automatic matching зөвхөн structurally valid normalized Монгол РД дээр exact ажиллаж, бусад төрөлд fuzzy match хийхгүй. Raw identifier encrypted, lookup keyed token-той, correction append-only revision байна; шинэ valid РД revision батлагдвал matching дахин ажиллана.
 
+### RC-DEC-045 — 18 нас хүрээгүй үндсэн зочинд үйлчлэхгүй
+
+- **Төлөв:** Батлагдсан (2026-09-28, захиалагчийн шийдвэр)
+- **Шийдвэр:** Зочид буудлын журмаар насанд хүрээгүй хүнд үйлчлэхгүй. Бүх буудалд ижил, тохиргоогүй дүрэм: үндсэн зочин check-in өдөр 18 нас хүрсэн байх ёстой; эс бөгөөс walk-in болон online booking check-in-ийг сервер `GUEST_UNDER_18`-аар татгалзана. `RC-DEC-044`-ийн 18-аас доош үндсэн зочны guardian metadata хэсгийг орлоно; API/UI-д guardian талбар байхгүй. Өмнө бүртгэгдсэн түүхэн guardian өгөгдлийг өөрчлөхгүй.
+
 ## 8. Хаагдсан canonical scope
 
-P0-37, P0-38, P0-39A–D болон primary guest identity P0-40 бүрэн хаагдсан. `STAY-DEC-008`–`014`, `RC-DEC-044`-ийг мөрдөнө. Confirmed booking/active stay-ийн planned end amendment/extension/shortening/conversion MVP-д байхгүй; early/late actual checkout existing checkout урсгалаар явагдана. Early-morning cutoff түр хойшлогдсон. Guest registry filter/export/retention-ийг [12-hotel-guest-registry-report.md](./12-hotel-guest-registry-report.md)-ийн `GUEST-DEC-005`–`008` тодорхойлно.
+P0-37, P0-38, P0-39A–D болон primary guest identity P0-40 бүрэн хаагдсан. `STAY-DEC-008`–`014`, `RC-DEC-044`, `RC-DEC-045`-ийг мөрдөнө. Confirmed booking/active stay-ийн planned end amendment/extension/shortening/conversion MVP-д байхгүй; early/late actual checkout existing checkout урсгалаар явагдана. Early-morning cutoff түр хойшлогдсон. Guest registry filter/export/retention-ийг [12-hotel-guest-registry-report.md](./12-hotel-guest-registry-report.md)-ийн `GUEST-DEC-005`–`008` тодорхойлно.
 
 ## 9. Барьцааны төрлийг хамгаалах дүрэм
 

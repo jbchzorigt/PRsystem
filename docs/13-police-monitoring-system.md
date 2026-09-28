@@ -235,7 +235,7 @@ DRAFT → PENDING_APPROVAL → ACTIVE ↔ SUSPENDED → CLOSED
 - `MN_REG_NO` нь structurally valid normalized РД болон `XYP_VERIFIED` эсвэл `MANUAL` provenance-тэй байна. Manual боловч бүтэц зөв РД exact matching-д орно.
 - `FOREIGN_PASSPORT` нь issuing country, passport number, expiry; `OTHER_GOV_ID` нь document type, issuing country/authority, number хадгална.
 - `NO_DOCUMENT` үед reason, note заавал бөгөөд identity assurance `LOW_ASSURANCE` байна.
-- Үндсэн зочин 18 нас хүрээгүй бол guardian/responsible adult-ийн нэр, холбоо барих дугаар, relationship metadata заавал хадгална. Энэ нь тусдаа staying-guest мөр үүсгэхгүй.
+- 18 нас хүрээгүй үндсэн зочныг буудал бүртгэхгүй (`RC-DEC-045`, 2026-09-28); guardian metadata хадгалахгүй.
 - Valid РД-тэй хүүхдийг exact matching-ээс хасахгүй. Харин passport, other ID, no-document болон invalid РД дээр Police fuzzy matching хийхгүй, `NOT_ELIGIBLE_EXACT_RD` гэж тэмдэглэнэ.
 - Hotel талын response, UI болон алдааны текст Match байгаа эсэхээс хамаарч ялгарахгүй.
 - Check-in баталгаажсаны дараах hotel identity lifecycle-ээр зөвшөөрөгдсөн correction нь original snapshot-ийг overwrite хийхгүй, reason-тэй append-only revision байна. Шинэ valid РД батлагдвал exact matching дахин ажиллана; өмнөх Match-ийг Hotel correction автоматаар устгахгүй бөгөөд шаардлагатай бол Police-ийн False Match урсгалаар шийдвэрлэнэ.
