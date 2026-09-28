@@ -262,3 +262,33 @@ class MockContactNoticeGateway:
             conn.execute('INSERT OR IGNORE INTO mock_contact_notice VALUES(?,?,?)',(identity,channel,recipient))
             if tuple(conn.execute('SELECT channel,recipient FROM mock_contact_notice WHERE id=?',(identity,)).fetchone())!=(channel,recipient):raise DomainError('IDEMPOTENCY_CONFLICT')
         return dict(notice_id=identity,channel=channel,recipient=recipient,provider_id='MOCK-CONTACT:'+identity,mode='MOCK_ONLY')
+
+
+class MockXypGateway:
+    """Simulated ХУР citizen register (EXT-01 pending). Never a production adapter."""
+    is_mock = True
+    OUTAGE = 'ЖЖ80010100'
+
+    def __init__(self, store):
+        self.store, self.available, self.calls = store, True, 0
+        with store.connect() as conn:
+            conn.execute('''CREATE TABLE IF NOT EXISTS mock_citizen (document_number TEXT PRIMARY KEY,
+                family_name TEXT NOT NULL, given_name TEXT NOT NULL, date_of_birth TEXT NOT NULL)''')
+
+    def add_citizen(self, document_number, family_name, given_name, date_of_birth):
+        with self.store.connect() as conn:
+            conn.execute('INSERT OR REPLACE INTO mock_citizen VALUES (?,?,?,?)', (document_number, family_name, given_name, date_of_birth))
+
+    def set_available(self, available):
+        self.available = available is True
+
+    def citizen(self, document_number):
+        from prsystem.xyp import XypNotFound, XypUnavailable
+        self.calls += 1
+        if not self.available or document_number == self.OUTAGE:
+            raise XypUnavailable('PROVIDER_ERROR')
+        with self.store.connect() as conn:
+            row = conn.execute('SELECT family_name,given_name,date_of_birth FROM mock_citizen WHERE document_number=?', (document_number,)).fetchone()
+        if row is None:
+            raise XypNotFound(document_number)
+        return dict(row)

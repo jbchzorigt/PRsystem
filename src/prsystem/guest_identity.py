@@ -33,6 +33,18 @@ def calendar_date(value):
         raise DomainError('INVALID_GUEST_IDENTITY') from exc
 
 
+def registration_number(value):
+    """Normalized Mongolian РД and the birth date it encodes."""
+    number = text(value).upper()
+    if not re.fullmatch(r'[А-ЯЁӨҮ]{2}[0-9]{8}', number):
+        raise DomainError('INVALID_GUEST_IDENTITY')
+    yy, mm, dd = int(number[2:4]), int(number[4:6]), int(number[6:8])
+    try:
+        return number, date(2000 + yy if mm > 20 else 1900 + yy, mm - 20 if mm > 20 else mm, dd)
+    except ValueError as exc:
+        raise DomainError('INVALID_GUEST_IDENTITY') from exc
+
+
 def validate_identity(data, on_date):
     kind = data['identity_type']
     result = {name: text(data.get(name)) for name in ('family_name', 'given_name', 'nationality')}
@@ -49,14 +61,7 @@ def validate_identity(data, on_date):
     required = set()
     if kind == 'MN_REG_NO':
         required = {'document_number'}
-        identifier = text(data.get('document_number')).upper()
-        if not re.fullmatch(r'[А-ЯЁӨҮ]{2}[0-9]{8}', identifier):
-            raise DomainError('INVALID_GUEST_IDENTITY')
-        yy, mm, dd = int(identifier[2:4]), int(identifier[4:6]), int(identifier[6:8])
-        try:
-            rd_dob = date(2000 + yy if mm > 20 else 1900 + yy, mm - 20 if mm > 20 else mm, dd)
-        except ValueError as exc:
-            raise DomainError('INVALID_GUEST_IDENTITY') from exc
+        identifier, rd_dob = registration_number(data.get('document_number'))
         if rd_dob != dob:
             raise DomainError('INVALID_GUEST_IDENTITY')
         country = 'MN'
