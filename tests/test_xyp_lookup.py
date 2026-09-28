@@ -243,6 +243,24 @@ class XypLookupTests(WalkInCase):
         self.ready()
         self.assert_status(self.checkin(guest=self.guest(lookup)), 201)
 
+    def test_found_lookup_rejects_any_other_identity_field(self):
+        self.ready()
+        lookup = self.assert_status(self.lookup(), 201)['lookup_id']
+        for index, extra in enumerate((dict(note='VIP'), dict(issuing_country='US'), dict(note=' '))):
+            response = self.checkin(guest=self.guest(lookup, **extra), idempotency_key=f'extra-{index}')
+            self.assertEqual((response.status_code, response.json()['code']), (422, 'XYP_VERIFIED_FIELDS_LOCKED'), extra)
+        with psycopg.connect(self.owner_dsn) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM prsystem.stay WHERE tenant_id=%s', (self.tenant,)).fetchone()[0], 0)
+
+    def test_lookup_from_another_hotel_is_not_found(self):
+        self.ready()
+        foreign = 'f' * 32
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('''INSERT INTO prsystem.xyp_lookup(tenant_id,id,actor_id,lookup_token,status,reason,envelope,consent_at,created_at,expires_at)
+                VALUES(%s,%s,%s,'token','NOT_FOUND',NULL,NULL,now(),now(),now()+interval '15 minutes')''', (self.other, foreign, self.account))
+        response = self.checkin(guest=self.guest(foreign, **self.MANUAL), idempotency_key='foreign')
+        self.assertEqual((response.status_code, response.json()['code']), (404, 'XYP_LOOKUP_NOT_FOUND'))
+
     def test_xyp_birth_date_applies_the_adult_rule(self):
         self.ready(); self.xyp.add_citizen('АБ15210211', 'Бага', 'Хүүхэд', '2015-01-02')
         lookup = self.assert_status(self.lookup('АБ15210211'), 201)['lookup_id']

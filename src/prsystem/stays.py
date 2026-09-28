@@ -7,7 +7,8 @@ price, cleanliness, paid/confirmed flag, shift root or snapshot is accepted.
 import secrets
 from datetime import datetime, timedelta
 from psycopg.types.json import Jsonb
-from prsystem.common import DomainError
+from prsystem.booking_inventory import scope
+from prsystem.common import DomainError, identifier
 from prsystem.guest_identity import validate_identity
 from prsystem.rooms import RoomService
 from prsystem.shifts import ShiftService
@@ -47,11 +48,40 @@ class StayService(RoomService):
     def _guest_identity(self, conn, tenant, guest, on_date):
         """RC-DEC-046: a Mongolian РД identity resolves through its server-held ХУР lookup."""
         if guest.get('identity_type') == 'MN_REG_NO':
-            from prsystem.xyp import bind
-            return bind(conn, self.vault, tenant, guest, on_date)
+            return self._xyp_identity(conn, tenant, guest, on_date)
         if guest.get('xyp_lookup_id') is not None:
             raise DomainError('INVALID_GUEST_IDENTITY')
         return (*validate_identity(guest, on_date), None)
+
+    def _xyp_identity(self, conn, tenant, guest, on_date):
+        """Resolve a Mongolian РД guest through its server-held, unused, unexpired ХУР lookup."""
+        lookup = guest.get('xyp_lookup_id')
+        if lookup is None:
+            raise DomainError('XYP_LOOKUP_REQUIRED')
+        identifier(lookup)
+        scope(conn, tenant)
+        row = conn.execute('''SELECT status,reason,lookup_token,envelope,stay_id,expires_at<=clock_timestamp()
+            FROM prsystem.xyp_lookup WHERE tenant_id=%s AND id=%s FOR UPDATE''', (tenant, lookup)).fetchone()
+        if not row:
+            raise DomainError('XYP_LOOKUP_NOT_FOUND')
+        status, reason, token, envelope, stay, expired = row
+        if stay is not None:
+            raise DomainError('XYP_LOOKUP_USED')
+        if expired:
+            raise DomainError('XYP_LOOKUP_EXPIRED')
+        if status == 'FOUND':
+            # Everything but the type and the lookup comes from ХУР; any other value is a browser edit.
+            if any(value is not None for name, value in guest.items() if name not in ('identity_type', 'xyp_lookup_id')):
+                raise DomainError('XYP_VERIFIED_FIELDS_LOCKED')
+            citizen = self.vault.open(envelope, tenant, lookup, 'xyp-lookup')
+            identity, exact = validate_identity(dict(citizen, identity_type='MN_REG_NO', nationality='MN'), on_date)
+            identity['provenance'] = 'XYP_VERIFIED'
+        else:
+            identity, exact = validate_identity({k: v for k, v in guest.items() if k != 'xyp_lookup_id'}, on_date)
+            if self.vault.fingerprint('guest-exact-identity', list(exact)) != token:
+                raise DomainError('XYP_LOOKUP_MISMATCH')
+            identity['xyp_fallback'] = dict(status=status, reason=reason)
+        return identity, exact, lookup
 
     @staticmethod
     def _readiness(conn, tenant, room, category, actual, recorded):

@@ -50,3 +50,10 @@ class MockXypGatewayTests(unittest.TestCase):
     def test_mock_store_refuses_production_mode(self):
         with TemporaryDirectory() as directory, self.assertRaises(ValueError):
             MockXypGateway(MockStore(directory + '/xyp.sqlite3', environment='production'))
+
+
+class PortModuleTests(unittest.TestCase):
+    def test_port_module_holds_no_database_code(self):
+        import prsystem.xyp as xyp
+        for name in ('bind', 'MANUAL_FIELDS', 'scope', 'validate_identity', 'identifier'):
+            self.assertFalse(hasattr(xyp, name), name)
