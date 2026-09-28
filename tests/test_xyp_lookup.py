@@ -1,7 +1,9 @@
 """ХУР lookup and check-in binding on real PostgreSQL through the API (RC-DEC-046)."""
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from threading import Barrier, Event
 from time import sleep
 from unittest.mock import patch
@@ -13,6 +15,8 @@ if ADMIN_DSN:
     from fastapi.testclient import TestClient
     from prsystem.api import create_app
     from prsystem.mock_providers import MockStore, MockXypGateway
+    from prsystem.xyp import XypNotFound
+    from prsystem.xyp_lookups import XypLookups
 
 
 @unittest.skipUnless(ADMIN_DSN, 'PRSYSTEM_TEST_ADMIN_DSN is not set')
@@ -265,3 +269,34 @@ class XypLookupTests(WalkInCase):
         self.ready(); self.xyp.add_citizen('АБ15210211', 'Бага', 'Хүүхэд', '2015-01-02')
         lookup = self.assert_status(self.lookup('АБ15210211'), 201)['lookup_id']
         self.assertEqual(self.checkin(guest=self.guest(lookup)).json()['code'], 'GUEST_UNDER_18')
+
+
+@unittest.skipUnless(ADMIN_DSN, 'PRSYSTEM_TEST_ADMIN_DSN is not set')
+class XypAdapterBoundTests(unittest.TestCase):
+    """ask() alone: a hung ХУР holds at most 8 daemon calls and never blocks process exit."""
+    def ask(self, gateway):
+        return XypLookups.ask(SimpleNamespace(gateway=gateway), 'АБ90010211')
+
+    def test_hung_adapter_slots_turn_new_lookups_into_timeouts_on_daemon_threads(self):
+        release, calls = threading.Event(), []
+        class Stuck:
+            def citizen(self, number):
+                calls.append(number); release.wait(5); raise XypNotFound(number)
+        with patch('prsystem.xyp_lookups.TIMEOUT_SECONDS', 0.2):
+            with ThreadPoolExecutor(8) as pool:
+                results = list(pool.map(lambda _: self.ask(Stuck()), range(8)))
+            self.assertEqual({result[:2] for result in results}, {('UNAVAILABLE', 'TIMEOUT')})
+            self.assertEqual(self.ask(Stuck())[:2], ('UNAVAILABLE', 'TIMEOUT'))
+        self.assertEqual(len(calls), 8)  # the ninth lookup never reached ХУР
+        workers = [thread for thread in threading.enumerate() if thread.name.startswith('xyp')]
+        release.set()
+        self.assertTrue(workers)
+        self.assertTrue(all(thread.daemon for thread in workers), [thread.name for thread in workers])
+        for thread in workers:
+            thread.join(2)
+
+    def test_adapter_socket_timeout_is_a_timeout(self):
+        class Slow:
+            def citizen(self, number):
+                raise TimeoutError('timed out')
+        self.assertEqual(self.ask(Slow()), ('UNAVAILABLE', 'TIMEOUT', None, None))

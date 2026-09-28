@@ -4,8 +4,9 @@ The adapter is called outside database transactions. Receipts keep only the
 lookup id; citizen data lives in the encrypted xyp_lookup envelope.
 """
 import secrets
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as AdapterTimeout
 from datetime import timedelta
+from threading import BoundedSemaphore, Thread
+from time import monotonic
 
 from psycopg.types.json import Jsonb
 
@@ -19,8 +20,9 @@ from prsystem.xyp import TIMEOUT_SECONDS, XypNotFound, XypUnavailable, citizen_e
 LOOKUP_LIMIT = 20
 LOOKUP_WINDOW = timedelta(minutes=10)
 LOOKUP_TTL = timedelta(minutes=15)
-# Bounded: a hanging adapter holds at most these threads; queued calls still time out.
-ADAPTER_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix='xyp')
+# At most this many adapter calls in flight, even while ХУР hangs. Each runs on a daemon thread,
+# so a hung call never blocks process exit and no queue keeps a РД in memory.
+ADAPTER_SLOTS = BoundedSemaphore(8)
 
 
 class XypLookups(StayService):
@@ -32,11 +34,31 @@ class XypLookups(StayService):
         """Return (status, reason, citizen, error_type); error_type names an unexpected adapter crash."""
         if self.gateway is None:
             return 'UNAVAILABLE', 'NOT_CONFIGURED', None, None
-        call = ADAPTER_POOL.submit(self.gateway.citizen, number)
+        deadline = monotonic() + TIMEOUT_SECONDS
+        if not ADAPTER_SLOTS.acquire(timeout=TIMEOUT_SECONDS):  # every slot is held by a hung call
+            return 'UNAVAILABLE', 'TIMEOUT', None, None
+        box = {}
+        def call():
+            try:
+                box['answer'] = self.gateway.citizen(number)
+            except Exception as exc:
+                box['error'] = exc
+            finally:
+                ADAPTER_SLOTS.release()
+        worker = Thread(target=call, name='xyp', daemon=True)
         try:
-            return 'FOUND', None, citizen_evidence(number, call.result(timeout=TIMEOUT_SECONDS)), None
-        except AdapterTimeout:
-            call.cancel()  # still queued: never runs; already running: its answer is discarded
+            worker.start()
+        except RuntimeError:  # no thread could start: give the slot back
+            ADAPTER_SLOTS.release()
+            return 'UNAVAILABLE', 'PROVIDER_ERROR', None, 'RuntimeError'
+        worker.join(max(0, deadline - monotonic()))
+        if worker.is_alive():  # its late answer is discarded; the call keeps its slot until it returns
+            return 'UNAVAILABLE', 'TIMEOUT', None, None
+        try:
+            if 'error' in box:
+                raise box['error']
+            return 'FOUND', None, citizen_evidence(number, box['answer']), None
+        except TimeoutError:  # an adapter's socket.timeout is a TIMEOUT by design, not a crash
             return 'UNAVAILABLE', 'TIMEOUT', None, None
         except XypNotFound:
             return 'NOT_FOUND', None, None, None
