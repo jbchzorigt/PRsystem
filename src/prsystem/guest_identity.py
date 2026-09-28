@@ -40,6 +40,9 @@ def validate_identity(data, on_date):
     if dob > on_date:
         raise DomainError('INVALID_GUEST_IDENTITY')
     age = on_date.year - dob.year - ((on_date.month, on_date.day) < (dob.month, dob.day))
+    # 2026-09-28 decision: hotels do not serve a primary guest under 18 (replaces RC-DEC-044 guardian metadata).
+    if age < 18:
+        raise DomainError('GUEST_UNDER_18')
     result.update(identity_type=kind, date_of_birth=dob.isoformat(), age_at_checkin=age, provenance='MANUAL',
                   matching_eligibility='ELIGIBLE_EXACT_RD' if kind == 'MN_REG_NO' else 'NOT_ELIGIBLE_EXACT_RD')
     identifier = country = None
@@ -79,11 +82,6 @@ def validate_identity(data, on_date):
     specific = {'document_number', 'issuing_country', 'expiry_date', 'document_type', 'issuing_authority', 'no_document_reason', 'note'}
     if any(data.get(field) is not None for field in specific - required):
         raise DomainError('INVALID_GUEST_IDENTITY')
-    guardian = data.get('guardian')
-    if age < 18 and guardian is None:
-        raise DomainError('GUARDIAN_REQUIRED')
-    if guardian is not None:
-        result['guardian'] = {field: text(guardian.get(field)) for field in ('name', 'phone', 'relationship')}
     if identifier:
         result['document_number'] = identifier
     return result, (kind, country, identifier) if identifier else None

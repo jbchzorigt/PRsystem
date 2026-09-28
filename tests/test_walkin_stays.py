@@ -196,3 +196,15 @@ class WalkInStayTests(WalkInCase):
         with psycopg.connect(self.owner_dsn) as conn:
             conn.execute('UPDATE prsystem.room_category SET deposit=0 WHERE tenant_id=%s',(self.tenant,))
         self.assertEqual(self.checkin().json()['code'],'STAY_DEPOSIT_SETTINGS_REQUIRED')
+
+    def test_under_18_primary_guest_is_refused_without_side_effects(self):
+        # 2026-09-28 decision: hotels do not serve a primary guest under 18; no guardian path remains.
+        self.ready()
+        child=dict(identity_type='MN_REG_NO',family_name='Бат',given_name='Болд',date_of_birth='2015-01-02',nationality='MN',document_number='АБ15210211')
+        self.assertEqual(self.assert_status(self.checkin(guest=child),422)['code'],'GUEST_UNDER_18')
+        guardian=dict(name='Эцэг',phone='99112233',relationship='father')
+        self.assert_status(self.checkin(guest=dict(child,guardian=guardian),idempotency_key='with-guardian'),422)
+        with psycopg.connect(self.owner_dsn) as conn:
+            for table in ('stay','stay_guest_identity','stay_guest_code','identity_match_outbox'):
+                self.assertEqual(conn.execute(sql.SQL('SELECT count(*) FROM prsystem.{} WHERE tenant_id=%s').format(sql.Identifier(table)),(self.tenant,)).fetchone()[0],0)
+        self.assert_status(self.checkin(idempotency_key='adult'),201)

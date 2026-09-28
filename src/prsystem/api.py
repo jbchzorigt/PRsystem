@@ -435,13 +435,6 @@ class TariffChange(BaseModel):
     idempotency_key: str = Field(min_length=1,max_length=128)
 
 
-class GuardianInput(BaseModel):
-    model_config = ConfigDict(extra='forbid',strict=True)
-    name: str = Field(min_length=1,max_length=200)
-    phone: str = Field(min_length=1,max_length=200)
-    relationship: str = Field(min_length=1,max_length=200)
-
-
 class PrimaryGuestInput(BaseModel):
     model_config = ConfigDict(extra='forbid',strict=True)
     identity_type: Literal['MN_REG_NO','FOREIGN_PASSPORT','OTHER_GOV_ID','NO_DOCUMENT']
@@ -456,7 +449,6 @@ class PrimaryGuestInput(BaseModel):
     issuing_authority: str | None = Field(default=None,min_length=1,max_length=200)
     no_document_reason: str | None = Field(default=None,min_length=1,max_length=1000)
     note: str | None = Field(default=None,min_length=1,max_length=2000)
-    guardian: GuardianInput | None = None
 
 
 class CashConfirmation(BaseModel):
@@ -1001,7 +993,7 @@ def create_app(dsn: str | None = None, settings: AuthSettings | None = None, *, 
     async def domain_error(request, exc):
         code = str(exc)
         stay_errors = {code:409 for code in ('ROOM_NOT_READY','ROOM_OCCUPIED','RESERVATION_CONFLICT','HISTORICAL_READINESS_REQUIRED','OPEN_SHIFT_REQUIRED','STAY_SETTINGS_REQUIRED','STAY_DEPOSIT_SETTINGS_REQUIRED','CLEANING_NOT_STARTED','WORK_SOURCE_CONFLICT')}
-        stay_errors.update({code:422 for code in ('INVALID_GUEST_IDENTITY','GUARDIAN_REQUIRED','ACTUAL_TIME_OUT_OF_RANGE','INVALID_STAY_DURATION','STAY_ALREADY_ENDED','TIMEZONE_REQUIRED')})
+        stay_errors.update({code:422 for code in ('INVALID_GUEST_IDENTITY','GUEST_UNDER_18','ACTUAL_TIME_OUT_OF_RANGE','INVALID_STAY_DURATION','STAY_ALREADY_ENDED','TIMEZONE_REQUIRED')})
         stay_errors['IDENTITY_VAULT_UNAVAILABLE'] = 503
         stay_errors['STAY_FINANCE_UNAVAILABLE'] = 503
         stay_errors.update({code:409 for code in ('DEPOSIT_REQUIREMENT_NOT_MET','FINANCIAL_SOURCE_NOT_READY','FINANCIAL_AGGREGATE_FROZEN','DEPOSIT_BALANCE_CONFLICT','INSUFFICIENT_DEPOSIT','CHARGE_OVERPAYMENT','INVALID_FINANCIAL_SOURCE','ORIGINAL_CASH_DRAWER_REQUIRED','REFUND_TERMINAL','CASH_SOURCE_CONFLICT','INSUFFICIENT_CASH')})

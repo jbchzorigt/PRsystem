@@ -67,12 +67,16 @@ class GuestIdentityPolicyTests(unittest.TestCase):
             data = self.guest();data['document_number'] = number
             with self.subTest(number=number), self.assertRaises(DomainError): validate_identity(data,self.day)
 
-    def test_child_needs_guardian_and_remains_rd_match_eligible(self):
-        data = self.guest(); data.update(date_of_birth='2015-01-02', document_number='АБ15210211')
-        with self.assertRaisesRegex(DomainError,'GUARDIAN_REQUIRED'): validate_identity(data,self.day)
-        data['guardian'] = dict(name='Эцэг',phone='99112233',relationship='father')
-        guest, exact = validate_identity(data,self.day)
-        self.assertEqual(guest['age_at_checkin'],11);self.assertEqual(exact[0],'MN_REG_NO')
+    def test_primary_guest_must_be_adult_on_checkin_day(self):
+        # 2026-09-28 decision: hotels do not serve guests under 18; replaces RC-DEC-044 guardian metadata.
+        child = dict(self.guest(),date_of_birth='2015-01-02',document_number='АБ15210211')
+        with self.assertRaisesRegex(DomainError,'GUEST_UNDER_18'): validate_identity(child,self.day)
+        with self.assertRaisesRegex(DomainError,'GUEST_UNDER_18'):
+            validate_identity(dict(child,guardian=dict(name='Эцэг',phone='99112233',relationship='father')),self.day)
+        with self.assertRaisesRegex(DomainError,'GUEST_UNDER_18'):
+            validate_identity(dict(self.guest(),date_of_birth='2008-09-08',document_number='АБ08290811'),self.day)
+        guest, exact = validate_identity(dict(self.guest(),date_of_birth='2008-09-07',document_number='АБ08290711'),self.day)
+        self.assertEqual((guest['age_at_checkin'],exact[0]),(18,'MN_REG_NO'))
 
     def test_passport_other_id_and_no_document(self):
         base = dict(family_name='Test',given_name='Guest',date_of_birth='2000-09-08',nationality='US')
