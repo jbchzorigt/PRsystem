@@ -51,6 +51,11 @@ class MinibarAdjustmentTests(MinibarConfigurationCase):
             self.assertEqual(conn.execute("SELECT count(*) FROM prsystem.guest_charge WHERE tenant_id=%s AND kind='MINIBAR'",(self.tenant,)).fetchone()[0],0)
         self.assertEqual(self.history()[0]['reason'],'Бодит тооллогын шалтгаан')
 
+    def test_manager_adjusts_stock_during_subscription_grace(self):
+        # B-07 / LIFE-DEC-003: every package right stays open for 48 hours after expires_at.
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
+        self.assertEqual(self.assert_status(self.adjust(quantity=3),201)['warehouse_quantity'],7)
+
     def test_room_return_preserves_hotel_quantity_and_value(self):
         self.guest();r=self.assert_status(self.adjust('RETURN',room=self.room),201)
         self.assertEqual((r['warehouse_quantity'],r['room_quantity'],r['total_quantity'],r['inventory_value_mnt']),(9,1,10,'10000'))

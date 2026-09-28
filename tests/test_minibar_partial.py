@@ -72,6 +72,13 @@ class MinibarPartialTests(MinibarConfigurationCase):
         with psycopg.connect(self.owner_dsn) as conn:
             self.assertEqual(conn.execute('SELECT phase,quantity FROM prsystem.minibar_transfer WHERE tenant_id=%s ORDER BY recorded_at',(self.tenant,)).fetchall(),[('PARTIAL',1),('APPLY',1)])
 
+    def test_cleaner_moves_partial_stock_during_subscription_grace(self):
+        # B-07 / LIFE-DEC-003: every package right stays open for 48 hours after expires_at.
+        task=self.assert_status(self.prepare(),201);self.count_all(task)
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
+        self.assert_status(self.move(task),200)
+        stock=self.stocks();self.assertEqual((stock['warehouse_quantity'],stock['room_quantity']),(9,1))
+
     def test_cancel_keeps_blocker_until_compensating_count_complete(self):
         task=self.partial();cancelled=self.assert_status(self.cancel(self.task(task)['request']),200)
         self.assertEqual(cancelled['state'],'ROLLBACK_REQUIRED')

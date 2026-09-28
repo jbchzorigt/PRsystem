@@ -67,6 +67,19 @@ class MinibarVarianceTests(MinibarConfigurationCase):
             self.assertEqual(row,('COUNT_MINUS',1,self.manager,None,0))
             self.assertEqual(conn.execute('SELECT actual_count FROM prsystem.cleaning_posting WHERE tenant_id=%s AND source_id=%s',(self.tenant,task['source_id'])).fetchone()[0],1)
 
+    def test_manager_resolves_and_applies_variance_during_subscription_grace(self):
+        # B-07 / LIFE-DEC-003: every package right stays open for 48 hours after expires_at.
+        task=self.variance()
+        with psycopg.connect(self.owner_dsn) as conn:conn.execute("UPDATE prsystem.hotel_access SET expires_at=now()-interval '1 hour' WHERE tenant_id=%s",(self.tenant,))
+        self.assertEqual(self.assert_status(self.resolve(task),201)['quantity_delta'],-1)
+        self.assertEqual(len(self.assert_status(self.apply(task),200)['count_resolutions']),1)
+
+    def test_database_variance_authority_ends_exactly_at_the_grace_lock(self):
+        with psycopg.connect(self.owner_dsn) as conn:
+            for offset,authorized in (('1 hour',True),('48 hours',False)):
+                conn.execute('UPDATE prsystem.hotel_access SET expires_at=clock_timestamp()-%s::interval WHERE tenant_id=%s',(offset,self.tenant))
+                self.assertEqual(conn.execute('SELECT prsystem.minibar_variance_authorized(%s,%s)',(self.tenant,self.manager)).fetchone()[0],authorized,offset)
+
     def test_waste_resolution_and_off_return_preserve_real_inventory(self):
         task=self.variance(off=True);self.assert_status(self.resolve(task,kind='WASTE'),201);self.assert_status(self.apply(task),200)
         after=self.stocks();self.assertEqual((after['total_quantity'],after['room_quantity'],after['warehouse_quantity']),(9,0,9))
