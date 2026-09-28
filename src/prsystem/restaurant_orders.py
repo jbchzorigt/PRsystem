@@ -5,7 +5,7 @@ HTTP clients can request reconciliation but cannot supply provider results.
 """
 import secrets
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from psycopg.types.json import Jsonb
 
@@ -70,7 +70,8 @@ class RestaurantOrders:
         if not access or access[0] != 30000 or access[2]:
             raise DomainError('FORBIDDEN')
         if ordering:
-            if self.now(conn) >= access[1]:
+            # LIFE-DEC-003: guests keep ordering through the 48h grace period.
+            if self.now(conn) >= access[1] + timedelta(hours=48):
                 raise DomainError('SUBSCRIPTION_EXPIRED')
             if conn.execute('SELECT 1 FROM prsystem.reception_checkout_intent WHERE tenant_id=%s AND stay_id=%s', (tenant, stay)).fetchone():
                 raise DomainError('CHECKOUT_ALREADY_INITIATED')

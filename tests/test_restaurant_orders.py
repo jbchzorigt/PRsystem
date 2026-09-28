@@ -294,3 +294,16 @@ class RestaurantOrderTests(GuestFinanceCase):
         self.assertEqual(result['state']['refund_policy'],'MANDATORY')
         with self.assertRaisesRegex(DomainError,'FORBIDDEN'):
             self.flow.command(self.worker_token,self.tenant,paid['order_id'],'BEGIN_REFUND',result['revision'],'forbidden-refund',hotel_staff=True)
+
+    def expire_subscription(self, hours_ago):
+        with psycopg.connect(self.owner_dsn) as conn:
+            conn.execute('UPDATE prsystem.hotel_access SET expires_at=%s WHERE tenant_id=%s', (self.clock-timedelta(hours=hours_ago), self.tenant))
+
+    def test_guest_orders_during_grace_and_locks_at_grace_end(self):
+        # REQ-17-06.00 / LIFE-DEC-003: grace keeps every package right, Restaurant included.
+        self.expire_subscription(1)
+        created = self.flow.create(self.guest_token,self.restaurant,{'soup':1},'grace-order')
+        self.assertEqual(self.flow.invoice(self.guest_token,created['order_id'])['amount_mnt'],4000)
+        self.expire_subscription(48)
+        with self.assertRaisesRegex(DomainError,'SUBSCRIPTION_EXPIRED'):
+            self.flow.create(self.guest_token,self.restaurant,{'soup':1},'after-grace-order')
